@@ -14,10 +14,9 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/miniodal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo/consts/ct"
 	"github.com/BetaGoRobot/BetaGo/utility"
-	"github.com/BetaGoRobot/BetaGo/utility/larkutils"
 	miniohelper "github.com/BetaGoRobot/BetaGo/utility/minio_helper"
 	"github.com/BetaGoRobot/BetaGo/utility/otel"
 	"github.com/BetaGoRobot/BetaGo/utility/requests"
@@ -25,6 +24,7 @@ import (
 	"github.com/bytedance/sonic"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/minio/minio-go/v7"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"gorm.io/gorm/clause"
@@ -72,24 +72,15 @@ func DownImgFromMsgSync(ctx context.Context, msgID, fileType, fileKey string) (b
 		return
 	}
 
-	// 上传到minio
-	_, b64Data, err = miniohelper.
-		Client().
-		SetContext(ctx).
-		SetBucketName("larkchat").
-		SetFileFromReader(reader).
-		SetObjName(filepath.Join("chat_image", fileType, fileKey+suffix)).
-		SetContentType(ct.ContentType(contentType)).
-		SetNeedAKA(true).
-		SetV4().
-		UploadWithB64Data()
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", fileKey), zap.String("file_type", fileType))
-		return
+	dal := miniodal.New(miniodal.Internal)
+	res := dal.Upload(ctx).WithContentType(contentType).WithReader(reader).Do("larkchat", filepath.Join("chat_image", fileType, fileKey+suffix), minio.PutObjectOptions{})
+	if res.Err() != nil {
+		return "", res.Err()
 	}
+
+	b64Data = res.B64Data()
 	logs.L().Ctx(ctx).Info("upload pic to minio success", zap.String("file_key", fileKey),
 		zap.String("file_type", fileType))
-	// url = u.String()
 	return
 }
 
@@ -119,7 +110,7 @@ func DownImgFromMsgAsync(ctx context.Context, msgID, fileType, fileKey string) (
 		Type(fileType).
 		Build()
 	// 发起请求
-	resp, err := lark.LarkClient.Im.V1.MessageResource.Get(ctx, req)
+	resp, err := lark_dal.Client().Im.V1.MessageResource.Get(ctx, req)
 	// 处理错误
 	if err != nil {
 		logs.L().Ctx(ctx).Error("get message resource error", zap.String("file_key", fileKey), zap.String("file_type", fileType), zap.Error(err))
@@ -138,21 +129,15 @@ func DownImgFromMsgAsync(ctx context.Context, msgID, fileType, fileKey string) (
 			return
 		}
 
-		// 异步上传
-		u, err := miniohelper.
-			Client().
-			SetContext(ctx).
-			SetBucketName("larkchat").
-			SetFileFromReader(reader).
-			SetObjName(filepath.Join("chat_image", fileType, fileKey+suffix)).
-			SetContentType(ct.ContentType(contentType)).
-			Upload()
-		if err != nil {
+		dal := miniodal.New(miniodal.Internal)
+		res := dal.Upload(ctx).WithContentType(contentType).WithReader(reader).Do("larkchat", filepath.Join("chat_image", fileType, fileKey+suffix), minio.PutObjectOptions{})
+		if res.Err() != nil {
 			logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", fileKey), zap.String("file_type", fileType))
 			return
 		}
+		u, err := res.PreSignURL()
 		logs.L().Ctx(ctx).Info("upload pic to minio success", zap.String("file_type", fileType),
-			zap.String("url", u.String()))
+			zap.String("url", u))
 	}()
 
 	return
@@ -329,7 +314,7 @@ func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[str
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	resp := larkutils.GetMsgFullByID(ctx, msgID)
+	resp := lark_dal.GetMsgFullByID(ctx, msgID)
 	if len(resp.Data.Items) == 0 {
 		return nil, nil
 	}
@@ -367,7 +352,7 @@ func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[str
 func GetAllImgURLFromParent(ctx context.Context, data *larkim.P2MessageReceiveV1) (iter.Seq[string], error) {
 	if data.Event.Message.ThreadId != nil {
 		// 话题模式 找图片
-		resp, err := lark.LarkClient.Im.Message.List(ctx,
+		resp, err := lark_dal.Client().Im.Message.List(ctx,
 			larkim.NewListMessageReqBuilder().ContainerIdType("thread").ContainerId(*data.Event.Message.ThreadId).Build())
 		if err != nil {
 			return nil, err
@@ -461,20 +446,19 @@ func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS 
 			return
 		}
 		if uploadOSS {
-			u, err := miniohelper.Client().
-				SetContext(ctx).
-				SetBucketName("cloudmusic").
-				SetFileFromReader(io.NopCloser(bytes.NewReader(picData))).
-				SetObjName("picture/" + musicID + filepath.Ext(imageURL)).
-				SetContentType(ct.ContentTypeImgJPEG).
-				Upload()
+			dal := miniodal.New(miniodal.Internal)
+			res := dal.Upload(ctx).WithContentType(ContentTypeImgJPEG.String()).WithData(picData).Do("cloudmusic", "picture/"+musicID+filepath.Ext(imageURL), minio.PutObjectOptions{})
+			if res.Err() != nil {
+				logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", "picture/"+musicID+filepath.Ext(imageURL)), zap.String("file_type", ContentTypeImgJPEG.String()))
+				return
+			}
+			u, err := res.PreSignURL()
 			if err != nil {
-				logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("imageURL", imageURL), zap.String("imageKey", imgKey))
-				err = nil
+				logs.L().Ctx(ctx).Error("get presign url error", zap.Error(err))
 			}
-			if u != nil {
-				ossURL = u.String()
-			}
+			logs.L().Ctx(ctx).Info("upload pic to minio success", zap.String("file_type", ContentTypeImgJPEG.String()),
+				zap.String("url", u))
+			ossURL = u
 		}
 	}
 	u, err := miniohelper.MinioTryGetFile(ctx, "cloudmusic", "picture/"+musicID+filepath.Ext(imageURL), true)
@@ -535,7 +519,7 @@ func UploadPicture2LarkReader(ctx context.Context, picture io.Reader) (imgKey st
 		).
 		Build()
 
-	resp, err := lark.LarkClient.Im.Image.Create(ctx, req)
+	resp, err := lark_dal.Client().Im.Image.Create(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Error", zap.Error(err))
 		return
@@ -567,7 +551,7 @@ func UploadPicture2Lark(ctx context.Context, URL string) (imgKey string) {
 		).
 		Build()
 
-	resp, err := lark.LarkClient.Im.Image.Create(ctx, req)
+	resp, err := lark_dal.Client().Im.Image.Create(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Error", zap.Error(err))
 		return
@@ -604,7 +588,7 @@ func UploadPicBatch(ctx context.Context, sourceURLIDs map[string]int) chan [2]st
 
 func GetMsgImages(ctx context.Context, msgID, fileKey, fileType string) (file io.Reader, err error) {
 	req := larkim.NewGetMessageResourceReqBuilder().MessageId(msgID).FileKey(fileKey).Type(fileType).Build()
-	resp, err := lark.LarkClient.Im.MessageResource.Get(ctx, req)
+	resp, err := lark_dal.Client().Im.MessageResource.Get(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Error", zap.Error(err))
 		return nil, err

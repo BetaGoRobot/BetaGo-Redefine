@@ -9,12 +9,15 @@ import (
 
 type Uploader struct {
 	*Dal
-	info    minio.UploadInfo
-	skipDup bool // 是否跳过重复文件的上传
+	info        minio.UploadInfo
+	skipDup     bool // 是否跳过重复文件的上传
+	innerData   []byte
+	contentType string
 }
 
 type UploaderX[T any] struct {
 	*Uploader
+
 	r T
 }
 
@@ -23,11 +26,29 @@ type UploaderData UploaderX[[]byte]
 type UploaderReader UploaderX[io.ReadCloser]
 
 func (d *Uploader) WithReader(r io.ReadCloser) *UploaderReader {
-	return &UploaderReader{Uploader: d, r: r}
+	// 先给读完
+	innerData, _ := io.ReadAll(r)
+	d.innerData = innerData
+	newReader := io.NopCloser(bytes.NewReader(d.innerData))
+	return &UploaderReader{Uploader: d, r: newReader}
 }
 
 func (d *Uploader) WithData(data []byte) *UploaderData {
+	d.innerData = data
 	return &UploaderData{Uploader: d, r: data}
+}
+
+func (d *Uploader) WithContentType(typ string) *Uploader {
+	d.contentType = typ
+	return d
+}
+
+func (d *Uploader) Data() []byte {
+	return d.innerData
+}
+
+func (d *Uploader) ContentType() string {
+	return d.contentType
 }
 
 func (d *Uploader) SkipDedup(dedup bool) *Uploader {

@@ -2,6 +2,8 @@ package miniodal
 
 import (
 	"context"
+	"encoding/base64"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -9,6 +11,8 @@ import (
 type Doer interface {
 	context.Context
 	Client() *minio.Client
+	Data() []byte
+	ContentType() string
 }
 
 type Res[T Doer] struct {
@@ -41,4 +45,15 @@ func (r Res[T]) PreSignURL() (url string, err error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func (r Res[T]) B64Data() string {
+	b64Data := base64.StdEncoding.EncodeToString(r.val.Data())
+	sb := strings.Builder{}
+	sb.Grow(len(b64Data) + 20)
+	sb.WriteString("data:")
+	sb.WriteString(r.val.ContentType())
+	sb.WriteString(";base64,")
+	sb.WriteString(b64Data)
+	return sb.String()
 }
