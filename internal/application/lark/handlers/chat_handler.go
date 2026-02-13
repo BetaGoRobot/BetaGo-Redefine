@@ -4,30 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"iter"
-	"strconv"
 	"strings"
-	"text/template"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/msg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/user"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/BetaGo/consts"
-	"github.com/BetaGoRobot/BetaGo/consts/env"
-	handlerbase "github.com/BetaGoRobot/BetaGo/handler/handler_base"
-	handlertypes "github.com/BetaGoRobot/BetaGo/handler/handler_types"
 	"github.com/BetaGoRobot/BetaGo/utility"
-	"github.com/BetaGoRobot/BetaGo/utility/ark/tools"
-	"github.com/BetaGoRobot/BetaGo/utility/database"
-	"github.com/BetaGoRobot/BetaGo/utility/history"
+
 	"github.com/BetaGoRobot/BetaGo/utility/larkutils"
-	"github.com/BetaGoRobot/BetaGo/utility/larkutils/grouputil"
-	"github.com/BetaGoRobot/BetaGo/utility/larkutils/larkimg"
-	"github.com/BetaGoRobot/BetaGo/utility/larkutils/larkmsgutils"
-	"github.com/BetaGoRobot/BetaGo/utility/larkutils/userutil"
-	"github.com/BetaGoRobot/BetaGo/utility/logs"
 	"github.com/BetaGoRobot/BetaGo/utility/message"
 	opensearchdal "github.com/BetaGoRobot/BetaGo/utility/opensearch_dal"
-	"github.com/BetaGoRobot/BetaGo/utility/otel"
 	"github.com/BetaGoRobot/BetaGo/utility/redis"
-	"github.com/BetaGoRobot/BetaGo/utility/retriver"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	jsonrepair "github.com/RealAlexandreAI/json-repair"
@@ -39,8 +39,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func ChatHandler(chatType string) func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *handlerbase.BaseMetaData, args ...string) (err error) {
-	return func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *handlerbase.BaseMetaData, args ...string) (err error) {
+func ChatHandler(chatType string) func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+	return func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 		defer func() { metaData.SkipDone = true }()
 		newChatType := chatType
 		size := new(int)
@@ -58,15 +58,15 @@ func ChatHandler(chatType string) func(ctx context.Context, event *larkim.P2Mess
 }
 
 func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
 	var (
-		res   iter.Seq[*responses.ModelStreamRespReasoning]
+		res   iter.Seq[*ark_dal.ModelStreamRespReasoning]
 		files = make([]string, 0)
 	)
-	if !larkutils.IsMentioned(event.Event.Message.Mentions) { // 禁言判断只对非at的生效
+	if !msg.IsMentioned(event.Event.Message.Mentions) { // 禁言判断只对非at的生效
 		if ext, err := redis.GetRedisClient().
 			Exists(ctx, MuteRedisKeyPrefix+*event.Event.Message.ChatId).Result(); err != nil {
 			return err
@@ -94,7 +94,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 		}
 	}
 	if chatType == consts.MODEL_TYPE_REASON {
-		res, err = GenerateChatSeq(ctx, event, env.ARK_REASON_EPID, size, files, args...)
+		res, err = GenerateChatSeq(ctx, event, config.Get().ArkConfig.ReasoningModel, size, files, args...)
 		if err != nil {
 			return
 		}
@@ -103,11 +103,11 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 			return
 		}
 	} else {
-		res, err = GenerateChatSeq(ctx, event, env.ARK_NORMAL_EPID, size, files, args...)
+		res, err = GenerateChatSeq(ctx, event, config.Get().ArkConfig.NormalModel, size, files, args...)
 		if err != nil {
 			return err
 		}
-		lastData := &responses.ModelStreamRespReasoning{}
+		lastData := &ark_dal.ModelStreamRespReasoning{}
 		for data := range res {
 			span.SetAttributes(attribute.String("lastData", data.Content))
 			lastData = data
@@ -139,8 +139,8 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 	return
 }
 
-func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*responses.ModelStreamRespReasoning], err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
@@ -158,21 +158,18 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	if err != nil {
 		return
 	}
-
-	templateRows, _ := database.FindByCacheFunc(database.PromptTemplateArgs{PromptID: 4}, func(d database.PromptTemplateArgs) string {
-		return strconv.Itoa(d.PromptID)
-	})
-	if len(templateRows) == 0 {
-		return nil, errors.New("prompt template not found")
+	ins := query.Q.PromptTemplateArg
+	tpl, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(4)).First()
+	if err != nil {
+		return nil, err
 	}
 
-	promptTemplate := templateRows[0]
-	promptTemplateStr := promptTemplate.TemplateStr
+	promptTemplateStr := tpl.TemplateStr
 	tp, err := template.New("prompt").Parse(promptTemplateStr)
 	if err != nil {
 		return nil, err
 	}
-	userInfo, err := userutil.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
+	userInfo, err := user.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
 	}
@@ -183,16 +180,16 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		userName = *userInfo.Name
 	}
 	createTime := utility.EpoMil2DateStr(*event.Event.Message.CreateTime)
-	promptTemplate.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkutils.PreGetTextMsg(ctx, event))}
-	promptTemplate.HistoryRecords = messageList.ToLines()
-	if len(promptTemplate.HistoryRecords) > *size {
-		promptTemplate.HistoryRecords = promptTemplate.HistoryRecords[len(promptTemplate.HistoryRecords)-*size:]
+	tpl.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkutils.PreGetTextMsg(ctx, event))}
+	tpl.HistoryRecords = messageList.ToLines()
+	if len(tpl.HistoryRecords) > *size {
+		tpl.HistoryRecords = tpl.HistoryRecords[len(tpl.HistoryRecords)-*size:]
 	}
 	docs, err := retriver.Cli().RecallDocs(ctx, chatID, *event.Event.Message.Content, 10)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("RecallDocs err", zap.Error(err))
 	}
-	promptTemplate.Context = commonutils.TransSlice(docs, func(doc schema.Document) string {
+	tpl.Context = commonutils.TransSlice(docs, func(doc schema.Document) string {
 		if doc.Metadata == nil {
 			doc.Metadata = map[string]any{}
 		}
@@ -201,11 +198,11 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		userName, _ := doc.Metadata["user_name"].(string)
 		return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, userID, userName, doc.PageContent)
 	})
-	promptTemplate.Topics = make([]string, 0)
+	tpl.Topics = make([]string, 0)
 	for _, doc := range docs {
 		msgID, ok := doc.Metadata["msg_id"]
 		if ok {
-			resp, err := opensearchdal.SearchData(ctx, consts.LarkChunkIndex, osquery.
+			resp, err := opensearchdal.SearchData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, osquery.
 				Search().Sort("timestamp_v2", osquery.OrderDesc).
 				Query(osquery.Bool().Must(osquery.Term("msg_ids", msgID))).
 				Size(1),
@@ -213,44 +210,44 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 			if err != nil {
 				return nil, err
 			}
-			chunk := &handlertypes.MessageChunkLogV3{}
+			chunk := &msg.MessageChunkLogV3{}
 			if len(resp.Hits.Hits) > 0 {
 				sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
-				promptTemplate.Topics = append(promptTemplate.Topics, chunk.Summary)
+				tpl.Topics = append(tpl.Topics, chunk.Summary)
 			}
 		}
 	}
-	promptTemplate.Topics = utility.Dedup(promptTemplate.Topics)
+	tpl.Topics = utils.Dedup(tpl.Topics)
 	b := &strings.Builder{}
-	err = tp.Execute(b, promptTemplate)
+	err = tp.Execute(b, tpl)
 	if err != nil {
 		return nil, err
 	}
 
-	iter, err := responses.ResponseStreaming(ctx, b.String(), modelID, &tools.FunctionCallMeta{ChatID: chatID, UserID: *event.Event.Sender.SenderId.OpenId, LarkData: event}, files...)
-	if err != nil {
-		return
-	}
-	return func(yield func(*responses.ModelStreamRespReasoning) bool) {
+	iter, err := ark_dal.New[*larkim.P2MessageReceiveV1](
+		"chat_id", "user_id", nil,
+	).Do(context.Background(), b.String(), "")
+
+	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		mentionMap := make(map[string]string)
 		for _, item := range messageList {
-			mentionMap[item.UserName] = larkmsgutils.AtUser(item.UserID, item.UserName)
-			mentionMap[item.UserID] = larkmsgutils.AtUser(item.UserID, item.UserName)
+			mentionMap[item.UserName] = msg.AtUser(item.UserID, item.UserName)
+			mentionMap[item.UserID] = msg.AtUser(item.UserID, item.UserName)
 			for _, mention := range item.MentionList {
-				mentionMap[*mention.Name] = larkmsgutils.AtUser(*mention.Id, *mention.Name)
-				mentionMap[*mention.Id] = larkmsgutils.AtUser(*mention.Id, *mention.Name)
+				mentionMap[*mention.Name] = msg.AtUser(*mention.Id, *mention.Name)
+				mentionMap[*mention.Id] = msg.AtUser(*mention.Id, *mention.Name)
 			}
 		}
-		memberMap, err := grouputil.GetUserMapFromChatIDCache(ctx, chatID)
+		memberMap, err := user.GetUserMapFromChatIDCache(ctx, chatID)
 		if err != nil {
 			return
 		}
 		for _, member := range memberMap {
-			mentionMap[*member.Name] = larkmsgutils.AtUser(*member.MemberId, *member.Name)
-			mentionMap[*member.MemberId] = larkmsgutils.AtUser(*member.MemberId, *member.Name)
+			mentionMap[*member.Name] = msg.AtUser(*member.MemberId, *member.Name)
+			mentionMap[*member.MemberId] = msg.AtUser(*member.MemberId, *member.Name)
 		}
-		trie := utility.BuildTrie(mentionMap)
-		lastData := &responses.ModelStreamRespReasoning{}
+		trie := utils.BuildTrie(mentionMap)
+		lastData := &ark_dal.ModelStreamRespReasoning{}
 		for data := range iter {
 			lastData = data
 			if !yield(data) {

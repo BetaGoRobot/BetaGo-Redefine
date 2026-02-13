@@ -7,13 +7,14 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	"github.com/BetaGoRobot/BetaGo/consts"
-	"github.com/BetaGoRobot/BetaGo/handler/larkhandler/lark_command/handlers"
 	"github.com/BetaGoRobot/BetaGo/utility"
 	"github.com/BetaGoRobot/BetaGo/utility/larkutils"
 	"github.com/BetaGoRobot/go_utils/reflecting"

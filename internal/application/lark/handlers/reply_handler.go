@@ -32,7 +32,7 @@ import (
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:18
 func ReplyAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *handlerbase.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	argMap, _ := parseArgs(args...)
@@ -133,7 +133,7 @@ func ReplyAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 //	@param args ...string
 //	@return error
 func ReplyGetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *handlerbase.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()

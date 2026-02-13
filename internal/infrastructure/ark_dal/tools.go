@@ -6,8 +6,9 @@ import (
 )
 
 func baseInputItem(sysPrompt, userPrompt string) []*responses.InputItem {
-	return []*responses.InputItem{
-		{
+	res := make([]*responses.InputItem, 0)
+	if sysPrompt != "" {
+		res = append(res, &responses.InputItem{
 			Union: &responses.InputItem_InputMessage{
 				InputMessage: &responses.ItemInputMessage{
 					Role: responses.MessageRole_system,
@@ -23,8 +24,10 @@ func baseInputItem(sysPrompt, userPrompt string) []*responses.InputItem {
 					},
 				},
 			},
-		},
-		{
+		})
+	}
+	if userPrompt != "" {
+		res = append(res, &responses.InputItem{
 			Union: &responses.InputItem_InputMessage{
 				InputMessage: &responses.ItemInputMessage{
 					Role: responses.MessageRole_user,
@@ -40,8 +43,9 @@ func baseInputItem(sysPrompt, userPrompt string) []*responses.InputItem {
 					},
 				},
 			},
-		},
+		})
 	}
+	return res
 }
 
 func buildImageInputMessages(files ...string) []*responses.InputItem {

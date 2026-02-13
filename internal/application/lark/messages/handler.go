@@ -8,16 +8,19 @@ import (
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/msg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/user"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/BetaGo/consts"
-	"github.com/BetaGoRobot/BetaGo/utility"
-	opensearchdal "github.com/BetaGoRobot/BetaGo/utility/opensearch_dal"
-	"github.com/BetaGoRobot/BetaGo/utility/otel"
+
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/kevinmatthe/gojieba"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -34,20 +37,20 @@ type (
 )
 
 func larkDeferFunc(ctx context.Context, err error, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
-	larkutils.SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
+	lark_dal.SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
 }
 
 func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
 	go func() {
-		ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 		defer span.End()
 
-		chatID, err := larkutils.GetChatIDFromMsgID(ctx, *event.Event.Message.MessageId)
+		chatID, err := lark_dal.GetChatIDFromMsgID(ctx, *event.Event.Message.MessageId)
 		if err != nil {
 			return
 		}
 
-		userInfo, err := userutil.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
+		userInfo, err := user.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 		if err != nil {
 			return
 		}
@@ -83,19 +86,19 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		}
 		ws := jieba.Cut(content, true)
 		wts := jieba.Tag(content)
-		wsTags := []*handlertypes.WordWithTag{}
+		wsTags := []*xmodel.WordWithTag{}
 		for _, tag := range wts {
 			sp := strings.Split(tag, "/")
 			if sp[0] = strings.TrimSpace(sp[0]); sp[0] == "" {
 				continue
 			}
-			wsTags = append(wsTags, &handlertypes.WordWithTag{Word: sp[0], Tag: sp[1]})
+			wsTags = append(wsTags, &xmodel.WordWithTag{Word: sp[0], Tag: sp[1]})
 		}
-		err = opensearchdal.InsertData(
-			ctx, consts.LarkMsgIndex, *event.Event.Message.MessageId,
-			&handlertypes.MessageIndex{
+		err = opensearch.InsertData(
+			ctx, config.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
+			&xmodel.MessageIndex{
 				MessageLog:           msgLog,
-				ChatName:             larkutils.GetChatName(ctx, chatID),
+				ChatName:             lark_dal.GetChatName(ctx, chatID),
 				RawMessage:           content,
 				RawMessageJieba:      strings.Join(ws, " "),
 				RawMessageJiebaArray: ws,
@@ -120,7 +123,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 					"chat_id":     utils.AddrOrNil(event.Event.Message.ChatId),
 					"user_id":     utils.AddrOrNil(event.Event.Sender.SenderId.OpenId),
 					"msg_id":      utils.AddrOrNil(event.Event.Message.MessageId),
-					"create_time": utility.EpoMil2DateStr(*event.Event.Message.CreateTime),
+					"create_time": utils.EpoMil2DateStr(*event.Event.Message.CreateTime),
 					"user_name":   userName,
 				},
 			}})
@@ -135,7 +138,7 @@ func init() {
 		OnPanic(larkDeferFunc).
 		WithMetaDataProcess(metaInit).
 		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
-			go func() { larkutils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
+			go func() { utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
 		}).
 		WithDefer(CollectMessage).
 		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {

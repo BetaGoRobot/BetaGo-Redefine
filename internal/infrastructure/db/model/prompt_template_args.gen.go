@@ -12,6 +12,11 @@ type PromptTemplateArg struct {
 	TemplateStr string `gorm:"column:template_str" json:"template_str"`
 	Task        string `gorm:"column:task" json:"task"`
 	Constraints string `gorm:"column:constraints" json:"constraints"`
+
+	HistoryRecords []string `json:"history_records" gorm:"-"`
+	Context        []string `json:"context" gorm:"-"`
+	Topics         []string `json:"topics" gorm:"-"`
+	UserInput      []string `json:"user_input" gorm:"-"`
 }
 
 // TableName PromptTemplateArg's table name

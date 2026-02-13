@@ -32,7 +32,7 @@ import (
 //	@author kevinmatthe
 //	@update 2025-05-30 15:19:56
 func TrendHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *handlerbase.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
@@ -128,7 +128,7 @@ type trendInternalHelper struct {
 }
 
 func (h *trendInternalHelper) DrawTrendPie(ctx context.Context, trend history.TrendSeries, reply bool) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
@@ -163,7 +163,7 @@ func (h *trendInternalHelper) DrawTrendPie(ctx context.Context, trend history.Tr
 }
 
 func (h *trendInternalHelper) DrawTrendBar(ctx context.Context, trend history.TrendSeries, reply bool) (err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
@@ -202,7 +202,7 @@ func (h *trendInternalHelper) DrawTrendBar(ctx context.Context, trend history.Tr
 }
 
 func (h *trendInternalHelper) TrendByUser(ctx context.Context) (trend history.TrendSeries, err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
@@ -224,7 +224,7 @@ func (h *trendInternalHelper) TrendByUser(ctx context.Context) (trend history.Tr
 }
 
 func (h *trendInternalHelper) TrendRate(ctx context.Context, indexName, field string, size uint64) (singleDimAggs *history.SingleDimAggregate, err error) {
-	ctx, span := otel.LarkRobotOtelTracer.Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 

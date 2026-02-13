@@ -17,3 +17,11 @@ func MustMarshal(v any) []byte {
 	}
 	return s
 }
+
+func UnmarshallStrPre[T any](s string, val *T) error {
+	err := sonic.UnmarshalString(s, &val)
+	if err != nil {
+		return err
+	}
+	return nil
+}

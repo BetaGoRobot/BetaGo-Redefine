@@ -2,9 +2,11 @@ package ark_dal
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"iter"
 	"maps"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -42,6 +44,46 @@ type (
 		NormalText    string
 	}
 )
+
+type ContentStruct struct {
+	Decision             string `json:"decision"`
+	Thought              string `json:"thought"`
+	ReferenceFromWeb     string `json:"reference_from_web"`
+	ReferenceFromHistory string `json:"reference_from_history"`
+	Reply                string `json:"reply"`
+}
+
+func (s *ContentStruct) BuildOutput() string {
+	output := strings.Builder{}
+	if s.Decision != "" {
+		output.WriteString(fmt.Sprintf("- 决策: %s\n", s.Decision))
+	}
+	if s.Thought != "" {
+		output.WriteString(fmt.Sprintf("- 思考: %s\n", s.Thought))
+	}
+	if s.Reply != "" {
+		output.WriteString(fmt.Sprintf("- 回复: %s\n", s.Reply))
+	}
+	if s.ReferenceFromWeb != "" {
+		output.WriteString(fmt.Sprintf("- 参考网络: %s\n", s.ReferenceFromWeb))
+	}
+	if s.ReferenceFromHistory != "" {
+		output.WriteString(fmt.Sprintf("- 参考历史: %s\n", s.ReferenceFromHistory))
+	}
+	return output.String()
+}
+
+type ReplyUnit struct {
+	ID      string
+	Content string
+}
+
+type ModelStreamRespReasoning struct {
+	ReasoningContent string
+	Content          string
+	ContentStruct    ContentStruct
+	Reply2Show       *ReplyUnit
+}
 
 func New[T any](chatID, userID string, data *T) *ResponsesImpl[T] {
 	return &ResponsesImpl[T]{
@@ -189,7 +231,7 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
 }
 
-func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[string], err error) {
+func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
 	ctx, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer subSpan.End()
 	defer func() { subSpan.RecordError(err) }() // 这里的err需要捕获闭包内的错误
@@ -227,7 +269,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		return nil, err
 	}
 
-	return func(yield func(string) bool) {
+	return func(yield func(*ModelStreamRespReasoning) bool) {
 		subCtx, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc()+".StreamIter")
 		defer subSpan.End()
 		defer func() { subSpan.RecordError(err) }() // 这里的err需要捕获闭包内的错误
@@ -251,7 +293,10 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 				return
 			}
 
-			if !yield(r.textOutput.NormalText) {
+			if !yield(&ModelStreamRespReasoning{
+				ReasoningContent: r.textOutput.ReasoningText,
+				Content:          r.textOutput.NormalText,
+			}) {
 				return
 			}
 		}
