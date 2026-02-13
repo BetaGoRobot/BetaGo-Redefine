@@ -1,0 +1,206 @@
+package retriver
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/go_utils/reflecting"
+	opensearchgo "github.com/opensearch-project/opensearch-go"
+	"github.com/tmc/langchaingo/embeddings"
+	"github.com/tmc/langchaingo/llms/openai"
+	"github.com/tmc/langchaingo/schema"
+	"github.com/tmc/langchaingo/vectorstores"
+	"github.com/tmc/langchaingo/vectorstores/opensearch"
+	"go.uber.org/zap"
+)
+
+var cli *RAGSystem
+
+const (
+	IndexNamePrefix = "langchaingo_default"
+	vectorDimension = 2560
+)
+
+func Cli() *RAGSystem {
+	return cli
+}
+
+func Init(config *config.BaseConfig) {
+	var err error
+	ctx := context.Background()
+	cfg := Config{
+		OpenAIAPIKey:         config.ArkConfig.APIKey,
+		OpenAIBaseURL:        "https://ark.cn-beijing.volces.com/api/v3/",
+		OpenAIModel:          config.ArkConfig.NormalModel,
+		OpenAIEmbeddingModel: config.ArkConfig.EmbeddingModel,
+		OpenAIEmbeddingDims:  vectorDimension,
+		OpenSearchURL:        "https://" + config.OpensearchConfig.Domain + ":9200",
+		OpenSearchUsername:   config.OpensearchConfig.User,
+		OpenSearchPassword:   config.OpensearchConfig.Password,
+	}
+	cli, err = NewRAGSystem(ctx, cfg)
+	if err != nil {
+		logs.L().Ctx(ctx).Fatal("初始化 RAG 系统失败", zap.Error(err))
+	}
+	logs.L().Ctx(ctx).Info("RAG 系统初始化成功！")
+}
+
+// RAGSystem 结构体封装了 RAG 应用所需的所有核心组件
+type RAGSystem struct {
+	llm      *openai.LLM
+	embedder *embeddings.EmbedderImpl
+	store    opensearch.Store
+}
+
+// Config 结构体用于传递初始化 RAGSystem 所需的配置
+type Config struct {
+	OpenAIAPIKey         string
+	OpenAIBaseURL        string
+	OpenAIModel          string
+	OpenAIEmbeddingModel string
+	OpenAIEmbeddingDims  int
+	OpenSearchURL        string
+	OpenSearchUsername   string
+	OpenSearchPassword   string
+}
+
+// NewRAGSystem 是 RAGSystem 的构造函数，负责初始化所有客户端和组件
+// 这是我们的第一个“原子能力”：系统初始化
+func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+
+	// 1. 创建 LLM 和 Embedding 模型
+	llm, err := openai.New(
+		openai.WithToken(cfg.OpenAIAPIKey),
+		openai.WithBaseURL(cfg.OpenAIBaseURL),
+		openai.WithModel(cfg.OpenAIModel),
+		openai.WithEmbeddingModel(cfg.OpenAIEmbeddingModel),
+		openai.WithEmbeddingDimensions(cfg.OpenAIEmbeddingDims),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("创建 OpenAI 客户端失败: %w", err)
+	}
+
+	embedder, err := embeddings.NewEmbedder(llm)
+	if err != nil {
+		return nil, fmt.Errorf("创建 Embedder 失败: %w", err)
+	}
+
+	// 2. 初始化 OpenSearch 客户端
+	osClient, err := opensearchgo.NewClient(opensearchgo.Config{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // 仅用于开发，生产环境请使用正确的证书
+		},
+		Addresses: []string{cfg.OpenSearchURL},
+		Username:  cfg.OpenSearchUsername,
+		Password:  cfg.OpenSearchPassword,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("创建 OpenSearch 客户端失败: %w", err)
+	}
+
+	// 3. 创建向量存储实例
+	store, err := opensearch.New(
+		osClient,
+		opensearch.WithEmbedder(embedder),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("创建 OpenSearch 向量存储失败: %w", err)
+	}
+
+	return &RAGSystem{
+		llm:      llm,
+		embedder: embedder,
+		store:    store,
+	}, nil
+}
+
+// AddDocuments 是我们的第二个“原子能力”：插入文档
+// 它负责创建索引（如果不存在）并将文档添加进去
+func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []schema.Document) error {
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+
+	if utils.IsDevChan() {
+		return nil
+	}
+	indexName := IndexNamePrefix + "_" + suffix
+	logs.L().Ctx(ctx).Info("正在为索引准备...", zap.String("indexName", indexName))
+	// 确保索引存在且维度正确
+	// CreateIndex 是幂等的，如果索引已存在，会返回错误，我们可以检查并忽略特定错误，或者简单地尝试添加
+	_, err := rs.store.CreateIndex(ctx, indexName, func(indexMap *map[string]interface{}) {
+		// 动态设置向量维度
+		(*indexMap)["mappings"].(map[string]interface{})["properties"].(map[string]interface{})["contentVector"].(map[string]interface{})["dimension"] = vectorDimension
+	})
+	if err != nil {
+		// 如果索引已存在，通常会报错，这里可以根据实际错误类型进行更精细的判断
+		logs.L().Ctx(ctx).Warn("创建索引时出现问题 (可能已存在): %v", zap.String("indexName", indexName), zap.Error(err))
+	}
+
+	logs.L().Ctx(ctx).Info("正在向索引添加文档...", zap.String("indexName", indexName), zap.Int("docCount", len(docs)))
+	_, err = rs.store.AddDocuments(ctx, docs, vectorstores.WithNameSpace(indexName))
+	if err != nil {
+		return fmt.Errorf("添加文档到 '%s' 失败: %w", indexName, err)
+	}
+
+	logs.L().Ctx(ctx).Info("文档成功添加到索引.", zap.String("indexName", indexName))
+	return nil
+}
+
+func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string, k int) ([]schema.Document, error) {
+	indexName := IndexNamePrefix + "_" + suffix
+	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query))
+	// 创建一个临时的检索器来执行查询
+	retriever := vectorstores.ToRetriever(rs.store, k, vectorstores.WithNameSpace(indexName))
+
+	retrievedDocs, err := retriever.GetRelevantDocuments(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("从检索器获取文档失败: %w", err)
+	}
+
+	return retrievedDocs, nil
+}
+
+func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query string, k int, chatID string) (string, []schema.Document, error) {
+	indexName := IndexNamePrefix + "_" + suffix
+	// 1. 使用召回能力获取上下文文档
+	contextDocs, err := rs.RecallDocs(ctx, indexName, query, k)
+	if err != nil {
+		return "", nil, fmt.Errorf("RAG - 检索失败: %w", err)
+	}
+
+	if len(contextDocs) == 0 {
+		logs.L().Ctx(ctx).Warn("没有检索到相关文档，将直接调用 LLM 回答。", zap.String("indexName", indexName))
+	}
+
+	// 2. 将检索到的文档内容格式化为上下文字符串
+	var contextBuilder strings.Builder
+	for _, doc := range contextDocs {
+		contextBuilder.WriteString(doc.PageContent + "\n")
+	}
+
+	// 3. 创建 Prompt
+	prompt := fmt.Sprintf(`请根据以下上下文回答问题。如果上下文没有提供相关信息，请直接回答你所知道的内容。
+
+上下文:
+%s
+
+问题: %s`, contextBuilder.String(), query)
+
+	// 4. 调用 LLM 生成最终答案
+	logs.L().Ctx(ctx).Info("正在调用 LLM 基于上下文生成回答...", zap.String("indexName", indexName))
+	answer, err := rs.llm.Call(ctx, prompt)
+	if err != nil {
+		return "", contextDocs, fmt.Errorf("RAG - LLM 调用失败: %w", err)
+	}
+
+	return answer, contextDocs, nil
+}
