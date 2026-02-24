@@ -36,7 +36,7 @@ type (
 
 		ForceReplyDirect bool
 		SkipDone         bool
-		Extra            map[string]any
+		Extra            map[string]string
 
 		// TODO: 暂时没有用上，后续改造替换掉st、et的反复解析，搞成通用参数
 		StartTime string
@@ -44,18 +44,18 @@ type (
 	}
 )
 
-func (m *BaseMetaData) GetExtra(key string) (any, bool) {
+func (m *BaseMetaData) GetExtra(key string) (string, bool) {
 	if m.Extra == nil {
-		m.Extra = make(map[string]any)
-		return nil, false
+		m.Extra = make(map[string]string)
+		return "", false
 	}
 	val, ok := m.Extra[key]
 	return val, ok
 }
 
-func (m *BaseMetaData) SetExtra(key string, val any) {
+func (m *BaseMetaData) SetExtra(key string, val string) {
 	if m.Extra == nil {
-		m.Extra = make(map[string]any)
+		m.Extra = make(map[string]string)
 	}
 	m.Extra[key] = val
 }

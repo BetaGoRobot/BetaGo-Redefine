@@ -13,7 +13,6 @@ type (
 	Impl[T any]        struct {
 		FunctionCallMap map[string]*FunctionCallUnit[T]
 		WebsearchTool   *responses.ResponsesTool
-		handlerFunc     HandlerFunc[T]
 	}
 )
 
@@ -28,15 +27,10 @@ func (h *Impl[T]) Add(unit *FunctionCallUnit[T]) *Impl[T] {
 	return h
 }
 
-func (h *Impl[T]) Handle(unit HandlerFunc[T]) *Impl[T] {
-	h.handlerFunc = unit
-	return h
-}
-
 func (h *Impl[T]) HandlerMap() map[string]HandlerFunc[T] {
 	res := make(map[string]HandlerFunc[T])
 	for _, unit := range h.FunctionCallMap {
-		res[unit.FunctionName] = h.handlerFunc
+		res[unit.FunctionName] = unit.Function
 	}
 	return res
 }

@@ -37,7 +37,7 @@ func TestLarkBotFunctionCallTools(t *testing.T) {
 				},
 			},
 		}).AddRequired("city")
-	ins.Add(unit.Name("get_weather").Desc("根据城市获取天气").Params(params)).Handle(handleGetWeather)
+	ins.Add(unit.Name("get_weather").Desc("根据城市获取天气").Params(params).Func(handleGetWeather))
 
 	iter, err := ark_dal.New[*larkim.P2MessageReceiveV1](
 		"chat_id", "user_id", nil,

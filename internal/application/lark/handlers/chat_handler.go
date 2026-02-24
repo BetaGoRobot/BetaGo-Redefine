@@ -230,9 +230,9 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		return nil, err
 	}
 
-	iter, err := ark_dal.New[*larkim.P2MessageReceiveV1](
+	iter, err := ark_dal.New[larkim.P2MessageReceiveV1](
 		"chat_id", "user_id", nil,
-	).Do(ctx, b.String(), fullTpl.UserInput[0], files...)
+	).WithTools(larktools()).Do(ctx, b.String(), fullTpl.UserInput[0], files...)
 
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		contentBuilder := &strings.Builder{}
