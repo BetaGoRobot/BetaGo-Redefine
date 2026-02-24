@@ -127,7 +127,6 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 				SetQueryParam("timestamp", fmt.Sprint(time.Now().Unix())).
 				SetContext(ctx).
 				Post(NetEaseAPIBaseURL + "/login/qr/check")
-			fmt.Println("my error code", resp.StatusCode())
 			if err != nil {
 				return err
 			}
