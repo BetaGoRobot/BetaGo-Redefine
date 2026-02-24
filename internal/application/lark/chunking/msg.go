@@ -60,7 +60,7 @@ func (m *LarkMessageEvent) BuildLine() (line string) {
 			if len(mentions) > 0 {
 				for _, mention := range mentions {
 					if mention.Key != nil {
-						if strings.HasPrefix(*mention.Name, "不太正经的网易云音乐机器人") {
+						if mention.Id != nil && *mention.Id.OpenId == config.Get().LarkConfig.BotOpenID {
 							*mention.Name = "你"
 						}
 						msgItem.Content = strings.ReplaceAll(msgItem.Content, *mention.Key, fmt.Sprintf("@%s", *mention.Name))

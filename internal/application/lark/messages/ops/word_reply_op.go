@@ -50,7 +50,7 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event)) {
+	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
 	return
@@ -68,7 +68,7 @@ func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageR
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
 
-	msg := larkmsg.PreGetTextMsg(ctx, event)
+	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 	var replyItem *xmodel.ReplyNType
 	// 检查定制化逻辑, Key为GuildID, 拿到GUI了dID下的所有SubStr配置
 	ins := query.Q.QuoteReplyMsgCustom

@@ -64,7 +64,15 @@ func Trans2Item(msgType, content string) (itemList iter.Seq[*Item]) {
 				return
 			}
 		case "post":
-			res := utils.MustUnmarshalString[postMsg](content)
+			res := &postMsg{}
+			err := utils.UnmarshalStringPre(content, res)
+			if err != nil {
+				// post也被前置解析过了，直接返回
+				if !yield(&Item{Tag: "text", Content: content}) {
+					return
+				}
+				return
+			}
 			for _, ele := range res.Content {
 				for _, ele2 := range ele {
 					switch ele2.Tag {

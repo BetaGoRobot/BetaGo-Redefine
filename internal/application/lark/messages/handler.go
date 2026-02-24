@@ -73,7 +73,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			Content:     utils.AddrOrNil(event.Event.Message.Content),
 			TraceID:     span.SpanContext().TraceID().String(),
 		}
-		content := larkmsg.PreGetTextMsg(ctx, event)
+		content := larkmsg.PreGetTextMsg(ctx, event).GetText()
 		embedded, usage, err := ark_dal.EmbeddingText(ctx, content)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))

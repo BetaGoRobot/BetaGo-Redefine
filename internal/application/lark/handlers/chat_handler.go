@@ -232,7 +232,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 
 	iter, err := ark_dal.New[*larkim.P2MessageReceiveV1](
 		"chat_id", "user_id", nil,
-	).Do(context.Background(), b.String(), "")
+	).Do(ctx, b.String(), fullTpl.UserInput[0], files...)
 
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		contentBuilder := &strings.Builder{}

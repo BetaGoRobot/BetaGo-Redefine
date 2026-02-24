@@ -53,7 +53,7 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event)) {
+	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
 	if ext, err := redis_dal.GetRedisClient().
@@ -80,7 +80,7 @@ func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	defer func() { span.RecordError(err) }()
 
 	// Repeat
-	msg := larkmsg.PreGetTextMsg(ctx, event)
+	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 
 	// 开始摇骰子, 默认概率10%
 	realRate := config.Get().RateConfig.RepeatDefaultRate

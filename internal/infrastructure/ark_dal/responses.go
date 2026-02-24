@@ -259,27 +259,26 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 	)
 	if len(files) > 0 {
 		items = append(items, buildImageInputMessages(files...)...)
-	} else {
-		input := &responses.ResponsesInput{
-			Union: &responses.ResponsesInput_ListValue{
-				ListValue: &responses.InputItemList{
-					ListValue: items,
-				},
+	}
+	input := &responses.ResponsesInput{
+		Union: &responses.ResponsesInput_ListValue{
+			ListValue: &responses.InputItemList{
+				ListValue: items,
 			},
-		}
-		req = &responses.ResponsesRequest{
-			Model:       modelID,
-			Input:       input,
-			Store:       gptr.Of(true),
-			Tools:       r.tools,
-			Temperature: gptr.Of(0.1),
-			Text: &responses.ResponsesText{
-				Format: &responses.TextFormat{
-					Type: responses.TextType_json_object,
-				},
+		},
+	}
+	req = &responses.ResponsesRequest{
+		Model:       modelID,
+		Input:       input,
+		Store:       gptr.Of(true),
+		Tools:       r.tools,
+		Temperature: gptr.Of(0.1),
+		Text: &responses.ResponsesText{
+			Format: &responses.TextFormat{
+				Type: responses.TextType_json_object,
 			},
-			Stream: gptr.Of(true),
-		}
+		},
+		Stream: gptr.Of(true),
 	}
 
 	resp, err := client.CreateResponsesStream(ctx, req)

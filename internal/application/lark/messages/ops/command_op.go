@@ -48,7 +48,7 @@ func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
 
-	if !command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event)) {
+	if !command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
 	return
@@ -66,7 +66,7 @@ func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
-	rawCommand := larkmsg.PreGetTextMsg(ctx, event)
+	rawCommand := larkmsg.PreGetTextMsg(ctx, event).GetText()
 
 	return ExecuteFromRawCommand(ctx, event, meta, rawCommand)
 }

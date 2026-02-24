@@ -348,7 +348,7 @@ func DebugImageHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 
 	dataSeq, err := ark_dal.New[*larkim.P2MessageReceiveV1](
 		"chat_id", "user_id", nil,
-	).Do(context.Background(), "", inputPrompt)
+	).Do(ctx, "", inputPrompt)
 	if err != nil {
 		return err
 	}

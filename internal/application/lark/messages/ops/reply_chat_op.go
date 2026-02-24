@@ -49,7 +49,7 @@ func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event)) {
+	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
 	return
@@ -75,7 +75,7 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 		defer larkmsg.RemoveReactionAsync(ctx, reactionID, *event.Event.Message.MessageId)
 	}
 
-	msg := larkmsg.PreGetTextMsg(ctx, event)
+	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 	msg = larkmsg.TrimAtMsg(ctx, msg)
 	err = handlers.ChatHandler("chat")(ctx, event, meta, strings.Split(msg, " ")...)
 	if !meta.SkipDone {
