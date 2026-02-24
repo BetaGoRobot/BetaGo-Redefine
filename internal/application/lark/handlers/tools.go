@@ -4,11 +4,14 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/gg/goption"
 	"github.com/bytedance/gg/gresult"
+	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -18,7 +21,71 @@ func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	muteBot(ins)
 	goldReport(ins)
 	revert(ins)
+	hybridSearch(ins)
 	return ins
+}
+
+func hybridSearch(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
+	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
+	params := tools.NewParams("object").
+		AddProp("keywords", &tools.Prop{
+			Type: "array",
+			Desc: "需要检索的关键词列表",
+			Items: []*tools.Prop{
+				{
+					Type: "string",
+					Desc: "关键词",
+				},
+			},
+		}).
+		AddProp("user_id", &tools.Prop{
+			Type: "string",
+			Desc: "用户ID",
+		}).
+		AddProp("start_time", &tools.Prop{
+			Type: "string",
+			Desc: "开始时间，格式为YYYY-MM-DD HH:MM:SS",
+		}).
+		AddProp("end_time", &tools.Prop{
+			Type: "string",
+			Desc: "结束时间，格式为YYYY-MM-DD HH:MM:SS",
+		}).
+		AddProp("top_k", &tools.Prop{
+			Type: "number",
+			Desc: "返回的结果数量",
+		}).
+		AddRequired("keywords")
+	ins.Add(unit.Name("search_history").Desc("根据输入的关键词搜索相关的历史对话记录").
+		Params(params).Func(hybridSearchWrap))
+}
+
+type SearchArgs struct {
+	Keywords  []string `json:"keywords"`
+	TopK      int      `json:"top_k"`
+	StartTime string   `json:"start_time"`
+	EndTime   string   `json:"end_time"`
+	UserID    string   `json:"user_id"`
+}
+
+func hybridSearchWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
+	args := &SearchArgs{}
+	err := sonic.UnmarshalString(argStr, &args)
+	if err != nil {
+		return gresult.Err[string](err)
+	}
+	res, err := history.HybridSearch(ctx,
+		history.HybridSearchRequest{
+			QueryText: args.Keywords,
+			TopK:      args.TopK,
+			UserID:    args.UserID,
+			ChatID:    meta.ChatID,
+			StartTime: args.StartTime,
+			EndTime:   args.EndTime,
+		}, ark_dal.EmbeddingText)
+	if err != nil {
+		return gresult.Err[string](err)
+	}
+	return gresult.OK(utils.MustMarshalString(res))
 }
 
 func musicSearch(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
