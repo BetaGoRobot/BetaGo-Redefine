@@ -1,6 +1,5 @@
 FROM golang:1.25-alpine AS prebuild
 
-ENV GOPROXY=https://goproxy.io,direct
 ENV GO111MODULE="auto"
 
 WORKDIR /data/
