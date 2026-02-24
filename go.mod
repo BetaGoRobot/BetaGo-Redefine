@@ -15,7 +15,7 @@ require (
 	github.com/eko/gocache/store/go_cache/v4 v4.2.4
 	github.com/enescakir/emoji v1.0.0
 	github.com/go-openapi/runtime v0.29.2
-	github.com/go-resty/resty/v2 v2.16.5
+	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gotify/go-api-client/v2 v2.0.4
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/jinzhu/copier v0.4.0
