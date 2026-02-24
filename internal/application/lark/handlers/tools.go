@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -29,14 +30,14 @@ func hybridSearch(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
 	params := tools.NewParams("object").
 		AddProp("keywords", &tools.Prop{
-			Type: "array",
-			Desc: "需要检索的关键词列表",
-			Items: []*tools.Prop{
-				{
-					Type: "string",
-					Desc: "关键词",
-				},
-			},
+			Type: "string",
+			Desc: "需要检索的关键词列表,逗号隔开",
+			// Items: []*tools.Prop{ // sb方舟，用array的在1.8及以上不支持function call，回退到string就可以，傻逼。
+			// 	{
+			// 		Type: "string",
+			// 		Desc: "关键词",
+			// 	},
+			// },
 		}).
 		AddProp("user_id", &tools.Prop{
 			Type: "string",
@@ -60,11 +61,11 @@ func hybridSearch(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 }
 
 type SearchArgs struct {
-	Keywords  []string `json:"keywords"`
-	TopK      int      `json:"top_k"`
-	StartTime string   `json:"start_time"`
-	EndTime   string   `json:"end_time"`
-	UserID    string   `json:"user_id"`
+	Keywords  string `json:"keywords"`
+	TopK      int    `json:"top_k"`
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time"`
+	UserID    string `json:"user_id"`
 }
 
 func hybridSearchWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
@@ -75,7 +76,7 @@ func hybridSearchWrap(ctx context.Context, argStr string, meta tools.FCMeta[lark
 	}
 	res, err := history.HybridSearch(ctx,
 		history.HybridSearchRequest{
-			QueryText: args.Keywords,
+			QueryText: strings.Split(args.Keywords, ","),
 			TopK:      args.TopK,
 			UserID:    args.UserID,
 			ChatID:    meta.ChatID,
