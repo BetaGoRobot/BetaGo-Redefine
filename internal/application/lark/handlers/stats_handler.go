@@ -25,5 +25,5 @@ func StatsGetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 	for _, res := range resList {
 		_ = res
 	}
-	return
+	return nil
 }

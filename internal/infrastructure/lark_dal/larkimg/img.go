@@ -421,7 +421,7 @@ func checkDBCache(ctx context.Context, musicID string) (imgKey string, err error
 		logs.L().Ctx(ctx).Error("get lark img from db error", zap.Error(err))
 		return
 	}
-	return res.ImgKey, err
+	return res.ImgKey, nil
 }
 
 func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS bool) (key string, ossURL string, err error) { // also minio

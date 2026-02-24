@@ -105,5 +105,5 @@ func (r *ReactMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRecei
 		}
 	}
 
-	return
+	return nil
 }

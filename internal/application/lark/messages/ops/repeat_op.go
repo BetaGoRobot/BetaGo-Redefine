@@ -152,7 +152,7 @@ func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 			go larkmsg.RecordMessage2Opensearch(ctx, resp)
 		}
 	}
-	return
+	return nil
 }
 
 func RebuildAtMsg(input string, substrings []string) []string {

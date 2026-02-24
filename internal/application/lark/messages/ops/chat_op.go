@@ -90,5 +90,5 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 			return err
 		}
 	}
-	return
+	return nil
 }

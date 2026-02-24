@@ -131,7 +131,7 @@ func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageR
 		}
 
 	}
-	return
+	return nil
 }
 
 func CheckQuoteKeywordMatch(msg string, keyword string, matchType xmodel.WordMatchType) bool {
