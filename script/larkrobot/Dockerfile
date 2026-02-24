@@ -7,8 +7,7 @@ WORKDIR /data/
 
 RUN cat /etc/resolv.conf
 
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    apk update && \
+RUN apk update && \
     apk add -U tzdata && \
     apk add upx && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
