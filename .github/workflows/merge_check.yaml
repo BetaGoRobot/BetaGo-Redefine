@@ -47,7 +47,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: scripts/larkrobot/Dockerfile
+          file: script/larkrobot/Dockerfile
           push: false
           tags: |
             ${{ env.IMAGE_NAME }}:latest
