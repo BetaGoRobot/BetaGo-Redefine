@@ -27,7 +27,6 @@ import (
 	"github.com/minio/minio-go/v7"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -417,7 +416,7 @@ func GetAndResizePicFromURL(ctx context.Context, imageURL string) (res []byte, e
 func checkDBCache(ctx context.Context, musicID string) (imgKey string, err error) {
 	ins := query.Q.LarkImg
 	res, err := ins.WithContext(ctx).Where(ins.SongID.Eq(musicID)).First()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil {
 		logs.L().Ctx(ctx).Error("get lark img from db error", zap.Error(err))
 		return
 	}

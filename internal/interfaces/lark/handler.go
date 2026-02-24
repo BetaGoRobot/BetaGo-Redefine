@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -60,6 +62,43 @@ func MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReaction
 }
 
 func CardActionHandler(ctx context.Context, cardAction *callback.CardActionTriggerEvent) (resp *callback.CardActionTriggerResponse, err error) {
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer larkmsg.RecoverMsg(ctx, cardAction.Event.Context.OpenMessageID)
+	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(cardAction)))
+	defer span.End()
+	defer func() { span.RecordError(err) }()
+	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
+	// 记录一下操作记录
+	defer func() { go larkmsg.RecordCardAction2Opensearch(ctx, cardAction) }()
+	if len(cardAction.Event.Action.FormValue) > 0 {
+		go cardhandlers.HandleSubmit(ctx, cardAction)
+	} else if buttonType, ok := cardAction.Event.Action.Value["type"]; ok {
+		switch buttonType {
+		case "song":
+			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
+				go cardhandlers.SendMusicCard(ctx, metaData, musicID.(string), cardAction.Event.Context.OpenMessageID, 1)
+			}
+		case "album":
+			if albumID, ok := cardAction.Event.Action.Value["id"]; ok {
+				_ = albumID
+				go cardhandlers.SendAlbumCard(ctx, metaData, albumID.(string), cardAction.Event.Context.OpenMessageID)
+			}
+		case "lyrics":
+			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
+				go cardhandlers.HandleFullLyrics(ctx, metaData, musicID.(string), cardAction.Event.Context.OpenMessageID)
+			}
+		case "withdraw":
+			// 撤回消息
+			go cardhandlers.HandleWithDraw(ctx, cardAction)
+		case "refresh":
+			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
+				go cardhandlers.HandleRefreshMusic(ctx, musicID.(string), cardAction.Event.Context.OpenMessageID)
+			}
+		case "refresh_obj":
+			// 通用的卡片刷新结构，重点是记录触发的command重新触发？
+			go cardhandlers.HandleRefreshObj(ctx, cardAction)
+		}
+	}
 	return
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
@@ -20,6 +21,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/yanyiwu/gojieba"
@@ -176,5 +178,35 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 	)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err))
+	}
+}
+
+func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+
+	chatID := cardAction.Event.Context.OpenChatID
+	userID := cardAction.Event.Operator.OpenID
+	userInfo, err := larkuser.GetUserInfoCache(ctx, cardAction.Event.Context.OpenChatID, userID)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("GetUserInfo error", zap.Error(err))
+		return
+	}
+	idxData := &xmodel.CardActionIndex{
+		CardActionTriggerEvent: cardAction,
+		ChatName:               larkchat.GetChatName(ctx, chatID),
+		CreateTime:             utils.EpoMicro2DateStr(cardAction.EventV2Base.Header.CreateTime),
+		UserID:                 userID,
+		UserName:               utils.AddrOrNil(userInfo.Name),
+		ActionValue:            cardAction.Event.Action.Value,
+	}
+	err = opensearch.InsertData(ctx,
+		config.Get().OpensearchConfig.LarkCardActionIndex,
+		cardAction.Event.Operator.OpenID,
+		idxData,
+	)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
+		return
 	}
 }

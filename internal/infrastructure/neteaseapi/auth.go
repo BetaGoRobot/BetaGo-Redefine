@@ -127,11 +127,8 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 				SetQueryParam("timestamp", fmt.Sprint(time.Now().Unix())).
 				SetContext(ctx).
 				Post(NetEaseAPIBaseURL + "/login/qr/check")
-
-			if err != nil || resp.StatusCode() != 200 {
-				if err == nil {
-					return fmt.Errorf("LoginNetEaseQR error, StatusCode %d", resp.StatusCode())
-				}
+			fmt.Println("my error code", resp.StatusCode())
+			if err != nil {
 				return err
 			}
 			data := resp.Body()
@@ -144,14 +141,14 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 				once.Do(func() { logs.L().Ctx(ctx).Info("Waiting for scan") })
 			case 800:
 				once.Do(func() {
-					logs.L().Ctx(ctx).Info("二维码已失效")
+					logs.L().Ctx(ctx).Info("[neteaseQR]二维码已失效")
 					neteaseCtx.qrStruct.isOutDated = true
 				})
 				return err
 			case 802:
-				once.Do(func() { logs.L().Ctx(ctx).Info("扫描未确认") })
+				once.Do(func() { logs.L().Ctx(ctx).Info("[neteaseQR]扫描未确认") })
 			case 803:
-				logs.L().Ctx(ctx).Info("登陆成功！")
+				logs.L().Ctx(ctx).Info("[neteaseQR]登陆成功！")
 				neteaseCtx.cookies = resp.Cookies()
 				neteaseCtx.SaveCookie(ctx)
 				neteaseCtx.loginType = "qr"

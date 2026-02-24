@@ -51,6 +51,7 @@ type NeteaseMusicConfig struct {
 	MusicCardInThread bool   `json:"music_card_in_thread" yaml:"music_card_in_thread" toml:"music_card_in_thread"`
 	UserName          string `json:"user_name" yaml:"user_name" toml:"user_name"`
 	PassWord          string `json:"pass_word" yaml:"pass_word" toml:"pass_word"`
+	PlayerURL         string `json:"player_url" yaml:"player_url" toml:"player_url"`
 }
 
 type ProxyConfig struct {
@@ -114,11 +115,12 @@ type ArkConfig struct {
 }
 
 type LarkConfig struct {
-	AppID        string `json:"app_id" yaml:"app_id" toml:"app_id"`
-	AppSecret    string `json:"app_secret" yaml:"app_secret" toml:"app_secret"`
-	Encryption   string `json:"encryption" yaml:"encryption" toml:"encryption"`
-	Verification string `json:"verification" yaml:"verification" toml:"verification"`
-	BotOpenID    string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
+	AppID           string `json:"app_id" yaml:"app_id" toml:"app_id"`
+	AppSecret       string `json:"app_secret" yaml:"app_secret" toml:"app_secret"`
+	Encryption      string `json:"encryption" yaml:"encryption" toml:"encryption"`
+	Verification    string `json:"verification" yaml:"verification" toml:"verification"`
+	BotOpenID       string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
+	WithDrawReplace bool   `json:"with_draw_replace" yaml:"with_draw_replace" toml:"with_draw_replace"`
 }
 
 func NewConfigs() *BaseConfig {
