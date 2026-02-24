@@ -50,11 +50,11 @@ func goldReport(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	params := tools.NewParams("object").
 		AddProp("start_time", &tools.Prop{
 			Type: "string",
-			Desc: "开始时间，默认可以不穿，格式为YYYY-MM-DD HH:MM:SS",
+			Desc: "开始时间，默认可以不穿，格式为RFC3339: 2006-01-02T15:04:05Z07:00",
 		}).
 		AddProp("end_time", &tools.Prop{
 			Type: "string",
-			Desc: "结束时间，默认可以不传，格式为YYYY-MM-DD HH:MM:SS",
+			Desc: "结束时间，默认可以不传，格式为RFC3339: 2006-01-02T15:04:05Z07:00",
 		}).
 		AddProp("hours", &tools.Prop{
 			Type: "number",
@@ -124,10 +124,10 @@ func goldWrap(ctx context.Context, args string, meta tools.FCMeta[larkim.P2Messa
 	}
 	argsSlice := make([]string, 0)
 	if s.Days != nil && *s.Days > 0 {
-		argsSlice = append(argsSlice, "--d", strconv.Itoa(*s.Days))
+		argsSlice = append(argsSlice, "--d="+strconv.Itoa(*s.Days))
 	}
 	if s.Hours != nil && *s.Hours > 0 {
-		argsSlice = append(argsSlice, "--h", strconv.Itoa(*s.Hours))
+		argsSlice = append(argsSlice, "--h="+strconv.Itoa(*s.Hours))
 	}
 	if s.StartTime != "" {
 		argsSlice = append(argsSlice, "--st="+s.StartTime)

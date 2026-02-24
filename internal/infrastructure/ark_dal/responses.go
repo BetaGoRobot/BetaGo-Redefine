@@ -234,7 +234,7 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 	fields := make([]zap.Field, 0)
 	for callID, res := range r.functionResult {
 		funcName := r.functionCallMap[callID]
-		fields = append(fields, zap.String(funcName+"_"+callID, res.String()))
+		fields = append(fields, zap.String(funcName+"_"+callID, res.Value()))
 	}
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
 }

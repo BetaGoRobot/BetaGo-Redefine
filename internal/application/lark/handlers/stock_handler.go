@@ -47,13 +47,18 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 		days        int
 		hoursInt    int
 		defaultDays = 30
+		llmResult   string // 为LLM准备的输出
 		st, et      time.Time
 	)
 	defer func() {
 		if err != nil {
 			metaData.SetExtra("gold_result", "执行失败，错误原因"+err.Error())
 		} else {
-			metaData.SetExtra("gold_result", "执行成功")
+			if llmResult != "" {
+				metaData.SetExtra("gold_result", llmResult)
+			} else {
+				metaData.SetExtra("gold_result", "执行成功")
+			}
 		}
 	}()
 	// 如果有st，et的配置，用st，et的配置来覆盖
@@ -80,8 +85,7 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 			et = time.Now()
 		}
 
-		cardContent, err = GetRealtimeGoldPriceGraph(ctx, st, et)
-		fmt.Println(cardContent.String())
+		llmResult, cardContent, err = GetRealtimeGoldPriceGraph(ctx, st, et)
 		if err != nil {
 			return err
 		}
@@ -94,13 +98,19 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 			st = time.Now().AddDate(0, 0, -1*days)
 			et = time.Now()
 		}
-
-		cardContent, err = GetHistoryGoldGraph(ctx, st, et)
-		if err != nil {
-			return err
+		if days == 1 { // 1 天应该用实时数据.
+			llmResult, cardContent, err = GetRealtimeGoldPriceGraph(ctx, st, et)
+			if err != nil {
+				return err
+			}
+		} else {
+			llmResult, cardContent, err = GetHistoryGoldGraph(ctx, st, et)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
-		cardContent, err = GetHistoryGoldGraph(ctx, st, et)
+		llmResult, cardContent, err = GetHistoryGoldGraph(ctx, st, et)
 		if err != nil {
 			return err
 		}
@@ -212,7 +222,7 @@ func ZhAStockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 	return
 }
 
-func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (*larktpl.TemplateCardContent, error) {
+func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (string, *larktpl.TemplateCardContent, error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
@@ -220,7 +230,7 @@ func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (*larktpl.Templa
 	graph := vadvisor.NewMultiSeriesLineGraph[string, float64](ctx)
 	goldPrices, err := aktool.GetHistoryGoldPrice(ctx)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	graph.
 		AddPointSeries(
@@ -289,14 +299,14 @@ func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (*larktpl.Templa
 		SetStartTime(st).
 		SetEndTime(et).
 		Build(ctx)
-	return card, nil
+	return goldPrices.ToLLMTable(), card, nil
 }
 
-func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (*larktpl.TemplateCardContent, error) {
+func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (string, *larktpl.TemplateCardContent, error) {
 	graph := vadvisor.NewMultiSeriesLineGraph[string, float64](ctx)
 	goldPrice, err := aktool.GetRealtimeGoldPrice(ctx)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	graph.
 		AddPointSeries(
@@ -322,7 +332,7 @@ func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (*larktpl.
 		SetStartTime(st).
 		SetEndTime(et).
 		Build(ctx)
-	return card, nil
+	return goldPrice.ToLLMTable(), card, nil
 }
 
 // func init() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -40,7 +41,7 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 				larkim.NewReplyMessageReqBodyBuilder().
 					MsgType(larkim.MsgTypeInteractive).
 					Content(cardContent.String()).
-					Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
+					Uuid(utils.GenUUIDStr(msgID+suffix+config.Get().LarkConfig.BotOpenID, 50)).
 					ReplyInThread(replyInThread).
 					Build(),
 			).

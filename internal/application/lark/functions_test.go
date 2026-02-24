@@ -39,11 +39,14 @@ func TestLarkBotFunctionCallTools(t *testing.T) {
 		}).AddRequired("city")
 	ins.Add(unit.Name("get_weather").Desc("根据城市获取天气").Params(params).Func(handleGetWeather))
 
-	iter, err := ark_dal.New[*larkim.P2MessageReceiveV1](
-		"chat_id", "user_id", nil,
-	).WithTools(ins).Do(
-		context.Background(), "你是一个气象分析专家,根据用户输入的城市名称,查询该城市的天气", "帮我查询一下绵阳市的天气；因为天气查询可能有不稳定的情况，请多查几次告诉我所有结果",
-	)
+	iter, err := ark_dal.
+		New[*larkim.P2MessageReceiveV1]("chat_id", "user_id", nil).
+		WithTools(ins).
+		Do(
+			context.Background(),
+			"你是一个气象分析专家,根据用户输入的城市名称,查询该城市的天气",
+			"帮我查询一下绵阳市的天气；因为天气查询可能有不稳定的情况，请多查几次告诉我所有结果",
+		)
 	if err != nil {
 		panic(err)
 	}

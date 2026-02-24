@@ -3,10 +3,12 @@ package aktool
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/go_utils/reflecting"
+	"github.com/avast/retry-go/v4"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/hertz/pkg/app/client"
 	"github.com/cloudwego/hertz/pkg/protocol"
@@ -46,23 +48,41 @@ type (
 	}
 )
 
+func (rt *GoldPriceDataRTList) ToLLMTable() string {
+	if len(*rt) == 0 {
+		return "没有有效的信息"
+	}
+	sb := strings.Builder{}
+	sb.WriteString("时间,现价\n")
+	for _, item := range *rt {
+		sb.WriteString(fmt.Sprintf("%s,%.2f,%s\n", item.Time, item.Price))
+	}
+	return sb.String()
+}
+
 func GetRealtimeGoldPrice(ctx context.Context) (res GoldPriceDataRTList, err error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	res = make(GoldPriceDataRTList, 0)
-	c, _ := client.NewClient()
-	req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
-	req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameRealtime)
-	req.SetMethod("GET")
-
-	err = c.Do(ctx, req, resp)
-	if err != nil {
-		return
-	}
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
-	}
+	var (
+		req  *protocol.Request
+		resp *protocol.Response
+	)
+	err = retry.Do(
+		func() error {
+			c, _ := client.NewClient()
+			req, resp = protocol.AcquireRequest(), protocol.AcquireResponse()
+			req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameRealtime)
+			req.SetMethod("GET")
+			err = c.Do(ctx, req, resp)
+			if resp.StatusCode() != 200 {
+				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
+			}
+			return err
+		},
+		retry.Attempts(3),
+	)
 
 	err = sonic.Unmarshal(resp.Body(), &res)
 	if err != nil {
@@ -79,23 +99,41 @@ type GoldPriceDataHS []struct {
 	High  float64 `json:"high"`
 }
 
+func (hs *GoldPriceDataHS) ToLLMTable() string {
+	if len(*hs) == 0 {
+		return "没有有效的信息"
+	}
+	sb := strings.Builder{}
+	sb.WriteString("日期,开盘价,收盘价,最低价,最高价\n")
+	for _, item := range *hs {
+		sb.WriteString(fmt.Sprintf("%s,%.2f,%.2f,%.2f,%.2f\n", item.Date, item.Open, item.Close, item.Low, item.High))
+	}
+	return sb.String()
+}
+
 func GetHistoryGoldPrice(ctx context.Context) (res GoldPriceDataHS, err error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	res = make(GoldPriceDataHS, 0)
-	c, _ := client.NewClient()
-	req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
-	req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameHistory)
-	req.SetMethod("GET")
-
-	err = c.Do(ctx, req, resp)
-	if err != nil {
-		return
-	}
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
-	}
+	var (
+		req  *protocol.Request
+		resp *protocol.Response
+	)
+	err = retry.Do(
+		func() error {
+			c, _ := client.NewClient()
+			req, resp = protocol.AcquireRequest(), protocol.AcquireResponse()
+			req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameHistory)
+			req.SetMethod("GET")
+			err = c.Do(ctx, req, resp)
+			if resp.StatusCode() != 200 {
+				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
+			}
+			return err
+		},
+		retry.Attempts(3),
+	)
 
 	err = sonic.Unmarshal(resp.Body(), &res)
 	if err != nil {

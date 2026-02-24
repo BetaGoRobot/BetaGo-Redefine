@@ -163,7 +163,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		return
 	}
 	ins := query.Q.PromptTemplateArg
-	tpl, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(4)).First()
+	tpl, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(5)).First()
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		userName = *userInfo.Name
 	}
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
-	fullTpl.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event))}
+	fullTpl.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())}
 	fullTpl.HistoryRecords = messageList.ToLines()
 	if len(fullTpl.HistoryRecords) > *size {
 		fullTpl.HistoryRecords = fullTpl.HistoryRecords[len(fullTpl.HistoryRecords)-*size:]
@@ -230,9 +230,10 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		return nil, err
 	}
 
-	iter, err := ark_dal.New[larkim.P2MessageReceiveV1](
-		"chat_id", "user_id", nil,
-	).WithTools(larktools()).Do(ctx, b.String(), fullTpl.UserInput[0], files...)
+	iter, err := ark_dal.
+		New("chat_id", "user_id", event).
+		WithTools(larktools()).
+		Do(ctx, b.String(), strings.Join(fullTpl.UserInput, "\n"), files...)
 
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		contentBuilder := &strings.Builder{}

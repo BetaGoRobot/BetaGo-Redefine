@@ -21,5 +21,4 @@ func NewBaseMetaDataWithChatIDUID(ctx context.Context, chatID, userID string) *B
 
 		IsP2P: isP2P,
 	}
-	return nil
 }

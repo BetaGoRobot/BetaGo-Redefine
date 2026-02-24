@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
@@ -10,7 +9,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -101,8 +99,7 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 					return
 				}
 			} else {
-				text := fmt.Sprintf("%v\n[Jaeger Trace](%s)", err.Error(), utils.GenTraceURL(span.SpanContext().TraceID().String()))
-				larkmsg.ReplyCardText(ctx, text, *event.Event.Message.MessageId, "_OpErr", true)
+				larkmsg.ReplyCardText(ctx, err.Error(), *event.Event.Message.MessageId, "_OpErr", true)
 				logs.L().Ctx(ctx).Error("CommandOperator", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
 				return
 			}
