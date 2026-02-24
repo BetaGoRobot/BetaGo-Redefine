@@ -28,7 +28,7 @@ COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    cd cmd/larkrobot && go build -ldflags="-w -s" -o /app/larkrobot
+    cd cmd/larkrobot && go build /app/larkrobot
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     mkdir -p /tmp/jieba_dict && \
