@@ -12,6 +12,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
@@ -239,12 +240,23 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 }
 
 func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
-	ctx, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer subSpan.End()
-	defer func() { subSpan.RecordError(err) }() // 这里的err需要捕获闭包内的错误
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+	defer func() { span.RecordError(err) }() // 这里的err需要捕获闭包内的错误
 
-	items := baseInputItem(sysPrompt, userPrompt)
-	var req *responses.ResponsesRequest
+	var (
+		req     *responses.ResponsesRequest
+		modelID = arkConfig.NormalModel
+		items   = baseInputItem(sysPrompt, userPrompt)
+	)
+
+	span.SetAttributes(
+		attribute.Key("sys_prompt.len").Int(len(sysPrompt)),
+		attribute.Key("sys_prompt.preview").String(sysPrompt),
+		attribute.Key("model_id").String(modelID),
+		attribute.Key("files.count").Int(len(files)),
+		attribute.Key("files").StringSlice(files),
+	)
 	if len(files) > 0 {
 		items = append(items, buildImageInputMessages(files...)...)
 	} else {
@@ -256,7 +268,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 			},
 		}
 		req = &responses.ResponsesRequest{
-			Model:       arkConfig.NormalModel,
+			Model:       modelID,
 			Input:       input,
 			Store:       gptr.Of(true),
 			Tools:       r.tools,

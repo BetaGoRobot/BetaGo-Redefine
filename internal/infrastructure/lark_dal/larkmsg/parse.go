@@ -3,6 +3,8 @@ package larkmsg
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -17,7 +19,13 @@ import (
 func PreGetTextMsg(ctx context.Context, event *larkim.P2MessageReceiveV1) string {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	return GetContentFromTextMsg(*event.Event.Message.Content)
+	rawContent := GetContentFromTextMsg(*event.Event.Message.Content)
+	if len(event.Event.Message.Mentions) > 0 {
+		for _, mention := range event.Event.Message.Mentions {
+			rawContent = strings.ReplaceAll(rawContent, *mention.Key, fmt.Sprintf("@%s", *mention.Name))
+		}
+	}
+	return rawContent
 }
 
 func GetContentFromTextMsg(s string) string {
