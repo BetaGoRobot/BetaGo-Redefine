@@ -20,15 +20,15 @@ FROM prebuild AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-
 RUN go mod download
-
-COPY . .
-
-RUN cd cmd/larkrobot && go build -o /app/larkrobot
 
 RUN mkdir -p /tmp/jieba_dict && \
     cp -r /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
+
+COPY . .
+RUN cd cmd/larkrobot && \
+    go build -o /app/larkrobot && \
+    go clean -cache # 🌟 核心瘦身：编译完立刻删掉 Go 产生的上百兆缓存文件
 
 
 FROM kevinmatt/libvips AS runner
