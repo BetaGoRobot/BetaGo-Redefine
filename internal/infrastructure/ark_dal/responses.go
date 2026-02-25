@@ -41,8 +41,11 @@ type (
 		textOutput textOutput
 	}
 	textOutput struct {
-		ReasoningText string
-		NormalText    string
+		ReasoningTextDelta string
+		NormalTextDelta    string
+
+		reasoningText strings.Builder
+		normalText    strings.Builder
 	}
 )
 
@@ -182,19 +185,21 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 }
 
 func (r *ResponsesImpl[T]) OnReasoningDelta(ctx context.Context, event *responses.Event) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
+	// ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	// defer span.End()
 
 	part := event.GetReasoningText()
-	r.textOutput.ReasoningText = part.GetDelta()
+	r.textOutput.ReasoningTextDelta = part.GetDelta()
+	r.textOutput.reasoningText.WriteString(part.GetDelta())
 }
 
 func (r *ResponsesImpl[T]) OnNormalDelta(ctx context.Context, event *responses.Event) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
+	// ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	// defer span.End()
 
 	part := event.GetText()
-	r.textOutput.NormalText = part.GetDelta()
+	r.textOutput.NormalTextDelta = part.GetDelta()
+	r.textOutput.normalText.WriteString(part.GetDelta())
 }
 
 func (r *ResponsesImpl[T]) OnOthers(ctx context.Context, event *responses.Event) {
@@ -205,11 +210,6 @@ func (r *ResponsesImpl[T]) OnOthers(ctx context.Context, event *responses.Event)
 }
 
 func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event) (newRes *arkutils.ResponsesStreamReader, err error) {
-	// 开启一个新的Span用于追踪流式接收过程
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc()+".StreamIter")
-	defer span.End()
-	defer func() { span.RecordError(err) }() // 这里的err需要捕获闭包内的错误
-
 	if id := event.GetResponse().GetResponse().GetId(); id != "" {
 		r.lastRespID = id
 	}
@@ -231,11 +231,21 @@ func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesS
 }
 
 func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
-	fields := make([]zap.Field, 0)
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+
+	var (
+		fields  = make([]zap.Field, 0)
+		fcSlice = make([]string, 0)
+	)
+
 	for callID, res := range r.functionResult {
 		funcName := r.functionCallMap[callID]
+		fcSlice = append(fcSlice, funcName+"_"+callID+"==>"+res.Value())
 		fields = append(fields, zap.String(funcName+"_"+callID, res.Value()))
 	}
+	span.SetAttributes(attribute.Key("funcion_results").StringSlice(fcSlice))
+	span.SetAttributes(attribute.Key("output").String(utils.MustMarshalString(r.textOutput)))
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
 }
 
@@ -268,11 +278,10 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		},
 	}
 	req = &responses.ResponsesRequest{
-		Model:       modelID,
-		Input:       input,
-		Store:       gptr.Of(true),
-		Tools:       r.tools,
-		Temperature: gptr.Of(0.1),
+		Model: modelID,
+		Input: input,
+		Store: gptr.Of(true),
+		Tools: r.tools,
 		Text: &responses.ResponsesText{
 			Format: &responses.TextFormat{
 				Type: responses.TextType_json_object,
@@ -312,8 +321,8 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 			}
 
 			if !yield(&ModelStreamRespReasoning{
-				ReasoningContent: r.textOutput.ReasoningText,
-				Content:          r.textOutput.NormalText,
+				ReasoningContent: r.textOutput.ReasoningTextDelta,
+				Content:          r.textOutput.NormalTextDelta,
 			}) {
 				return
 			}
