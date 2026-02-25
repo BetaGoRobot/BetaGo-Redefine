@@ -44,10 +44,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 		defer span.End()
 
-		chatID, err := larkmsg.GetChatIDFromMsgID(ctx, *event.Event.Message.MessageId)
-		if err != nil {
-			return
-		}
+		chatID := *event.Event.Message.ChatId
 
 		userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 		if err != nil {
