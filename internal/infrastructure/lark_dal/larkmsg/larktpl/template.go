@@ -54,6 +54,9 @@ func (t *TemplateVersionV2[T]) WithData(data *T) TemplateVersionV2[T] {
 func GetTemplate(ctx context.Context, templateID string) *model.TemplateVersion {
 	ins := query.Q.TemplateVersion
 	template, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &model.TemplateVersion{TemplateID: templateID}
+	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", template.TemplateID), zap.Error(err))
 	}
@@ -63,7 +66,10 @@ func GetTemplate(ctx context.Context, templateID string) *model.TemplateVersion 
 func GetTemplateV2[T any](ctx context.Context, templateID string) TemplateVersionV2[T] {
 	ins := query.Q.TemplateVersion
 	template, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return TemplateVersionV2[T]{TemplateVersion: model.TemplateVersion{TemplateID: templateID}}
+	}
+	if err != nil {
 		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", template.TemplateID), zap.Error(err))
 	}
 	if template != nil {
