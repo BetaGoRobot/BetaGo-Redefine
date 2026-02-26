@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/shorter"
 	"github.com/minio/minio-go/v7"
 )
 
@@ -44,7 +45,12 @@ func (r Res[T]) PreSignURL() (url string, err error) {
 	if err != nil {
 		return "", err
 	}
-	return u.String(), nil
+	rawURL := u.String()
+	newURL := shorter.GenAKAKutt(r.Val(), u)
+	if newURL == nil {
+		return rawURL, nil
+	}
+	return newURL.String(), nil
 }
 
 func (r Res[T]) B64Data() string {

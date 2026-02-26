@@ -134,7 +134,7 @@ func doSendCard(ctx context.Context, msgID, suffix string, cardContent *larktpl.
 				larkim.NewReplyMessageReqBodyBuilder().
 					MsgType(larkim.MsgTypeInteractive).
 					Content(cardContent.String()).
-					Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
+					// Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
 					ReplyInThread(replyInThread).
 					Build(),
 			).

@@ -7,5 +7,9 @@ import (
 
 var (
 	HttpClient          = resty.New()
-	HttpClientWithProxy = resty.New().SetProxy(config.Get().ProxyConfig.PrivateProxy)
+	HttpClientWithProxy = resty.New()
 )
+
+func Init() {
+	HttpClientWithProxy = resty.New().SetProxy(config.Get().ProxyConfig.PrivateProxy)
+}

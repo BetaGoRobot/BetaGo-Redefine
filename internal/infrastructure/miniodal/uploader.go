@@ -87,7 +87,7 @@ func TryGetFile(ctx context.Context, bucketName, objName string) (url string, er
 	if found, err := FileExists(ctx, bucketName, objName); err != nil {
 		return "", err
 	} else if found {
-		u, err := clientInternal.PresignedGetObject(ctx, bucketName, objName, time.Minute*5, nil)
+		u, err := clientExternal.PresignedGetObject(ctx, bucketName, objName, time.Minute*5, nil)
 		if err != nil {
 			return "", err
 		}

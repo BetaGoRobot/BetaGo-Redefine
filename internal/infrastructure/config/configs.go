@@ -26,6 +26,13 @@ type BaseConfig struct {
 	AKToolConfig       *AKToolConfig       `json:"aktool_config" yaml:"aktool_config" toml:"aktool_config"`
 	GotifyConfig       *GotifyConfig       `json:"gotify_config" yaml:"gotify_config" toml:"gotify_config"`
 	RedisConfig        *RedisConfig        `json:"redis_config" yaml:"redis_config" toml:"redis_config"`
+	KuttConfig         *KuttConfig         `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
+}
+
+type KuttConfig struct {
+	BaseURL     string `json:"base_url" yaml:"base_url" toml:"base_url"`
+	ExternalURL string `json:"external_url" yaml:"external_url" toml:"external_url"`
+	APIKey      string `json:"api_key" yaml:"api_key" toml:"api_key"`
 }
 
 type RedisConfig struct {
@@ -142,7 +149,11 @@ func LoadFile(path string) *BaseConfig {
 
 func Get() *BaseConfig {
 	if config == nil {
-		config = LoadFile(os.Getenv("BETAGO_CONFIG_PATH"))
+		if os.Getenv("BETAGO_CONFIG_PATH") == "" {
+			config = LoadFile(".dev/config.toml")
+		} else {
+			config = LoadFile(os.Getenv("BETAGO_CONFIG_PATH"))
+		}
 	}
 	return config
 }

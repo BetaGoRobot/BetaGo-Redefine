@@ -18,6 +18,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -43,6 +44,7 @@ func main() {
 	gotify.Init()
 	larkchunking.Init()
 	lark_dal.Init()
+	xhttp.Init()
 
 	go registerHandlers(config)
 	select {}

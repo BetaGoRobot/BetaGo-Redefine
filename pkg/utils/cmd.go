@@ -17,10 +17,10 @@ func RemoveArgFromStr(s string, args ...string) string {
 
 func BuildURL(jsonURL string) string {
 	u := &url.URL{}
-	u.Host = config.Get().NeteaseMusicConfig.BaseURL
+	u.Host = config.Get().NeteaseMusicConfig.PlayerURL
 	u.Scheme = "https"
 	q := u.Query()
-	q.Add("target", strings.TrimPrefix(jsonURL, "https://kutt.kmhomelab.cn/"))
+	q.Add("target", jsonURL)
 	u.RawQuery = q.Encode()
 	return u.String()
 }

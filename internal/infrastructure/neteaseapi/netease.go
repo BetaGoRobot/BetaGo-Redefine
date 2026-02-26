@@ -210,32 +210,50 @@ func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID string) (u
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("songID").String(ID))
 	defer span.End()
+	var (
+		bucketName = "cloudmusic"
+		objPrefix  = "music/" + ID
+		objName    = objPrefix
+		hasObj     = false
+	)
 
-	r, err := xhttp.HttpClient.R().SetQueryParams(
-		map[string]string{
-			"id":        ID,
-			"level":     "standard",
-			"timestamp": fmt.Sprint(time.Now().UnixNano()),
+	var maxSize int64
+	cli := miniodal.New(miniodal.Internal).Client()
+	for obj := range cli.ListObjectsIter(
+		ctx, bucketName, minio.ListObjectsOptions{
+			Prefix: objPrefix + ".",
 		},
-	).SetCookies(neteaseCtx.cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
-	body := r.Body()
-	music := musicList{}
-	err = sonic.Unmarshal(body, &music)
-	if err != nil {
-		return "", err
+	) {
+		if obj.ContentType == xmodel.ContentTypeAudio.String() && obj.Size > maxSize {
+			maxSize = obj.Size
+			hasObj = true
+			objName = objName + filepath.Ext(obj.Key)
+		}
 	}
-	URL := music.Data[0].URL
-	URL, err = miniodal.New(miniodal.Internal).Upload(ctx).
-		WithContentType(xmodel.ContentTypeAudio.String()).
-		WithURL(URL).
-		Do("cloudmusic", "music/"+ID+filepath.Ext(URL), minio.PutObjectOptions{}).PreSignURL()
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
+
+	if !hasObj {
+		r, err := xhttp.HttpClient.R().SetQueryParams(
+			map[string]string{
+				"id":        ID,
+				"level":     "standard",
+				"timestamp": fmt.Sprint(time.Now().UnixNano()),
+			},
+		).SetCookies(neteaseCtx.cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
+		body := r.Body()
+		music := musicList{}
+		err = sonic.Unmarshal(body, &music)
+		if err != nil {
+			return "", err
+		}
+		URL := music.Data[0].URL
+		objName = objPrefix + filepath.Ext(URL)
+		return miniodal.New(miniodal.Internal).Upload(ctx).
+			SkipDedup(true).
+			WithContentType(xmodel.ContentTypeAudio.String()).
+			WithURL(URL).
+			Do(bucketName, objName, minio.PutObjectOptions{}).PreSignURL()
 	}
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("Get minio url failed, will use raw url", zap.Error(err))
-	}
-	return URL, err
+	return miniodal.TryGetFile(ctx, bucketName, objName)
 }
 
 func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string) (musicDetail *MusicDetail) {
@@ -254,6 +272,10 @@ func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string)
 		Post(NetEaseAPIBaseURL + "/song/detail")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+	}
+	if resp.StatusCode() != 200 {
+		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil
 	}
 	musicDetail = &MusicDetail{}
 	err = sonic.Unmarshal(resp.Body(), musicDetail)
