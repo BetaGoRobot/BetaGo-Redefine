@@ -26,9 +26,10 @@ RUN mkdir -p /tmp/jieba_dict && \
     cp -r /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
 
 COPY . .
-RUN cd cmd/larkrobot && \
-    go build -o /app/larkrobot && 
-    # go clean -cache # 🌟 核心瘦身：编译完立刻删掉 Go 产生的上百兆缓存文件
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd cmd/larkrobot && \
+    go build -o /app/larkrobot
 
 
 FROM kevinmatt/libvips AS runner
