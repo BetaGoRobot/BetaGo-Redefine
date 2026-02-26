@@ -1,6 +1,8 @@
 package db
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -31,6 +33,10 @@ func callbackQuery(d *gorm.DB) {
 	if d.Error == nil {
 		callbacks.BuildQuerySQL(d)
 		sql := d.Statement.SQL.String()
+		vars := d.Statement.Vars
+		for i, v := range vars {
+			sql = strings.Replace(sql, fmt.Sprintf("$%d", i+1), fmt.Sprintf("%v", v), 1)
+		}
 		cacheResult := cache.Get(sql)
 		if cacheResult != nil {
 			logs.L().With(zap.Any("cache_result", cacheResult.Value())).Debug("cache hit, sql: " + sql)
@@ -58,6 +64,10 @@ func callbackQuery(d *gorm.DB) {
 
 func callbackAfter(d *gorm.DB) {
 	sql := d.Statement.SQL.String()
+	vars := d.Statement.Vars
+	for i, v := range vars {
+		sql = strings.Replace(sql, fmt.Sprintf("$%d", i+1), fmt.Sprintf("%v", v), 1)
+	}
 	result := d.Statement.Dest
 	cache.Set(sql, result, time.Minute)
 }
