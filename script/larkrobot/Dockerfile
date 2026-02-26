@@ -27,8 +27,8 @@ RUN mkdir -p /tmp/jieba_dict && \
 
 COPY . .
 RUN cd cmd/larkrobot && \
-    go build -o /app/larkrobot && \
-    go clean -cache # 🌟 核心瘦身：编译完立刻删掉 Go 产生的上百兆缓存文件
+    go build -o /app/larkrobot && 
+    # go clean -cache # 🌟 核心瘦身：编译完立刻删掉 Go 产生的上百兆缓存文件
 
 
 FROM kevinmatt/libvips AS runner
