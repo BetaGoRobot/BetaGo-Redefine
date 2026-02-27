@@ -7,6 +7,7 @@ import (
 
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -57,8 +58,19 @@ func MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) (er
 	return nil
 }
 
+// MessageReactionHandler Repeat
+//
+//	@param ctx
+//	@param event
+//	@return error
 func MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) (err error) {
-	return
+	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer larkmsg.RecoverMsg(ctx, *event.Event.MessageId)
+	defer span.End()
+	defer func() { span.RecordError(err) }()
+
+	go reaction.Handler.Clean().WithCtx(ctx).WithData(event).Run()
+	return nil
 }
 
 func CardActionHandler(ctx context.Context, cardAction *callback.CardActionTriggerEvent) (resp *callback.CardActionTriggerResponse, err error) {

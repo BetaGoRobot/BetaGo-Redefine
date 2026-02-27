@@ -65,9 +65,10 @@ type ProxyConfig struct {
 	PrivateProxy string `json:"private_proxy" yaml:"private_proxy" toml:"private_proxy"`
 }
 type RateConfig struct {
-	ReactionDefaultRate int `json:"reaction_default_rate" yaml:"reaction_default_rate" toml:"reaction_default_rate"`
-	RepeatDefaultRate   int `json:"repeat_default_rate" yaml:"repeat_default_rate" toml:"repeat_default_rate"`
-	ImitateDefaultRate  int `json:"imitate_default_rate" yaml:"imitate_default_rate" toml:"imitate_default_rate"`
+	ReactionDefaultRate       int `json:"reaction_default_rate" yaml:"reaction_default_rate" toml:"reaction_default_rate"`
+	RepeatDefaultRate         int `json:"repeat_default_rate" yaml:"repeat_default_rate" toml:"repeat_default_rate"`
+	ImitateDefaultRate        int `json:"imitate_default_rate" yaml:"imitate_default_rate" toml:"imitate_default_rate"`
+	ReactionFollowDefaultRate int `json:"reaction_follow_default_rate" yaml:"reaction_follow_default_rate" toml:"reaction_follow_default_rate"`
 }
 type DBConfig struct {
 	Host            string `json:"host" yaml:"host" toml:"host"`
