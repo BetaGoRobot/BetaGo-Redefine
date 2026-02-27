@@ -82,10 +82,14 @@ func ReplyAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 				case larkim.MsgTypeSticker:
 					imgKey := contentMap["file_key"]
 					ins := query.Q.StickerMapping
-					res, err := ins.WithContext(ctx).Where(ins.StickerKey.Eq(imgKey)).First()
-					if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					resList, err := ins.WithContext(ctx).Where(ins.StickerKey.Eq(imgKey)).Find()
+					if err != nil {
 						return err
 					}
+					if len(resList) == 0 {
+						return errors.New("sticker key not found")
+					}
+					res := resList[0]
 					if res == nil {
 						if stickerFile, err := larkimg.GetMsgImages(ctx, *data.Event.Message.ParentId, contentMap["file_key"], "image"); err != nil {
 							logs.L().Ctx(ctx).Warn("repeatMessage", zap.Error(err))

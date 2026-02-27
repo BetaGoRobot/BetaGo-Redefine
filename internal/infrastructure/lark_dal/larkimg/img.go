@@ -415,12 +415,15 @@ func GetAndResizePicFromURL(ctx context.Context, imageURL string) (res []byte, e
 
 func checkDBCache(ctx context.Context, musicID string) (imgKey string, err error) {
 	ins := query.Q.LarkImg
-	res, err := ins.WithContext(ctx).Where(ins.SongID.Eq(musicID)).First()
+	res, err := ins.WithContext(ctx).Where(ins.SongID.Eq(musicID)).Find()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("get lark img from db error", zap.Error(err))
 		return
 	}
-	return res.ImgKey, nil
+	if len(res) == 0 {
+		return "", errors.New("img key not found")
+	}
+	return res[0].ImgKey, nil
 }
 
 func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS bool) (key string, ossURL string, err error) { // also minio

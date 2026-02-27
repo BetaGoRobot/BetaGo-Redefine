@@ -2,7 +2,6 @@ package larktpl
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 type TemplateStru struct {
@@ -53,27 +51,29 @@ func (t *TemplateVersionV2[T]) WithData(data *T) TemplateVersionV2[T] {
 
 func GetTemplate(ctx context.Context, templateID string) *model.TemplateVersion {
 	ins := query.Q.TemplateVersion
-	template, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	templates, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).Find()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", templateID), zap.Error(err))
+	}
+	if len(templates) == 0 {
 		return &model.TemplateVersion{TemplateID: templateID}
 	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", template.TemplateID), zap.Error(err))
-	}
-	return template
+
+	return templates[0]
 }
 
 func GetTemplateV2[T any](ctx context.Context, templateID string) TemplateVersionV2[T] {
 	ins := query.Q.TemplateVersion
 	templateData := TemplateVersionV2[T]{}
 	var err error
-	templateData.TemplateVersion, err = ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return TemplateVersionV2[T]{TemplateVersion: &model.TemplateVersion{TemplateID: templateID}}
-	}
+	templates, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).Find()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", templateID), zap.Error(err))
 	}
+	if len(templates) == 0 {
+		return TemplateVersionV2[T]{TemplateVersion: &model.TemplateVersion{TemplateID: templateID}}
+	}
+	templateData.TemplateVersion = templates[0]
 	return templateData
 }
 

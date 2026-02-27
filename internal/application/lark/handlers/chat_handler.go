@@ -163,14 +163,17 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		return
 	}
 	ins := query.Q.PromptTemplateArg
-	tpl, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(5)).First()
+	tpls, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(5)).Find()
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	fullTpl := xmodel.PromptTemplateArg{
-		PromptTemplateArg: tpl,
+	if len(tpls) == 0 {
+		return nil, errors.New("prompt template not found")
 	}
-	promptTemplateStr := tpl.TemplateStr
+	fullTpl := xmodel.PromptTemplateArg{
+		PromptTemplateArg: tpls[0],
+	}
+	promptTemplateStr := tpls[0].TemplateStr
 	tp, err := template.New("prompt").Parse(promptTemplateStr)
 	if err != nil {
 		return nil, err

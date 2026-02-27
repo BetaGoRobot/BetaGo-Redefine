@@ -89,22 +89,22 @@ func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	config, err := ins.WithContext(ctx).Where(
 		query.RepeatWordsRateCustom.GuildID.Eq(*event.Event.Message.ChatId),
 		query.RepeatWordsRateCustom.Word.Eq(msg),
-	).First()
+	).Find()
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	if config != nil {
-		realRate = int(config.Rate)
+	if len(config) > 0 {
+		realRate = int(config[0].Rate)
 	} else {
 		ins := query.Q.RepeatWordsRate
 		config, err := ins.WithContext(ctx).Where(
 			query.RepeatWordsRate.Word.Eq(msg),
-		).First()
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		).Find()
+		if err != nil {
 			return err
 		}
-		if config != nil {
-			realRate = int(config.Rate)
+		if len(config) > 0 {
+			realRate = int(config[0].Rate)
 		}
 	}
 

@@ -5,7 +5,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
@@ -73,14 +72,13 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	realRate := config.Get().RateConfig.ImitateDefaultRate
 	// 群聊定制化
 	ins := query.Q.ImitateRateCustom
-	config, err := ins.WithContext(ctx).Where(ins.GuildID.Eq(*event.Event.Message.ChatId)).First()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	configList, err := ins.WithContext(ctx).Where(ins.GuildID.Eq(*event.Event.Message.ChatId)).Find()
+	if err != nil {
 		logs.L().Ctx(ctx).Error("get imitate config from db failed", zap.Error(err))
 		return
 	}
-
-	if config != nil {
-		realRate = int(config.Rate)
+	if len(configList) > 0 {
+		realRate = int(configList[0].Rate)
 	}
 
 	if utils.Prob(float64(realRate) / 100) {

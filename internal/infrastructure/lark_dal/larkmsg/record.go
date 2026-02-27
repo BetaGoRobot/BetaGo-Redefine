@@ -110,12 +110,19 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 		content = GetContentFromTextMsg(utils.AddrOrNil(resp.Data.Body.Content))
 	}
 	ins := query.Q.PrivateMode
-	configs, err := ins.WithContext(ctx).Where(ins.ChatID.Eq(utils.AddrOrNil(resp.Data.ChatId))).First()
+	configs, err := ins.WithContext(ctx).Where(ins.ChatID.Eq(utils.AddrOrNil(resp.Data.ChatId))).Find()
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		logs.L().Ctx(ctx).Error("FindByCacheFunc error", zap.Error(err))
 		return
 	}
-	if configs != nil && configs.Enable {
+	enable := false
+	for _, config := range configs {
+		if config.Enable {
+			enable = true
+			break
+		}
+	}
+	if configs != nil && enable {
 		// 隐私模式，不存了
 		logs.L().Ctx(ctx).Info("ChatID hit private config, will not record data...",
 			zap.String("chat_id", utils.AddrOrNil(resp.Data.ChatId)),

@@ -23,7 +23,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -217,11 +216,14 @@ func ImageDelHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 
 func getImageKeyByStickerKey(stickerKey string) string {
 	ins := query.Q.StickerMapping
-	res, err := ins.WithContext(context.Background()).Where(ins.StickerKey.Eq(stickerKey)).First()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	resList, err := ins.WithContext(context.Background()).Where(ins.StickerKey.Eq(stickerKey)).Find()
+	if err != nil {
 		return stickerKey
 	}
-	return res.ImageKey
+	if len(resList) == 0 {
+		return stickerKey
+	}
+	return resList[0].ImageKey
 }
 
 func getImageKey(msg *larkim.Message) string {

@@ -21,7 +21,6 @@ import (
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/redis/go-redis/v9"
@@ -212,11 +211,14 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 
 	// Note: It's better to fetch templates once, not on every merge. This is kept as per the original code.
 	ins := query.Q.PromptTemplateArg
-	templates, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(3)).First()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	templates, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(3)).Find()
+	if err != nil {
 		return fmt.Errorf("prompt template with ID 3 not found: %w", err)
 	}
-	promptTemplateStr := templates.TemplateStr
+	if len(templates) == 0 {
+		return fmt.Errorf("prompt template with ID 3 not found")
+	}
+	promptTemplateStr := templates[0].TemplateStr
 	tp, err := template.New("prompt").Parse(promptTemplateStr)
 	if err != nil {
 		return
