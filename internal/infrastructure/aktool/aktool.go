@@ -130,15 +130,15 @@ func GetHistoryGoldPrice(ctx context.Context) (res GoldPriceDataHS, err error) {
 			if resp.StatusCode() != 200 {
 				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
 			}
-			return err
+			err = sonic.Unmarshal(resp.Body(), &res)
+			if err != nil {
+				return err
+			}
+			return nil
 		},
 		retry.Attempts(3),
 	)
 
-	err = sonic.Unmarshal(resp.Body(), &res)
-	if err != nil {
-		return
-	}
 	return
 }
 
