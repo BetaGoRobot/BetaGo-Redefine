@@ -35,7 +35,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/tmc/langchaingo v0.1.14
-	github.com/volcengine/volcengine-go-sdk v1.2.13
+	github.com/volcengine/volcengine-go-sdk v1.2.15
 	github.com/yanyiwu/gojieba v1.4.6
 	go.opentelemetry.io/contrib/bridges/otelzap v0.15.0
 	go.opentelemetry.io/otel v1.40.0
