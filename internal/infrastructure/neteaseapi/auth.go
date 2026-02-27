@@ -153,6 +153,9 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 				neteaseCtx.loginType = "qr"
 				gotify.SendMessage(ctx, "网易云登录", "登陆成功！", 7)
 				return nil
+			case 404:
+				logs.L().Ctx(ctx).Error("LoginNetEaseQR error", zap.String("respBody", string(data)))
+				return fmt.Errorf("LoginNetEaseQR error, StatusCode %d", resp.StatusCode())
 			}
 		}
 	}
