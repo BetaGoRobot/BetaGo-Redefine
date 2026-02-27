@@ -26,9 +26,8 @@ RUN mkdir -p /tmp/jieba_dict && \
     cp -r /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
 
 COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    cd cmd/larkrobot && \
+
+RUN cd cmd/larkrobot && \
     go build -o /app/larkrobot
 
 
