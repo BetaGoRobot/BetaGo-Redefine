@@ -456,7 +456,7 @@ func DebugConversationHandler(ctx context.Context, data *larkim.P2MessageReceive
 		}
 
 		tpl.WithData(metaData)
-		cardContent := larktpl.NewCardContentV2[larktpl.ChunkMetaData](ctx, tpl.TemplateID)
+		cardContent := larktpl.NewCardContentV2[larktpl.ChunkMetaData](ctx, tpl)
 		err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_replyGet", false)
 		if err != nil {
 			return err

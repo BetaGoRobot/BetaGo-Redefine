@@ -133,7 +133,7 @@ func WordCloudHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 		EndTime:   et.Format("2006-01-02 15:04"),
 	}
 	tpl.WithData(cardVar)
-	cardContent := larktpl.NewCardContentV2[larktpl.WordCountCardVars[xmodel.MessageChunkLogV3]](ctx, tpl.TemplateID)
+	cardContent := larktpl.NewCardContentV2(ctx, tpl)
 	if metaData != nil && metaData.Refresh {
 		err = larkmsg.PatchCard(ctx,
 			cardContent,

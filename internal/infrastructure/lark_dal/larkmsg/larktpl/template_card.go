@@ -1,5 +1,12 @@
 package larktpl
 
+import (
+	"maps"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/bytedance/sonic"
+)
+
 type CardBaseVars struct {
 	RefreshTime     string      `json:"refresh_time"`
 	JaegerTraceInfo string      `json:"jaeger_trace_info"`
@@ -145,7 +152,7 @@ type (
 	}
 
 	ChunkData[T any] struct {
-		ChunkLog *T
+		ChunkLog *T `json:"-"`
 
 		Sentiment           string      `json:"sentiment"`
 		Tones               string      `json:"tones"`
@@ -153,3 +160,31 @@ type (
 		UnresolvedQuestions string      `json:"unresolved_questions"`
 	}
 )
+
+func (d *ChunkData[T]) MarshalJSON() ([]byte, error) {
+	// 1. 核心破局点：定义类型别名，剥离原有的 MarshalJSON 方法
+	type Alias ChunkData[T]
+
+	// 2. 将指针强转为别名类型，再去转 Map。此时序列化库就不会再触发死循环了
+	m, err := utils.Struct2Map((*Alias)(d))
+	if err != nil {
+		return nil, err // 顺便纠正一下：原代码这里出错时 return sonic.Marshal(m) 是有风险的，应该直接返回 err
+	}
+
+	// 3. 将需要打平的内部结构也转为 Map
+	chunkMap, err := utils.Struct2Map(d.ChunkLog)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. 清理残留的嵌套字段 (非常重要)
+	// 因为 d 被当做普通 struct 序列化了，m 里面此刻还包含着嵌套的 ChunkLog 字段。
+	// 如果你在 struct 定义时没有给 ChunkLog 加上 `json:"-"`，这里必须手动把它的 key 删掉，否则结果会重复。
+	delete(m, "chunkLog") // 注意：这里的 "chunkLog" 要替换成你 ChunkLog 实际的 json tag 名字
+
+	// 5. 合并 Map
+	maps.Copy(m, chunkMap)
+
+	// 6. 最终输出
+	return sonic.Marshal(m)
+}

@@ -9,3 +9,7 @@ type ValidType interface {
 type Numeric interface {
 	constraints.Integer | constraints.Float
 }
+
+type VariablesConstraints interface {
+	Map() map[string]any
+}

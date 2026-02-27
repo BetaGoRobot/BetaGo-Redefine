@@ -63,6 +63,9 @@ func callbackQuery(d *gorm.DB) {
 }
 
 func callbackAfter(d *gorm.DB) {
+	if d.Error != nil {
+		return
+	}
 	sql := d.Statement.SQL.String()
 	vars := d.Statement.Vars
 	for i, v := range vars {

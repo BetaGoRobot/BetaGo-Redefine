@@ -51,3 +51,16 @@ func UnmarshalStringPre[T any](s string, val *T) error {
 	}
 	return nil
 }
+
+func Struct2Map(v any) (map[string]any, error) {
+	m := make(map[string]any)
+	s, err := sonic.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	err = sonic.Unmarshal(s, &m)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}

@@ -42,7 +42,7 @@ var (
 )
 
 type TemplateVersionV2[T any] struct {
-	model.TemplateVersion
+	*model.TemplateVersion
 	Variables *T
 }
 
@@ -65,17 +65,16 @@ func GetTemplate(ctx context.Context, templateID string) *model.TemplateVersion 
 
 func GetTemplateV2[T any](ctx context.Context, templateID string) TemplateVersionV2[T] {
 	ins := query.Q.TemplateVersion
-	template, err := ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
+	templateData := TemplateVersionV2[T]{}
+	var err error
+	templateData.TemplateVersion, err = ins.WithContext(ctx).Where(ins.TemplateID.Eq(templateID)).First()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return TemplateVersionV2[T]{TemplateVersion: model.TemplateVersion{TemplateID: templateID}}
+		return TemplateVersionV2[T]{TemplateVersion: &model.TemplateVersion{TemplateID: templateID}}
 	}
 	if err != nil {
-		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", template.TemplateID), zap.Error(err))
+		logs.L().Ctx(ctx).Error("get templates from db error", zap.String("templateID", templateID), zap.Error(err))
 	}
-	if template != nil {
-		return TemplateVersionV2[T]{TemplateVersion: *template}
-	}
-	return TemplateVersionV2[T]{}
+	return templateData
 }
 
 type (
@@ -125,12 +124,11 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 	return t
 }
 
-func NewCardContentV2[T any](ctx context.Context, templateID string) *TemplateCardContent {
+func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersionV2[T]) *TemplateCardContent {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
-	templateVersion := GetTemplateV2[T](ctx, templateID)
 	var t *TemplateCardContent
 	// 纯template
 	t = &TemplateCardContent{
