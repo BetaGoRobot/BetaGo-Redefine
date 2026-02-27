@@ -1,0 +1,3 @@
+[submodule "internal/infrastructure/neteaseapi/apirepo"]
+	path = script/neteaseapi/api_repo
+	url = https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git
