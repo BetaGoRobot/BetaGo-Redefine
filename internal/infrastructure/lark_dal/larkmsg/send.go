@@ -38,6 +38,7 @@ func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err e
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("content").String(content))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
+	// TODO: Add id saving
 	uuid := (msgID + "_create")
 	if len(uuid) > 50 {
 		uuid = uuid[:50]
