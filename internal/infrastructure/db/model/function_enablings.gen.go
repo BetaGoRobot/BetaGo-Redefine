@@ -10,6 +10,7 @@ const TableNameFunctionEnabling = "function_enablings"
 type FunctionEnabling struct {
 	GuildID  string `gorm:"column:guild_id;primaryKey" json:"guild_id"`
 	Function string `gorm:"column:function;primaryKey" json:"function"`
+	Disable  bool   `gorm:"column:disable;not null" json:"disable"`
 }
 
 // TableName FunctionEnabling's table name

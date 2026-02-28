@@ -12,7 +12,7 @@ const TableNameCopyWritingCustom = "copy_writing_customs"
 type CopyWritingCustom struct {
 	Endpoint string         `gorm:"column:endpoint;primaryKey" json:"endpoint"`
 	GuildID  string         `gorm:"column:guild_id;primaryKey" json:"guild_id"`
-	Content  pq.StringArray `gorm:"column:content;type:text[]" json:"content"`
+	Content  pq.StringArray `gorm:"column:content" json:"content"`
 }
 
 // TableName CopyWritingCustom's table name

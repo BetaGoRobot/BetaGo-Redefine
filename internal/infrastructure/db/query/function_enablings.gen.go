@@ -27,6 +27,7 @@ func newFunctionEnabling(db *gorm.DB, opts ...gen.DOOption) functionEnabling {
 	_functionEnabling.ALL = field.NewAsterisk(tableName)
 	_functionEnabling.GuildID = field.NewString(tableName, "guild_id")
 	_functionEnabling.Function = field.NewString(tableName, "function")
+	_functionEnabling.Disable = field.NewBool(tableName, "disable")
 
 	_functionEnabling.fillFieldMap()
 
@@ -39,6 +40,7 @@ type functionEnabling struct {
 	ALL      field.Asterisk
 	GuildID  field.String
 	Function field.String
+	Disable  field.Bool
 
 	fieldMap map[string]field.Expr
 }
@@ -57,6 +59,7 @@ func (f *functionEnabling) updateTableName(table string) *functionEnabling {
 	f.ALL = field.NewAsterisk(table)
 	f.GuildID = field.NewString(table, "guild_id")
 	f.Function = field.NewString(table, "function")
+	f.Disable = field.NewBool(table, "disable")
 
 	f.fillFieldMap()
 
@@ -85,9 +88,10 @@ func (f *functionEnabling) GetFieldByName(fieldName string) (field.OrderExpr, bo
 }
 
 func (f *functionEnabling) fillFieldMap() {
-	f.fieldMap = make(map[string]field.Expr, 2)
+	f.fieldMap = make(map[string]field.Expr, 3)
 	f.fieldMap["guild_id"] = f.GuildID
 	f.fieldMap["function"] = f.Function
+	f.fieldMap["disable"] = f.Disable
 }
 
 func (f functionEnabling) clone(db *gorm.DB) functionEnabling {
