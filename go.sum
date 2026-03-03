@@ -451,8 +451,8 @@ go.mongodb.org/mongo-driver v1.17.6 h1:87JUG1wZfWsr6rIz3ZmpH90rL5tea7O3IHuSwHUps
 go.mongodb.org/mongo-driver v1.17.6/go.mod h1:Hy04i7O2kC4RS06ZrhPRqj/u4DTYkFDAAccj+rVKqgQ=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
-go.opentelemetry.io/contrib/bridges/otelzap v0.15.0 h1:x4qzjKkTl2hXmLl+IviSXvzaTyCJSYvpFZL5SRVLBxs=
-go.opentelemetry.io/contrib/bridges/otelzap v0.15.0/go.mod h1:h7dZHJgqkzUiKFXCTJBrPWH0LEZaZXBFzKWstjWBRxw=
+go.opentelemetry.io/contrib/bridges/otelzap v0.16.0 h1:sJ13RB8i3O3vBO62as3JbpodT/VZyJ4jTqNPquZrUWQ=
+go.opentelemetry.io/contrib/bridges/otelzap v0.16.0/go.mod h1:w3nrQCEr4xvu416OwMXtK9AhFgWcnp0b8mpKDd3o29U=
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 h1:F7Jx+6hwnZ41NSFTO5q4LYDtJRXBf2PD0rNBkeB/lus=
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0/go.mod h1:UHB22Z8QsdRDrnAtX4PntOl36ajSxcdUMt1sF7Y6E7Q=
 go.opentelemetry.io/otel v1.41.0 h1:YlEwVsGAlCvczDILpUXpIpPSL/VPugt7zHThEMLce1c=
@@ -465,8 +465,8 @@ go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.40.0 h1:DvJDO
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.40.0/go.mod h1:EtekO9DEJb4/jRyN4v4Qjc2yA7AtfCBuz2FynRUWTXs=
 go.opentelemetry.io/otel/log v0.17.0 h1:blZWM4y7n+KSa9OywwGWyBMPpeVoCl/NCw+jMps8afM=
 go.opentelemetry.io/otel/log v0.17.0/go.mod h1:VXhjKYep6/laSgf/tjdh2SMAt18Z9XotBFBO0jxSE24=
-go.opentelemetry.io/otel/log/logtest v0.16.0 h1:jr1CG3Z6FD9pwUaL/D0s0X4lY2ZVm1jP3JfCtzGxUmE=
-go.opentelemetry.io/otel/log/logtest v0.16.0/go.mod h1:qeeZw+cI/rAtCzZ03Kq1ozq6C4z/PCa+K+bb0eJfKNs=
+go.opentelemetry.io/otel/log/logtest v0.17.0 h1:ljXJYD22KOc+h+vfv9IM1ppPjFSNndkp0Cb8AC3Nyh4=
+go.opentelemetry.io/otel/log/logtest v0.17.0/go.mod h1:MwJw0jkhvkZP8+qIQsVduBM660V0cMht4V1GUjuwLLE=
 go.opentelemetry.io/otel/metric v1.41.0 h1:rFnDcs4gRzBcsO9tS8LCpgR0dxg4aaxWlJxCno7JlTQ=
 go.opentelemetry.io/otel/metric v1.41.0/go.mod h1:xPvCwd9pU0VN8tPZYzDZV/BMj9CM9vs00GuBjeKhJps=
 go.opentelemetry.io/otel/sdk v1.41.0 h1:YPIEXKmiAwkGl3Gu1huk1aYWwtpRLeskpV+wPisxBp8=
