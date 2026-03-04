@@ -14,7 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -112,7 +112,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		if err != nil {
 			logs.L().Ctx(ctx).Error("InsertData error", zap.Error(err))
 		}
-		err = retriver.Cli().AddDocuments(ctx, utils.AddrOrNil(event.Event.Message.ChatId),
+		err = retriever.Cli().AddDocuments(ctx, utils.AddrOrNil(event.Event.Message.ChatId),
 			[]schema.Document{{
 				PageContent: content,
 				Metadata: map[string]any{

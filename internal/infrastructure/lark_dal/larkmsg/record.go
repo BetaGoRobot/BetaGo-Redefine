@@ -14,7 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -80,7 +80,7 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
 		return
 	}
-	err = retriver.Cli().AddDocuments(ctx, utils.AddrOrNil(resp.Data.ChatId),
+	err = retriever.Cli().AddDocuments(ctx, utils.AddrOrNil(resp.Data.ChatId),
 		[]schema.Document{{
 			PageContent: content,
 			Metadata: map[string]any{
@@ -171,7 +171,7 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
 		return
 	}
-	err = retriver.Cli().AddDocuments(ctx, utils.AddrOrNil(resp.Data.ChatId),
+	err = retriever.Cli().AddDocuments(ctx, utils.AddrOrNil(resp.Data.ChatId),
 		[]schema.Document{{
 			PageContent: content,
 			Metadata: map[string]any{

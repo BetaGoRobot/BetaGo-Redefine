@@ -281,7 +281,8 @@ type operatorWrapper[T, K any] struct {
 //	@param event
 //	@return error
 func (p *Processor[T, K]) RunParallelStages() error {
-	ctx, span := otel.T().Start(p.Context, reflecting.GetCurrentFunc())
+	var span trace.Span
+	p.Context, span = otel.T().Start(p.Context, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	// 1. 收集所有依赖的 Fetcher（去重）
@@ -311,8 +312,8 @@ func (p *Processor[T, K]) RunParallelStages() error {
 			defer close(w.done)
 			defer wg.Done()
 
-			logs.L().Ctx(ctx).Info("Starting fetcher", zap.String("fetcher", fetcherName))
-			err := w.fetcher.Fetch(ctx, p.data, p.metaData)
+			logs.L().Ctx(p).Info("Starting fetcher", zap.String("fetcher", fetcherName))
+			err := w.fetcher.Fetch(p, p.data, p.metaData)
 			w.err = err
 			if err != nil && !errors.Is(err, xerror.ErrStageSkip) {
 				errorChan <- err
@@ -331,23 +332,25 @@ func (p *Processor[T, K]) RunParallelStages() error {
 			deps := operator.Depends()
 			for _, dep := range deps {
 				if wrapper, ok := fetcherMap[dep.Name()]; ok {
-					logs.L().Ctx(ctx).Info("Waiting for dependency",
+					logs.L().Ctx(p).Info("Waiting for dependency",
 						zap.String("operator", operator.Name()),
 						zap.String("dependency", dep.Name()))
 					<-wrapper.done
 					// 如果依赖的 Fetcher 出错了，记录日志但继续执行（使用回退机制）
 					if wrapper.err != nil {
-						logs.L().Ctx(ctx).Warn("Dependency fetcher failed, will use fallback",
-							zap.String("operator", operator.Name()),
-							zap.String("dependency", dep.Name()),
-							zap.Error(wrapper.err))
+						if !errors.Is(wrapper.err, xerror.ErrStageSkip) {
+							logs.L().Ctx(p).Warn("Dependency fetcher failed, will use fallback",
+								zap.String("operator", operator.Name()),
+								zap.String("dependency", dep.Name()),
+								zap.Error(wrapper.err))
+						}
 					}
 				}
 			}
 
 			// 执行 Operator
-			logs.L().Ctx(ctx).Info("Starting operator", zap.String("operator", operator.Name()))
-			err := p.runSingleOperator(ctx, operator)
+			logs.L().Ctx(p).Info("Starting operator", zap.String("operator", operator.Name()))
+			err := p.runSingleOperator(p, operator)
 			if err != nil && !errors.Is(err, xerror.ErrStageSkip) {
 				errorChan <- err
 			}
@@ -364,7 +367,7 @@ func (p *Processor[T, K]) RunParallelStages() error {
 	for err := range errorChan {
 		if err != nil {
 			mergedErr = errors.Wrap(mergedErr, err.Error())
-			logs.L().Ctx(ctx).Warn("error in async stages", zap.Error(err))
+			logs.L().Ctx(p).Warn("error in async stages", zap.Error(err))
 		}
 	}
 	return mergedErr

@@ -15,7 +15,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
@@ -38,7 +38,7 @@ func main() {
 	opensearch.Init(config.OpensearchConfig)
 	ark_dal.Init(config.ArkConfig)
 	miniodal.Init(config.MinioConfig)
-	retriver.Init()
+	retriever.Init()
 	neteaseapi.Init()
 	aktool.Init()
 	gotify.Init()

@@ -20,7 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriver"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -194,7 +194,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	if len(fullTpl.HistoryRecords) > *size {
 		fullTpl.HistoryRecords = fullTpl.HistoryRecords[len(fullTpl.HistoryRecords)-*size:]
 	}
-	docs, err := retriver.Cli().RecallDocs(ctx, chatID, *event.Event.Message.Content, 10)
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, *event.Event.Message.Content, 10)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("RecallDocs err", zap.Error(err))
 	}
