@@ -22,3 +22,8 @@ func Init(config *config.ArkConfig) {
 	embeddingModel = config.EmbeddingModel
 	visionModel = config.VisionModel
 }
+
+// Client returns the ark runtime client
+func Client() *arkruntime.Client {
+	return client
+}

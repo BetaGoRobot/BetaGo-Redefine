@@ -31,6 +31,16 @@ func main() {
 	}
 
 	g.WithDataTypeMap(dataMap)
+	// 预编译正则，用于匹配 GORM tag 中的 type 属性
+	// typeRegex := regexp.MustCompile(`type:[^;]+`)
+
+	// 2. 拦截并修改字段的 GORM Tag
+	g.WithOpts(gen.FieldModify(func(f gen.Field) gen.Field {
+		if f.Type == "pq.StringArray" {
+			f.GORMTag.Append("type", "text[]")
+		}
+		return f
+	}))
 	tables := g.GenerateAllTable()
 	g.ApplyBasic(tables...)
 	// Generate the code

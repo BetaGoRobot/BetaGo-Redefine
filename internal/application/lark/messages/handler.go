@@ -142,13 +142,13 @@ func init() {
 				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
 			}
 		}).
-		AddParallelStages(&ops.RecordMsgOperator{}).
-		AddParallelStages(&ops.RepeatMsgOperator{}).
-		AddParallelStages(&ops.ReactMsgOperator{}).
-		AddParallelStages(&ops.WordReplyMsgOperator{}).
-		AddParallelStages(&ops.ReplyChatOperator{}).
-		AddParallelStages(&ops.CommandOperator{}).
-		AddParallelStages(&ops.ChatMsgOperator{})
+		AddAsync(&ops.RecordMsgOperator{}).
+		AddAsync(&ops.RepeatMsgOperator{}).
+		AddAsync(&ops.ReactMsgOperator{}).
+		AddAsync(&ops.WordReplyMsgOperator{}).
+		AddAsync(&ops.ReplyChatOperator{}).
+		AddAsync(&ops.CommandOperator{}).
+		AddAsync(&ops.ChatMsgOperator{})
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {

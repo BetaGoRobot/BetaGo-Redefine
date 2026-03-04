@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
@@ -125,34 +124,4 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err))
 		}
 	}()
-}
-
-func init() {
-	Handler = Handler.
-		OnPanic(larkDeferFunc).
-		WithMetaDataProcess(metaInit).
-		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
-			go func() { utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
-		}).
-		WithDefer(CollectMessage).
-		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
-			if !meta.IsCommand { // 过滤Command
-				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
-			}
-		}).
-		AddParallelStages(&RecordMsgOperator{}).
-		AddParallelStages(&RepeatMsgOperator{}).
-		AddParallelStages(&ReactMsgOperator{}).
-		AddParallelStages(&WordReplyMsgOperator{}).
-		AddParallelStages(&ReplyChatOperator{}).
-		AddParallelStages(&CommandOperator{}).
-		AddParallelStages(&ChatMsgOperator{})
-}
-
-func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
-	return &xhandler.BaseMetaData{
-		ChatID: *event.Event.Message.ChatId,
-		IsP2P:  *event.Event.Message.ChatType == "p2p",
-		UserID: *event.Event.Sender.SenderId.UserId,
-	}
 }
