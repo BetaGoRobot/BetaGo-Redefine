@@ -44,6 +44,12 @@ func MustUnmarshalString[T any](s string) *T {
 	return t
 }
 
+func UnmarshalStringGeneric[T any](s string) (*T, error) {
+	t := new(T)
+	err := sonic.UnmarshalString(s, &t)
+	return t, err
+}
+
 func UnmarshalStringPre[T any](s string, val *T) error {
 	err := sonic.UnmarshalString(s, &val)
 	if err != nil {

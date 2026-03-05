@@ -3,8 +3,10 @@ package larkcontent
 import (
 	"iter"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.uber.org/zap"
 )
 
 type MsgConstraints interface {
@@ -96,14 +98,22 @@ func Trans2Item(msgType, content string) (itemList iter.Seq[*Item]) {
 				}
 			}
 		case "image":
-			res := utils.MustUnmarshalString[imageMsg](content)
-			if !yield(&Item{Tag: "image", Content: res.ImageKey}) {
-				return
+			res, err := utils.UnmarshalStringGeneric[imageMsg](content)
+			if err != nil {
+				logs.L().Error("error in unmarshal imageMsg", zap.Error(err), zap.String("raw_input", content))
+			} else {
+				if !yield(&Item{Tag: "image", Content: res.ImageKey}) {
+					return
+				}
 			}
 		case "file":
-			res := utils.MustUnmarshalString[fileMsg](content)
-			if !yield(&Item{Tag: "file", Content: res.FileKey}) {
-				return
+			res, err := utils.UnmarshalStringGeneric[fileMsg](content)
+			if err != nil {
+				logs.L().Error("error in unmarshal fileMsg", zap.Error(err), zap.String("raw_input", content))
+			} else {
+				if !yield(&Item{Tag: "file", Content: res.FileKey}) {
+					return
+				}
 			}
 		}
 	}
