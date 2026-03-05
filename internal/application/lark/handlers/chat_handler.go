@@ -270,9 +270,15 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 				return
 			}
 		}
-		err = sonic.UnmarshalString(contentBuilder.String(), &lastData.ContentStruct)
+
+		fullContent := contentBuilder.String()
+		err = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
 		if err != nil {
-			lastData.Content, err = jsonrepair.RepairJSON(lastData.Content)
+			fullContent, err = jsonrepair.RepairJSON(fullContent)
+			if err != nil {
+				return
+			}
+			err = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
 			if err != nil {
 				return
 			}
