@@ -131,7 +131,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 		}
 
 		resp, err := larkmsg.ReplyMsgText(
-			ctx, strings.ReplaceAll(lastData.ContentStruct.Reply, "\\n", "\n"), *event.Event.Message.MessageId, "_chat_random", false,
+			ctx, lastData.ContentStruct.Reply, *event.Event.Message.MessageId, "_chat_random", false,
 		)
 		if err != nil {
 			return err
