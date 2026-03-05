@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -53,6 +54,12 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
+
+	// 检查功能是否启用
+	if !appconfig.GetManager().IsFeatureEnabled(ctx, "word_reply", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
+	}
+
 	return
 }
 

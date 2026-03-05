@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
@@ -88,7 +88,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			wsTags = append(wsTags, &xmodel.WordWithTag{Word: sp[0], Tag: sp[1]})
 		}
 		err = opensearch.InsertData(
-			ctx, config.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
+			ctx, infraconfig.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
 			&xmodel.MessageIndex{
 				MessageLog:           msgLog,
 				ChatName:             larkchat.GetChatName(ctx, chatID),

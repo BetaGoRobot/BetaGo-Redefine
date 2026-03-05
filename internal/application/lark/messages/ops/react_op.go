@@ -3,12 +3,14 @@ package ops
 import (
 	"context"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
@@ -40,6 +42,11 @@ func (r *ReactMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRe
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
+	// 检查功能是否启用
+	if !appconfig.GetManager().IsFeatureEnabled(ctx, "react", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
+	}
+
 	return
 }
 
@@ -58,7 +65,7 @@ func (r *ReactMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRecei
 	// React
 
 	// 开始摇骰子, 默认概率10%
-	realRate := config.Get().RateConfig.ReactionDefaultRate
+	realRate := infraconfig.Get().RateConfig.ReactionDefaultRate
 	if utils.Prob(float64(realRate) / 100) {
 		_, err := larkmsg.AddReaction(ctx, larkmsg.GetRandomEmoji(), *event.Event.Message.MessageId)
 		if err != nil {

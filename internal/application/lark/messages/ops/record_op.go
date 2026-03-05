@@ -3,15 +3,18 @@ package ops
 import (
 	"context"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"gorm.io/gorm/clause"
 )
@@ -42,6 +45,11 @@ func (r *RecordMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
+
+	// 检查功能是否启用
+	if !appconfig.GetManager().IsFeatureEnabled(ctx, "record", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
+	}
 
 	return
 }

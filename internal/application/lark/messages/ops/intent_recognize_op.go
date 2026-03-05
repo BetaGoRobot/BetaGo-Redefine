@@ -7,9 +7,9 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -49,9 +49,9 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	// 检查是否启用了意图识别
-	if !config.Get().RateConfig.IntentRecognitionEnabled {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
+	// 检查功能是否启用
+	if !appconfig.GetManager().IsFeatureEnabled(ctx, "intent_recognize", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 
 	// 跳过命令消息
