@@ -10,6 +10,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -52,6 +53,11 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	// 检查功能是否启用
 	if !appconfig.GetManager().IsFeatureEnabled(ctx, "intent_recognize", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
+	}
+
+	// 检查是否启用了意图识别
+	if !infraconfig.Get().RateConfig.IntentRecognitionEnabled {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}
 
 	// 跳过命令消息
