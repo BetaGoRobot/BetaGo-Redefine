@@ -48,14 +48,6 @@ type Feature struct {
 	DefaultEnabled bool   `json:"default_enabled"` // 默认是否启用
 }
 
-// 全局获取功能列表的回调
-var getFeaturesFunc func() []Feature
-
-// SetGetFeaturesFunc 设置获取功能列表的回调
-func SetGetFeaturesFunc(fn func() []Feature) {
-	getFeaturesFunc = fn
-}
-
 // IsValidFeature 检查功能名称是否有效（始终返回 true，兼容旧代码）
 func IsValidFeature(name string) bool {
 	return true
@@ -90,23 +82,21 @@ func buildFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) str
 
 // Manager 配置管理器
 type Manager struct {
-	cache map[string]string
-	mu    sync.RWMutex
+	cache            map[string]string
+	mu               sync.RWMutex
+	getFeaturesFunc  func() []Feature // 获取功能列表的回调
 }
 
-var (
-	managerInstance *Manager
-	managerOnce     sync.Once
-)
+// NewManager 创建新的配置管理器
+func NewManager() *Manager {
+	return &Manager{
+		cache: make(map[string]string),
+	}
+}
 
-// GetManager 获取配置管理器单例
-func GetManager() *Manager {
-	managerOnce.Do(func() {
-		managerInstance = &Manager{
-			cache: make(map[string]string),
-		}
-	})
-	return managerInstance
+// SetGetFeaturesFunc 设置获取功能列表的回调
+func (m *Manager) SetGetFeaturesFunc(fn func() []Feature) {
+	m.getFeaturesFunc = fn
 }
 
 // ==========================================
@@ -209,11 +199,12 @@ func (m *Manager) getConfigByFullKey(ctx context.Context, fullKey string) (strin
 	}
 	m.mu.RUnlock()
 
-	cfg, err := query.Q.DynamicConfig.WithContext(ctx).
+	cfgs, err := query.Q.DynamicConfig.WithContext(ctx).
 		Where(query.DynamicConfig.Key.Eq(fullKey)).
-		First()
+		Find()
 
-	if err == nil && cfg != nil {
+	if err == nil && len(cfgs) > 0 {
+		cfg := cfgs[0]
 		m.mu.Lock()
 		m.cache[fullKey] = cfg.Value
 		m.mu.Unlock()
@@ -460,7 +451,7 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // ==========================================
 
 // IsFeatureEnabled 检查功能是否启用
-// 优先级: chat_user > user > chat > legacy function_enablings
+// 优先级: chat_user > user > chat > global > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
 func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, userID string) bool {
 	// 1. 检查 chat_user 级别
@@ -497,23 +488,34 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 		}
 	}
 
-	// 4. 兼容检查旧的 function_enablings 表
+	// 4. 检查 global 级别
+	if m.isFeatureBlockedAtScope(ctx, ScopeGlobal, "", "", feature) {
+		logs.L().Ctx(ctx).Debug("feature blocked at global level",
+			zap.String("feature", feature),
+		)
+		return false
+	}
+
+	// 5. 兼容检查旧的 function_enablings 表
 	if chatID != "" {
-		fc, err := query.Q.FunctionEnabling.WithContext(ctx).
+		fcs, err := query.Q.FunctionEnabling.WithContext(ctx).
 			Where(query.FunctionEnabling.GuildID.Eq(chatID)).
 			Where(query.FunctionEnabling.Function.Eq(feature)).
-			First()
+			Find()
 
-		if err == nil && fc != nil && fc.Disable {
-			logs.L().Ctx(ctx).Debug("feature disabled in legacy table",
-				zap.String("feature", feature),
-				zap.String("chat_id", chatID),
-			)
-			return false
+		if err == nil && len(fcs) > 0 {
+			fc := fcs[0]
+			if fc.Disable {
+				logs.L().Ctx(ctx).Debug("feature disabled in legacy table",
+					zap.String("feature", feature),
+					zap.String("chat_id", chatID),
+				)
+				return false
+			}
 		}
 	}
 
-	// 5. 返回功能的默认值
+	// 6. 返回功能的默认值
 	return defaultEnabled
 }
 
@@ -558,7 +560,7 @@ func (m *Manager) UnblockFeature(ctx context.Context, feature string, scope Conf
 // ListBlockedFeatures 列出被屏蔽的功能
 func (m *Manager) ListBlockedFeatures(ctx context.Context, scope ConfigScope, chatID, userID string) ([]string, error) {
 	blocked := make([]string, 0)
-	for _, f := range GetAllFeatures() {
+	for _, f := range m.GetAllFeatures() {
 		if !m.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID) {
 			blocked = append(blocked, f.Name)
 		}
@@ -576,11 +578,81 @@ func (m *Manager) EnableFeature(ctx context.Context, feature string, chatID stri
 	return m.UnblockFeature(ctx, feature, ScopeChat, chatID, "")
 }
 
+// BlockFeatureGlobal 全局屏蔽功能
+func (m *Manager) BlockFeatureGlobal(ctx context.Context, feature string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeGlobal, "", "", remark)
+}
+
+// UnblockFeatureGlobal 取消全局屏蔽功能
+func (m *Manager) UnblockFeatureGlobal(ctx context.Context, feature string) error {
+	return m.UnblockFeature(ctx, feature, ScopeGlobal, "", "")
+}
+
+// BlockFeatureChat 在指定聊天中屏蔽功能
+func (m *Manager) BlockFeatureChat(ctx context.Context, feature, chatID string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeChat, chatID, "", remark)
+}
+
+// UnblockFeatureChat 取消在指定聊天中屏蔽功能
+func (m *Manager) UnblockFeatureChat(ctx context.Context, feature, chatID string) error {
+	return m.UnblockFeature(ctx, feature, ScopeChat, chatID, "")
+}
+
+// BlockFeatureUser 屏蔽指定用户的功能
+func (m *Manager) BlockFeatureUser(ctx context.Context, feature, userID string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeUser, "", userID, remark)
+}
+
+// UnblockFeatureUser 取消屏蔽指定用户的功能
+func (m *Manager) UnblockFeatureUser(ctx context.Context, feature, userID string) error {
+	return m.UnblockFeature(ctx, feature, ScopeUser, "", userID)
+}
+
+// BlockFeatureChatUser 在指定聊天中屏蔽指定用户的功能
+func (m *Manager) BlockFeatureChatUser(ctx context.Context, feature, chatID, userID string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeUser, chatID, userID, remark)
+}
+
+// UnblockFeatureChatUser 取消在指定聊天中屏蔽指定用户的功能
+func (m *Manager) UnblockFeatureChatUser(ctx context.Context, feature, chatID, userID string) error {
+	return m.UnblockFeature(ctx, feature, ScopeUser, chatID, userID)
+}
+
 // ClearCache 清除缓存
 func (m *Manager) ClearCache() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cache = make(map[string]string)
+}
+
+// GetAllFeatures 获取所有功能列表
+func (m *Manager) GetAllFeatures() []Feature {
+	if m.getFeaturesFunc != nil {
+		return m.getFeaturesFunc()
+	}
+	return nil
+}
+
+// ==========================================
+// 全局便捷函数（保留用于向后兼容）
+// ==========================================
+
+var (
+	globalManager *Manager
+	globalOnce    sync.Once
+)
+
+// GetManager 获取配置管理器单例（保留用于向后兼容）
+func GetManager() *Manager {
+	globalOnce.Do(func() {
+		globalManager = NewManager()
+	})
+	return globalManager
+}
+
+// SetGetFeaturesFunc 设置获取功能列表的回调（保留用于向后兼容）
+func SetGetFeaturesFunc(fn func() []Feature) {
+	GetManager().SetGetFeaturesFunc(fn)
 }
 
 // GetAllConfigKeys 获取所有配置键列表
@@ -618,10 +690,7 @@ func GetConfigDescription(key ConfigKey) string {
 	}
 }
 
-// GetAllFeatures 获取所有功能列表
+// GetAllFeatures 获取所有功能列表（保留用于向后兼容）
 func GetAllFeatures() []Feature {
-	if getFeaturesFunc != nil {
-		return getFeaturesFunc()
-	}
-	return nil
+	return GetManager().GetAllFeatures()
 }

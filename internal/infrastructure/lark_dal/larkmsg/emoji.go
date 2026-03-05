@@ -168,6 +168,7 @@ var emojiTypeList = []string{
 	"APPLAUSE",
 	"LIPS",
 	"StatusReading",
+	"DULLSTARE",
 }
 
 func GetRandomEmoji() string {

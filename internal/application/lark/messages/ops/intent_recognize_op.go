@@ -7,7 +7,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -52,7 +51,7 @@ func (r *IntentRecognizeOperator) FeatureInfo() *xhandler.FeatureInfo {
 		ID:          "intent_recognize",
 		Name:        "意图识别功能",
 		Description: "使用AI识别用户消息意图",
-		Default:     false,
+		Default:     true,
 	}
 }
 
@@ -62,12 +61,7 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "intent_recognize", true, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
-	}
-
-	// 检查是否启用了意图识别
+	// 检查是否启用了意图识别（TOML 配置的总开关）
 	if !infraconfig.Get().RateConfig.IntentRecognitionEnabled {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}

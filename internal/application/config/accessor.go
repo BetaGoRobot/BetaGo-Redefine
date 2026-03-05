@@ -9,26 +9,49 @@ import (
 // Accessor 统一配置访问接口
 // 这是一个便捷的包装器，提供简洁的配置访问方法
 type Accessor struct {
-	ctx    context.Context
-	chatID string
-	userID string
+	ctx       context.Context
+	chatID    string
+	userID    string
+	manager   *Manager
 }
 
 // NewAccessor 创建配置访问器
 func NewAccessor(ctx context.Context, chatID, userID string) *Accessor {
 	return &Accessor{
-		ctx:    ctx,
-		chatID: chatID,
-		userID: userID,
+		ctx:     ctx,
+		chatID:  chatID,
+		userID:  userID,
+		manager: GetManager(), // 默认使用全局管理器（向后兼容）
+	}
+}
+
+// NewAccessorWithManager 使用指定的管理器创建配置访问器
+func NewAccessorWithManager(ctx context.Context, chatID, userID string, manager *Manager) *Accessor {
+	return &Accessor{
+		ctx:     ctx,
+		chatID:  chatID,
+		userID:  userID,
+		manager: manager,
 	}
 }
 
 // NewAccessorFromMeta 从 meta data 创建配置访问器
 func NewAccessorFromMeta(ctx context.Context, meta *xhandler.BaseMetaData) *Accessor {
 	return &Accessor{
-		ctx:    ctx,
-		chatID: meta.ChatID,
-		userID: meta.UserID,
+		ctx:     ctx,
+		chatID:  meta.ChatID,
+		userID:  meta.UserID,
+		manager: GetManager(), // 默认使用全局管理器（向后兼容）
+	}
+}
+
+// NewAccessorFromMetaWithManager 从 meta data 创建配置访问器（使用指定管理器）
+func NewAccessorFromMetaWithManager(ctx context.Context, meta *xhandler.BaseMetaData, manager *Manager) *Accessor {
+	return &Accessor{
+		ctx:     ctx,
+		chatID:  meta.ChatID,
+		userID:  meta.UserID,
+		manager: manager,
 	}
 }
 
@@ -38,32 +61,32 @@ func NewAccessorFromMeta(ctx context.Context, meta *xhandler.BaseMetaData) *Acce
 
 // ReactionDefaultRate 获取默认反应概率
 func (a *Accessor) ReactionDefaultRate() int {
-	return GetManager().GetInt(a.ctx, KeyReactionDefaultRate, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyReactionDefaultRate, a.chatID, a.userID)
 }
 
 // ReactionFollowDefaultRate 获取跟随反应概率
 func (a *Accessor) ReactionFollowDefaultRate() int {
-	return GetManager().GetInt(a.ctx, KeyReactionFollowDefaultRate, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyReactionFollowDefaultRate, a.chatID, a.userID)
 }
 
 // RepeatDefaultRate 获取默认重复概率
 func (a *Accessor) RepeatDefaultRate() int {
-	return GetManager().GetInt(a.ctx, KeyRepeatDefaultRate, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyRepeatDefaultRate, a.chatID, a.userID)
 }
 
 // ImitateDefaultRate 获取默认模仿概率
 func (a *Accessor) ImitateDefaultRate() int {
-	return GetManager().GetInt(a.ctx, KeyImitateDefaultRate, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyImitateDefaultRate, a.chatID, a.userID)
 }
 
 // IntentFallbackRate 获取意图识别失败回退概率
 func (a *Accessor) IntentFallbackRate() int {
-	return GetManager().GetInt(a.ctx, KeyIntentFallbackRate, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyIntentFallbackRate, a.chatID, a.userID)
 }
 
 // IntentReplyThreshold 获取意图回复阈值
 func (a *Accessor) IntentReplyThreshold() int {
-	return GetManager().GetInt(a.ctx, KeyIntentReplyThreshold, a.chatID, a.userID)
+	return a.manager.GetInt(a.ctx, KeyIntentReplyThreshold, a.chatID, a.userID)
 }
 
 // ==========================================
@@ -72,7 +95,7 @@ func (a *Accessor) IntentReplyThreshold() int {
 
 // IntentRecognitionEnabled 检查是否启用意图识别
 func (a *Accessor) IntentRecognitionEnabled() bool {
-	return GetManager().GetBool(a.ctx, KeyIntentRecognitionEnabled, a.chatID, a.userID)
+	return a.manager.GetBool(a.ctx, KeyIntentRecognitionEnabled, a.chatID, a.userID)
 }
 
 // ==========================================
@@ -81,11 +104,16 @@ func (a *Accessor) IntentRecognitionEnabled() bool {
 
 // IsFeatureEnabled 检查功能是否启用（保留用于兼容，建议使用带 defaultEnabled 的版本）
 func (a *Accessor) IsFeatureEnabled(feature string) bool {
-	return GetManager().IsFeatureEnabled(a.ctx, feature, true, a.chatID, a.userID)
+	return a.manager.IsFeatureEnabled(a.ctx, feature, true, a.chatID, a.userID)
+}
+
+// IsFeatureEnabledWithDefault 检查功能是否启用
+func (a *Accessor) IsFeatureEnabledWithDefault(feature string, defaultEnabled bool) bool {
+	return a.manager.IsFeatureEnabled(a.ctx, feature, defaultEnabled, a.chatID, a.userID)
 }
 
 // ==========================================
-// 全局便捷函数（不绑定特定上下文）
+// 全局便捷函数（保留用于向后兼容）
 // ==========================================
 
 // GetReactionDefaultRate 获取默认反应概率
