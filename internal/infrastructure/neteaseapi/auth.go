@@ -249,11 +249,13 @@ func (neteaseCtx *NetEaseContext) LoginNetEase(ctx context.Context) (err error) 
 //
 //	@receiver ctx
 //	@return bool
-func (neteaseCtx *NetEaseContext) CheckIfLogin(ctx context.Context) bool {
+func (neteaseCtx *NetEaseContext) CheckIfLogin(ctx context.Context) (login bool) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	logs.L().Ctx(ctx).Info("ChekIfLogin...")
-
+	logs.L().Ctx(ctx).Info("CheckIfLogin start...")
+	defer func() {
+		logs.L().Ctx(ctx).Info("CheckIfLogin result", zap.Bool("isLogin", login))
+	}()
 	resp, err := xhttp.HttpClient.R().
 		SetCookies(neteaseCtx.cookies).
 		SetContext(ctx).
