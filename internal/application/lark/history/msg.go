@@ -11,12 +11,14 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.uber.org/zap"
 
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	"go.opentelemetry.io/otel/attribute"
@@ -129,7 +131,7 @@ func (h *Helper) GetMsg() (messageList OpensearchMsgLogList, err error) {
 	if err != nil {
 		return
 	}
-	messageList = FilterMessage(resp.Hits.Hits)
+	messageList = FilterMessage(h, resp.Hits.Hits)
 	return
 }
 
@@ -295,7 +297,7 @@ func (o *OpensearchMsgLog) ToLine() (msgList string) {
 	return fmt.Sprintf("[%s](%s) <%s>: %s", o.CreateTime, o.UserID, o.UserName, strings.Join(o.MsgList, ";"))
 }
 
-func FilterMessage(hits []opensearchapi.SearchHit) (msgList []*OpensearchMsgLog) {
+func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList []*OpensearchMsgLog) {
 	msgList = make([]*OpensearchMsgLog, 0)
 	for _, hit := range hits {
 		res := &xmodel.MessageIndex{}
@@ -306,7 +308,10 @@ func FilterMessage(hits []opensearchapi.SearchHit) (msgList []*OpensearchMsgLog)
 		}
 		mentions := make([]*larkim.Mention, 0)
 		utils.UnmarshalStrPre(res.Mentions, &mentions)
-
+		logs.L().Ctx(ctx).Debug("filteringMsg",
+			zap.Any("mentions", mentions),
+			zap.Any("rawMsg", res),
+		)
 		tmpList := make([]string, 0)
 		for msgItem := range larkcontent.
 			GetContentItemsSeq(

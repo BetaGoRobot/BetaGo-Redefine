@@ -109,7 +109,7 @@ func Trans2Item(msgType, content string) (itemList iter.Seq[*Item]) {
 		case "file":
 			res, err := utils.UnmarshalStringGeneric[fileMsg](content)
 			if err != nil {
-				logs.L().Error("error in unmarshal fileMsg", zap.Error(err), zap.String("raw_input", content))
+				logs.L().Error("error in unmarshal fileMsg", zap.Error(err))
 			} else {
 				if !yield(&Item{Tag: "file", Content: res.FileKey}) {
 					return
