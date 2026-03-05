@@ -65,10 +65,13 @@ type ProxyConfig struct {
 	PrivateProxy string `json:"private_proxy" yaml:"private_proxy" toml:"private_proxy"`
 }
 type RateConfig struct {
-	ReactionDefaultRate       int `json:"reaction_default_rate" yaml:"reaction_default_rate" toml:"reaction_default_rate"`
-	RepeatDefaultRate         int `json:"repeat_default_rate" yaml:"repeat_default_rate" toml:"repeat_default_rate"`
-	ImitateDefaultRate        int `json:"imitate_default_rate" yaml:"imitate_default_rate" toml:"imitate_default_rate"`
-	ReactionFollowDefaultRate int `json:"reaction_follow_default_rate" yaml:"reaction_follow_default_rate" toml:"reaction_follow_default_rate"`
+	ReactionDefaultRate       int  `json:"reaction_default_rate" yaml:"reaction_default_rate" toml:"reaction_default_rate"`
+	RepeatDefaultRate         int  `json:"repeat_default_rate" yaml:"repeat_default_rate" toml:"repeat_default_rate"`
+	ImitateDefaultRate        int  `json:"imitate_default_rate" yaml:"imitate_default_rate" toml:"imitate_default_rate"`
+	ReactionFollowDefaultRate int  `json:"reaction_follow_default_rate" yaml:"reaction_follow_default_rate" toml:"reaction_follow_default_rate"`
+	IntentRecognitionEnabled  bool `json:"intent_recognition_enabled" yaml:"intent_recognition_enabled" toml:"intent_recognition_enabled"`
+	IntentReplyThreshold      int  `json:"intent_reply_threshold" yaml:"intent_reply_threshold" toml:"intent_reply_threshold"`
+	IntentFallbackRate        int  `json:"intent_fallback_rate" yaml:"intent_fallback_rate" toml:"intent_fallback_rate"`
 }
 type DBConfig struct {
 	Host            string `json:"host" yaml:"host" toml:"host"`
@@ -120,6 +123,7 @@ type ArkConfig struct {
 	NormalModel    string `json:"normal_model" yaml:"normal_model" toml:"normal_model"`
 	EmbeddingModel string `json:"embedding_model" yaml:"embedding_model" toml:"embedding_model"`
 	ChunkModel     string `json:"chunk_model" yaml:"chunk_model" toml:"chunk_model"`
+	LiteModel      string `json:"lite_model" yaml:"lite_model" toml:"lite_model"`
 }
 
 type LarkConfig struct {

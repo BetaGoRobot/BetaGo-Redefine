@@ -23,6 +23,6 @@ func larkDeferFunc(ctx context.Context, err error, event *larkim.P2MessageReacti
 func init() {
 	Handler = Handler.
 		OnPanic(larkDeferFunc).
-		AddParallelStages(&FollowReactionOperator{}).
-		AddParallelStages(&RecordReactionOperator{})
+		AddAsync(&FollowReactionOperator{}).
+		AddAsync(&RecordReactionOperator{})
 }
