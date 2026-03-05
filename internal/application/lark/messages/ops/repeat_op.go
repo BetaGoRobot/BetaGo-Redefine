@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -41,6 +40,16 @@ func (r *RepeatMsgOperator) Name() string {
 	return "RepeatMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *RepeatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "repeat",
+		Name:        "重复消息功能",
+		Description: "随机复读用户消息",
+		Default:     true,
+	}
+}
+
 // PreRun Repeat
 //
 //	@receiver r *RepeatMsgOperator
@@ -62,11 +71,6 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 		return err
 	} else if ext != 0 {
 		return errors.Wrap(xerror.ErrStageSkip, "RepeatMsgOperator: Muted")
-	}
-
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "repeat", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 
 	return

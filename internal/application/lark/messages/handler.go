@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -130,6 +131,9 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 }
 
 func init() {
+	// 设置全局功能检查器
+	xhandler.SetFeatureChecker(appconfig.GetManager().FeatureCheckFunc())
+
 	Handler = Handler.
 		OnPanic(larkDeferFunc).
 		WithMetaDataProcess(metaInit).
@@ -149,6 +153,20 @@ func init() {
 		AddAsync(&ops.ReplyChatOperator{}).
 		AddAsync(&ops.CommandOperator{}).
 		AddAsync(&ops.ChatMsgOperator{})
+
+	// 设置获取功能列表的回调（在添加完所有 Operators 之后）
+	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {
+		features := make([]appconfig.Feature, 0)
+		for _, fi := range Handler.ListFeatures() {
+			features = append(features, appconfig.Feature{
+				Name:           fi.ID,
+				Description:    fi.Description,
+				Category:       "message",
+				DefaultEnabled: fi.Default,
+			})
+		}
+		return features
+	})
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {

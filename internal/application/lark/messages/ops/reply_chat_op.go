@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -34,6 +33,16 @@ func (r *ReplyChatOperator) Name() string {
 	return "ReplyChatOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "reply_chat",
+		Name:        "回复聊天功能",
+		Description: "@机器人时的聊天回复功能",
+		Default:     true,
+	}
+}
+
 // PreRun Music
 //
 //	@receiver r *MusicMsgOperator
@@ -52,11 +61,6 @@ func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
-	}
-
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "reply_chat", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 
 	return

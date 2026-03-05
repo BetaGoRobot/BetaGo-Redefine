@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -37,6 +36,16 @@ func (r *WordReplyMsgOperator) Name() string {
 	return "WordReplyMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *WordReplyMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "word_reply",
+		Name:        "关键词回复功能",
+		Description: "根据关键词自动回复消息",
+		Default:     true,
+	}
+}
+
 // PreRun Repeat
 //
 //	@receiver r *WordReplyMsgOperator
@@ -53,11 +62,6 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
-	}
-
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "word_reply", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 
 	return

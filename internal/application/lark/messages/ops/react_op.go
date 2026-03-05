@@ -3,14 +3,12 @@ package ops
 import (
 	"context"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
@@ -31,6 +29,16 @@ func (r *ReactMsgOperator) Name() string {
 	return "ReactMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *ReactMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "react",
+		Name:        "消息反应功能",
+		Description: "随机给消息添加表情反应",
+		Default:     true,
+	}
+}
+
 // PreRun Repeat
 //
 //	@receiver r
@@ -41,11 +49,6 @@ func (r *ReactMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRe
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
-
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "react", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
-	}
 
 	return
 }

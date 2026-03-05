@@ -79,9 +79,9 @@ func (a *Accessor) IntentRecognitionEnabled() bool {
 // 功能开关
 // ==========================================
 
-// IsFeatureEnabled 检查功能是否启用
+// IsFeatureEnabled 检查功能是否启用（保留用于兼容，建议使用带 defaultEnabled 的版本）
 func (a *Accessor) IsFeatureEnabled(feature string) bool {
-	return GetManager().IsFeatureEnabled(a.ctx, feature, a.chatID, a.userID)
+	return GetManager().IsFeatureEnabled(a.ctx, feature, true, a.chatID, a.userID)
 }
 
 // ==========================================
@@ -123,7 +123,7 @@ func IsIntentRecognitionEnabled(ctx context.Context, chatID, userID string) bool
 	return GetManager().GetBool(ctx, KeyIntentRecognitionEnabled, chatID, userID)
 }
 
-// IsFeatureEnabled 检查功能是否启用
+// IsFeatureEnabled 检查功能是否启用（保留用于兼容，建议使用带 defaultEnabled 的版本）
 func IsFeatureEnabled(ctx context.Context, feature, chatID, userID string) bool {
-	return GetManager().IsFeatureEnabled(ctx, feature, chatID, userID)
+	return GetManager().IsFeatureEnabled(ctx, feature, true, chatID, userID)
 }

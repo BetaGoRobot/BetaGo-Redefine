@@ -30,6 +30,34 @@ type Operator[T, K any] interface {
 
 	// Depends 返回此 Operator 依赖的 Fetcher 实例列表
 	Depends() []Fetcher[T, K]
+
+	// FeatureInfo 返回功能信息，返回 nil 表示此 Operator 不受功能开关控制
+	FeatureInfo() *FeatureInfo
+}
+
+// FeatureInfo 功能信息
+type FeatureInfo struct {
+	ID          string // 功能唯一标识
+	Name        string // 功能名称
+	Description string // 功能描述
+	Default     bool   // 默认是否开启
+}
+
+// FeatureCheckFunc 功能检查函数类型
+type FeatureCheckFunc func(ctx context.Context, featureID string, defaultEnabled bool, chatID, userID string) bool
+
+// 全局功能检查函数
+var globalFeatureChecker FeatureCheckFunc
+
+// SetFeatureChecker 设置全局功能检查函数
+func SetFeatureChecker(checker FeatureCheckFunc) {
+	globalFeatureChecker = checker
+}
+
+// MetaDataWithUser 可以获取 chatID 和 userID 的 meta 接口
+type MetaDataWithUser interface {
+	GetChatID() string
+	GetUserID() string
 }
 
 type (
@@ -69,6 +97,16 @@ func (m *BaseMetaData) SetExtra(key string, val string) {
 	m.Extra[key] = val
 }
 
+// GetChatID 实现 MetaDataWithUser 接口
+func (m *BaseMetaData) GetChatID() string {
+	return m.ChatID
+}
+
+// GetUserID 实现 MetaDataWithUser 接口
+func (m *BaseMetaData) GetUserID() string {
+	return m.UserID
+}
+
 type (
 	ProcPanicFunc[T, K any] func(context.Context, error, *T, *K)
 	ProcDeferFunc[T, K any] func(context.Context, *T, *K)
@@ -81,6 +119,7 @@ type (
 		metaData    *K
 		syncStages  []Operator[T, K]
 		asyncStages []Operator[T, K]
+		features    map[string]FeatureInfo // 自动收集的功能信息
 		onPanicFn   ProcPanicFunc[T, K]
 		deferFn     []ProcDeferFunc[T, K]
 		metaInitFn  MetaInitFunc[T, K]
@@ -110,6 +149,11 @@ func (op *OperatorBase[T, K]) MetaInit() *K {
 
 // Depends 默认实现：无依赖
 func (op *OperatorBase[T, K]) Depends() []Fetcher[T, K] {
+	return nil
+}
+
+// FeatureInfo 默认实现：返回 nil，表示不受功能开关控制
+func (op *OperatorBase[T, K]) FeatureInfo() *FeatureInfo {
 	return nil
 }
 
@@ -168,6 +212,7 @@ func (p *Processor[T, K]) Defer() {
 //	@return *Processor[T]
 func (p *Processor[T, K]) AddSync(stage Operator[T, K]) *Processor[T, K] {
 	p.syncStages = append(p.syncStages, stage)
+	p.collectFeatureInfo(stage)
 	return p
 }
 
@@ -178,7 +223,27 @@ func (p *Processor[T, K]) AddSync(stage Operator[T, K]) *Processor[T, K] {
 //	@return *Processor[T]
 func (p *Processor[T, K]) AddAsync(stage Operator[T, K]) *Processor[T, K] {
 	p.asyncStages = append(p.asyncStages, stage)
+	p.collectFeatureInfo(stage)
 	return p
+}
+
+// collectFeatureInfo 收集 Operator 的 FeatureInfo
+func (p *Processor[T, K]) collectFeatureInfo(op Operator[T, K]) {
+	if fi := op.FeatureInfo(); fi != nil {
+		if p.features == nil {
+			p.features = make(map[string]FeatureInfo)
+		}
+		p.features[fi.ID] = *fi
+	}
+}
+
+// ListFeatures 列出所有收集到的功能信息
+func (p *Processor[T, K]) ListFeatures() []FeatureInfo {
+	list := make([]FeatureInfo, 0, len(p.features))
+	for _, fi := range p.features {
+		list = append(list, fi)
+	}
+	return list
 }
 
 // AddParallelStages 兼容旧接口
@@ -269,11 +334,6 @@ type fetcherWrapper[T, K any] struct {
 	err     error
 }
 
-// operatorWrapper 包装 Operator 用于追踪执行状态
-type operatorWrapper[T, K any] struct {
-	operator Operator[T, K]
-}
-
 // RunParallelStages  运行并行处理阶段（考虑依赖关系）
 //
 //	@receiver p
@@ -312,8 +372,24 @@ func (p *Processor[T, K]) RunParallelStages() error {
 			defer close(w.done)
 			defer wg.Done()
 
+			// 检查 Fetcher 是否也有 FeatureInfo（如果它同时也是 Operator）
+			var err error
+			if opWithFeature, ok := any(w.fetcher).(interface{ FeatureInfo() *FeatureInfo }); ok {
+				if fi := opWithFeature.FeatureInfo(); fi != nil && globalFeatureChecker != nil {
+					var chatID, userID string
+					if metaWithUser, ok := any(p.metaData).(MetaDataWithUser); ok {
+						chatID = metaWithUser.GetChatID()
+						userID = metaWithUser.GetUserID()
+					}
+					if !globalFeatureChecker(p, fi.ID, fi.Default, chatID, userID) {
+						w.err = errors.Wrap(xerror.ErrStageSkip, fetcherName+" feature blocked")
+						return
+					}
+				}
+			}
+
 			logs.L().Ctx(p).Info("Starting fetcher", zap.String("fetcher", fetcherName))
-			err := w.fetcher.Fetch(p, p.data, p.metaData)
+			err = w.fetcher.Fetch(p, p.data, p.metaData)
 			w.err = err
 			if err != nil && !errors.Is(err, xerror.ErrStageSkip) {
 				errorChan <- err
@@ -376,6 +452,18 @@ func (p *Processor[T, K]) RunParallelStages() error {
 // runSingleOperator 运行单个 Operator
 func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, K]) error {
 	var err error
+
+	// 自动检查功能开关
+	if fi := op.FeatureInfo(); fi != nil && globalFeatureChecker != nil {
+		var chatID, userID string
+		if metaWithUser, ok := any(p.metaData).(MetaDataWithUser); ok {
+			chatID = metaWithUser.GetChatID()
+			userID = metaWithUser.GetUserID()
+		}
+		if !globalFeatureChecker(ctx, fi.ID, fi.Default, chatID, userID) {
+			return errors.Wrap(xerror.ErrStageSkip, op.Name()+" feature blocked")
+		}
+	}
 
 	err = op.PreRun(ctx, p.data, p.metaData)
 	if err != nil {

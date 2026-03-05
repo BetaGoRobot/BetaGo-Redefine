@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"go.uber.org/zap"
 )
 
@@ -47,56 +48,17 @@ type Feature struct {
 	DefaultEnabled bool   `json:"default_enabled"` // 默认是否启用
 }
 
-// AllFeatures 所有可用功能列表
-var AllFeatures = []Feature{
-	{Name: "chat", Description: "聊天功能", Category: "message", DefaultEnabled: true},
-	{Name: "react", Description: "消息反应功能", Category: "message", DefaultEnabled: true},
-	{Name: "repeat", Description: "重复消息功能", Category: "message", DefaultEnabled: true},
-	{Name: "record", Description: "记录消息功能", Category: "message", DefaultEnabled: true},
-	{Name: "reply_chat", Description: "回复聊天功能", Category: "message", DefaultEnabled: true},
-	{Name: "word_reply", Description: "关键词回复功能", Category: "message", DefaultEnabled: true},
-	{Name: "intent_recognize", Description: "意图识别功能", Category: "ai", DefaultEnabled: true},
+// 全局获取功能列表的回调
+var getFeaturesFunc func() []Feature
+
+// SetGetFeaturesFunc 设置获取功能列表的回调
+func SetGetFeaturesFunc(fn func() []Feature) {
+	getFeaturesFunc = fn
 }
 
-// defaultFeatureEnabled 功能默认值映射（快速查找）
-var defaultFeatureEnabled map[string]bool
-var defaultFeatureEnabledOnce sync.Once
-
-// getDefaultFeatureEnabled 获取功能默认值
-func getDefaultFeatureEnabled(feature string) bool {
-	defaultFeatureEnabledOnce.Do(func() {
-		defaultFeatureEnabled = make(map[string]bool)
-		for _, f := range AllFeatures {
-			defaultFeatureEnabled[f.Name] = f.DefaultEnabled
-		}
-	})
-	// 未知功能默认启用
-	if enabled, ok := defaultFeatureEnabled[feature]; ok {
-		return enabled
-	}
-	return true
-}
-
-var (
-	featureMap     map[string]Feature
-	featureMapOnce sync.Once
-)
-
-// GetFeatureMap 获取功能映射
-func GetFeatureMap() map[string]Feature {
-	featureMapOnce.Do(func() {
-		featureMap = make(map[string]Feature)
-		for _, f := range AllFeatures {
-			featureMap[f.Name] = f
-		}
-	})
-	return featureMap
-}
-
-// IsValidFeature 检查功能名称是否有效
+// IsValidFeature 检查功能名称是否有效（始终返回 true，兼容旧代码）
 func IsValidFeature(name string) bool {
-	_, ok := GetFeatureMap()[name]
-	return ok
+	return true
 }
 
 // buildConfigKey 构建带作用域的配置键
@@ -500,7 +462,7 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // IsFeatureEnabled 检查功能是否启用
 // 优先级: chat_user > user > chat > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
-func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, chatID, userID string) bool {
+func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, userID string) bool {
 	// 1. 检查 chat_user 级别
 	if chatID != "" && userID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, userID, feature) {
@@ -552,7 +514,14 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, chatID, 
 	}
 
 	// 5. 返回功能的默认值
-	return getDefaultFeatureEnabled(feature)
+	return defaultEnabled
+}
+
+// FeatureCheckFunc 适配 xhandler.FeatureCheckFunc 的检查函数
+func (m *Manager) FeatureCheckFunc() xhandler.FeatureCheckFunc {
+	return func(ctx context.Context, featureID string, defaultEnabled bool, chatID, userID string) bool {
+		return m.IsFeatureEnabled(ctx, featureID, defaultEnabled, chatID, userID)
+	}
 }
 
 // isFeatureBlockedAtScope 检查特定作用域是否屏蔽了功能
@@ -589,8 +558,8 @@ func (m *Manager) UnblockFeature(ctx context.Context, feature string, scope Conf
 // ListBlockedFeatures 列出被屏蔽的功能
 func (m *Manager) ListBlockedFeatures(ctx context.Context, scope ConfigScope, chatID, userID string) ([]string, error) {
 	blocked := make([]string, 0)
-	for _, f := range AllFeatures {
-		if !m.IsFeatureEnabled(ctx, f.Name, chatID, userID) {
+	for _, f := range GetAllFeatures() {
+		if !m.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID) {
 			blocked = append(blocked, f.Name)
 		}
 	}
@@ -651,5 +620,8 @@ func GetConfigDescription(key ConfigKey) string {
 
 // GetAllFeatures 获取所有功能列表
 func GetAllFeatures() []Feature {
-	return AllFeatures
+	if getFeaturesFunc != nil {
+		return getFeaturesFunc()
+	}
+	return nil
 }

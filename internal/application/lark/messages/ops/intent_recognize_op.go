@@ -21,8 +21,10 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-var _ Op = &IntentRecognizeOperator{}
-var _ xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] = &IntentRecognizeOperator{}
+var (
+	_ Op                                                                 = &IntentRecognizeOperator{}
+	_ xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] = &IntentRecognizeOperator{}
+)
 
 // IntentRecognizeOperator 意图识别 Operator（同时也是 Fetcher）
 //
@@ -44,6 +46,16 @@ func (r *IntentRecognizeOperator) Name() string {
 	return "IntentRecognizeOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *IntentRecognizeOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "intent_recognize",
+		Name:        "意图识别功能",
+		Description: "使用AI识别用户消息意图",
+		Default:     false,
+	}
+}
+
 // Fetch 实现 Fetcher 接口，执行意图识别
 func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
@@ -51,7 +63,7 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	defer func() { span.RecordError(err) }()
 
 	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "intent_recognize", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
+	if !appconfig.GetManager().IsFeatureEnabled(ctx, "intent_recognize", true, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 

@@ -6,7 +6,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
@@ -38,6 +37,16 @@ func (r *ChatMsgOperator) Name() string {
 	return "ChatMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *ChatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "chat",
+		Name:        "聊天功能",
+		Description: "随机触发的聊天功能",
+		Default:     true,
+	}
+}
+
 // Depends 声明此 Operator 依赖的 Fetcher
 func (r *ChatMsgOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
 	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
@@ -60,11 +69,6 @@ func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
-	}
-
-	// 检查功能是否启用
-	if !appconfig.GetManager().IsFeatureEnabled(ctx, "chat", *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" feature blocked")
 	}
 
 	return

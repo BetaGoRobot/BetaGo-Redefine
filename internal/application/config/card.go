@@ -184,7 +184,7 @@ func GetFeatureCardData(ctx context.Context, chatID, userID string) (*FeatureCar
 			Name:        f.Name,
 			Description: f.Description,
 			Category:    f.Category,
-			IsEnabled:   mgr.IsFeatureEnabled(ctx, f.Name, chatID, userID),
+			IsEnabled:   mgr.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID),
 		}
 
 		// 检查各级别屏蔽状态

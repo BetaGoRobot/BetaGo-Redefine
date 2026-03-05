@@ -260,7 +260,7 @@ func FeatureListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 
 	for _, f := range allFeatures {
 		status := "✅ Enabled"
-		if !mgr.IsFeatureEnabled(ctx, f.Name, chatID, userID) {
+		if !mgr.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID) {
 			status = "❌ Blocked"
 		}
 		lines = append(lines, map[string]string{
