@@ -125,6 +125,15 @@ func init() {
 		AddSubCommand(
 			newCmd("talkrate", handlers.TrendHandler).
 				AddArgs("days", "interval"),
-		).AddSubCommand(newCmd("wc", handlers.WordCloudHandler).AddArgs("mtop", "ctop", "interval", "days", "st", "et", "chat_id", "sort"))
+		).AddSubCommand(newCmd("wc", handlers.WordCloudHandler).AddArgs("mtop", "ctop", "interval", "days", "st", "et", "chat_id", "sort")).
+		AddSubCommand(
+			newCmd("ratelimit", larkCommandNilFunc).
+				AddSubCommand(
+					newCmd("stats", handlers.RateLimitStatsHandler).AddArgs("chat_id"),
+				).
+				AddSubCommand(
+					newCmd("list", handlers.RateLimitListHandler),
+				),
+		)
 	LarkRootCommand.BuildChain()
 }

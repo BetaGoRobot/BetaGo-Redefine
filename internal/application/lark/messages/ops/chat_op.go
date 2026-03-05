@@ -8,14 +8,13 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
@@ -87,59 +86,49 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
+	chatID := *event.Event.Message.ChatId
+	decider := ratelimit.GetDecider()
+
 	// 优先尝试使用意图识别结果
 	if analysis, ok := GetIntentAnalysisFromMeta(meta); ok {
-		if shouldReplyByIntent(analysis) {
-			logs.L().Ctx(ctx).Info("decided to reply by intent recognition",
+		// 使用频控决策器决定是否回复
+		decision := decider.DecideIntentReply(ctx, chatID, analysis)
+		if decision.Allowed {
+			logs.L().Ctx(ctx).Info("decided to reply by intent recognition with rate limit",
 				zap.String("intent_type", string(analysis.IntentType)),
 				zap.Int("confidence", analysis.ReplyConfidence),
 				zap.String("reason", analysis.Reason),
+				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
 			err := handlers.ChatHandler("chat")(ctx, event, meta)
 			if err != nil {
 				return err
 			}
+			// 记录回复
+			decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
 			return nil
 		}
 		logs.L().Ctx(ctx).Info("skipped reply by intent recognition",
 			zap.String("intent_type", string(analysis.IntentType)),
 			zap.Bool("need_reply", analysis.NeedReply),
 			zap.Int("confidence", analysis.ReplyConfidence),
+			zap.String("ratelimit_reason", decision.Reason),
 		)
-		// 意图识别说不需要回复，直接返回
+		// 意图识别说不需要回复或被频控拒绝，直接返回
 		return nil
 	}
 
-	// 意图识别不可用，回退到原有的随机数机制
-	logs.L().Ctx(ctx).Info("intent recognition not available, fallback to random rate")
+	// 意图识别不可用，回退到原有的随机数机制（带频控）
+	logs.L().Ctx(ctx).Info("intent recognition not available, fallback to random rate with rate limit")
 	return r.runWithFallbackRate(ctx, event, meta)
-}
-
-// shouldReplyByIntent 根据意图分析结果判断是否应该回复
-func shouldReplyByIntent(analysis *intent.IntentAnalysis) bool {
-	rateConfig := infraconfig.Get().RateConfig
-
-	// 如果明确需要回复且置信度超过阈值
-	if analysis.NeedReply && analysis.ReplyConfidence >= rateConfig.IntentReplyThreshold {
-		return true
-	}
-
-	// 如果是问题类型，即使置信度稍低也回复
-	if analysis.IntentType == intent.IntentTypeQuestion && analysis.ReplyConfidence >= 50 {
-		return true
-	}
-
-	// 根据建议动作判断
-	if analysis.SuggestAction == intent.SuggestActionChat && analysis.ReplyConfidence >= rateConfig.IntentReplyThreshold {
-		return true
-	}
-
-	return false
 }
 
 // runWithFallbackRate 使用回退概率机制
 func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
+	chatID := *event.Event.Message.ChatId
+	decider := ratelimit.GetDecider()
+
 	// 使用配置的回退概率，默认使用 ImitateDefaultRate
 	realRate := infraconfig.Get().RateConfig.IntentFallbackRate
 	if realRate <= 0 {
@@ -148,7 +137,7 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 
 	// 群聊定制化
 	ins := query.Q.ImitateRateCustom
-	configList, err := ins.WithContext(ctx).Where(ins.GuildID.Eq(*event.Event.Message.ChatId)).Find()
+	configList, err := ins.WithContext(ctx).Where(ins.GuildID.Eq(chatID)).Find()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("get imitate config from db failed", zap.Error(err))
 		// 继续使用默认概率
@@ -156,13 +145,27 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 		realRate = int(configList[0].Rate)
 	}
 
-	if utils.Prob(float64(realRate) / 100) {
-		logs.L().Ctx(ctx).Info("decided to reply by random rate", zap.Int("rate", realRate))
+	baseProbability := float64(realRate) / 100
+
+	// 使用频控决策器
+	decision := decider.DecideRandomReply(ctx, chatID, baseProbability)
+	if decision.Allowed {
+		logs.L().Ctx(ctx).Info("decided to reply by random rate with rate limit",
+			zap.Int("rate", realRate),
+			zap.String("ratelimit_reason", decision.Reason),
+		)
 		// sendMsg
 		err := handlers.ChatHandler("chat")(ctx, event, meta)
 		if err != nil {
 			return err
 		}
+		// 记录回复
+		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeRandom)
+	} else {
+		logs.L().Ctx(ctx).Info("skipped reply by random rate",
+			zap.Int("rate", realRate),
+			zap.String("ratelimit_reason", decision.Reason),
+		)
 	}
 	return nil
 }
