@@ -132,7 +132,7 @@ func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem],
 	ins := query.Q.MsgTraceLog
 	res, err := ins.WithContext(ctx).Where(
 		query.Q.MsgTraceLog.MsgID.Eq(msgID),
-	).Find()
+	).Order(ins.CreatedAt.Desc()).Find()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("AddTraceLog2DB", zap.Error(err))
 		return nil, err
