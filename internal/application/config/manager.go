@@ -41,20 +41,40 @@ const (
 
 // Feature 功能定义
 type Feature struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Category    string `json:"category"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Category       string `json:"category"`
+	DefaultEnabled bool   `json:"default_enabled"` // 默认是否启用
 }
 
 // AllFeatures 所有可用功能列表
 var AllFeatures = []Feature{
-	{Name: "chat", Description: "聊天功能", Category: "message"},
-	{Name: "react", Description: "消息反应功能", Category: "message"},
-	{Name: "repeat", Description: "重复消息功能", Category: "message"},
-	{Name: "record", Description: "记录消息功能", Category: "message"},
-	{Name: "reply_chat", Description: "回复聊天功能", Category: "message"},
-	{Name: "word_reply", Description: "关键词回复功能", Category: "message"},
-	{Name: "intent_recognize", Description: "意图识别功能", Category: "ai"},
+	{Name: "chat", Description: "聊天功能", Category: "message", DefaultEnabled: true},
+	{Name: "react", Description: "消息反应功能", Category: "message", DefaultEnabled: true},
+	{Name: "repeat", Description: "重复消息功能", Category: "message", DefaultEnabled: true},
+	{Name: "record", Description: "记录消息功能", Category: "message", DefaultEnabled: true},
+	{Name: "reply_chat", Description: "回复聊天功能", Category: "message", DefaultEnabled: true},
+	{Name: "word_reply", Description: "关键词回复功能", Category: "message", DefaultEnabled: true},
+	{Name: "intent_recognize", Description: "意图识别功能", Category: "ai", DefaultEnabled: true},
+}
+
+// defaultFeatureEnabled 功能默认值映射（快速查找）
+var defaultFeatureEnabled map[string]bool
+var defaultFeatureEnabledOnce sync.Once
+
+// getDefaultFeatureEnabled 获取功能默认值
+func getDefaultFeatureEnabled(feature string) bool {
+	defaultFeatureEnabledOnce.Do(func() {
+		defaultFeatureEnabled = make(map[string]bool)
+		for _, f := range AllFeatures {
+			defaultFeatureEnabled[f.Name] = f.DefaultEnabled
+		}
+	})
+	// 未知功能默认启用
+	if enabled, ok := defaultFeatureEnabled[feature]; ok {
+		return enabled
+	}
+	return true
 }
 
 var (
@@ -531,7 +551,8 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, chatID, 
 		}
 	}
 
-	return true
+	// 5. 返回功能的默认值
+	return getDefaultFeatureEnabled(feature)
 }
 
 // isFeatureBlockedAtScope 检查特定作用域是否屏蔽了功能
