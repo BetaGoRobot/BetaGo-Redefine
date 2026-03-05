@@ -11,7 +11,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
@@ -40,6 +40,16 @@ func (r *RepeatMsgOperator) Name() string {
 	return "RepeatMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *RepeatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "repeat",
+		Name:        "重复消息功能",
+		Description: "随机复读用户消息",
+		Default:     true,
+	}
+}
+
 // PreRun Repeat
 //
 //	@receiver r *RepeatMsgOperator
@@ -62,6 +72,7 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 	} else if ext != 0 {
 		return errors.Wrap(xerror.ErrStageSkip, "RepeatMsgOperator: Muted")
 	}
+
 	return
 }
 
@@ -83,7 +94,7 @@ func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 
 	// 开始摇骰子, 默认概率10%
-	realRate := config.Get().RateConfig.RepeatDefaultRate
+	realRate := infraconfig.Get().RateConfig.RepeatDefaultRate
 	// 群聊定制化
 	ins := query.Q.RepeatWordsRateCustom
 	config, err := ins.WithContext(ctx).Where(

@@ -9,7 +9,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -20,8 +20,10 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-var _ Op = &IntentRecognizeOperator{}
-var _ xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] = &IntentRecognizeOperator{}
+var (
+	_ Op                                                                 = &IntentRecognizeOperator{}
+	_ xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] = &IntentRecognizeOperator{}
+)
 
 // IntentRecognizeOperator 意图识别 Operator（同时也是 Fetcher）
 //
@@ -43,14 +45,24 @@ func (r *IntentRecognizeOperator) Name() string {
 	return "IntentRecognizeOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *IntentRecognizeOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "intent_recognize",
+		Name:        "意图识别功能",
+		Description: "使用AI识别用户消息意图",
+		Default:     true,
+	}
+}
+
 // Fetch 实现 Fetcher 接口，执行意图识别
 func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	// 检查是否启用了意图识别
-	if !config.Get().RateConfig.IntentRecognitionEnabled {
+	// 检查是否启用了意图识别（TOML 配置的总开关）
+	if !infraconfig.Get().RateConfig.IntentRecognitionEnabled {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}
 

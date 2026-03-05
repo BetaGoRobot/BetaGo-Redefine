@@ -30,6 +30,16 @@ func (r *RecordMsgOperator) Name() string {
 	return "RecordMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *RecordMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "record",
+		Name:        "记录消息功能",
+		Description: "记录消息到数据库和搜索索引",
+		Default:     true,
+	}
+}
+
 // PreRun Repeat
 //
 //	@receiver r *RepeatMsgOperator

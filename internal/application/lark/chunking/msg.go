@@ -43,7 +43,7 @@ func (m *LarkMessageEvent) BuildLine() (line string) {
 
 	tmpList := make([]string, 0)
 	for msgItem := range larkcontent.
-		GetContentItemsSeq(m.,
+		GetContentItemsSeq(
 			&larkim.EventMessage{
 				Content:     m.Event.Message.Content,
 				MessageType: m.Event.Message.MessageType,

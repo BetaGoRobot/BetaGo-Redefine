@@ -58,7 +58,7 @@ jobs:
         with:
           context: .
           file: script/neteaseapi/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:latest-${{ needs.prepare.outputs.timestamp }}

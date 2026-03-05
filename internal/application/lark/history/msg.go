@@ -45,7 +45,8 @@ type Helper struct {
 //	@update 2025-04-30 13:10:02
 func New(ctx context.Context) *Helper {
 	return &Helper{
-		req: osquery.Search(),
+		Context: ctx,
+		req:     osquery.Search(),
 	}
 }
 

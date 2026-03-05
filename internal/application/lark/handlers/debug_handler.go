@@ -7,10 +7,12 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -127,29 +129,19 @@ func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem],
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
-	query := osquery.Search().
-		Query(
-			osquery.Bool().Must(
-				osquery.Term("message_id", msgID),
-			),
-		).
-		SourceIncludes("create_time", "trace_id").
-		Sort("create_time", "desc")
-	resp, err := opensearch.SearchData(
-		ctx, config.Get().OpensearchConfig.LarkMsgIndex, query,
-	)
+	ins := query.Q.MsgTraceLog
+	res, err := ins.WithContext(ctx).Where(
+		query.Q.MsgTraceLog.MsgID.Eq(msgID),
+	).Order(ins.CreatedAt.Desc()).Find()
 	if err != nil {
+		logs.L().Ctx(ctx).Error("AddTraceLog2DB", zap.Error(err))
 		return nil, err
 	}
+
 	return func(yield func(*traceItem) bool) {
-		for _, hit := range resp.Hits.Hits {
-			src := &xmodel.MessageIndex{}
-			err = sonic.Unmarshal(hit.Source, &src)
-			if err != nil {
-				return
-			}
+		for _, src := range res {
 			if src.TraceID != "" {
-				if !yield(&traceItem{src.TraceID, src.CreateTime}) {
+				if !yield(&traceItem{src.TraceID, src.CreatedAt.Format(time.DateTime)}) {
 					return
 				}
 			}

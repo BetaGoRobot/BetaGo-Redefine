@@ -3,7 +3,7 @@ package ops
 import (
 	"context"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -27,6 +27,16 @@ type ReactMsgOperator struct {
 
 func (r *ReactMsgOperator) Name() string {
 	return "ReactMsgOperator"
+}
+
+// FeatureInfo 返回功能信息
+func (r *ReactMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "react",
+		Name:        "消息反应功能",
+		Description: "随机给消息添加表情反应",
+		Default:     true,
+	}
 }
 
 // PreRun Repeat
@@ -58,7 +68,7 @@ func (r *ReactMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRecei
 	// React
 
 	// 开始摇骰子, 默认概率10%
-	realRate := config.Get().RateConfig.ReactionDefaultRate
+	realRate := infraconfig.Get().RateConfig.ReactionDefaultRate
 	if utils.Prob(float64(realRate) / 100) {
 		_, err := larkmsg.AddReaction(ctx, larkmsg.GetRandomEmoji(), *event.Event.Message.MessageId)
 		if err != nil {

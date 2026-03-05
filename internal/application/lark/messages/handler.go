@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -27,13 +28,58 @@ import (
 	"go.uber.org/zap"
 )
 
-// Handler  消息处理器
-var Handler = &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{}
+// Handler  消息处理器（保留用于向后兼容）
+var Handler *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+
+// ConfigManager 全局配置管理器（新代码应该使用依赖注入）
+var ConfigManager *appconfig.Manager
 
 type (
 	OpBase = xhandler.OperatorBase[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	Op     = xhandler.Operator[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 )
+
+// NewMessageProcessor 创建新的消息处理器（推荐使用）
+func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	processor := &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{}
+
+	processor = processor.
+		OnPanic(larkDeferFunc).
+		WithMetaDataProcess(metaInit).
+		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
+			go func() { utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
+		}).
+		WithDefer(CollectMessage).
+		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
+			if !meta.IsCommand { // 过滤Command
+				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
+			}
+		}).
+		WithFeatureChecker(cfgManager.FeatureCheckFunc()).
+		AddAsync(&ops.RecordMsgOperator{}).
+		AddAsync(&ops.RepeatMsgOperator{}).
+		AddAsync(&ops.ReactMsgOperator{}).
+		AddAsync(&ops.WordReplyMsgOperator{}).
+		AddAsync(&ops.ReplyChatOperator{}).
+		AddAsync(&ops.CommandOperator{}).
+		AddAsync(&ops.ChatMsgOperator{})
+
+	// 设置获取功能列表的回调
+	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
+		features := make([]appconfig.Feature, 0)
+		for _, fi := range processor.ListFeatures() {
+			features = append(features, appconfig.Feature{
+				Name:           fi.ID,
+				Description:    fi.Description,
+				Category:       "message",
+				DefaultEnabled: fi.Default,
+			})
+		}
+		return features
+	})
+
+	return processor
+}
 
 func larkDeferFunc(ctx context.Context, err error, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
 	larkmsg.SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
@@ -130,25 +176,9 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 }
 
 func init() {
-	Handler = Handler.
-		OnPanic(larkDeferFunc).
-		WithMetaDataProcess(metaInit).
-		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
-			go func() { utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
-		}).
-		WithDefer(CollectMessage).
-		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
-			if !meta.IsCommand { // 过滤Command
-				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
-			}
-		}).
-		AddAsync(&ops.RecordMsgOperator{}).
-		AddAsync(&ops.RepeatMsgOperator{}).
-		AddAsync(&ops.ReactMsgOperator{}).
-		AddAsync(&ops.WordReplyMsgOperator{}).
-		AddAsync(&ops.ReplyChatOperator{}).
-		AddAsync(&ops.CommandOperator{}).
-		AddAsync(&ops.ChatMsgOperator{})
+	// 向后兼容：初始化全局变量
+	ConfigManager = appconfig.NewManager()
+	Handler = NewMessageProcessor(ConfigManager)
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {

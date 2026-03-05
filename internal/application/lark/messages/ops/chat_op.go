@@ -9,7 +9,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -37,6 +37,16 @@ func (r *ChatMsgOperator) Name() string {
 	return "ChatMsgOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *ChatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "chat",
+		Name:        "聊天功能",
+		Description: "随机触发的聊天功能",
+		Default:     true,
+	}
+}
+
 // Depends 声明此 Operator 依赖的 Fetcher
 func (r *ChatMsgOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
 	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
@@ -60,6 +70,7 @@ func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
+
 	return
 }
 
@@ -107,7 +118,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 
 // shouldReplyByIntent 根据意图分析结果判断是否应该回复
 func shouldReplyByIntent(analysis *intent.IntentAnalysis) bool {
-	rateConfig := config.Get().RateConfig
+	rateConfig := infraconfig.Get().RateConfig
 
 	// 如果明确需要回复且置信度超过阈值
 	if analysis.NeedReply && analysis.ReplyConfidence >= rateConfig.IntentReplyThreshold {
@@ -130,9 +141,9 @@ func shouldReplyByIntent(analysis *intent.IntentAnalysis) bool {
 // runWithFallbackRate 使用回退概率机制
 func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	// 使用配置的回退概率，默认使用 ImitateDefaultRate
-	realRate := config.Get().RateConfig.IntentFallbackRate
+	realRate := infraconfig.Get().RateConfig.IntentFallbackRate
 	if realRate <= 0 {
-		realRate = config.Get().RateConfig.ImitateDefaultRate
+		realRate = infraconfig.Get().RateConfig.ImitateDefaultRate
 	}
 
 	// 群聊定制化

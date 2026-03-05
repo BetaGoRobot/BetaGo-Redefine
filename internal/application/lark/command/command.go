@@ -44,6 +44,30 @@ func init() {
 				),
 		).
 		AddSubCommand(
+			newCmd("config", larkCommandNilFunc).
+				AddSubCommand(
+					newCmd("list", handlers.ConfigListHandler).AddArgs("scope"),
+				).
+				AddSubCommand(
+					newCmd("set", handlers.ConfigSetHandler).AddArgs("key", "value", "scope"),
+				).
+				AddSubCommand(
+					newCmd("delete", handlers.ConfigDeleteHandler).AddArgs("key", "scope"),
+				),
+		).
+		AddSubCommand(
+			newCmd("feature", larkCommandNilFunc).
+				AddSubCommand(
+					newCmd("list", handlers.FeatureListHandler),
+				).
+				AddSubCommand(
+					newCmd("block", handlers.FeatureBlockHandler).AddArgs("feature", "scope"),
+				).
+				AddSubCommand(
+					newCmd("unblock", handlers.FeatureUnblockHandler).AddArgs("feature", "scope"),
+				),
+		).
+		AddSubCommand(
 			newCmd("word", larkCommandNilFunc).
 				AddSubCommand(
 					newCmd("add", handlers.WordAddHandler).AddArgs("word", "rate"),

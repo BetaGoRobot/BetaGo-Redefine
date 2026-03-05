@@ -33,6 +33,16 @@ func (r *ReplyChatOperator) Name() string {
 	return "ReplyChatOperator"
 }
 
+// FeatureInfo 返回功能信息
+func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
+	return &xhandler.FeatureInfo{
+		ID:          "reply_chat",
+		Name:        "回复聊天功能",
+		Description: "@机器人时的聊天回复功能",
+		Default:     true,
+	}
+}
+
 // PreRun Music
 //
 //	@receiver r *MusicMsgOperator
@@ -52,6 +62,7 @@ func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
 	}
+
 	return
 }
 
