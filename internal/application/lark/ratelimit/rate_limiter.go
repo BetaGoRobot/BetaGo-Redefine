@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/redis/go-redis/v9"
@@ -126,6 +127,63 @@ func DefaultConfig() *Config {
 		BurstPenaltyFactor:    2.0,
 		HourlyWeights:         hourlyWeights,
 	}
+}
+
+// ConfigFromRateLimitConfig 从统一配置转换
+func ConfigFromRateLimitConfig(cfg *config.RateLimitConfig) *Config {
+	if cfg == nil {
+		return DefaultConfig()
+	}
+
+	hourlyWeights := [24]float64{}
+	for h := 0; h < 24; h++ {
+		switch {
+		case h >= 9 && h <= 18:
+			hourlyWeights[h] = 0.8
+		case h >= 7 && h < 9:
+			hourlyWeights[h] = 1.0
+		case h > 18 && h <= 23:
+			hourlyWeights[h] = 1.0
+		case h >= 0 && h < 7:
+			hourlyWeights[h] = 0.3
+		}
+	}
+
+	result := DefaultConfig()
+
+	if cfg.MaxMessagesPerHour > 0 {
+		result.MaxMessagesPerHour = cfg.MaxMessagesPerHour
+	}
+	if cfg.MaxMessagesPerDay > 0 {
+		result.MaxMessagesPerDay = cfg.MaxMessagesPerDay
+	}
+	if cfg.MinIntervalSeconds > 0 {
+		result.MinIntervalSeconds = cfg.MinIntervalSeconds
+	}
+	if cfg.CooldownBaseSeconds > 0 {
+		result.CooldownBaseSeconds = cfg.CooldownBaseSeconds
+	}
+	if cfg.MaxCooldownSeconds > 0 {
+		result.MaxCooldownSeconds = cfg.MaxCooldownSeconds
+	}
+	if cfg.ActivityThresholdLow > 0 {
+		result.ActivityThresholdLow = cfg.ActivityThresholdLow
+	}
+	if cfg.ActivityThresholdHigh > 0 {
+		result.ActivityThresholdHigh = cfg.ActivityThresholdHigh
+	}
+	if cfg.BurstThreshold > 0 {
+		result.BurstThreshold = cfg.BurstThreshold
+	}
+	if cfg.BurstWindowSeconds > 0 {
+		result.BurstWindowSeconds = cfg.BurstWindowSeconds
+	}
+	if cfg.BurstPenaltyFactor > 0 {
+		result.BurstPenaltyFactor = cfg.BurstPenaltyFactor
+	}
+	result.HourlyWeights = hourlyWeights
+
+	return result
 }
 
 // ==========================================
@@ -794,7 +852,11 @@ var (
 // Get 获取全局频控器
 func Get() *SmartRateLimiter {
 	onceLimiter.Do(func() {
-		globalLimiter = NewSmartRateLimiter(nil, nil)
+		var cfg *Config
+		if rateLimitCfg := config.Get().RateLimitConfig; rateLimitCfg != nil {
+			cfg = ConfigFromRateLimitConfig(rateLimitCfg)
+		}
+		globalLimiter = NewSmartRateLimiter(cfg, nil)
 	})
 	return globalLimiter
 }
