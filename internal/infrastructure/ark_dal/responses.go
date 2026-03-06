@@ -287,6 +287,9 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 				Type: responses.TextType_json_object,
 			},
 		},
+		Reasoning: &responses.ResponsesReasoning{
+			Effort: responses.ReasoningEffort_medium,
+		},
 		Stream: gptr.Of(true),
 	}
 
