@@ -119,7 +119,8 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		content := larkmsg.PreGetTextMsg(ctx, event).GetText()
 		embedded, usage, err := ark_dal.EmbeddingText(ctx, content)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))
+			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err), zap.String("content", content))
+			return
 		}
 		jieba := gojieba.NewJieba()
 		defer jieba.Free()
@@ -170,7 +171,8 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				},
 			}})
 		if err != nil {
-			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err))
+			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err), zap.String("content", content))
+			return
 		}
 	}()
 }

@@ -35,7 +35,7 @@ func EmbeddingText(ctx context.Context, input string) (embedded []float32, token
 		arkruntime.WithCustomHeader("x-is-encrypted", "true"),
 	)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("embeddings error", zap.Error(err))
+		logs.L().Ctx(ctx).Error("embeddings error", zap.Error(err), zap.String("input", input))
 		return
 	}
 	embedded = resp.Data[0].Embedding
