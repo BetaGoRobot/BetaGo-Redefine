@@ -22,6 +22,7 @@ type BaseConfig struct {
 	ArkConfig          *ArkConfig          `json:"ark_config" yaml:"ark_config" toml:"ark_config"`
 	NeteaseMusicConfig *NeteaseMusicConfig `json:"netease_music_config" yaml:"netease_music_config" toml:"netease_music_config"`
 	RateConfig         *RateConfig         `json:"rate_config" yaml:"rate_config" toml:"rate_config"`
+	RateLimitConfig    *RateLimitConfig    `json:"ratelimit_config" yaml:"ratelimit_config" toml:"ratelimit_config"`
 	ProxyConfig        *ProxyConfig        `json:"proxy_config" yaml:"proxy_config" toml:"proxy_config"`
 	AKToolConfig       *AKToolConfig       `json:"aktool_config" yaml:"aktool_config" toml:"aktool_config"`
 	GotifyConfig       *GotifyConfig       `json:"gotify_config" yaml:"gotify_config" toml:"gotify_config"`
@@ -72,6 +73,20 @@ type RateConfig struct {
 	IntentRecognitionEnabled  bool `json:"intent_recognition_enabled" yaml:"intent_recognition_enabled" toml:"intent_recognition_enabled"`
 	IntentReplyThreshold      int  `json:"intent_reply_threshold" yaml:"intent_reply_threshold" toml:"intent_reply_threshold"`
 	IntentFallbackRate        int  `json:"intent_fallback_rate" yaml:"intent_fallback_rate" toml:"intent_fallback_rate"`
+}
+
+// RateLimitConfig 智能频控配置
+type RateLimitConfig struct {
+	MaxMessagesPerHour    int     `json:"max_messages_per_hour" yaml:"max_messages_per_hour" toml:"max_messages_per_hour"`
+	MaxMessagesPerDay     int     `json:"max_messages_per_day" yaml:"max_messages_per_day" toml:"max_messages_per_day"`
+	MinIntervalSeconds    float64 `json:"min_interval_seconds" yaml:"min_interval_seconds" toml:"min_interval_seconds"`
+	CooldownBaseSeconds   float64 `json:"cooldown_base_seconds" yaml:"cooldown_base_seconds" toml:"cooldown_base_seconds"`
+	MaxCooldownSeconds    float64 `json:"max_cooldown_seconds" yaml:"max_cooldown_seconds" toml:"max_cooldown_seconds"`
+	ActivityThresholdLow  float64 `json:"activity_threshold_low" yaml:"activity_threshold_low" toml:"activity_threshold_low"`
+	ActivityThresholdHigh float64 `json:"activity_threshold_high" yaml:"activity_threshold_high" toml:"activity_threshold_high"`
+	BurstThreshold        int     `json:"burst_threshold" yaml:"burst_threshold" toml:"burst_threshold"`
+	BurstWindowSeconds    float64 `json:"burst_window_seconds" yaml:"burst_window_seconds" toml:"burst_window_seconds"`
+	BurstPenaltyFactor    float64 `json:"burst_penalty_factor" yaml:"burst_penalty_factor" toml:"burst_penalty_factor"`
 }
 type DBConfig struct {
 	Host            string `json:"host" yaml:"host" toml:"host"`

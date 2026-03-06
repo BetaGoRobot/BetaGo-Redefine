@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/BetaGoRobot/go_utils v0.0.3
 	github.com/RealAlexandreAI/json-repair v0.0.15
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.4
@@ -128,6 +129,7 @@ require (
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.mongodb.org/mongo-driver v1.17.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.41.0 // indirect
