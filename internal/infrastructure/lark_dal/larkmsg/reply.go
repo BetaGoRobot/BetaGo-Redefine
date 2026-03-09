@@ -146,5 +146,6 @@ func doSendCard(ctx context.Context, msgID, suffix string, cardContent *larktpl.
 	if !resp.Success() {
 		return resp, errors.New(resp.Error())
 	}
+	go RecordReplyMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
 	return
 }
