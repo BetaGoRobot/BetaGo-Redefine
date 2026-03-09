@@ -8,7 +8,6 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -93,7 +92,7 @@ func (wordAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	defer func() { span.RecordError(err) }()
 	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
 
-	ChatID := *data.Event.Message.ChatId
+	ChatID := currentChatID(data, metaData)
 	return query.Q.RepeatWordsRateCustom.WithContext(ctx).Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&model.RepeatWordsRateCustom{
@@ -128,7 +127,7 @@ func (wordGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
-	ChatID := *data.Event.Message.ChatId
+	ChatID := currentChatID(data, metaData)
 
 	lines := make([]map[string]string, 0)
 	ins := query.Q.RepeatWordsRateCustom
@@ -169,11 +168,7 @@ func (wordGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 		AddVariable("title3", "Rate").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_wordGet", false)
-	if err != nil {
-		return err
-	}
-	return nil
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_wordGet", false)
 }
 
 func (wordAddHandler) CommandDescription() string {

@@ -428,7 +428,7 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 			return err
 		}
 		for _, msg := range resp.Data.Items {
-			if *msg.Sender.Id == config.Get().LarkConfig.BotOpenID {
+			if *msg.Sender.Id == config.Get().LarkConfig.AppID {
 				resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*msg.MessageId).Build())
 				if err != nil {
 					return err

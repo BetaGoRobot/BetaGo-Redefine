@@ -121,6 +121,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.4 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

@@ -8,7 +8,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -161,8 +160,8 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 
 	switch scopeStr {
 	case "global":
@@ -227,8 +226,7 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 		AddVariable("title4", "Description").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_configList", false)
-	return err
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_configList", false)
 }
 
 func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ConfigSetArgs) (err error) {
@@ -242,8 +240,8 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 
 	switch scopeStr {
 	case "global":
@@ -297,8 +295,7 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	}
 
 	msg := fmt.Sprintf("✅ 配置已设置\n\nKey: %s\nValue: %s\nScope: %s", key, value, scopeStr)
-	err = larkmsg.ReplyCardText(ctx, msg, *data.Event.Message.MessageId, "_configSet", false)
-	return err
+	return sendCompatibleText(ctx, data, metaData, msg, "_configSet", false)
 }
 
 func (configDeleteHandler) ParseCLI(args []string) (ConfigDeleteArgs, error) {
@@ -357,8 +354,8 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 
 	switch scopeStr {
 	case "global":
@@ -381,8 +378,7 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	}
 
 	msg := fmt.Sprintf("✅ 配置已删除\n\nKey: %s\nScope: %s", key, scopeStr)
-	err = larkmsg.ReplyCardText(ctx, msg, *data.Event.Message.MessageId, "_configDelete", false)
-	return err
+	return sendCompatibleText(ctx, data, metaData, msg, "_configDelete", false)
 }
 
 // ==========================================
@@ -414,8 +410,8 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 	mgr := config.GetManager()
 
 	allFeatures := config.GetAllFeatures()
@@ -444,8 +440,7 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		AddVariable("title4", "Status").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_featureList", false)
-	return err
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_featureList", false)
 }
 
 func (featureBlockHandler) ParseCLI(args []string) (FeatureBlockArgs, error) {
@@ -504,8 +499,8 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 
 	switch scopeStr {
 	case "chat":
@@ -528,8 +523,7 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	}
 
 	msg := fmt.Sprintf("✅ 功能已屏蔽\n\nFeature: %s\nScope: %s", feature, scopeStr)
-	err = larkmsg.ReplyCardText(ctx, msg, *data.Event.Message.MessageId, "_featureBlock", false)
-	return err
+	return sendCompatibleText(ctx, data, metaData, msg, "_featureBlock", false)
 }
 
 func (featureUnblockHandler) ParseCLI(args []string) (FeatureUnblockArgs, error) {
@@ -588,8 +582,8 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
-	chatID := *data.Event.Message.ChatId
-	userID := *data.Event.Sender.SenderId.OpenId
+	chatID := currentChatID(data, metaData)
+	userID := currentUserID(data, metaData)
 
 	switch scopeStr {
 	case "chat":
@@ -612,8 +606,7 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	}
 
 	msg := fmt.Sprintf("✅ 功能已取消屏蔽\n\nFeature: %s\nScope: %s", feature, scopeStr)
-	err = larkmsg.ReplyCardText(ctx, msg, *data.Event.Message.MessageId, "_featureUnblock", false)
-	return err
+	return sendCompatibleText(ctx, data, metaData, msg, "_featureUnblock", false)
 }
 
 func (configSetHandler) CommandDescription() string {

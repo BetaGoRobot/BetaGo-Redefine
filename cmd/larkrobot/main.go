@@ -5,6 +5,8 @@ import (
 	"os"
 
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -49,8 +51,10 @@ func main() {
 
 	// 初始化待办事项系统
 	todoapp.Init(db.DB())
-	// 启动提醒调度器
-	go todoapp.StartScheduler()
+	// 初始化定时任务系统
+	scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
+	// 启动统一 schedule 调度器
+	go scheduleapp.StartScheduler()
 
 	go registerHandlers(config)
 	select {}

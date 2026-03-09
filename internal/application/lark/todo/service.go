@@ -20,13 +20,6 @@ type TodoService interface {
 	GetTodo(ctx context.Context, id string) (*todo.Todo, error)
 	ListTodos(ctx context.Context, req *ListTodosRequest) ([]*todo.Todo, error)
 	DeleteTodo(ctx context.Context, id string) error
-	CreateReminder(ctx context.Context, req *CreateReminderRequest) (*todo.Reminder, error)
-	UpdateReminder(ctx context.Context, req *UpdateReminderRequest) (*todo.Reminder, error)
-	GetReminder(ctx context.Context, id string) (*todo.Reminder, error)
-	ListReminders(ctx context.Context, req *ListRemindersRequest) ([]*todo.Reminder, error)
-	DeleteReminder(ctx context.Context, id string) error
-	GetPendingReminders(ctx context.Context, limit int) ([]*todo.Reminder, error)
-	MarkReminderTriggered(ctx context.Context, id string) error
 	Available() bool
 }
 
@@ -60,34 +53,6 @@ func (s noopService) ListTodos(context.Context, *ListTodosRequest) ([]*todo.Todo
 }
 
 func (s noopService) DeleteTodo(context.Context, string) error {
-	return s.unavailableErr()
-}
-
-func (s noopService) CreateReminder(context.Context, *CreateReminderRequest) (*todo.Reminder, error) {
-	return nil, s.unavailableErr()
-}
-
-func (s noopService) UpdateReminder(context.Context, *UpdateReminderRequest) (*todo.Reminder, error) {
-	return nil, s.unavailableErr()
-}
-
-func (s noopService) GetReminder(context.Context, string) (*todo.Reminder, error) {
-	return nil, s.unavailableErr()
-}
-
-func (s noopService) ListReminders(context.Context, *ListRemindersRequest) ([]*todo.Reminder, error) {
-	return nil, s.unavailableErr()
-}
-
-func (s noopService) DeleteReminder(context.Context, string) error {
-	return s.unavailableErr()
-}
-
-func (s noopService) GetPendingReminders(context.Context, int) ([]*todo.Reminder, error) {
-	return nil, nil
-}
-
-func (s noopService) MarkReminderTriggered(context.Context, string) error {
 	return s.unavailableErr()
 }
 
@@ -246,128 +211,6 @@ func (s *Service) DeleteTodo(ctx context.Context, id string) error {
 	return s.repo.DeleteTodo(ctx, id)
 }
 
-// CreateReminderRequest 创建提醒请求
-type CreateReminderRequest struct {
-	ChatID     string
-	CreatorID  string
-	TodoID     string
-	Title      string
-	Content    string
-	Type       string
-	TriggerAt  time.Time
-	RepeatRule string
-}
-
-// CreateReminder 创建提醒
-func (s *Service) CreateReminder(ctx context.Context, req *CreateReminderRequest) (*todo.Reminder, error) {
-	remType := todo.ReminderTypeOnce
-	if req.Type != "" {
-		remType = todo.ReminderType(strings.ToLower(req.Type))
-	}
-
-	rem := todo.NewReminder(req.ChatID, req.CreatorID, req.Title, req.Content, req.TriggerAt, remType)
-	rem.TodoID = req.TodoID
-	rem.RepeatRule = req.RepeatRule
-
-	if err := s.repo.CreateReminder(ctx, rem); err != nil {
-		return nil, err
-	}
-
-	// 如果关联了待办，同时更新待办
-	if req.TodoID != "" {
-		if t, err := s.repo.GetTodoByID(ctx, req.TodoID); err == nil {
-			t.AddReminder(rem)
-			_ = s.repo.UpdateTodo(ctx, t)
-		}
-	}
-
-	return rem, nil
-}
-
-// UpdateReminderRequest 更新提醒请求
-type UpdateReminderRequest struct {
-	ID         string
-	Title      *string
-	Content    *string
-	Status     *string
-	TriggerAt  *time.Time
-	RepeatRule *string
-}
-
-// UpdateReminder 更新提醒
-func (s *Service) UpdateReminder(ctx context.Context, req *UpdateReminderRequest) (*todo.Reminder, error) {
-	rem, err := s.repo.GetReminderByID(ctx, req.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	if req.Title != nil {
-		rem.Title = *req.Title
-	}
-	if req.Content != nil {
-		rem.Content = *req.Content
-	}
-	if req.Status != nil {
-		status := todo.ReminderStatus(*req.Status)
-		if status == todo.ReminderStatusCancelled {
-			rem.Cancel()
-		} else if status == todo.ReminderStatusTriggered {
-			rem.MarkTriggered()
-		}
-	}
-	if req.TriggerAt != nil {
-		rem.TriggerAt = *req.TriggerAt
-	}
-	if req.RepeatRule != nil {
-		rem.RepeatRule = *req.RepeatRule
-	}
-
-	if err := s.repo.UpdateReminder(ctx, rem); err != nil {
-		return nil, err
-	}
-	return rem, nil
-}
-
-// GetReminder 获取提醒
-func (s *Service) GetReminder(ctx context.Context, id string) (*todo.Reminder, error) {
-	return s.repo.GetReminderByID(ctx, id)
-}
-
-// ListRemindersRequest 获取提醒列表请求
-type ListRemindersRequest struct {
-	ChatID string
-	Limit  int
-	Offset int
-}
-
-// ListReminders 获取提醒列表
-func (s *Service) ListReminders(ctx context.Context, req *ListRemindersRequest) ([]*todo.Reminder, error) {
-	if req.Limit <= 0 {
-		req.Limit = 50
-	}
-	return s.repo.ListRemindersByChatID(ctx, req.ChatID, req.Limit, req.Offset)
-}
-
-// DeleteReminder 删除提醒
-func (s *Service) DeleteReminder(ctx context.Context, id string) error {
-	return s.repo.DeleteReminder(ctx, id)
-}
-
-// GetPendingReminders 获取待触发的提醒（用于调度器）
-func (s *Service) GetPendingReminders(ctx context.Context, limit int) ([]*todo.Reminder, error) {
-	return s.repo.ListPendingReminders(ctx, time.Now(), limit)
-}
-
-// MarkReminderTriggered 标记提醒已触发
-func (s *Service) MarkReminderTriggered(ctx context.Context, id string) error {
-	rem, err := s.repo.GetReminderByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	rem.MarkTriggered()
-	return s.repo.UpdateReminder(ctx, rem)
-}
-
 // FormatTodoList 格式化待办列表为文本
 func FormatTodoList(todos []*todo.Todo) string {
 	if len(todos) == 0 {
@@ -410,30 +253,6 @@ func FormatTodoList(todos []*todo.Todo) string {
 	return sb.String()
 }
 
-// FormatReminderList 格式化提醒列表为文本
-func FormatReminderList(reminders []*todo.Reminder) string {
-	if len(reminders) == 0 {
-		return "暂无提醒 ⏰"
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("⏰ 提醒列表（共 %d 项）\n\n", len(reminders)))
-
-	for i, rem := range reminders {
-		typeIcon := getReminderTypeIcon(rem.Type)
-		sb.WriteString(fmt.Sprintf("%d. %s **%s**\n", i+1, typeIcon, rem.Title))
-
-		if rem.Content != "" {
-			sb.WriteString(fmt.Sprintf("   %s\n", rem.Content))
-		}
-
-		sb.WriteString(fmt.Sprintf("   触发时间: %s\n", rem.TriggerAt.In(utils.UTC8Loc()).Format("2006-01-02 15:04:05")))
-		sb.WriteString(fmt.Sprintf("   ID: `%s`\n\n", rem.ID))
-	}
-
-	return sb.String()
-}
-
 func getStatusIcon(status todo.TodoStatus) string {
 	switch status {
 	case todo.TodoStatusPending:
@@ -461,20 +280,5 @@ func getPriorityIcon(priority todo.TodoPriority) string {
 		return "🟢"
 	default:
 		return "🟡"
-	}
-}
-
-func getReminderTypeIcon(remType todo.ReminderType) string {
-	switch remType {
-	case todo.ReminderTypeOnce:
-		return "⏰"
-	case todo.ReminderTypeDaily:
-		return "📅"
-	case todo.ReminderTypeWeekly:
-		return "📆"
-	case todo.ReminderTypeMonthly:
-		return "🗓️"
-	default:
-		return "⏰"
 	}
 }

@@ -3,6 +3,7 @@ package larkmsg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"runtime/debug"
 	"strings"
@@ -39,6 +40,9 @@ func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err e
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	// TODO: Add id saving
+	if msgID == "" {
+		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
+	}
 	uuid := (msgID + "_create")
 	if len(uuid) > 50 {
 		uuid = uuid[:50]

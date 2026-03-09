@@ -5,7 +5,6 @@ import (
 	"time"
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -75,17 +74,21 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 		muteTimeDuration time.Duration
 	)
 	defer func() { metaData.SetExtra("mute_result", res) }()
+	chatID := currentChatID(event, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
 	if arg.Cancel {
 		// 取消禁言
 		// 先检查是否已经取消禁言
 		if ext, err := redis.GetRedisClient().
-			Exists(ctx, MuteRedisKeyPrefix+*event.Event.Message.ChatId).Result(); err != nil {
+			Exists(ctx, MuteRedisKeyPrefix+chatID).Result(); err != nil {
 			return err
 		} else if ext == 0 {
 			res = "没有禁言，不需要取消, 直接发言即可"
 			return nil // Do nothing
 		}
-		if err := redis.GetRedisClient().Del(ctx, MuteRedisKeyPrefix+*event.Event.Message.ChatId).Err(); err != nil {
+		if err := redis.GetRedisClient().Del(ctx, MuteRedisKeyPrefix+chatID).Err(); err != nil {
 			return err
 		}
 		res = "禁言已取消"
@@ -99,17 +102,13 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	}
 	if muteTimeDuration > 0 {
 		if err := redis.GetRedisClient().
-			Set(ctx, MuteRedisKeyPrefix+*event.Event.Message.ChatId, 1, muteTimeDuration).
+			Set(ctx, MuteRedisKeyPrefix+chatID, 1, muteTimeDuration).
 			Err(); err != nil {
 			return err
 		}
 		res = "已启用" + muteTimeDuration.String() + "禁言"
 	}
-	err = larkmsg.ReplyCardText(ctx, res, *event.Event.Message.MessageId, "_mute", true)
-	if err != nil {
-		return err
-	}
-	return
+	return sendCompatibleText(ctx, event, metaData, res, "_mute", true)
 }
 
 func (muteHandler) CommandDescription() string {
