@@ -90,13 +90,13 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 
 	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 	msg = larkmsg.TrimAtMsg(ctx, msg)
+	// 记录回复
+	decider := ratelimit.GetDecider()
+	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
 	err = xcommand.BindCLI(handlers.Chat)(ctx, event, meta, strings.Split(msg, " ")...)
 	if !meta.SkipDone {
 		larkmsg.AddReactionAsync(ctx, "DONE", *event.Event.Message.MessageId)
 	}
 
-	// 记录回复
-	decider := ratelimit.GetDecider()
-	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
 	return
 }
