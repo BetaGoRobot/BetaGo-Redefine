@@ -18,6 +18,9 @@ import (
 )
 
 func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string) (res string, err error) {
+	if _, _, err := runtimeClient(); err != nil {
+		return "", err
+	}
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("sys_prompt").String(sysPrompt))
 	span.SetAttributes(attribute.Key("user_prompt").String(userPrompt))
@@ -59,7 +62,7 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 			ExpireAt: gptr.Of(exp),
 		}
 		// 先创建cache
-		resp, err := client.CreateResponses(ctx, req)
+		resp, err := CreateResponses(ctx, req)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
 			return "", err
@@ -99,7 +102,7 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 		PreviousResponseId: &previousResponseID,
 	}
 
-	resp, err := client.CreateResponses(ctx, secondReq)
+	resp, err := CreateResponses(ctx, secondReq)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
 		return "", err

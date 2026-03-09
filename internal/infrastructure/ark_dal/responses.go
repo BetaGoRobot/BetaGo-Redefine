@@ -167,8 +167,12 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 				}},
 			},
 		}
-		resp, err = client.CreateResponsesStream(ctx, &responses.ResponsesRequest{
-			Model:              arkConfig.NormalModel,
+		_, cfg, cfgErr := runtimeClient()
+		if cfgErr != nil {
+			return nil, cfgErr
+		}
+		resp, err = CreateResponsesStream(ctx, &responses.ResponsesRequest{
+			Model:              cfg.NormalModel,
 			PreviousResponseId: gptr.Of(r.lastRespID),
 			Input:              message,
 		})
@@ -250,13 +254,17 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 }
 
 func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
+	_, cfg, err := runtimeClient()
+	if err != nil {
+		return nil, err
+	}
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }() // 这里的err需要捕获闭包内的错误
 
 	var (
 		req     *responses.ResponsesRequest
-		modelID = arkConfig.NormalModel
+		modelID = cfg.NormalModel
 		items   = baseInputItem(sysPrompt, userPrompt)
 	)
 
@@ -293,7 +301,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		Stream: gptr.Of(true),
 	}
 
-	resp, err := client.CreateResponsesStream(ctx, req)
+	resp, err := CreateResponsesStream(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses stream", zap.Error(err))
 		return nil, err

@@ -14,7 +14,7 @@ import (
 
 // Scheduler 提醒调度器
 type Scheduler struct {
-	service   *Service
+	service   TodoService
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -24,7 +24,7 @@ type Scheduler struct {
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(service *Service) *Scheduler {
+func NewScheduler(service TodoService) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		service: service,
@@ -156,12 +156,12 @@ var globalScheduler *Scheduler
 
 // StartScheduler 启动全局调度器
 func StartScheduler() {
-	if globalService == nil {
+	if !GetService().Available() {
 		logs.L().Warn("Todo service not initialized, scheduler not started")
 		return
 	}
 
-	globalScheduler = NewScheduler(globalService)
+	globalScheduler = NewScheduler(GetService())
 	globalScheduler.Start()
 }
 

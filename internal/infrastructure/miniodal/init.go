@@ -1,6 +1,8 @@
 package miniodal
 
 import (
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -10,42 +12,116 @@ import (
 	"go.uber.org/zap"
 )
 
+type backend interface {
+	Reason() string
+	Client(ClientType) *minio.Client
+	ExpireTime() time.Duration
+}
+
+type noopBackend struct {
+	reason string
+}
+
+func (b noopBackend) Reason() string {
+	return b.reason
+}
+
+func (b noopBackend) Client(ClientType) *minio.Client {
+	return nil
+}
+
+func (b noopBackend) ExpireTime() time.Duration {
+	return 0
+}
+
+type liveBackend struct {
+	internal *minio.Client
+	external *minio.Client
+	expire   time.Duration
+}
+
+func (b liveBackend) Reason() string {
+	return ""
+}
+
+func (b liveBackend) Client(clientType ClientType) *minio.Client {
+	if clientType == Internal {
+		return b.internal
+	}
+	return b.external
+}
+
+func (b liveBackend) ExpireTime() time.Duration {
+	return b.expire
+}
+
 var (
-	clientInternal *minio.Client // for 内部使用, 连接minio服务的内网地址
-	clientExternal *minio.Client // for 外部使用, 连接minio服务的公网地址，生成的预签名URL会使用这个client，以保证URL中使用公网地址
-	expireTime     time.Duration
+	defaultBackend backend = noopBackend{reason: "minio not initialized"}
+	warnOnce       sync.Once
 )
 
 func Init(conf *config.MinioConfig) {
-	var err error
-	clientInternal, err = minio.New(conf.Internal.Endpoint, &minio.Options{
+	if conf == nil || conf.Internal == nil || conf.External == nil || conf.AK == "" || conf.SK == "" || conf.ExpireTime == "" {
+		setNoop("minio config missing or incomplete")
+		return
+	}
+	internalClient, err := minio.New(conf.Internal.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(conf.AK, conf.SK, ""),
 		Secure: conf.Internal.UseSSL,
 	})
 	if err != nil {
-		logs.L().Panic("MinIO client initialization failed", zap.Error(err))
+		setNoop("internal minio client init failed: " + err.Error())
+		return
 	}
 
-	clientExternal, err = minio.New(conf.External.Endpoint, &minio.Options{
+	externalClient, err := minio.New(conf.External.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(conf.AK, conf.SK, ""),
 		Secure: conf.External.UseSSL,
 	})
 	if err != nil {
-		logs.L().Panic("MinIO client initialization failed", zap.Error(err))
+		setNoop("external minio client init failed: " + err.Error())
+		return
 	}
 
-	expireTime, err = time.ParseDuration(conf.ExpireTime)
+	expireTime, err := time.ParseDuration(conf.ExpireTime)
 	if err != nil {
-		logs.L().Panic("Invalid expire time format", zap.Error(err))
+		setNoop("invalid expire time format: " + err.Error())
+		return
 	}
 
+	defaultBackend = liveBackend{
+		internal: internalClient,
+		external: externalClient,
+		expire:   expireTime,
+	}
 	logs.L().Info("MinIO clients initialized successfully")
 }
 
+func ErrUnavailable() error {
+	reason := defaultBackend.Reason()
+	if reason == "" {
+		reason = "minio not initialized"
+	}
+	return errors.New(reason)
+}
+
+func setNoop(reason string) {
+	defaultBackend = noopBackend{reason: reason}
+	warnOnce.Do(func() {
+		logs.L().Warn("MinIO disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
+}
+
 func internalCli() *minio.Client {
-	return clientInternal
+	return defaultBackend.Client(Internal)
 }
 
 func externalCli() *minio.Client {
-	return clientExternal
+	return defaultBackend.Client(External)
+}
+
+func expireDuration() time.Duration {
+	return defaultBackend.ExpireTime()
 }

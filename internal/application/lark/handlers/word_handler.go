@@ -175,3 +175,23 @@ func (wordGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	}
 	return nil
 }
+
+func (wordAddHandler) CommandDescription() string {
+	return "新增复读词条"
+}
+
+func (wordGetHandler) CommandDescription() string {
+	return "查看复读词条"
+}
+
+func (wordAddHandler) CommandExamples() []string {
+	return []string{
+		"/word add --word=收到 --rate=80",
+	}
+}
+
+func (wordGetHandler) CommandExamples() []string {
+	return []string{
+		"/word get",
+	}
+}

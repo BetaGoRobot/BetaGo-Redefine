@@ -106,10 +106,8 @@ type (
 	Processor[T, K any]     struct {
 		context.Context
 
-		needBreak      bool
 		data           *T
 		metaData       *K
-		syncStages     []Operator[T, K]
 		asyncStages    []Operator[T, K]
 		features       map[string]FeatureInfo // 自动收集的功能信息
 		onPanicFn      ProcPanicFunc[T, K]
@@ -204,17 +202,6 @@ func (p *Processor[T, K]) Defer() {
 	}
 }
 
-// AddSync  添加处理阶段
-//
-//	@receiver p
-//	@param stage
-//	@return *Processor[T]
-func (p *Processor[T, K]) AddSync(stage Operator[T, K]) *Processor[T, K] {
-	p.syncStages = append(p.syncStages, stage)
-	p.collectFeatureInfo(stage)
-	return p
-}
-
 // AddAsync  添加并行处理阶段
 //
 //	@receiver p
@@ -245,62 +232,6 @@ func (p *Processor[T, K]) ListFeatures() []FeatureInfo {
 	return list
 }
 
-// AddParallelStages 兼容旧接口
-func (p *Processor[T, K]) AddParallelStages(stage Operator[T, K]) *Processor[T, K] {
-	return p.AddAsync(stage)
-}
-
-// AddStages 兼容旧接口
-func (p *Processor[T, K]) AddStages(stage Operator[T, K]) *Processor[T, K] {
-	return p.AddSync(stage)
-}
-
-// RunStages  运行处理阶段
-//
-//	@receiver p
-//	@param ctx
-//	@param event
-func (p *Processor[T, K]) RunStages() (err error) {
-	var span trace.Span
-	p.Context, span = otel.T().Start(p.Context, reflecting.GetCurrentFunc())
-	defer span.End()
-
-	for _, s := range p.syncStages {
-		defer p.Defer()
-		err = s.PreRun(p.Context, p.data, p.metaData)
-		if err != nil {
-			trace.SpanFromContext(p.Context).RecordError(err)
-			if errors.Is(err, xerror.ErrStageSkip) {
-				logs.L().Ctx(p).Warn("Skipped pre run stage", zap.Error(err))
-			} else {
-				logs.L().Ctx(p).Error("Skipped pre run stage", zap.Error(err))
-			}
-			return
-		}
-		err = s.Run(p.Context, p.data, p.metaData)
-		if err != nil {
-			trace.SpanFromContext(p.Context).RecordError(err)
-			if errors.Is(err, xerror.ErrStageSkip) {
-				logs.L().Ctx(p).Warn("run stage skipped", zap.Error(err))
-			} else {
-				logs.L().Ctx(p).Error("run stage skipped", zap.Error(err))
-			}
-			return
-		}
-		err = s.PostRun(p.Context, p.data, p.metaData)
-		if err != nil {
-			trace.SpanFromContext(p.Context).RecordError(err)
-			if errors.Is(err, xerror.ErrStageSkip) {
-				logs.L().Ctx(p).Warn("post run stage skipped", zap.Error(err))
-			} else {
-				logs.L().Ctx(p).Error("post run stage skipped", zap.Error(err))
-			}
-			return
-		}
-	}
-	return
-}
-
 // Run  运行
 //
 //	@receiver p
@@ -320,10 +251,7 @@ func (p *Processor[T, K]) Run() {
 			defer fn(p.Context, p.data, p.metaData)
 		}
 	}
-	wg := sync.WaitGroup{}
-	wg.Go(func() { p.RunStages() })
-	wg.Go(func() { p.RunParallelStages() })
-	wg.Wait()
+	_ = p.RunParallelStages()
 }
 
 // fetcherWrapper 包装 Fetcher 用于追踪执行状态

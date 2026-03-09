@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -17,23 +18,53 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/vectorstores"
-	"github.com/tmc/langchaingo/vectorstores/opensearch"
+	vectoropensearch "github.com/tmc/langchaingo/vectorstores/opensearch"
 	"go.uber.org/zap"
 )
 
 var cli *RAGSystem
+var retrieverWarnOnce sync.Once
+var defaultClient Client = noopClient{reason: "retriever not initialized"}
 
 const (
 	IndexNamePrefix = "langchaingo_default"
 	vectorDimension = 2560
 )
 
-func Cli() *RAGSystem {
-	return cli
+type Client interface {
+	AddDocuments(ctx context.Context, suffix string, docs []schema.Document) error
+	RecallDocs(ctx context.Context, suffix string, query string, k int) ([]schema.Document, error)
+	AnswerQuery(ctx context.Context, suffix string, query string, k int, chatID string) (string, []schema.Document, error)
+}
+
+type noopClient struct {
+	reason string
+}
+
+func (n noopClient) AddDocuments(context.Context, string, []schema.Document) error {
+	return nil
+}
+
+func (n noopClient) RecallDocs(context.Context, string, string, int) ([]schema.Document, error) {
+	return nil, nil
+}
+
+func (n noopClient) AnswerQuery(context.Context, string, string, int, string) (string, []schema.Document, error) {
+	return "", nil, nil
+}
+
+func Cli() Client {
+	return defaultClient
 }
 
 func Init() {
 	config := config.Get()
+	if config == nil || config.ArkConfig == nil || config.OpensearchConfig == nil ||
+		config.ArkConfig.APIKey == "" || config.ArkConfig.NormalModel == "" || config.ArkConfig.EmbeddingModel == "" ||
+		config.OpensearchConfig.Domain == "" {
+		setNoop("retriever config missing or incomplete")
+		return
+	}
 	var err error
 	ctx := context.Background()
 	cfg := Config{
@@ -48,16 +79,31 @@ func Init() {
 	}
 	cli, err = NewRAGSystem(ctx, cfg)
 	if err != nil {
-		logs.L().Ctx(ctx).Fatal("初始化 RAG 系统失败", zap.Error(err))
+		setNoop("retriever init failed", zap.Error(err))
+		return
 	}
+	defaultClient = cli
 	logs.L().Ctx(ctx).Info("RAG 系统初始化成功！")
+}
+
+func setNoop(reason string, fields ...zap.Field) {
+	cli = nil
+	defaultClient = noopClient{reason: reason}
+	fields = append(fields, zap.String("reason", reason))
+	retrieverWarnOnce.Do(func() {
+		logs.L().Warn("Retriever disabled, falling back to noop", fields...)
+	})
 }
 
 // RAGSystem 结构体封装了 RAG 应用所需的所有核心组件
 type RAGSystem struct {
 	llm      *openai.LLM
 	embedder *embeddings.EmbedderImpl
-	store    opensearch.Store
+	store    *vectoropensearch.Store
+}
+
+func (rs *RAGSystem) ready() bool {
+	return rs != nil && rs.llm != nil && rs.embedder != nil && rs.store != nil
 }
 
 // Config 结构体用于传递初始化 RAGSystem 所需的配置
@@ -109,9 +155,9 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 	}
 
 	// 3. 创建向量存储实例
-	store, err := opensearch.New(
+	store, err := vectoropensearch.New(
 		osClient,
-		opensearch.WithEmbedder(embedder),
+		vectoropensearch.WithEmbedder(embedder),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("创建 OpenSearch 向量存储失败: %w", err)
@@ -120,13 +166,16 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 	return &RAGSystem{
 		llm:      llm,
 		embedder: embedder,
-		store:    store,
+		store:    &store,
 	}, nil
 }
 
 // AddDocuments 是我们的第二个“原子能力”：插入文档
 // 它负责创建索引（如果不存在）并将文档添加进去
 func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []schema.Document) error {
+	if !rs.ready() {
+		return nil
+	}
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
@@ -157,6 +206,9 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 }
 
 func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string, k int) ([]schema.Document, error) {
+	if !rs.ready() {
+		return nil, nil
+	}
 	indexName := IndexNamePrefix + "_" + suffix
 	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query))
 	// 创建一个临时的检索器来执行查询
@@ -171,6 +223,9 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 }
 
 func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query string, k int, chatID string) (string, []schema.Document, error) {
+	if !rs.ready() {
+		return "", nil, nil
+	}
 	indexName := IndexNamePrefix + "_" + suffix
 	// 1. 使用召回能力获取上下文文档
 	contextDocs, err := rs.RecallDocs(ctx, indexName, query, k)

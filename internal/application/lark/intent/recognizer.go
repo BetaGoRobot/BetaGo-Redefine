@@ -118,7 +118,7 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 	}
 
 	// 调用 LLM
-	resp, err := ark_dal.Client().CreateResponses(ctx, req)
+	resp, err := ark_dal.CreateResponses(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses for intent analysis", zap.Error(err))
 		return nil, err

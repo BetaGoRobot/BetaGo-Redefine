@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel/trace"
@@ -14,25 +13,42 @@ import (
 
 var logger *ContextualLogger
 
+func init() {
+	logger = newStdoutOnlyLogger()
+}
+
 func L() *ContextualLogger {
+	if logger == nil {
+		logger = newStdoutOnlyLogger()
+	}
 	return logger.Ctx(context.Background()) // 默认都要搞一个context出来
 }
 
 func Init() {
-	otelCore := otelzap.NewCore(config.Get().BaseInfo.RobotName, otelzap.WithLoggerProvider(otel.LoggerProvider()))
-	otelLogger := zap.New(otelCore, zap.AddCaller())
+	stdoutLogger := newStdoutZapLogger()
+	otelLogger := zap.NewNop()
 
-	// Stdout logger
+	if provider := otel.LoggerProvider(); provider != nil {
+		otelCore := otelzap.NewCore("betago", otelzap.WithLoggerProvider(provider))
+		otelLogger = zap.New(otelCore, zap.AddCaller())
+	}
+
+	logger = NewContextualLogger(stdoutLogger, otelLogger)
+}
+
+func newStdoutOnlyLogger() *ContextualLogger {
+	stdoutLogger := newStdoutZapLogger()
+	return NewContextualLogger(stdoutLogger, zap.NewNop())
+}
+
+func newStdoutZapLogger() *zap.Logger {
 	encCfg := zap.NewProductionEncoderConfig()
 	encCfg.TimeKey = "time"
 	encCfg.EncodeTime = zapcore.ISO8601TimeEncoder
 	encCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	consoleEncoder := zapcore.NewConsoleEncoder(encCfg)
 	stdoutCore := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), zap.InfoLevel)
-	stdoutLogger := zap.New(stdoutCore, zap.AddCaller(), zap.AddCallerSkip(1))
-
-	// 组合
-	logger = NewContextualLogger(stdoutLogger, otelLogger)
+	return zap.New(stdoutCore, zap.AddCaller(), zap.AddCallerSkip(1))
 }
 
 // ContextualLogger ：双写封装

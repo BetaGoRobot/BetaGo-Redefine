@@ -73,7 +73,11 @@ func (d *Uploader) SkipDedup(dedup bool) *Uploader {
 }
 
 func FileExists(ctx context.Context, bucketName, objName string) (found bool, err error) {
-	_, err = clientInternal.StatObject(ctx, bucketName, objName, minio.StatObjectOptions{})
+	client := internalCli()
+	if client == nil {
+		return false, nil
+	}
+	_, err = client.StatObject(ctx, bucketName, objName, minio.StatObjectOptions{})
 	if err != nil {
 		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
 			return false, nil
@@ -84,10 +88,14 @@ func FileExists(ctx context.Context, bucketName, objName string) (found bool, er
 }
 
 func TryGetFile(ctx context.Context, bucketName, objName string) (url string, err error) {
+	client := externalCli()
+	if client == nil {
+		return "", nil
+	}
 	if found, err := FileExists(ctx, bucketName, objName); err != nil {
 		return "", err
 	} else if found {
-		u, err := clientExternal.PresignedGetObject(ctx, bucketName, objName, time.Minute*5, nil)
+		u, err := client.PresignedGetObject(ctx, bucketName, objName, time.Minute*5, nil)
 		if err != nil {
 			return "", err
 		}
@@ -98,6 +106,10 @@ func TryGetFile(ctx context.Context, bucketName, objName string) (url string, er
 
 func (d *UploaderReader) Do(bucketName, objName string, opts minio.PutObjectOptions) *Res[*UploaderReader] {
 	defer d.r.Close()
+	client := internalCli()
+	if client == nil {
+		return &Res[*UploaderReader]{val: d, bucket: bucketName, key: objName, err: ErrUnavailable()}
+	}
 	if d.skipDup {
 		if found, err := FileExists(d, bucketName, objName); err != nil {
 			return &Res[*UploaderReader]{val: d, bucket: bucketName, key: objName, err: err}
@@ -105,7 +117,7 @@ func (d *UploaderReader) Do(bucketName, objName string, opts minio.PutObjectOpti
 			return &Res[*UploaderReader]{val: d, bucket: bucketName, key: objName, err: nil}
 		}
 	}
-	info, err := clientInternal.PutObject(d, bucketName, objName, d.r, -1, opts)
+	info, err := client.PutObject(d, bucketName, objName, d.r, -1, opts)
 	if err != nil {
 		return &Res[*UploaderReader]{val: d, bucket: bucketName, key: objName, err: err}
 	}

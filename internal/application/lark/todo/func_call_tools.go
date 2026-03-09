@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
@@ -20,20 +21,34 @@ import (
 )
 
 var (
-	globalService *Service
+	globalService TodoService = noopService{reason: "todo service not initialized"}
+	warnOnce      sync.Once
 )
 
 const todoToolResultKey = "todo_tool_result"
 
 // Init 初始化待办服务（需要在应用启动时调用）
 func Init(db *gorm.DB) {
+	if db == nil {
+		setNoopService("todo db unavailable")
+		return
+	}
 	repo := todo.NewRepository(db)
 	globalService = NewService(repo)
 }
 
 // GetService 获取全局服务实例
-func GetService() *Service {
+func GetService() TodoService {
 	return globalService
+}
+
+func setNoopService(reason string) {
+	globalService = noopService{reason: reason}
+	warnOnce.Do(func() {
+		logs.L().Warn("Todo service disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
 }
 
 // RegisterTools 注册待办相关的 Function Call 工具

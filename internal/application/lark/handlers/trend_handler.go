@@ -321,3 +321,14 @@ func GetBackDays(days int) (st, et time.Time) {
 	st, et = time.Now().AddDate(0, 0, -1*days), time.Now()
 	return
 }
+
+func (trendHandler) CommandDescription() string {
+	return "查看发言趋势"
+}
+
+func (trendHandler) CommandExamples() []string {
+	return []string{
+		"/talkrate --days=7 --interval=1d",
+		"/talkrate --play=bar --st=2026-03-01T00:00:00+08:00 --et=2026-03-07T23:59:59+08:00",
+	}
+}

@@ -25,6 +25,7 @@ import (
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -41,6 +42,55 @@ const (
 	MODEL_TYPE_REASON = "reason"
 	MODEL_TYPE_NORMAL = "normal"
 )
+
+type ChatArgs struct {
+	Reason    bool   `cli:"r,flag" help:"启用推理模型"`
+	NoContext bool   `cli:"c,flag" help:"不携带上下文消息"`
+	Input     string `cli:"input,input" help:"聊天输入内容"`
+}
+
+type chatHandler struct {
+	defaultType string
+}
+
+var Chat = chatHandler{defaultType: "chat"}
+
+func (chatHandler) CommandDescription() string {
+	return "与机器人对话"
+}
+
+func (chatHandler) CommandExamples() []string {
+	return []string{
+		"/bb 今天天气怎么样",
+		"/bb --r 帮我总结一下这周讨论",
+	}
+}
+
+func (h chatHandler) ParseCLI(args []string) (ChatArgs, error) {
+	argMap, input := parseArgs(args...)
+	_, reason := argMap["r"]
+	_, noContext := argMap["c"]
+	return ChatArgs{
+		Reason:    reason,
+		NoContext: noContext,
+		Input:     input,
+	}, nil
+}
+
+func (h chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
+	defer func() { metaData.SkipDone = true }()
+
+	chatType := h.defaultType
+	size := 20
+	if arg.Reason {
+		chatType = MODEL_TYPE_REASON
+	}
+	if arg.NoContext {
+		size = 0
+	}
+
+	return ChatHandlerInner(ctx, event, chatType, &size, arg.Input)
+}
 
 func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
@@ -215,7 +265,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	}
 
 	iter, err := ark_dal.
-		New("chat_id", "user_id", event).
+		New(chatID, *event.Event.Sender.SenderId.UserId, event).
 		WithTools(larktools()).
 		Do(ctx, b.String(), strings.Join(fullTpl.UserInput, "\n"), files...)
 

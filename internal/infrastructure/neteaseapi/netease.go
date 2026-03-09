@@ -38,31 +38,39 @@ const (
 	CommentTypeAlbum CommentType = "3"
 )
 
+var warnOnce sync.Once
+
 func Init() {
 	config := config.Get().NeteaseMusicConfig
+	if config == nil || config.BaseURL == "" {
+		setNoop("netease config missing or base url empty")
+		return
+	}
 	NetEaseAPIBaseURL = config.BaseURL
+	ctx := &NetEaseContext{}
+	NetEaseGCtx = ctx
 
 	startUpCtx := context.Background()
-	NetEaseGCtx.TryGetLastCookie(startUpCtx)
+	ctx.TryGetLastCookie(startUpCtx)
 
 	go func() {
-		err := NetEaseGCtx.LoginNetEase(startUpCtx)
+		err := ctx.LoginNetEase(startUpCtx)
 		if err != nil {
 			logs.L().Ctx(startUpCtx).Error("error in init loginNetease", zap.Error(err))
-			err = NetEaseGCtx.LoginNetEaseQR(startUpCtx)
+			err = ctx.LoginNetEaseQR(startUpCtx)
 			if err != nil {
 				logs.L().Ctx(startUpCtx).Error("error in init loginNeteaseQR", zap.Error(err))
 			}
 		}
 		for {
-			if NetEaseGCtx.loginType == "qr" {
-				if !NetEaseGCtx.CheckIfLogin(startUpCtx) {
-					NetEaseGCtx.LoginNetEaseQR(startUpCtx)
+			if ctx.loginType == "qr" {
+				if !ctx.CheckIfLogin(startUpCtx) {
+					ctx.LoginNetEaseQR(startUpCtx)
 				}
 			} else {
-				NetEaseGCtx.RefreshLogin(startUpCtx)
-				if NetEaseGCtx.CheckIfLogin(startUpCtx) {
-					NetEaseGCtx.SaveCookie(startUpCtx)
+				ctx.RefreshLogin(startUpCtx)
+				if ctx.CheckIfLogin(startUpCtx) {
+					ctx.SaveCookie(startUpCtx)
 				} else {
 					logs.L().Ctx(startUpCtx).Error("error in refresh login")
 				}
@@ -70,6 +78,15 @@ func Init() {
 			time.Sleep(time.Second * 300)
 		}
 	}()
+}
+
+func setNoop(reason string) {
+	NetEaseGCtx = noopProvider{reason: reason}
+	warnOnce.Do(func() {
+		logs.L().Warn("NetEase API disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
 }
 
 // GetDailyRecommendID 获取当前账号日推
@@ -218,8 +235,8 @@ func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID string) (u
 	)
 
 	var maxSize int64
-	cli := miniodal.New(miniodal.Internal).Client()
-	for obj := range cli.ListObjectsIter(
+	dal := miniodal.New(miniodal.Internal)
+	for obj := range dal.ListObjectsIter(
 		ctx, bucketName, minio.ListObjectsOptions{
 			Prefix: objPrefix + ".",
 		},

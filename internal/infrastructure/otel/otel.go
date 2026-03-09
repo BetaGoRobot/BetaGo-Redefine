@@ -2,13 +2,14 @@ package otel
 
 import (
 	"context"
+	stdlog "log"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/sdk/log"
+	log2 "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
@@ -17,6 +18,9 @@ import (
 )
 
 func init() {
+	tracerProvider = noop.NewTracerProvider()
+	loggerProvider = log2.NewLoggerProvider()
+	OtelTracer = tracerProvider.Tracer("betago")
 	otel.SetTracerProvider(tracerProvider)
 }
 
@@ -28,14 +32,14 @@ const (
 // tracerProvider jaeger provider
 var (
 	tracerProvider trace.TracerProvider
-	loggerProvider *log.LoggerProvider
+	loggerProvider *log2.LoggerProvider
 )
 
 func OtelProvider() trace.TracerProvider {
 	return tracerProvider
 }
 
-func LoggerProvider() *log.LoggerProvider {
+func LoggerProvider() *log2.LoggerProvider {
 	return loggerProvider
 }
 
@@ -44,21 +48,40 @@ func T() trace.Tracer {
 }
 
 func Init(config *config.OtelConfig) {
-	if config != nil {
-		tracerProvider, _ = newTracerProvider(config)
-		loggerProvider, _ = newLoggerProvider(config)
-		tracerName := config.TracerName
-		OtelTracer = tracerProvider.Tracer(tracerName)
-	} else {
-		tracerProvider = noop.NewTracerProvider()
-		loggerProvider = log.NewLoggerProvider()
+	if config == nil || config.CollectorEndpoint == "" || config.TracerName == "" || config.ServiceName == "" {
+		setNoop("otel config missing or incomplete")
+		return
 	}
+
+	tp, err := newTracerProvider(config)
+	if err != nil {
+		setNoop("trace exporter init failed: " + err.Error())
+		return
+	}
+	lp, err := newLoggerProvider(config)
+	if err != nil {
+		setNoop("log exporter init failed: " + err.Error())
+		return
+	}
+
+	tracerProvider = tp
+	loggerProvider = lp
+	OtelTracer = tracerProvider.Tracer(config.TracerName)
+	otel.SetTracerProvider(tracerProvider)
 }
 
 // BetaGoOtelTracer a
 var (
 	OtelTracer trace.Tracer
 )
+
+func setNoop(reason string) {
+	tracerProvider = noop.NewTracerProvider()
+	loggerProvider = log2.NewLoggerProvider()
+	OtelTracer = tracerProvider.Tracer("betago")
+	otel.SetTracerProvider(tracerProvider)
+	stdlog.Printf("[WARN] otel disabled, falling back to noop: %s", reason)
+}
 
 func newTracerProvider(config *config.OtelConfig) (*tracesdk.TracerProvider, error) {
 	// Create the Jaeger exporter
@@ -91,7 +114,7 @@ func newResource(config *config.OtelConfig) *resource.Resource {
 	return res
 }
 
-func newLoggerProvider(config *config.OtelConfig) (*log.LoggerProvider, error) {
+func newLoggerProvider(config *config.OtelConfig) (*log2.LoggerProvider, error) {
 	ctx := context.Background()
 	exporter, err := otlploggrpc.New(
 		ctx, otlploggrpc.WithEndpoint(config.CollectorEndpoint), otlploggrpc.WithInsecure(),
@@ -99,9 +122,9 @@ func newLoggerProvider(config *config.OtelConfig) (*log.LoggerProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	processor := log.NewBatchProcessor(exporter)
-	return log.NewLoggerProvider(
-		log.WithResource(newResource(config)),
-		log.WithProcessor(processor),
+	processor := log2.NewBatchProcessor(exporter)
+	return log2.NewLoggerProvider(
+		log2.WithResource(newResource(config)),
+		log2.WithProcessor(processor),
 	), nil
 }

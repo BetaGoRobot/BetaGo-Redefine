@@ -3,9 +3,11 @@ package opensearch
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -19,38 +21,47 @@ import (
 	"go.uber.org/zap"
 )
 
-var opensearchClient *opensearchapi.Client
+var opensearchWarnOnce sync.Once
+var backend searchBackend = noopBackend{reason: "opensearch not initialized"}
 
 var opensearchDomain = os.Getenv("OPENSEARCH_DOMAIN")
 
-func Init(conf *config.OpensearchConfig) {
-	opensearchDomain = conf.Domain
-	if opensearchClient == nil {
-		var err error
-		opensearchClient, err = opensearchapi.NewClient(opensearchapi.Config{
-			Client: opensearch.Config{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-				},
-				Addresses: []string{
-					"https://" + opensearchDomain + ":9200",
-					"https://" + opensearchDomain + ":9200",
-				},
-				Username: conf.User,
-				Password: conf.Password,
-			},
-		})
-		if err != nil {
-			panic(err)
-		}
-	}
+type searchBackend interface {
+	Reason() string
+	InsertData(ctx context.Context, index string, id string, data any) error
+	SearchData(ctx context.Context, index string, data any) (*opensearchapi.SearchResp, error)
+	SearchDataStr(ctx context.Context, index string, data string) (*opensearchapi.SearchResp, error)
 }
 
-func Client() *opensearchapi.Client {
-	return opensearchClient
+type noopBackend struct {
+	reason string
 }
 
-func InsertData(ctx context.Context, index string, id string, data any) (err error) {
+func (n noopBackend) Reason() string {
+	return n.reason
+}
+
+func (n noopBackend) InsertData(context.Context, string, string, any) error {
+	return nil
+}
+
+func (n noopBackend) SearchData(context.Context, string, any) (*opensearchapi.SearchResp, error) {
+	return nil, errors.New(n.reason)
+}
+
+func (n noopBackend) SearchDataStr(context.Context, string, string) (*opensearchapi.SearchResp, error) {
+	return nil, errors.New(n.reason)
+}
+
+type liveBackend struct {
+	client *opensearchapi.Client
+}
+
+func (l liveBackend) Reason() string {
+	return ""
+}
+
+func (l liveBackend) InsertData(ctx context.Context, index string, id string, data any) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
@@ -61,7 +72,7 @@ func InsertData(ctx context.Context, index string, id string, data any) (err err
 		DocumentID: id,
 		Body:       opensearchutil.NewJSONReader(data),
 	}
-	resp, err := Client().Index(ctx, req)
+	resp, err := l.client.Index(ctx, req)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Index error", zap.Error(err), zap.Any("resp", resp))
 		return err
@@ -69,7 +80,7 @@ func InsertData(ctx context.Context, index string, id string, data any) (err err
 	return nil
 }
 
-func SearchData(ctx context.Context, index string, data any) (resp *opensearchapi.SearchResp, err error) {
+func (l liveBackend) SearchData(ctx context.Context, index string, data any) (resp *opensearchapi.SearchResp, err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
@@ -78,12 +89,10 @@ func SearchData(ctx context.Context, index string, data any) (resp *opensearchap
 		Indices: []string{index},
 		Body:    opensearchutil.NewJSONReader(data),
 	}
-	resp, err = Client().Search(ctx, req)
-
-	return resp, err
+	return l.client.Search(ctx, req)
 }
 
-func SearchDataStr(ctx context.Context, index string, data string) (resp *opensearchapi.SearchResp, err error) {
+func (l liveBackend) SearchDataStr(ctx context.Context, index string, data string) (resp *opensearchapi.SearchResp, err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
@@ -92,6 +101,56 @@ func SearchDataStr(ctx context.Context, index string, data string) (resp *opense
 		Indices: []string{index},
 		Body:    strings.NewReader(data),
 	}
-	resp, err = Client().Search(ctx, req)
-	return resp, err
+	return l.client.Search(ctx, req)
+}
+
+func Init(conf *config.OpensearchConfig) {
+	if conf == nil || conf.Domain == "" {
+		setNoop("opensearch config missing or incomplete")
+		return
+	}
+	opensearchDomain = conf.Domain
+	client, err := opensearchapi.NewClient(opensearchapi.Config{
+		Client: opensearch.Config{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+			Addresses: []string{
+				"https://" + opensearchDomain + ":9200",
+				"https://" + opensearchDomain + ":9200",
+			},
+			Username: conf.User,
+			Password: conf.Password,
+		},
+	})
+	if err != nil {
+		setNoop("opensearch client init failed: " + err.Error())
+		return
+	}
+	backend = liveBackend{client: client}
+}
+
+func setNoop(reason string) {
+	backend = noopBackend{reason: reason}
+	opensearchWarnOnce.Do(func() {
+		logs.L().Warn("OpenSearch disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
+}
+
+func unavailableErr() error {
+	return errors.New(backend.Reason())
+}
+
+func InsertData(ctx context.Context, index string, id string, data any) (err error) {
+	return backend.InsertData(ctx, index, id, data)
+}
+
+func SearchData(ctx context.Context, index string, data any) (resp *opensearchapi.SearchResp, err error) {
+	return backend.SearchData(ctx, index, data)
+}
+
+func SearchDataStr(ctx context.Context, index string, data string) (resp *opensearchapi.SearchResp, err error) {
+	return backend.SearchDataStr(ctx, index, data)
 }

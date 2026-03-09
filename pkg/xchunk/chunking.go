@@ -90,6 +90,8 @@ type Chunk struct {
 type Management struct {
 	redisClient     *redis.Client
 	processingQueue chan *Chunk
+	enabled         bool
+	disableReason   string
 }
 
 type GenericMsg interface {
@@ -110,9 +112,21 @@ type (
 // getGroupIDFunc: A function to extract the group/chat ID from a message.
 // getTimestampFunc: A function to extract the Unix timestamp from a message.
 func NewManagement() *Management {
+	redisClient := redis_dal.GetRedisClient()
+	if redisClient == nil {
+		return NewNoopManagement("redis client unavailable")
+	}
 	return &Management{
-		redisClient:     redis_dal.GetRedisClient(),
+		redisClient:     redisClient,
 		processingQueue: make(chan *Chunk, 100), // Buffered channel for processing chunks
+		enabled:         true,
+	}
+}
+
+func NewNoopManagement(reason string) *Management {
+	return &Management{
+		enabled:       false,
+		disableReason: reason,
 	}
 }
 
@@ -120,6 +134,9 @@ func NewManagement() *Management {
 // 如果缓冲区达到MAX_CHUNK_SIZE，它会触发立即合并。否则，它会更新会话的
 // 最后活动时间戳，以用于基于超时的机制。
 func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err error) {
+	if m == nil || !m.enabled {
+		return nil
+	}
 	groupID := msg.GroupID()
 	newTimestamp := msg.TimeStamp()
 	if groupID == "" {
@@ -197,6 +214,9 @@ func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err err
 // OnMerge is called when a chunk is ready to be processed.
 // It builds a single string from the chunk and sends it to an LLM.
 func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
+	if m == nil || !m.enabled {
+		return nil
+	}
 	if chunk == nil || len(chunk.Messages) == 0 {
 		return nil
 	}
@@ -231,6 +251,14 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	chunkStr := strings.Join(chunkLines, "\n")
 	res, err := ark_dal.ResponseWithCache(ctx, sysPrompt.String(), chunkStr, config.Get().ArkConfig.ChunkModel)
 	if err != nil {
+		if ark_dal.IsUnavailable(err) {
+			m.enabled = false
+			m.disableReason = err.Error()
+			logs.L().Ctx(ctx).Warn("Chunking disabled after ark unavailable",
+				zap.String("reason", err.Error()),
+			)
+			return nil
+		}
 		return
 	}
 	res = strings.Trim(res, "```")
@@ -269,6 +297,16 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 
 // StartBackgroundCleaner starts a goroutine to periodically scan for and process timed-out sessions.
 func (m *Management) StartBackgroundCleaner(ctx context.Context) {
+	if m == nil || !m.enabled {
+		reason := ""
+		if m != nil {
+			reason = m.disableReason
+		}
+		logs.L().Ctx(ctx).Warn("Chunking disabled, background cleaner not started",
+			zap.String("reason", reason),
+		)
+		return
+	}
 	logs.L().Ctx(ctx).Info("Starting background cleaner for timed-out sessions...")
 	// Start the consumer goroutine
 	go func() {
@@ -304,6 +342,9 @@ func (m *Management) StartBackgroundCleaner(ctx context.Context) {
 
 // scanAndProcessTimeouts is the internal logic for the background cleaner.
 func (m *Management) scanAndProcessTimeouts(ctx context.Context) {
+	if m == nil || !m.enabled {
+		return
+	}
 	logs.L().Ctx(ctx).Debug("Scanning for timed-out sessions...")
 	// Calculate the timestamp threshold for timeout. Sessions older than this will be processed.
 	timeoutThreshold := time.Now().Add(-INACTIVITY_TIMEOUT).UnixMilli()

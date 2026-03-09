@@ -111,3 +111,14 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	}
 	return
 }
+
+func (muteHandler) CommandDescription() string {
+	return "设置或解除禁言"
+}
+
+func (muteHandler) CommandExamples() []string {
+	return []string{
+		"/mute --t=10m",
+		"/mute --cancel",
+	}
+}

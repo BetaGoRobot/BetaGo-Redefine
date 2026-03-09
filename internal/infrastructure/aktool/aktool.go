@@ -2,30 +2,89 @@ package aktool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/avast/retry-go/v4"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/hertz/pkg/app/client"
 	"github.com/cloudwego/hertz/pkg/protocol"
+	"go.uber.org/zap"
+)
+
+const (
+	publicAPIURI             = "/api/public/"
+	goldHandlerNameRealtime  = "spot_quotations_sge"
+	goldHandlerNameHistory   = "spot_hist_sge"
+	stockHandlerNameRealtime = "stock_zh_a_minute"
+	stockSingleInfo          = "stock_individual_info_em"
 )
 
 var (
-	BaseURL                 = ""
-	PublicAPIURI            = "/api/public/"
-	GoldHandlerNameRealtime = "spot_quotations_sge"
-	GoldHandlerNameHistory  = "spot_hist_sge"
-
-	StockHandlerNameRealtime = "stock_zh_a_minute"
-	StockSingleInfo          = "stock_individual_info_em"
+	defaultProvider Provider = noopProvider{reason: "aktool not initialized"}
+	warnOnce        sync.Once
 )
 
+type Provider interface {
+	GetRealtimeGoldPrice(ctx context.Context) (GoldPriceDataRTList, error)
+	GetHistoryGoldPrice(ctx context.Context) (GoldPriceDataHS, error)
+	GetStockPriceRT(ctx context.Context, symbol string) (StockPriceDataRTList, error)
+	GetStockSymbolInfo(ctx context.Context, symbol string) (string, error)
+}
+
+type noopProvider struct {
+	reason string
+}
+
+func (n noopProvider) GetRealtimeGoldPrice(context.Context) (GoldPriceDataRTList, error) {
+	return nil, errors.New(n.reason)
+}
+
+func (n noopProvider) GetHistoryGoldPrice(context.Context) (GoldPriceDataHS, error) {
+	return nil, errors.New(n.reason)
+}
+
+func (n noopProvider) GetStockPriceRT(context.Context, string) (StockPriceDataRTList, error) {
+	return nil, errors.New(n.reason)
+}
+
+func (n noopProvider) GetStockSymbolInfo(context.Context, string) (string, error) {
+	return "", errors.New(n.reason)
+}
+
+type httpProvider struct {
+	baseURL string
+}
+
 func Init() {
-	BaseURL = config.Get().AKToolConfig.BaseURL
+	cfg := config.Get().AKToolConfig
+	if cfg == nil || cfg.BaseURL == "" {
+		setNoop("aktool config missing or base url empty")
+		return
+	}
+	defaultProvider = httpProvider{baseURL: cfg.BaseURL}
+}
+
+func ErrUnavailable() error {
+	if provider, ok := defaultProvider.(noopProvider); ok {
+		return errors.New(provider.reason)
+	}
+	return errors.New("aktool not initialized")
+}
+
+func setNoop(reason string) {
+	defaultProvider = noopProvider{reason: reason}
+	warnOnce.Do(func() {
+		logs.L().Warn("AKTool disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
 }
 
 type (
@@ -39,7 +98,7 @@ type (
 
 	StockPriceDataRTList []*StockPriceDataRT
 	StockPriceDataRT     struct {
-		DateTime string `json:"day"` // "2025-05-23 10:25:00"
+		DateTime string `json:"day"`
 		Open     string `json:"open"`
 		High     string `json:"high"`
 		Low      string `json:"low"`
@@ -55,40 +114,9 @@ func (rt *GoldPriceDataRTList) ToLLMTable() string {
 	sb := strings.Builder{}
 	sb.WriteString("时间,现价\n")
 	for _, item := range *rt {
-		sb.WriteString(fmt.Sprintf("%s,%.2f,%s\n", item.Time, item.Price))
+		sb.WriteString(fmt.Sprintf("%s,%.2f\n", item.Time, item.Price))
 	}
 	return sb.String()
-}
-
-func GetRealtimeGoldPrice(ctx context.Context) (res GoldPriceDataRTList, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
-
-	res = make(GoldPriceDataRTList, 0)
-	var (
-		req  *protocol.Request
-		resp *protocol.Response
-	)
-	err = retry.Do(
-		func() error {
-			c, _ := client.NewClient()
-			req, resp = protocol.AcquireRequest(), protocol.AcquireResponse()
-			req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameRealtime)
-			req.SetMethod("GET")
-			err = c.Do(ctx, req, resp)
-			if resp.StatusCode() != 200 {
-				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
-			}
-			err = sonic.Unmarshal(resp.Body(), &res)
-			if err != nil {
-				return err
-			}
-			return nil
-		},
-		retry.Attempts(3),
-	)
-
-	return
 }
 
 type GoldPriceDataHS []struct {
@@ -111,95 +139,114 @@ func (hs *GoldPriceDataHS) ToLLMTable() string {
 	return sb.String()
 }
 
-func GetHistoryGoldPrice(ctx context.Context) (res GoldPriceDataHS, err error) {
+func GetRealtimeGoldPrice(ctx context.Context) (GoldPriceDataRTList, error) {
+	return defaultProvider.GetRealtimeGoldPrice(ctx)
+}
+
+func (p httpProvider) GetRealtimeGoldPrice(ctx context.Context) (res GoldPriceDataRTList, err error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
-	res = make(GoldPriceDataHS, 0)
-	var (
-		req  *protocol.Request
-		resp *protocol.Response
-	)
+	res = make(GoldPriceDataRTList, 0)
 	err = retry.Do(
 		func() error {
 			c, _ := client.NewClient()
-			req, resp = protocol.AcquireRequest(), protocol.AcquireResponse()
-			req.SetRequestURI(BaseURL + PublicAPIURI + GoldHandlerNameHistory)
+			req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
+			req.SetRequestURI(p.baseURL + publicAPIURI + goldHandlerNameRealtime)
 			req.SetMethod("GET")
 			err = c.Do(ctx, req, resp)
 			if resp.StatusCode() != 200 {
 				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
 			}
-			err = sonic.Unmarshal(resp.Body(), &res)
-			if err != nil {
-				return err
-			}
-			return nil
+			return sonic.Unmarshal(resp.Body(), &res)
 		},
 		retry.Attempts(3),
 	)
-
-	return
+	return res, err
 }
 
-/*
-symbol	str	symbol='000300'; 股票代码
-start_date	str	start_date="1979-09-01 09:32:00"; 日期时间; 默认返回所有数据
-end_date	str	end_date="2222-01-01 09:32:00"; 日期时间; 默认返回所有数据
-period	str	period='5'; choice of {'1', '5', '15', '30', '60'}; 其中 1 分钟数据返回近 5 个交易日数据且不复权
-adjust	str	adjust=”; choice of {”, 'qfq', 'hfq'}; ”: 不复权, 'qfq': 前复权, 'hfq': 后复权, 其中 1 分钟数据返回近 5 个交易日数据且不复权
-*/
-func GetStockPriceRT(ctx context.Context, symbol string) (res StockPriceDataRTList, err error) {
+func GetHistoryGoldPrice(ctx context.Context) (GoldPriceDataHS, error) {
+	return defaultProvider.GetHistoryGoldPrice(ctx)
+}
+
+func (p httpProvider) GetHistoryGoldPrice(ctx context.Context) (res GoldPriceDataHS, err error) {
+	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	defer span.End()
+
+	res = make(GoldPriceDataHS, 0)
+	err = retry.Do(
+		func() error {
+			c, _ := client.NewClient()
+			req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
+			req.SetRequestURI(p.baseURL + publicAPIURI + goldHandlerNameHistory)
+			req.SetMethod("GET")
+			err = c.Do(ctx, req, resp)
+			if resp.StatusCode() != 200 {
+				return fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
+			}
+			return sonic.Unmarshal(resp.Body(), &res)
+		},
+		retry.Attempts(3),
+	)
+	return res, err
+}
+
+func GetStockPriceRT(ctx context.Context, symbol string) (StockPriceDataRTList, error) {
+	return defaultProvider.GetStockPriceRT(ctx, symbol)
+}
+
+func (p httpProvider) GetStockPriceRT(ctx context.Context, symbol string) (res StockPriceDataRTList, err error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	res = make(StockPriceDataRTList, 0)
 	c, _ := client.NewClient()
 	req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
-	req.SetRequestURI(BaseURL + PublicAPIURI + StockHandlerNameRealtime)
+	req.SetRequestURI(p.baseURL + publicAPIURI + stockHandlerNameRealtime)
 	req.SetMethod("GET")
 	req.SetQueryString(fmt.Sprintf("symbol=sh%s", symbol))
 
 	err = c.Do(ctx, req, resp)
 	if err != nil {
-		return
+		return nil, err
 	}
 	if resp.StatusCode() != 200 {
 		return nil, fmt.Errorf("get gold price failed, status code: %d", resp.StatusCode())
 	}
-
-	err = sonic.Unmarshal(resp.Body(), &res)
-	if err != nil {
-		return
+	if err := sonic.Unmarshal(resp.Body(), &res); err != nil {
+		return nil, err
 	}
-	return
+	return res, nil
 }
 
-func GetStockSymbolInfo(ctx context.Context, symbol string) (stockName string, err error) {
+func GetStockSymbolInfo(ctx context.Context, symbol string) (string, error) {
+	return defaultProvider.GetStockSymbolInfo(ctx, symbol)
+}
+
+func (p httpProvider) GetStockSymbolInfo(ctx context.Context, symbol string) (stockName string, err error) {
 	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
 	res := make([]map[string]any, 0)
 	c, _ := client.NewClient()
 	req, resp := protocol.AcquireRequest(), protocol.AcquireResponse()
-	req.SetRequestURI(BaseURL + PublicAPIURI + StockSingleInfo)
+	req.SetRequestURI(p.baseURL + publicAPIURI + stockSingleInfo)
 	req.SetMethod("GET")
 	req.SetQueryString(fmt.Sprintf("symbol=%s", symbol))
 	err = c.Do(ctx, req, resp)
 	if err != nil {
-		return
+		return "", err
 	}
 	if resp.StatusCode() != 200 {
 		return "", fmt.Errorf("get stock info failed, status code: %d", resp.StatusCode())
 	}
-	err = sonic.Unmarshal(resp.Body(), &res)
-	if err != nil {
-		return
+	if err := sonic.Unmarshal(resp.Body(), &res); err != nil {
+		return "", err
 	}
 	for _, item := range res {
 		if item["item"].(string) == "股票简称" {
 			return item["value"].(string), nil
 		}
 	}
-	return
+	return "", nil
 }

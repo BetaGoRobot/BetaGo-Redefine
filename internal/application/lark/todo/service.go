@@ -2,6 +2,7 @@ package todo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,87 @@ import (
 	"go.uber.org/zap"
 )
 
+type TodoService interface {
+	CreateTodo(ctx context.Context, req *CreateTodoRequest) (*todo.Todo, error)
+	UpdateTodo(ctx context.Context, req *UpdateTodoRequest) (*todo.Todo, error)
+	GetTodo(ctx context.Context, id string) (*todo.Todo, error)
+	ListTodos(ctx context.Context, req *ListTodosRequest) ([]*todo.Todo, error)
+	DeleteTodo(ctx context.Context, id string) error
+	CreateReminder(ctx context.Context, req *CreateReminderRequest) (*todo.Reminder, error)
+	UpdateReminder(ctx context.Context, req *UpdateReminderRequest) (*todo.Reminder, error)
+	GetReminder(ctx context.Context, id string) (*todo.Reminder, error)
+	ListReminders(ctx context.Context, req *ListRemindersRequest) ([]*todo.Reminder, error)
+	DeleteReminder(ctx context.Context, id string) error
+	GetPendingReminders(ctx context.Context, limit int) ([]*todo.Reminder, error)
+	MarkReminderTriggered(ctx context.Context, id string) error
+	Available() bool
+}
+
+var errServiceUnavailable = errors.New("todo service unavailable")
+
+type noopService struct {
+	reason string
+}
+
+func (s noopService) unavailableErr() error {
+	if s.reason == "" {
+		return errServiceUnavailable
+	}
+	return fmt.Errorf("%w: %s", errServiceUnavailable, s.reason)
+}
+
+func (s noopService) CreateTodo(context.Context, *CreateTodoRequest) (*todo.Todo, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) UpdateTodo(context.Context, *UpdateTodoRequest) (*todo.Todo, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) GetTodo(context.Context, string) (*todo.Todo, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) ListTodos(context.Context, *ListTodosRequest) ([]*todo.Todo, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) DeleteTodo(context.Context, string) error {
+	return s.unavailableErr()
+}
+
+func (s noopService) CreateReminder(context.Context, *CreateReminderRequest) (*todo.Reminder, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) UpdateReminder(context.Context, *UpdateReminderRequest) (*todo.Reminder, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) GetReminder(context.Context, string) (*todo.Reminder, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) ListReminders(context.Context, *ListRemindersRequest) ([]*todo.Reminder, error) {
+	return nil, s.unavailableErr()
+}
+
+func (s noopService) DeleteReminder(context.Context, string) error {
+	return s.unavailableErr()
+}
+
+func (s noopService) GetPendingReminders(context.Context, int) ([]*todo.Reminder, error) {
+	return nil, nil
+}
+
+func (s noopService) MarkReminderTriggered(context.Context, string) error {
+	return s.unavailableErr()
+}
+
+func (s noopService) Available() bool {
+	return false
+}
+
 // Service 待办事项应用服务
 type Service struct {
 	repo *todorepo.Repository
@@ -23,6 +105,10 @@ func NewService(repo *todorepo.Repository) *Service {
 	return &Service{
 		repo: repo,
 	}
+}
+
+func (s *Service) Available() bool {
+	return s != nil && s.repo != nil
 }
 
 // CreateTodoRequest 创建待办请求
