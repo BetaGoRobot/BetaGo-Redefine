@@ -11,6 +11,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
@@ -25,6 +26,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xchunk"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -40,6 +42,195 @@ const (
 	getIDText      = "Quoted Msg OpenID is "
 	getGroupIDText = "Current ChatID is "
 )
+
+type (
+	debugGetIDArgs      struct{}
+	debugGetGroupIDArgs struct{}
+	debugTryPanicArgs   struct{}
+	debugTraceArgs      struct{}
+	debugRevertArgs     struct{}
+	debugRepeatArgs     struct{}
+	debugImageArgs      struct {
+		Prompt string `cli:"prompt,input" help:"图片分析提示词"`
+	}
+)
+type debugConversationArgs struct{}
+
+type (
+	debugGetIDHandler        struct{}
+	debugGetGroupIDHandler   struct{}
+	debugTryPanicHandler     struct{}
+	debugTraceHandler        struct{}
+	debugRevertHandler       struct{}
+	debugRepeatHandler       struct{}
+	debugImageHandler        struct{}
+	debugConversationHandler struct{}
+)
+
+var (
+	DebugGetID        debugGetIDHandler
+	DebugGetGroupID   debugGetGroupIDHandler
+	DebugTryPanic     debugTryPanicHandler
+	DebugTrace        debugTraceHandler
+	DebugRevert       debugRevertHandler
+	DebugRepeat       debugRepeatHandler
+	DebugImage        debugImageHandler
+	DebugConversation debugConversationHandler
+)
+
+func (debugGetIDHandler) CommandDescription() string {
+	return "查看引用消息 ID"
+}
+
+func (debugGetGroupIDHandler) CommandDescription() string {
+	return "查看当前会话 ID"
+}
+
+func (debugTryPanicHandler) CommandDescription() string {
+	return "触发 panic 调试"
+}
+
+func (debugTraceHandler) CommandDescription() string {
+	return "查看消息 trace"
+}
+
+func (debugRevertHandler) CommandDescription() string {
+	return "撤回机器人消息"
+}
+
+func (debugRepeatHandler) CommandDescription() string {
+	return "复发引用消息"
+}
+
+func (debugImageHandler) CommandDescription() string {
+	return "分析引用图片"
+}
+
+func (debugConversationHandler) CommandDescription() string {
+	return "查看对话上下文"
+}
+
+func (debugGetIDHandler) CommandExamples() []string {
+	return []string{"/debug msgid"}
+}
+
+func (debugGetGroupIDHandler) CommandExamples() []string {
+	return []string{"/debug chatid"}
+}
+
+func (debugTryPanicHandler) CommandExamples() []string {
+	return []string{"/debug panic"}
+}
+
+func (debugTraceHandler) CommandExamples() []string {
+	return []string{"/debug trace"}
+}
+
+func (debugRevertHandler) CommandExamples() []string {
+	return []string{"/debug revert"}
+}
+
+func (debugRepeatHandler) CommandExamples() []string {
+	return []string{"/debug repeat"}
+}
+
+func (debugImageHandler) CommandExamples() []string {
+	return []string{
+		"/debug image",
+		"/debug image 这张图里有什么",
+	}
+}
+
+func (debugConversationHandler) CommandExamples() []string {
+	return []string{"/debug conver"}
+}
+
+func (debugGetIDHandler) ParseCLI(args []string) (debugGetIDArgs, error) {
+	return debugGetIDArgs{}, nil
+}
+
+func (debugGetIDHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugGetIDArgs) error {
+	return handleDebugGetID(ctx, data, metaData)
+}
+
+func (debugGetGroupIDHandler) ParseCLI(args []string) (debugGetGroupIDArgs, error) {
+	return debugGetGroupIDArgs{}, nil
+}
+
+func (debugGetGroupIDHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugGetGroupIDArgs) error {
+	return handleDebugGetGroupID(ctx, data, metaData)
+}
+
+func (debugTryPanicHandler) ParseCLI(args []string) (debugTryPanicArgs, error) {
+	return debugTryPanicArgs{}, nil
+}
+
+func (debugTryPanicHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugTryPanicArgs) error {
+	return handleDebugTryPanic(ctx, data, metaData)
+}
+
+func (debugTraceHandler) ParseCLI(args []string) (debugTraceArgs, error) {
+	return debugTraceArgs{}, nil
+}
+
+func (debugTraceHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugTraceArgs) error {
+	return handleDebugTrace(ctx, data, metaData)
+}
+
+func (debugRevertHandler) ParseCLI(args []string) (debugRevertArgs, error) {
+	return debugRevertArgs{}, nil
+}
+
+func (debugRevertHandler) ParseTool(raw string) (debugRevertArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return debugRevertArgs{}, err
+	}
+	return debugRevertArgs{}, nil
+}
+
+func (debugRevertHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "revert_message",
+		Desc:   "可以撤回指定消息,调用时不需要任何参数，工具会判断要撤回的消息是什么，并且返回撤回的结果。如果不是机器人发出的消息,是不能撤回的",
+		Params: arktools.NewParams("object"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra("revert_result")
+			return result
+		},
+	}
+}
+
+func (debugRevertHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugRevertArgs) error {
+	return handleDebugRevert(ctx, data, metaData)
+}
+
+func (debugRepeatHandler) ParseCLI(args []string) (debugRepeatArgs, error) {
+	return debugRepeatArgs{}, nil
+}
+
+func (debugRepeatHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugRepeatArgs) error {
+	return handleDebugRepeat(ctx, data, metaData)
+}
+
+func (debugImageHandler) ParseCLI(args []string) (debugImageArgs, error) {
+	_, input := parseArgs(args...)
+	return debugImageArgs{Prompt: input}, nil
+}
+
+func (debugImageHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugImageArgs) error {
+	if arg.Prompt == "" {
+		return handleDebugImage(ctx, data, metaData)
+	}
+	return handleDebugImage(ctx, data, metaData, arg.Prompt)
+}
+
+func (debugConversationHandler) ParseCLI(args []string) (debugConversationArgs, error) {
+	return debugConversationArgs{}, nil
+}
+
+func (debugConversationHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugConversationArgs) error {
+	return handleDebugConversation(ctx, data, metaData)
+}
 
 type traceItem struct {
 	TraceID    string `json:"trace_id"`
@@ -339,7 +530,7 @@ func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 	}
 
 	dataSeq, err := ark_dal.
-		New("chat_id", "user_id", &data).
+		New(*data.Event.Message.ChatId, *data.Event.Sender.SenderId.UserId, &data).
 		Do(ctx, "", inputPrompt, urls...)
 	if err != nil {
 		return err

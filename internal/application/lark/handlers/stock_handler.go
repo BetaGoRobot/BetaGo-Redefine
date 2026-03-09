@@ -500,3 +500,25 @@ func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (string, *
 // 	}
 // 	return goption.Of(metaData.GetExtra("gold_result")).ValueOr("执行完成但没有结果"), nil
 // }
+
+func (goldHandler) CommandDescription() string {
+	return "查看金价走势"
+}
+
+func (zhAStockHandler) CommandDescription() string {
+	return "查看 A 股走势"
+}
+
+func (goldHandler) CommandExamples() []string {
+	return []string{
+		"/stock gold --d=7",
+		"/stock gold --h=12",
+	}
+}
+
+func (zhAStockHandler) CommandExamples() []string {
+	return []string{
+		"/stock zh_a --code=600519",
+		"/stock zh_a --code=000001 --days=5",
+	}
+}

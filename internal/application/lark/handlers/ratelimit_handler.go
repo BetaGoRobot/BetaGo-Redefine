@@ -296,3 +296,24 @@ func (rateLimitListHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_ratelimitList", false)
 	return err
 }
+
+func (rateLimitStatsHandler) CommandDescription() string {
+	return "查看频控详情"
+}
+
+func (rateLimitListHandler) CommandDescription() string {
+	return "查看频控概览"
+}
+
+func (rateLimitStatsHandler) CommandExamples() []string {
+	return []string{
+		"/ratelimit stats",
+		"/ratelimit stats --chat_id=oc_xxx",
+	}
+}
+
+func (rateLimitListHandler) CommandExamples() []string {
+	return []string{
+		"/ratelimit list",
+	}
+}

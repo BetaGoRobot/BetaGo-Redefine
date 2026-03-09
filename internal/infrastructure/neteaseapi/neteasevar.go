@@ -1,6 +1,8 @@
 package neteaseapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 )
@@ -17,6 +19,24 @@ type LoginStatusStruct struct {
 	} `json:"data"`
 }
 
+// Provider 网易云能力抽象。
+type Provider interface {
+	SearchAlbumByKeyWord(ctx context.Context, keywords ...string) ([]*Album, error)
+	SearchMusicByKeyWord(ctx context.Context, keywords ...string) ([]*SearchMusicItem, error)
+	GetMusicURL(ctx context.Context, id string) (string, error)
+	GetDetail(ctx context.Context, musicID string) *MusicDetail
+	GetLyrics(ctx context.Context, songID string) (string, string)
+	GetAlbumDetail(ctx context.Context, albumID string) (*AlbumDetail, error)
+	AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) ([]*SearchMusicItem, error)
+	GetComment(ctx context.Context, commentType CommentType, id string) (*CommentResult, error)
+	TryGetLastCookie(ctx context.Context)
+	LoginNetEase(ctx context.Context) error
+	LoginNetEaseQR(ctx context.Context) error
+	CheckIfLogin(ctx context.Context) bool
+	RefreshLogin(ctx context.Context) error
+	SaveCookie(ctx context.Context)
+}
+
 // NetEaseContext 网易云API调用封装
 type NetEaseContext struct {
 	cookies  []*http.Cookie
@@ -29,6 +49,56 @@ type NetEaseContext struct {
 	}
 	loginType string
 }
+
+type noopProvider struct {
+	reason string
+}
+
+func (n noopProvider) unavailableErr() error {
+	if n.reason == "" {
+		return errors.New("netease api not initialized")
+	}
+	return errors.New(n.reason)
+}
+
+func (n noopProvider) SearchAlbumByKeyWord(context.Context, ...string) ([]*Album, error) {
+	return nil, n.unavailableErr()
+}
+
+func (n noopProvider) SearchMusicByKeyWord(context.Context, ...string) ([]*SearchMusicItem, error) {
+	return nil, n.unavailableErr()
+}
+
+func (n noopProvider) GetMusicURL(context.Context, string) (string, error) {
+	return "", n.unavailableErr()
+}
+
+func (n noopProvider) GetDetail(context.Context, string) *MusicDetail {
+	return &MusicDetail{}
+}
+
+func (n noopProvider) GetLyrics(context.Context, string) (string, string) {
+	return "", ""
+}
+
+func (n noopProvider) GetAlbumDetail(context.Context, string) (*AlbumDetail, error) {
+	return nil, n.unavailableErr()
+}
+
+func (n noopProvider) AsyncGetSearchRes(context.Context, SearchMusic) ([]*SearchMusicItem, error) {
+	return nil, n.unavailableErr()
+}
+
+func (n noopProvider) GetComment(context.Context, CommentType, string) (*CommentResult, error) {
+	return nil, n.unavailableErr()
+}
+
+func (n noopProvider) TryGetLastCookie(context.Context)     {}
+func (n noopProvider) LoginNetEase(context.Context) error   { return n.unavailableErr() }
+func (n noopProvider) LoginNetEaseQR(context.Context) error { return n.unavailableErr() }
+func (n noopProvider) CheckIfLogin(context.Context) bool    { return false }
+func (n noopProvider) RefreshLogin(context.Context) error   { return n.unavailableErr() }
+func (n noopProvider) SaveCookie(context.Context)           {}
 
 type dailySongs struct {
 	Data struct {
@@ -364,4 +434,4 @@ type MusicDetail struct {
 var NetEaseAPIBaseURL = "http://netease-api:3335"
 
 // NetEaseGCtx 网易云全局API调用封装
-var NetEaseGCtx = &NetEaseContext{}
+var NetEaseGCtx Provider = noopProvider{reason: "netease api not initialized"}

@@ -615,3 +615,68 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	err = larkmsg.ReplyCardText(ctx, msg, *data.Event.Message.MessageId, "_featureUnblock", false)
 	return err
 }
+
+func (configSetHandler) CommandDescription() string {
+	return "设置配置项"
+}
+
+func (configListHandler) CommandDescription() string {
+	return "查看配置项"
+}
+
+func (configDeleteHandler) CommandDescription() string {
+	return "删除配置项"
+}
+
+func (featureListHandler) CommandDescription() string {
+	return "查看功能开关"
+}
+
+func (featureBlockHandler) CommandDescription() string {
+	return "屏蔽功能"
+}
+
+func (featureUnblockHandler) CommandDescription() string {
+	return "取消屏蔽功能"
+}
+
+func (configSetHandler) CommandExamples() []string {
+	return []string{
+		"/config set --key=intent_recognition_enabled --value=true",
+		"/config set --key=intent_recognition_enabled --value=false --scope=global",
+	}
+}
+
+func (configListHandler) CommandExamples() []string {
+	return []string{
+		"/config list",
+		"/config list --scope=user",
+	}
+}
+
+func (configDeleteHandler) CommandExamples() []string {
+	return []string{
+		"/config delete --key=intent_recognition_enabled",
+		"/config delete --key=intent_recognition_enabled --scope=global",
+	}
+}
+
+func (featureListHandler) CommandExamples() []string {
+	return []string{
+		"/feature list",
+	}
+}
+
+func (featureBlockHandler) CommandExamples() []string {
+	return []string{
+		"/feature block --feature=chat",
+		"/feature block --feature=chat --scope=user",
+	}
+}
+
+func (featureUnblockHandler) CommandExamples() []string {
+	return []string{
+		"/feature unblock --feature=chat",
+		"/feature unblock --feature=chat --scope=user",
+	}
+}

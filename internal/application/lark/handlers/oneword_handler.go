@@ -110,3 +110,14 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	_, err = larkmsg.ReplyMsgText(ctx, msg, *data.Event.Message.MessageId, "_oneWord", false)
 	return
 }
+
+func (oneWordHandler) CommandDescription() string {
+	return "发送一言或诗词"
+}
+
+func (oneWordHandler) CommandExamples() []string {
+	return []string{
+		"/oneword",
+		"/oneword --type=诗词",
+	}
+}

@@ -11,7 +11,6 @@ import (
 
 type Doer interface {
 	context.Context
-	Client() *minio.Client
 	Data() []byte
 	ContentType() string
 }
@@ -41,7 +40,10 @@ func (r Res[T]) Unwrap() (T, string, string, error) {
 
 func (r Res[T]) PreSignURL() (url string, err error) {
 	client := externalCli() // 签名一定走外网
-	u, err := client.PresignedGetObject(r.Val(), r.bucket, r.key, expireTime, nil)
+	if client == nil {
+		return "", ErrUnavailable()
+	}
+	u, err := client.PresignedGetObject(r.Val(), r.bucket, r.key, expireDuration(), nil)
 	if err != nil {
 		return "", err
 	}

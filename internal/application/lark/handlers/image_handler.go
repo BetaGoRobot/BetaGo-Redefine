@@ -361,3 +361,33 @@ func createImage(ctx context.Context, msgID, chatID, imgKey, msgType string) err
 	}
 	return nil
 }
+
+func (imageAddHandler) CommandDescription() string {
+	return "新增图片素材"
+}
+
+func (imageGetHandler) CommandDescription() string {
+	return "查看图片素材"
+}
+
+func (imageDeleteHandler) CommandDescription() string {
+	return "删除图片素材"
+}
+
+func (imageAddHandler) CommandExamples() []string {
+	return []string{
+		"/image add --url=https://example.com/demo.png",
+	}
+}
+
+func (imageGetHandler) CommandExamples() []string {
+	return []string{
+		"/image get",
+	}
+}
+
+func (imageDeleteHandler) CommandExamples() []string {
+	return []string{
+		"/image del",
+	}
+}

@@ -280,3 +280,24 @@ func (replyGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	}
 	return nil
 }
+
+func (replyAddHandler) CommandDescription() string {
+	return "新增关键词回复"
+}
+
+func (replyGetHandler) CommandDescription() string {
+	return "查看关键词回复"
+}
+
+func (replyAddHandler) CommandExamples() []string {
+	return []string{
+		"/reply add --word=早安 --reply=早安早安",
+		"/reply add --word=天气 --reply=今天天气不错 --type=substr",
+	}
+}
+
+func (replyGetHandler) CommandExamples() []string {
+	return []string{
+		"/reply get",
+	}
+}

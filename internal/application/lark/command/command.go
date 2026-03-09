@@ -14,7 +14,7 @@ var LarkRootCommand = NewLarkRootCommand()
 var newCmd = xcommand.NewCommand[*larkim.P2MessageReceiveV1]
 
 func newTypedCmd[TArgs any](name string, handler xcommand.CLIArgHandler[*larkim.P2MessageReceiveV1, TArgs]) *xcommand.Command[*larkim.P2MessageReceiveV1] {
-	return xcommand.NewTypedCommand[*larkim.P2MessageReceiveV1, TArgs](name, handler)
+	return xcommand.NewTypedCommand(name, handler)
 }
 
 func NewLarkRootCommand() *xcommand.Command[*larkim.P2MessageReceiveV1] {

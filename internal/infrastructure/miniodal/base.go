@@ -2,6 +2,7 @@ package miniodal
 
 import (
 	"context"
+	"iter"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -34,9 +35,13 @@ func (d *Dal) Download(ctx context.Context) *Downloader {
 	return &Downloader{Dal: d}
 }
 
-func (d *Dal) Client() *minio.Client {
+func (d *Dal) ListObjectsIter(ctx context.Context, bucketName string, opts minio.ListObjectsOptions) iter.Seq[minio.ObjectInfo] {
+	client := externalCli()
 	if d.clientType == Internal {
-		return internalCli()
+		client = internalCli()
 	}
-	return externalCli()
+	if client == nil {
+		return func(func(minio.ObjectInfo) bool) {}
+	}
+	return client.ListObjectsIter(ctx, bucketName, opts)
 }

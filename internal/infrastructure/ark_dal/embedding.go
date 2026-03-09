@@ -3,7 +3,6 @@ package ark_dal
 import (
 	"context"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -20,6 +19,10 @@ import (
 //	@return embedded
 //	@return err
 func EmbeddingText(ctx context.Context, input string) (embedded []float32, tokenUsage model.Usage, err error) {
+	runtime, cfg, err := runtimeClient()
+	if err != nil {
+		return nil, model.Usage{}, nil
+	}
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("input").String(input))
 	defer span.End()
@@ -27,9 +30,9 @@ func EmbeddingText(ctx context.Context, input string) (embedded []float32, token
 
 	req := model.EmbeddingRequestStrings{
 		Input: []string{input},
-		Model: config.Get().ArkConfig.EmbeddingModel,
+		Model: cfg.EmbeddingModel,
 	}
-	resp, err := client.CreateEmbeddings(
+	resp, err := runtime.CreateEmbeddings(
 		ctx,
 		req,
 		arkruntime.WithCustomHeader("x-is-encrypted", "true"),

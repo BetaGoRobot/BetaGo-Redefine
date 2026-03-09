@@ -124,3 +124,14 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	}
 	return
 }
+
+func (musicSearchHandler) CommandDescription() string {
+	return "搜索音乐"
+}
+
+func (musicSearchHandler) CommandExamples() []string {
+	return []string{
+		"/music 稻香",
+		"/music --type=album 范特西",
+	}
+}

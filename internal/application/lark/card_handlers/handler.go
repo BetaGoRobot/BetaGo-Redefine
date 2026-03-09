@@ -85,7 +85,12 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 		return nil
 	}
 
-	songDetail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID).Songs[0]
+	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
+	if detail == nil || len(detail.Songs) == 0 {
+		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.String("music_id", musicID))
+		return nil
+	}
+	songDetail := detail.Songs[0]
 	picURL := songDetail.Al.PicURL
 	imageKey, ossURL, err := larkimg.UploadPicAllinOne(ctx, picURL, musicID, true)
 	if err != nil {
@@ -215,7 +220,12 @@ func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musi
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").String(musicID))
 	defer span.End()
-	songDetail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID).Songs[0]
+	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
+	if detail == nil || len(detail.Songs) == 0 {
+		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.String("music_id", musicID))
+		return
+	}
+	songDetail := detail.Songs[0]
 
 	imgKey, _, err := larkimg.UploadPicAllinOne(ctx, songDetail.Al.PicURL, musicID, true)
 	lyric, _ := neteaseapi.NetEaseGCtx.GetLyrics(ctx, musicID)

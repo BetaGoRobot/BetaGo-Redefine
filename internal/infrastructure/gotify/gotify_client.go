@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -18,21 +19,56 @@ import (
 )
 
 var (
-	tokenParsed         runtime.ClientAuthInfoWriter
-	DefaultGotifyClient *client.GotifyREST
+	defaultSender Sender = noopSender{reason: "gotify not initialized"}
+	warnOnce      sync.Once
 )
+
+type Sender interface {
+	SendMessage(ctx context.Context, title, msg string, priority int)
+}
+
+type noopSender struct {
+	reason string
+}
+
+func (n noopSender) SendMessage(context.Context, string, string, int) {}
+
+type clientSender struct {
+	token  runtime.ClientAuthInfoWriter
+	client *client.GotifyREST
+}
 
 func Init() {
 	config := config.Get().GotifyConfig
+	if config == nil || config.URL == "" || config.ApplicationToken == "" {
+		setNoop("gotify config missing or incomplete")
+		return
+	}
 	gotifyURLParsed, err := url.Parse(config.URL)
 	if err != nil {
-		panic("error parsing url for gotify" + err.Error())
+		setNoop("error parsing gotify url: " + err.Error())
+		return
 	}
-	DefaultGotifyClient = gotify.NewClient(gotifyURLParsed, &http.Client{})
-	tokenParsed = auth.TokenAuth(config.ApplicationToken)
+	defaultSender = clientSender{
+		token:  auth.TokenAuth(config.ApplicationToken),
+		client: gotify.NewClient(gotifyURLParsed, &http.Client{}),
+	}
+}
+
+func setNoop(reason string) {
+	defaultSender = noopSender{reason: reason}
+	warnOnce.Do(func() {
+		logs.L().Warn("Gotify disabled, falling back to noop",
+			zap.String("reason", reason),
+		)
+	})
 }
 
 func SendMessage(ctx context.Context, title, msg string, priority int) {
+	defaultSender.SendMessage(ctx, title, msg, priority)
+}
+
+func (s clientSender) SendMessage(ctx context.Context, title, msg string, priority int) {
 	ctx, span := otel.T().Start(ctx, "SendMessage")
 	defer span.End()
 	logs.L().Ctx(ctx).Info("SendMessage...", zap.String("traceID", span.SpanContext().TraceID().String()))
@@ -51,7 +87,7 @@ func SendMessage(ctx context.Context, title, msg string, priority int) {
 		},
 	}
 
-	_, err := DefaultGotifyClient.Message.CreateMessage(params, tokenParsed)
+	_, err := s.client.Message.CreateMessage(params, s.token)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Could not send message", zap.Error(err))
 		return

@@ -504,3 +504,14 @@ func SentimentColor(sentiment string) (string, string) {
 		return sentiment, "lime"
 	}
 }
+
+func (wordCloudHandler) CommandDescription() string {
+	return "生成词云和热点摘要"
+}
+
+func (wordCloudHandler) CommandExamples() []string {
+	return []string{
+		"/wc --days=7 --mtop=10 --ctop=5",
+		"/wc --sort=time --chat_id=oc_xxx",
+	}
+}

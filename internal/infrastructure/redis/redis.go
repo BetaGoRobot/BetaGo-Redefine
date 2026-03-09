@@ -12,6 +12,11 @@ import (
 // RedisClient  12
 var RedisClient *redis.Client
 
+func HasConfig() bool {
+	cfg := config.Get().RedisConfig
+	return cfg != nil && cfg.Addr != ""
+}
+
 // GetRedisClient 1
 func GetRedisClient() *redis.Client {
 	if RedisClient == nil {
