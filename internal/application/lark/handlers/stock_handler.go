@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
@@ -24,28 +25,93 @@ import (
 	"go.uber.org/zap"
 )
 
-func StockHandler(stockType string) xcommand.CommandFunc[*larkim.P2MessageReceiveV1] {
-	switch stockType {
-	case "gold":
-		return GoldHandler
-	case "a":
-		return ZhAStockHandler
-	}
-	return nil
+type GoldArgs struct {
+	Days      int    `json:"days" cli:"d"`
+	Hours     int    `json:"hours" cli:"h"`
+	StartTime string `json:"start_time" cli:"st"`
+	EndTime   string `json:"end_time" cli:"et"`
 }
 
-func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type ZhAStockArgs struct {
+	Code      string `json:"code"`
+	Days      int    `json:"days"`
+	StartTime string `json:"start_time" cli:"st"`
+	EndTime   string `json:"end_time" cli:"et"`
+}
+
+type goldHandler struct{}
+type zhAStockHandler struct{}
+
+var Gold goldHandler
+var ZhAStock zhAStockHandler
+
+func (goldHandler) ParseCLI(args []string) (GoldArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := GoldArgs{
+		StartTime: argMap["st"],
+		EndTime:   argMap["et"],
+	}
+	if daysStr := argMap["d"]; daysStr != "" {
+		if days, err := strconv.Atoi(daysStr); err == nil {
+			parsed.Days = days
+		}
+	}
+	if hoursStr := argMap["h"]; hoursStr != "" {
+		if hours, err := strconv.Atoi(hoursStr); err == nil {
+			parsed.Hours = hours
+		}
+	}
+	return parsed, nil
+}
+
+func (goldHandler) ParseTool(raw string) (GoldArgs, error) {
+	parsed := GoldArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return GoldArgs{}, err
+	}
+	if parsed.StartTime != "" && parsed.EndTime != "" {
+		parsed.StartTime = normalizeRFC3339(parsed.StartTime)
+		parsed.EndTime = normalizeRFC3339(parsed.EndTime)
+	}
+	return parsed, nil
+}
+
+func (goldHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "gold_price_get",
+		Desc: "搜索指定时间范围内的金价变化情况，可选相对时间天或小时，也可以指定时间范围",
+		Params: arktools.NewParams("object").
+			AddProp("start_time", &arktools.Prop{
+				Type: "string",
+				Desc: "开始时间，默认可以不穿，格式为RFC3339: 2006-01-02T15:04:05Z07:00",
+			}).
+			AddProp("end_time", &arktools.Prop{
+				Type: "string",
+				Desc: "结束时间，默认可以不传，格式为RFC3339: 2006-01-02T15:04:05Z07:00",
+			}).
+			AddProp("hours", &arktools.Prop{
+				Type: "number",
+				Desc: "查询的小时数，默认1小时",
+			}).
+			AddProp("days", &arktools.Prop{
+				Type: "number",
+				Desc: "查询的天数，默认30天",
+			}),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra("gold_result")
+			return result
+		},
+	}
+}
+
+func (goldHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg GoldArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-
 	var (
 		cardContent *larktpl.TemplateCardContent
-		days        int
-		hoursInt    int
 		defaultDays = 30
 		llmResult   string // 为LLM准备的输出
 		st, et      time.Time
@@ -62,25 +128,20 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 		}
 	}()
 	// 如果有st，et的配置，用st，et的配置来覆盖
-	if stStr, ok := argMap["st"]; ok {
-		if etStr, ok := argMap["et"]; ok {
-			st, err = time.Parse(time.RFC3339, stStr)
-			if err != nil {
-				return err
-			}
-			et, err = time.Parse(time.RFC3339, etStr)
-			if err != nil {
-				return err
-			}
+	if arg.StartTime != "" && arg.EndTime != "" {
+		st, err = time.Parse(time.RFC3339, arg.StartTime)
+		if err != nil {
+			return err
+		}
+		et, err = time.Parse(time.RFC3339, arg.EndTime)
+		if err != nil {
+			return err
 		}
 	}
 
-	if hours, ok := argMap["h"]; ok {
+	if arg.Hours > 0 {
 		if st.IsZero() || et.IsZero() {
-			hoursInt, err = strconv.Atoi(hours)
-			if err != nil || hoursInt <= 0 {
-				hoursInt = 1
-			}
+			hoursInt := arg.Hours
 			st = time.Now().Add(time.Duration(-1*hoursInt) * time.Hour)
 			et = time.Now()
 		}
@@ -89,10 +150,10 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 		if err != nil {
 			return err
 		}
-	} else if daysStr, ok := argMap["d"]; ok {
+	} else if arg.Days > 0 {
+		days := arg.Days
 		if st.IsZero() || et.IsZero() {
-			days, err = strconv.Atoi(daysStr)
-			if err != nil || days <= 0 {
+			if days <= 0 {
 				days = defaultDays
 			}
 			st = time.Now().AddDate(0, 0, -1*days)
@@ -129,53 +190,104 @@ func GoldHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData 
 	return
 }
 
-func ZhAStockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (zhAStockHandler) ParseCLI(args []string) (ZhAStockArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := ZhAStockArgs{
+		Code:      argMap["code"],
+		Days:      1,
+		StartTime: argMap["st"],
+		EndTime:   argMap["et"],
+	}
+	if parsed.Code == "" {
+		return ZhAStockArgs{}, fmt.Errorf("stock code is required")
+	}
+	if daysStr := argMap["days"]; daysStr != "" {
+		days, err := strconv.Atoi(daysStr)
+		if err != nil || days <= 0 {
+			parsed.Days = 1
+		} else {
+			parsed.Days = days
+		}
+	}
+	return parsed, nil
+}
+
+func (zhAStockHandler) ParseTool(raw string) (ZhAStockArgs, error) {
+	parsed := ZhAStockArgs{Days: 1}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ZhAStockArgs{}, err
+	}
+	if parsed.Code == "" {
+		return ZhAStockArgs{}, fmt.Errorf("stock code is required")
+	}
+	if parsed.Days <= 0 {
+		parsed.Days = 1
+	}
+	if parsed.StartTime != "" && parsed.EndTime != "" {
+		parsed.StartTime = normalizeRFC3339(parsed.StartTime)
+		parsed.EndTime = normalizeRFC3339(parsed.EndTime)
+	}
+	return parsed, nil
+}
+
+func (zhAStockHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "stock_zh_a_get",
+		Desc: "查询沪深 A 股指定股票的近期价格走势图",
+		Params: arktools.NewParams("object").
+			AddProp("code", &arktools.Prop{
+				Type: "string",
+				Desc: "A 股股票代码，例如 600519 或 000001",
+			}).
+			AddProp("days", &arktools.Prop{
+				Type: "number",
+				Desc: "查询近几天的数据，默认 1",
+			}).
+			AddProp("start_time", &arktools.Prop{
+				Type: "string",
+				Desc: "开始时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}).
+			AddProp("end_time", &arktools.Prop{
+				Type: "string",
+				Desc: "结束时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}).
+			AddRequired("code"),
+	}
+}
+
+func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ZhAStockArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
 	var (
-		days                  = 1
+		days                  = arg.Days
 		defaultDays           = 1
 		st, et      time.Time = time.Now().AddDate(0, 0, -1*defaultDays), time.Now()
-		stockCode   string
 	)
-
-	argMap, _ := parseArgs(args...)
-
-	stockCode, ok := argMap["code"]
-	if !ok {
-		return fmt.Errorf("stock code is required")
-	}
-
-	if daysStr, ok := argMap["days"]; ok {
-		days, err = strconv.Atoi(daysStr)
-		if err != nil || days <= 0 {
-			days = defaultDays
-		}
+	if days <= 0 {
+		days = defaultDays
 		st, et = time.Now().AddDate(0, 0, -1*days), time.Now()
 	}
 
 	// 如果有st，et的配置，用st，et的配置来覆盖
-	if stStr, ok := argMap["st"]; ok {
-		if etStr, ok := argMap["et"]; ok {
-			st, err = time.Parse(time.RFC3339, stStr)
-			if err != nil {
-				return err
-			}
-			et, err = time.Parse(time.RFC3339, etStr)
-			if err != nil {
-				return err
-			}
+	if arg.StartTime != "" && arg.EndTime != "" {
+		st, err = time.Parse(time.RFC3339, arg.StartTime)
+		if err != nil {
+			return err
+		}
+		et, err = time.Parse(time.RFC3339, arg.EndTime)
+		if err != nil {
+			return err
 		}
 	}
 	graph := vadvisor.NewMultiSeriesLineGraph[string, float64](ctx)
-	stockPrice, err := aktool.GetStockPriceRT(ctx, stockCode)
+	stockPrice, err := aktool.GetStockPriceRT(ctx, arg.Code)
 	if err != nil {
 		return err
 	}
-	stockName, err := aktool.GetStockSymbolInfo(ctx, stockCode)
+	stockName, err := aktool.GetStockSymbolInfo(ctx, arg.Code)
 	if err != nil {
 		return err
 	}
@@ -206,7 +318,7 @@ func ZhAStockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 		},
 	)
 	cardContent := larkcard.NewCardBuildGraphHelper(graph).
-		SetTitle(fmt.Sprintf("沪A-[%s]%s-近<%d>天", stockCode, stockName, days)).
+		SetTitle(fmt.Sprintf("沪A-[%s]%s-近<%d>天", arg.Code, stockName, days)).
 		SetStartTime(st).
 		SetEndTime(et).
 		Build(ctx)

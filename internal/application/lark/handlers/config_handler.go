@@ -7,10 +7,13 @@ import (
 	"strconv"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -24,19 +27,138 @@ import (
 // 配置管理命令
 // ==========================================
 
-// ConfigListHandler 列出配置
-// 使用方式: /config list [scope]
-func ConfigListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type ConfigSetArgs struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Scope string `json:"scope"`
+}
+
+type ConfigListArgs struct {
+	Scope string `json:"scope"`
+}
+
+type ConfigDeleteArgs struct {
+	Key   string `json:"key"`
+	Scope string `json:"scope"`
+}
+
+type FeatureListArgs struct{}
+
+type FeatureBlockArgs struct {
+	Feature string `json:"feature"`
+	Scope   string `json:"scope"`
+}
+
+type FeatureUnblockArgs struct {
+	Feature string `json:"feature"`
+	Scope   string `json:"scope"`
+}
+
+type configSetHandler struct{}
+type configListHandler struct{}
+type configDeleteHandler struct{}
+type featureListHandler struct{}
+type featureBlockHandler struct{}
+type featureUnblockHandler struct{}
+
+var ConfigSet configSetHandler
+var ConfigList configListHandler
+var ConfigDelete configDeleteHandler
+var FeatureList featureListHandler
+var FeatureBlock featureBlockHandler
+var FeatureUnblock featureUnblockHandler
+
+func (configSetHandler) ParseCLI(args []string) (ConfigSetArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := ConfigSetArgs{
+		Key:   argMap["key"],
+		Value: argMap["value"],
+		Scope: argMap["scope"],
+	}
+	if parsed.Key == "" || parsed.Value == "" {
+		return ConfigSetArgs{}, errors.New("usage: /config set key=xxx value=xxx [scope=global/chat/user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (configSetHandler) ParseTool(raw string) (ConfigSetArgs, error) {
+	parsed := ConfigSetArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ConfigSetArgs{}, err
+	}
+	if parsed.Key == "" || parsed.Value == "" {
+		return ConfigSetArgs{}, errors.New("usage: /config set key=xxx value=xxx [scope=global/chat/user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (configSetHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "config_set",
+		Desc: "设置机器人配置项",
+		Params: arktools.NewParams("object").
+			AddProp("key", &arktools.Prop{
+				Type: "string",
+				Desc: "配置键名",
+			}).
+			AddProp("value", &arktools.Prop{
+				Type: "string",
+				Desc: "配置值。布尔配置传 true/false，数值配置传整数字符串",
+			}).
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+			}).
+			AddRequired("key").
+			AddRequired("value"),
+	}
+}
+
+func (configListHandler) ParseCLI(args []string) (ConfigListArgs, error) {
+	argMap, _ := parseArgs(args...)
+	scope := argMap["scope"]
+	if scope == "" {
+		scope = "chat"
+	}
+	return ConfigListArgs{Scope: scope}, nil
+}
+
+func (configListHandler) ParseTool(raw string) (ConfigListArgs, error) {
+	parsed := ConfigListArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ConfigListArgs{}, err
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (configListHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "config_list",
+		Desc: "列出当前上下文可见的配置项",
+		Params: arktools.NewParams("object").
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+			}),
+	}
+}
+
+func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ConfigListArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	scopeStr := argMap["scope"]
-	if scopeStr == "" {
-		scopeStr = "chat"
-	}
+	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
 	chatID := *data.Event.Message.ChatId
@@ -109,26 +231,15 @@ func ConfigListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 	return err
 }
 
-// ConfigSetHandler 设置配置
-// 使用方式: /config set key=xxx value=xxx [scope=global/chat/user]
-func ConfigSetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ConfigSetArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	key := argMap["key"]
-	value := argMap["value"]
-	scopeStr := argMap["scope"]
-
-	if key == "" || value == "" {
-		return errors.New("usage: /config set key=xxx value=xxx [scope=global/chat/user]")
-	}
-
-	if scopeStr == "" {
-		scopeStr = "chat"
-	}
+	key := arg.Key
+	value := arg.Value
+	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
 	chatID := *data.Event.Message.ChatId
@@ -190,25 +301,60 @@ func ConfigSetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 	return err
 }
 
-// ConfigDeleteHandler 删除配置
-// 使用方式: /config delete key=xxx [scope=global/chat/user]
-func ConfigDeleteHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (configDeleteHandler) ParseCLI(args []string) (ConfigDeleteArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := ConfigDeleteArgs{
+		Key:   argMap["key"],
+		Scope: argMap["scope"],
+	}
+	if parsed.Key == "" {
+		return ConfigDeleteArgs{}, errors.New("usage: /config delete key=xxx [scope=global/chat/user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (configDeleteHandler) ParseTool(raw string) (ConfigDeleteArgs, error) {
+	parsed := ConfigDeleteArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ConfigDeleteArgs{}, err
+	}
+	if parsed.Key == "" {
+		return ConfigDeleteArgs{}, errors.New("usage: /config delete key=xxx [scope=global/chat/user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (configDeleteHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "config_delete",
+		Desc: "删除机器人配置项",
+		Params: arktools.NewParams("object").
+			AddProp("key", &arktools.Prop{
+				Type: "string",
+				Desc: "配置键名",
+			}).
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+			}).
+			AddRequired("key"),
+	}
+}
+
+func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ConfigDeleteArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	key := argMap["key"]
-	scopeStr := argMap["scope"]
-
-	if key == "" {
-		return errors.New("usage: /config delete key=xxx [scope=global/chat/user]")
-	}
-
-	if scopeStr == "" {
-		scopeStr = "chat"
-	}
+	key := arg.Key
+	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
 	chatID := *data.Event.Message.ChatId
@@ -243,9 +389,26 @@ func ConfigDeleteHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, m
 // 功能开关命令
 // ==========================================
 
-// FeatureListHandler 列出功能
-// 使用方式: /feature list [scope]
-func FeatureListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (featureListHandler) ParseCLI(args []string) (FeatureListArgs, error) {
+	return FeatureListArgs{}, nil
+}
+
+func (featureListHandler) ParseTool(raw string) (FeatureListArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return FeatureListArgs{}, err
+	}
+	return FeatureListArgs{}, nil
+}
+
+func (featureListHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "feature_list",
+		Desc:   "列出当前群聊的功能开关状态",
+		Params: arktools.NewParams("object"),
+	}
+}
+
+func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg FeatureListArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -285,25 +448,60 @@ func FeatureListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	return err
 }
 
-// FeatureBlockHandler 屏蔽功能
-// 使用方式: /feature block feature=xxx [scope=chat/user/chat_user]
-func FeatureBlockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (featureBlockHandler) ParseCLI(args []string) (FeatureBlockArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := FeatureBlockArgs{
+		Feature: argMap["feature"],
+		Scope:   argMap["scope"],
+	}
+	if parsed.Feature == "" {
+		return FeatureBlockArgs{}, errors.New("usage: /feature block feature=xxx [scope=chat/user/chat_user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (featureBlockHandler) ParseTool(raw string) (FeatureBlockArgs, error) {
+	parsed := FeatureBlockArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return FeatureBlockArgs{}, err
+	}
+	if parsed.Feature == "" {
+		return FeatureBlockArgs{}, errors.New("usage: /feature block feature=xxx [scope=chat/user/chat_user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (featureBlockHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "feature_block",
+		Desc: "屏蔽指定机器人功能",
+		Params: arktools.NewParams("object").
+			AddProp("feature", &arktools.Prop{
+				Type: "string",
+				Desc: "功能名称",
+			}).
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "生效范围，可选值：chat、user、chat_user。默认 chat",
+			}).
+			AddRequired("feature"),
+	}
+}
+
+func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg FeatureBlockArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	feature := argMap["feature"]
-	scopeStr := argMap["scope"]
-
-	if feature == "" {
-		return errors.New("usage: /feature block feature=xxx [scope=chat/user/chat_user]")
-	}
-
-	if scopeStr == "" {
-		scopeStr = "chat"
-	}
+	feature := arg.Feature
+	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
 	chatID := *data.Event.Message.ChatId
@@ -334,25 +532,60 @@ func FeatureBlockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, m
 	return err
 }
 
-// FeatureUnblockHandler 取消屏蔽功能
-// 使用方式: /feature unblock feature=xxx [scope=chat/user/chat_user]
-func FeatureUnblockHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (featureUnblockHandler) ParseCLI(args []string) (FeatureUnblockArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := FeatureUnblockArgs{
+		Feature: argMap["feature"],
+		Scope:   argMap["scope"],
+	}
+	if parsed.Feature == "" {
+		return FeatureUnblockArgs{}, errors.New("usage: /feature unblock feature=xxx [scope=chat/user/chat_user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (featureUnblockHandler) ParseTool(raw string) (FeatureUnblockArgs, error) {
+	parsed := FeatureUnblockArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return FeatureUnblockArgs{}, err
+	}
+	if parsed.Feature == "" {
+		return FeatureUnblockArgs{}, errors.New("usage: /feature unblock feature=xxx [scope=chat/user/chat_user]")
+	}
+	if parsed.Scope == "" {
+		parsed.Scope = "chat"
+	}
+	return parsed, nil
+}
+
+func (featureUnblockHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "feature_unblock",
+		Desc: "取消屏蔽指定机器人功能",
+		Params: arktools.NewParams("object").
+			AddProp("feature", &arktools.Prop{
+				Type: "string",
+				Desc: "功能名称",
+			}).
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "生效范围，可选值：chat、user、chat_user。默认 chat",
+			}).
+			AddRequired("feature"),
+	}
+}
+
+func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg FeatureUnblockArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	feature := argMap["feature"]
-	scopeStr := argMap["scope"]
-
-	if feature == "" {
-		return errors.New("usage: /feature unblock feature=xxx [scope=chat/user/chat_user]")
-	}
-
-	if scopeStr == "" {
-		scopeStr = "chat"
-	}
+	feature := arg.Feature
+	scopeStr := arg.Scope
 
 	var scope config.ConfigScope
 	chatID := *data.Event.Message.ChatId

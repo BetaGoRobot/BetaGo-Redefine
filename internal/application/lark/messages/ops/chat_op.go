@@ -15,6 +15,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
@@ -101,7 +102,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
-			err := handlers.ChatHandler("chat")(ctx, event, meta)
+			err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
 			if err != nil {
 				return err
 			}
@@ -155,7 +156,7 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 			zap.String("ratelimit_reason", decision.Reason),
 		)
 		// sendMsg
-		err := handlers.ChatHandler("chat")(ctx, event, meta)
+		err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
 		if err != nil {
 			return err
 		}

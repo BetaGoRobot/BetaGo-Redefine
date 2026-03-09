@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/hitokoto"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/enescakir/emoji"
@@ -34,40 +37,69 @@ type RespBody struct {
 	Length     int         `json:"length"`
 }
 
-func OneWordHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type OneWordArgs struct {
+	Type string `json:"type"`
+}
+
+type oneWordHandler struct{}
+
+var OneWord oneWordHandler
+
+func (oneWordHandler) ParseCLI(args []string) (OneWordArgs, error) {
+	argMap, _ := parseArgs(args...)
+	return OneWordArgs{Type: argMap["type"]}, nil
+}
+
+func (oneWordHandler) ParseTool(raw string) (OneWordArgs, error) {
+	parsed := OneWordArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return OneWordArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (oneWordHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "oneword_get",
+		Desc: "获取一句一言/诗词并发送到当前对话",
+		Params: arktools.NewParams("object").
+			AddProp("type", &arktools.Prop{
+				Type: "string",
+				Desc: "一言类型，可选值：二次元、游戏、文学、原创、网络、其他、影视、诗词、网易云、哲学、抖机灵",
+			}),
+	}
+}
+
+func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg OneWordArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
 	oneWordArgs := []string{}
 
-	argsMap, _ := parseArgs(args...)
-	wordType, ok := argsMap["type"]
-	if ok {
-		switch wordType {
-		case "二次元":
-			oneWordArgs = append(oneWordArgs, []string{"a", "b"}...)
-		case "游戏":
-			oneWordArgs = append(oneWordArgs, "c")
-		case "文学":
-			oneWordArgs = append(oneWordArgs, "d")
-		case "原创":
-			oneWordArgs = append(oneWordArgs, "e")
-		case "网络":
-			oneWordArgs = append(oneWordArgs, "f")
-		case "其他":
-			oneWordArgs = append(oneWordArgs, "g")
-		case "影视":
-			oneWordArgs = append(oneWordArgs, "h")
-		case "诗词":
-			oneWordArgs = append(oneWordArgs, "i")
-		case "网易云":
-			oneWordArgs = append(oneWordArgs, "j")
-		case "哲学":
-			oneWordArgs = append(oneWordArgs, "k")
-		case "抖机灵":
-			oneWordArgs = append(oneWordArgs, "l")
-		}
+	switch arg.Type {
+	case "二次元":
+		oneWordArgs = append(oneWordArgs, []string{"a", "b"}...)
+	case "游戏":
+		oneWordArgs = append(oneWordArgs, "c")
+	case "文学":
+		oneWordArgs = append(oneWordArgs, "d")
+	case "原创":
+		oneWordArgs = append(oneWordArgs, "e")
+	case "网络":
+		oneWordArgs = append(oneWordArgs, "f")
+	case "其他":
+		oneWordArgs = append(oneWordArgs, "g")
+	case "影视":
+		oneWordArgs = append(oneWordArgs, "h")
+	case "诗词":
+		oneWordArgs = append(oneWordArgs, "i")
+	case "网易云":
+		oneWordArgs = append(oneWordArgs, "j")
+	case "哲学":
+		oneWordArgs = append(oneWordArgs, "k")
+	case "抖机灵":
+		oneWordArgs = append(oneWordArgs, "l")
 	}
 
 	hitokotoRes, err := hitokoto.GetHitokoto(oneWordArgs...)

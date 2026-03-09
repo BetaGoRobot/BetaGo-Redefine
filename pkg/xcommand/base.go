@@ -4,6 +4,7 @@ package xcommand
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -19,17 +20,28 @@ import (
 //	@update 2024-07-18 04:43:42
 type CommandFunc[T any] func(ctx context.Context, data T, metaData *xhandler.BaseMetaData, args ...string) (err error)
 
+type CommandArg struct {
+	Name        string
+	Description string
+	Required    bool
+	Input       bool
+	Flag        bool
+}
+
 // Command Repeat
 //
 //	@author heyuhengmatt
 //	@update 2024-07-18 04:43:37
 type Command[T any] struct {
-	Name        string
-	SubCommands map[string]*Command[T]
-	Func        CommandFunc[T]
-	Usage       string
-	SupportArgs map[string]struct{}
-	curComChain []string
+	Name          string
+	Description   string
+	Examples      []string
+	SubCommands   map[string]*Command[T]
+	Func          CommandFunc[T]
+	Usage         string
+	SupportArgs   map[string]*CommandArg
+	supportArgSeq []string
+	curComChain   []string
 }
 
 // Execute 从当前节点开始，执行Command
@@ -48,11 +60,14 @@ func (c *Command[T]) Execute(ctx context.Context, data T, metaData *xhandler.Bas
 	if len(args) == 0 { // 无执行方法且无后续参数
 		return fmt.Errorf("%w: %s", xerror.ErrCommandIncomplete, c.FormatUsage())
 	}
+	if helpArgs, ok := c.redirectHelpArgs(args); ok {
+		helpCommand := c.SubCommands["help"]
+		if helpCommand != nil {
+			return helpCommand.Execute(ctx, data, metaData, helpArgs)
+		}
+	}
 
 	if subcommand, ok := c.SubCommands[args[0]]; ok {
-		if usage, ok := subcommand.CheckUsage(args[1:]...); ok {
-			return fmt.Errorf("%w: %s", xerror.ErrCheckUsage, usage)
-		}
 		err := subcommand.Execute(ctx, data, metaData, args[1:])
 		if err != nil && err == xerror.ErrArgsIncompelete {
 			return fmt.Errorf("%w: %s", xerror.ErrArgsIncompelete, subcommand.FormatUsage())
@@ -87,38 +102,20 @@ func (c *Command[T]) BuildChain() {
 //	@return GetSubCommands
 func (c *Command[T]) FormatUsage() string {
 	if c.Usage == "" {
-		baseUsage := fmt.Sprintf("Usage: %s", "/"+strings.Join(c.curComChain, " "))
+		baseUsage := c.Path()
 		if len(c.SupportArgs) != 0 {
-			baseUsage += fmt.Sprintf(" <%s>", strings.Join(c.GetSupportArgs(), ", "))
+			baseUsage += " " + strings.Join(c.GetSupportArgs(), " ")
 		}
 		if len(c.SubCommands) != 0 {
 			baseUsage += fmt.Sprintf(" [%s]", strings.Join(c.GetSubCommands(), ", "))
+		}
+		if details := c.FormatArgDetails(); details != "" {
+			baseUsage += "\n" + details
 		}
 
 		return baseUsage
 	}
 	return c.Usage
-}
-
-// CheckUsage 获取当前节点的所有SubCommands
-//
-//	@param c
-//	@return GetSubCommands
-func (c *Command[T]) CheckUsage(args ...string) (usage string, isHelp bool) {
-	if len(args) == 1 {
-		if args[0] == "--help" {
-			return c.FormatUsage(), true
-		}
-	}
-	for index, arg := range args {
-		if _, ok := c.SupportArgs[arg]; ok {
-			continue
-		}
-		if subcommand, ok := c.SubCommands[arg]; ok {
-			return subcommand.CheckUsage(args[index+1:]...)
-		}
-	}
-	return "", false
 }
 
 // GetSubCommands 获取当前节点的所有SubCommands
@@ -130,6 +127,7 @@ func (c *Command[T]) GetSubCommands() []string {
 	for k := range c.SubCommands {
 		availableComs = append(availableComs, k)
 	}
+	sort.Strings(availableComs)
 	return availableComs
 }
 
@@ -138,11 +136,69 @@ func (c *Command[T]) GetSubCommands() []string {
 //	@param c
 //	@return GetSubCommands
 func (c *Command[T]) GetSupportArgs() []string {
-	supportArgs := make([]string, 0, len(c.SupportArgs))
-	for k := range c.SupportArgs {
-		supportArgs = append(supportArgs, k)
+	supportArgs := make([]string, 0, len(c.supportArgSeq))
+	for _, spec := range c.GetArgSpecs() {
+		supportArgs = append(supportArgs, spec.UsageToken())
 	}
 	return supportArgs
+}
+
+func (c *Command[T]) GetArgSpecs() []CommandArg {
+	argSpecs := make([]CommandArg, 0, len(c.supportArgSeq))
+	for _, name := range c.supportArgSeq {
+		spec := c.SupportArgs[name]
+		if spec == nil {
+			continue
+		}
+		argSpecs = append(argSpecs, *spec)
+	}
+	return argSpecs
+}
+
+func (c *Command[T]) FormatArgDetails() string {
+	if len(c.supportArgSeq) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(c.supportArgSeq)+1)
+	lines = append(lines, "Args:")
+	for _, name := range c.supportArgSeq {
+		spec := c.SupportArgs[name]
+		if spec == nil {
+			continue
+		}
+		line := "  " + spec.UsageToken()
+		if spec.Description != "" {
+			line += ": " + spec.Description
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// redirectHelpArgs routes inline `--help` requests to the explicit `/help` command
+// so both entry points share the same handler and rendering logic.
+func (c *Command[T]) redirectHelpArgs(args []string) ([]string, bool) {
+	if c.Path() != "/" {
+		return nil, false
+	}
+	if len(args) == 0 || args[0] == "help" {
+		return nil, false
+	}
+	if _, ok := c.SubCommands["help"]; !ok {
+		return nil, false
+	}
+
+	path := make([]string, 0, len(args))
+	for _, token := range args {
+		if token == "--help" {
+			return path, true
+		}
+		if strings.HasPrefix(token, "--") {
+			continue
+		}
+		path = append(path, token)
+	}
+	return nil, false
 }
 
 // Validate 从当前节点开始，执行Command
@@ -184,14 +240,65 @@ func (c *Command[T]) AddUsage(usage string) *Command[T] {
 	return c
 }
 
+func (c *Command[T]) AddDescription(description string) *Command[T] {
+	c.Description = description
+	return c
+}
+
+func (c *Command[T]) AddExamples(examples ...string) *Command[T] {
+	for _, example := range examples {
+		example = strings.TrimSpace(example)
+		if example == "" {
+			continue
+		}
+		c.Examples = append(c.Examples, example)
+	}
+	return c
+}
+
+func (c *Command[T]) GetExamples() []string {
+	if len(c.Examples) == 0 {
+		return nil
+	}
+	res := make([]string, 0, len(c.Examples))
+	seen := make(map[string]struct{}, len(c.Examples))
+	for _, example := range c.Examples {
+		example = strings.TrimSpace(example)
+		if example == "" {
+			continue
+		}
+		if _, ok := seen[example]; ok {
+			continue
+		}
+		seen[example] = struct{}{}
+		res = append(res, example)
+	}
+	return res
+}
+
 // AddArgs 添加一个SubCommand
 //
 //	@param c *Command[T]
 //	@return AddUsage
 func (c *Command[T]) AddArgs(args ...string) *Command[T] {
 	for _, arg := range args {
-		c.SupportArgs[arg] = struct{}{}
+		c.AddArgSpec(CommandArg{Name: arg})
 	}
+	return c
+}
+
+func (c *Command[T]) AddArgSpec(arg CommandArg) *Command[T] {
+	if arg.Name == "" {
+		return c
+	}
+	if _, ok := c.SupportArgs[arg.Name]; !ok {
+		c.supportArgSeq = append(c.supportArgSeq, arg.Name)
+	}
+	spec := arg
+	if !spec.Input && spec.Name != "" && !spec.Flag {
+		spec.Flag = false
+	}
+	c.SupportArgs[arg.Name] = &spec
 	return c
 }
 
@@ -230,7 +337,7 @@ func NewCommand[T any](name string, fn CommandFunc[T]) *Command[T] {
 		Name:        name,
 		SubCommands: make(map[string]*Command[T]),
 		Func:        fn,
-		SupportArgs: make(map[string]struct{}),
+		SupportArgs: make(map[string]*CommandArg),
 	}
 }
 
@@ -246,5 +353,52 @@ func NewRootCommand[T any](fn CommandFunc[T]) *Command[T] {
 		Name:        "root",
 		SubCommands: make(map[string]*Command[T]),
 		Func:        fn,
+		SupportArgs: make(map[string]*CommandArg),
 	}
+}
+
+func (a CommandArg) UsageToken() string {
+	switch {
+	case a.Input && a.Required:
+		return "<" + a.Name + ">"
+	case a.Input:
+		return "[" + a.Name + "]"
+	case a.Flag && a.Required:
+		return "--" + a.Name
+	case a.Flag:
+		return "[--" + a.Name + "]"
+	case a.Required:
+		return "--" + a.Name + "=<value>"
+	default:
+		return "[--" + a.Name + "=<value>]"
+	}
+}
+
+func (c *Command[T]) Path() string {
+	if len(c.curComChain) != 0 {
+		return "/" + strings.Join(c.curComChain, " ")
+	}
+	if c.Name == "" || c.Name == "root" {
+		return "/"
+	}
+	return "/" + c.Name
+}
+
+func (c *Command[T]) Find(path ...string) *Command[T] {
+	cur := c
+	for _, item := range path {
+		name := strings.TrimSpace(strings.TrimPrefix(item, "/"))
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, "--") {
+			return nil
+		}
+		next, ok := cur.SubCommands[name]
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	return cur
 }

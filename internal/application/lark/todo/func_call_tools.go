@@ -12,8 +12,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/bytedance/gg/gresult"
-	"github.com/bytedance/sonic"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -22,6 +22,8 @@ import (
 var (
 	globalService *Service
 )
+
+const todoToolResultKey = "todo_tool_result"
 
 // Init 初始化待办服务（需要在应用启动时调用）
 func Init(db *gorm.DB) {
@@ -36,52 +38,13 @@ func GetService() *Service {
 
 // RegisterTools 注册待办相关的 Function Call 工具
 func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	createTodoTool(ins)
-	updateTodoTool(ins)
-	listTodosTool(ins)
-	deleteTodoTool(ins)
-	createReminderTool(ins)
-	listRemindersTool(ins)
-	deleteReminderTool(ins)
-}
-
-// ============================================
-// 创建待办工具
-// ============================================
-
-func createTodoTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("title", &tools.Prop{
-			Type: "string",
-			Desc: "待办事项的标题，必填",
-		}).
-		AddProp("description", &tools.Prop{
-			Type: "string",
-			Desc: "待办事项的详细描述，可选",
-		}).
-		AddProp("priority", &tools.Prop{
-			Type: "string",
-			Desc: "优先级: low(低), medium(中), high(高), urgent(紧急)，默认 medium",
-		}).
-		AddProp("due_at", &tools.Prop{
-			Type: "string",
-			Desc: "截止时间，格式为 RFC3339 或 YYYY-MM-DD HH:MM:SS，可选",
-		}).
-		AddProp("assignee_id", &tools.Prop{
-			Type: "string",
-			Desc: "负责人的飞书用户ID，可选",
-		}).
-		AddProp("tags", &tools.Prop{
-			Type: "string",
-			Desc: "标签，多个标签用逗号分隔，可选",
-		}).
-		AddRequired("title")
-
-	ins.Add(unit.Name("create_todo").
-		Desc("创建一个新的待办事项。当用户要求记录任务、添加待办、设置提醒事项时使用此工具").
-		Params(params).
-		Func(createTodoWrap))
+	xcommand.RegisterTool(ins, CreateTodo)
+	xcommand.RegisterTool(ins, UpdateTodo)
+	xcommand.RegisterTool(ins, ListTodos)
+	xcommand.RegisterTool(ins, DeleteTodo)
+	xcommand.RegisterTool(ins, CreateReminder)
+	xcommand.RegisterTool(ins, ListReminders)
+	xcommand.RegisterTool(ins, DeleteReminder)
 }
 
 type createTodoArgs struct {
@@ -91,118 +54,6 @@ type createTodoArgs struct {
 	DueAt       string `json:"due_at"`
 	AssigneeID  string `json:"assignee_id"`
 	Tags        string `json:"tags"`
-}
-
-func createTodoWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &createTodoArgs{}
-	if err := sonic.UnmarshalString(argStr, args); err != nil {
-		return gresult.Err[string](err)
-	}
-
-	// 获取用户信息
-	userInfo, err := larkuser.GetUserInfoCache(ctx, meta.ChatID, meta.UserID)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("Get user info failed", zap.Error(err))
-	}
-	userName := ""
-	if userInfo != nil && userInfo.Name != nil {
-		userName = *userInfo.Name
-	}
-
-	// 解析截止时间
-	var dueAt *time.Time
-	if args.DueAt != "" {
-		t, err := parseTime(args.DueAt)
-		if err == nil {
-			dueAt = &t
-		}
-	}
-
-	// 解析标签
-	tags := make([]string, 0)
-	if args.Tags != "" {
-		for _, tag := range strings.Split(args.Tags, ",") {
-			if t := strings.TrimSpace(tag); t != "" {
-				tags = append(tags, t)
-			}
-		}
-	}
-
-	req := &CreateTodoRequest{
-		ChatID:      meta.ChatID,
-		CreatorID:   meta.UserID,
-		CreatorName: userName,
-		Title:       args.Title,
-		Description: args.Description,
-		Priority:    args.Priority,
-		DueAt:       dueAt,
-		Tags:        tags,
-	}
-	if args.AssigneeID != "" {
-		req.AssigneeID = &args.AssigneeID
-	}
-
-	t, err := GetService().CreateTodo(ctx, req)
-	if err != nil {
-		return gresult.Err[string](err)
-	}
-
-	result := fmt.Sprintf("✅ 待办创建成功！\n\n标题: %s\nID: `%s`", t.Title, t.ID)
-	if t.Description != "" {
-		result += fmt.Sprintf("\n描述: %s", t.Description)
-	}
-	if t.DueAt != nil {
-		result += fmt.Sprintf("\n截止: %s", t.DueAt.In(utils.UTC8Loc()).Format("2006-01-02 15:04:05"))
-	}
-
-	return gresult.OK(result)
-}
-
-// ============================================
-// 更新待办工具
-// ============================================
-
-func updateTodoTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("id", &tools.Prop{
-			Type: "string",
-			Desc: "待办事项的ID，必填",
-		}).
-		AddProp("title", &tools.Prop{
-			Type: "string",
-			Desc: "新的标题，可选",
-		}).
-		AddProp("description", &tools.Prop{
-			Type: "string",
-			Desc: "新的描述，可选",
-		}).
-		AddProp("status", &tools.Prop{
-			Type: "string",
-			Desc: "状态: pending(待处理), doing(进行中), done(已完成), cancelled(已取消)",
-		}).
-		AddProp("priority", &tools.Prop{
-			Type: "string",
-			Desc: "优先级: low, medium, high, urgent",
-		}).
-		AddProp("due_at", &tools.Prop{
-			Type: "string",
-			Desc: "新的截止时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS",
-		}).
-		AddProp("add_tags", &tools.Prop{
-			Type: "string",
-			Desc: "要添加的标签，多个用逗号分隔",
-		}).
-		AddProp("remove_tags", &tools.Prop{
-			Type: "string",
-			Desc: "要移除的标签，多个用逗号分隔",
-		}).
-		AddRequired("id")
-
-	ins.Add(unit.Name("update_todo").
-		Desc("更新待办事项的状态、标题、描述、截止时间等。当用户要求完成任务、修改待办、设置状态时使用").
-		Params(params).
-		Func(updateTodoWrap))
 }
 
 type updateTodoArgs struct {
@@ -216,16 +67,164 @@ type updateTodoArgs struct {
 	RemoveTags  string `json:"remove_tags"`
 }
 
-func updateTodoWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &updateTodoArgs{}
-	if err := sonic.UnmarshalString(argStr, args); err != nil {
-		return gresult.Err[string](err)
+type listTodosArgs struct {
+	Status string `json:"status"`
+	Limit  int    `json:"limit"`
+}
+
+type deleteTodoArgs struct {
+	ID string `json:"id"`
+}
+
+type createReminderArgs struct {
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	TriggerAt string `json:"trigger_at"`
+	Type      string `json:"type"`
+	TodoID    string `json:"todo_id"`
+}
+
+type listRemindersArgs struct {
+	Limit int `json:"limit"`
+}
+
+type deleteReminderArgs struct {
+	ID string `json:"id"`
+}
+
+type createTodoHandler struct{}
+
+type updateTodoHandler struct{}
+
+type listTodosHandler struct{}
+
+type deleteTodoHandler struct{}
+
+type createReminderHandler struct{}
+
+type listRemindersHandler struct{}
+
+type deleteReminderHandler struct{}
+
+var CreateTodo createTodoHandler
+var UpdateTodo updateTodoHandler
+var ListTodos listTodosHandler
+var DeleteTodo deleteTodoHandler
+var CreateReminder createReminderHandler
+var ListReminders listRemindersHandler
+var DeleteReminder deleteReminderHandler
+
+func toolResultSpec(name, desc string, params *tools.Param) xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   name,
+		Desc:   desc,
+		Params: params,
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(todoToolResultKey)
+			return result
+		},
+	}
+}
+
+func (createTodoHandler) ParseTool(raw string) (createTodoArgs, error) {
+	parsed := createTodoArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return createTodoArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (createTodoHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"create_todo",
+		"创建一个新的待办事项。当用户要求记录任务、添加待办、设置提醒事项时使用此工具",
+		tools.NewParams("object").
+			AddProp("title", &tools.Prop{Type: "string", Desc: "待办事项的标题，必填"}).
+			AddProp("description", &tools.Prop{Type: "string", Desc: "待办事项的详细描述，可选"}).
+			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级: low(低), medium(中), high(高), urgent(紧急)，默认 medium"}).
+			AddProp("due_at", &tools.Prop{Type: "string", Desc: "截止时间，格式为 RFC3339 或 YYYY-MM-DD HH:MM:SS，可选"}).
+			AddProp("assignee_id", &tools.Prop{Type: "string", Desc: "负责人的飞书用户ID，可选"}).
+			AddProp("tags", &tools.Prop{Type: "string", Desc: "标签，多个标签用逗号分隔，可选"}).
+			AddRequired("title"),
+	)
+}
+
+func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createTodoArgs) error {
+	userInfo, err := larkuser.GetUserInfoCache(ctx, metaData.ChatID, metaData.UserID)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("Get user info failed", zap.Error(err))
+	}
+	userName := ""
+	if userInfo != nil && userInfo.Name != nil {
+		userName = *userInfo.Name
 	}
 
-	req := &UpdateTodoRequest{
-		ID: args.ID,
+	var dueAt *time.Time
+	if args.DueAt != "" {
+		t, err := parseTime(args.DueAt)
+		if err == nil {
+			dueAt = &t
+		}
 	}
 
+	tags := splitTags(args.Tags)
+	req := &CreateTodoRequest{
+		ChatID:      metaData.ChatID,
+		CreatorID:   metaData.UserID,
+		CreatorName: userName,
+		Title:       args.Title,
+		Description: args.Description,
+		Priority:    args.Priority,
+		DueAt:       dueAt,
+		Tags:        tags,
+	}
+	if args.AssigneeID != "" {
+		req.AssigneeID = &args.AssigneeID
+	}
+
+	t, err := GetService().CreateTodo(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	result := fmt.Sprintf("✅ 待办创建成功！\n\n标题: %s\nID: `%s`", t.Title, t.ID)
+	if t.Description != "" {
+		result += fmt.Sprintf("\n描述: %s", t.Description)
+	}
+	if t.DueAt != nil {
+		result += fmt.Sprintf("\n截止: %s", t.DueAt.In(utils.UTC8Loc()).Format("2006-01-02 15:04:05"))
+	}
+	metaData.SetExtra(todoToolResultKey, result)
+	return nil
+}
+
+func (updateTodoHandler) ParseTool(raw string) (updateTodoArgs, error) {
+	parsed := updateTodoArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return updateTodoArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (updateTodoHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"update_todo",
+		"更新待办事项的状态、标题、描述、截止时间等。当用户要求完成任务、修改待办、设置状态时使用",
+		tools.NewParams("object").
+			AddProp("id", &tools.Prop{Type: "string", Desc: "待办事项的ID，必填"}).
+			AddProp("title", &tools.Prop{Type: "string", Desc: "新的标题，可选"}).
+			AddProp("description", &tools.Prop{Type: "string", Desc: "新的描述，可选"}).
+			AddProp("status", &tools.Prop{Type: "string", Desc: "状态: pending(待处理), doing(进行中), done(已完成), cancelled(已取消)"}).
+			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级: low, medium, high, urgent"}).
+			AddProp("due_at", &tools.Prop{Type: "string", Desc: "新的截止时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS"}).
+			AddProp("add_tags", &tools.Prop{Type: "string", Desc: "要添加的标签，多个用逗号分隔"}).
+			AddProp("remove_tags", &tools.Prop{Type: "string", Desc: "要移除的标签，多个用逗号分隔"}).
+			AddRequired("id"),
+	)
+}
+
+func (updateTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args updateTodoArgs) error {
+	req := &UpdateTodoRequest{ID: args.ID}
 	if args.Title != "" {
 		req.Title = &args.Title
 	}
@@ -244,184 +243,127 @@ func updateTodoWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim
 		}
 	}
 	if args.AddTags != "" {
-		for _, tag := range strings.Split(args.AddTags, ",") {
-			if t := strings.TrimSpace(tag); t != "" {
-				req.AddTags = append(req.AddTags, t)
-			}
-		}
+		req.AddTags = splitTags(args.AddTags)
 	}
 	if args.RemoveTags != "" {
-		for _, tag := range strings.Split(args.RemoveTags, ",") {
-			if t := strings.TrimSpace(tag); t != "" {
-				req.RemoveTags = append(req.RemoveTags, t)
-			}
-		}
+		req.RemoveTags = splitTags(args.RemoveTags)
 	}
 
 	t, err := GetService().UpdateTodo(ctx, req)
 	if err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
 
 	result := fmt.Sprintf("✅ 待办更新成功！\n\n标题: %s\n状态: %s", t.Title, t.Status)
 	if args.Status == "done" {
 		result = fmt.Sprintf("🎉 恭喜完成任务！\n\n标题: %s", t.Title)
 	}
-
-	return gresult.OK(result)
+	metaData.SetExtra(todoToolResultKey, result)
+	return nil
 }
 
-// ============================================
-// 列出待办工具
-// ============================================
-
-func listTodosTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("status", &tools.Prop{
-			Type: "string",
-			Desc: "过滤状态: pending, doing, done, cancelled，不填则列出所有",
-		}).
-		AddProp("limit", &tools.Prop{
-			Type: "number",
-			Desc: "返回数量限制，默认 50",
-		})
-
-	ins.Add(unit.Name("list_todos").
-		Desc("列出当前群组的所有待办事项。当用户要求查看待办、任务列表、有什么任务时使用").
-		Params(params).
-		Func(listTodosWrap))
-}
-
-type listTodosArgs struct {
-	Status string `json:"status"`
-	Limit  int    `json:"limit"`
-}
-
-func listTodosWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &listTodosArgs{}
-	_ = sonic.UnmarshalString(argStr, args)
-
-	req := &ListTodosRequest{
-		ChatID: meta.ChatID,
-		Limit:  args.Limit,
+func (listTodosHandler) ParseTool(raw string) (listTodosArgs, error) {
+	parsed := listTodosArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
 	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return listTodosArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (listTodosHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"list_todos",
+		"列出当前群组的所有待办事项。当用户要求查看待办、任务列表、有什么任务时使用",
+		tools.NewParams("object").
+			AddProp("status", &tools.Prop{Type: "string", Desc: "过滤状态: pending, doing, done, cancelled，不填则列出所有"}).
+			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制，默认 50"}),
+	)
+}
+
+func (listTodosHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listTodosArgs) error {
+	req := &ListTodosRequest{ChatID: metaData.ChatID, Limit: args.Limit}
 	if args.Status != "" {
 		req.Status = &args.Status
 	}
-
 	todos, err := GetService().ListTodos(ctx, req)
 	if err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
-
-	return gresult.OK(FormatTodoList(todos))
+	metaData.SetExtra(todoToolResultKey, FormatTodoList(todos))
+	return nil
 }
 
-// ============================================
-// 删除待办工具
-// ============================================
-
-func deleteTodoTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("id", &tools.Prop{
-			Type: "string",
-			Desc: "要删除的待办事项ID",
-		}).
-		AddRequired("id")
-
-	ins.Add(unit.Name("delete_todo").
-		Desc("删除指定的待办事项。当用户要求删除任务、移除待办时使用").
-		Params(params).
-		Func(deleteTodoWrap))
-}
-
-type deleteTodoArgs struct {
-	ID string `json:"id"`
-}
-
-func deleteTodoWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &deleteTodoArgs{}
-	if err := sonic.UnmarshalString(argStr, args); err != nil {
-		return gresult.Err[string](err)
+func (deleteTodoHandler) ParseTool(raw string) (deleteTodoArgs, error) {
+	parsed := deleteTodoArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return deleteTodoArgs{}, err
 	}
+	return parsed, nil
+}
 
+func (deleteTodoHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"delete_todo",
+		"删除指定的待办事项。当用户要求删除任务、移除待办时使用",
+		tools.NewParams("object").
+			AddProp("id", &tools.Prop{Type: "string", Desc: "要删除的待办事项ID"}).
+			AddRequired("id"),
+	)
+}
+
+func (deleteTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteTodoArgs) error {
 	if err := GetService().DeleteTodo(ctx, args.ID); err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
-
-	return gresult.OK(fmt.Sprintf("✅ 待办已删除！ID: `%s`", args.ID))
+	metaData.SetExtra(todoToolResultKey, fmt.Sprintf("✅ 待办已删除！ID: `%s`", args.ID))
+	return nil
 }
 
-// ============================================
-// 创建提醒工具
-// ============================================
-
-func createReminderTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("title", &tools.Prop{
-			Type: "string",
-			Desc: "提醒的标题，必填",
-		}).
-		AddProp("content", &tools.Prop{
-			Type: "string",
-			Desc: "提醒的详细内容，可选",
-		}).
-		AddProp("trigger_at", &tools.Prop{
-			Type: "string",
-			Desc: "触发时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS，必填",
-		}).
-		AddProp("type", &tools.Prop{
-			Type: "string",
-			Desc: "提醒类型: once(一次性), daily(每天), weekly(每周), monthly(每月)，默认 once",
-		}).
-		AddProp("todo_id", &tools.Prop{
-			Type: "string",
-			Desc: "关联的待办事项ID，可选",
-		}).
-		AddRequired("title").
-		AddRequired("trigger_at")
-
-	ins.Add(unit.Name("create_reminder").
-		Desc("创建一个提醒。当用户要求设置闹钟、提醒我、到时通知等时使用此工具").
-		Params(params).
-		Func(createReminderWrap))
-}
-
-type createReminderArgs struct {
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	TriggerAt string `json:"trigger_at"`
-	Type      string `json:"type"`
-	TodoID    string `json:"todo_id"`
-}
-
-func createReminderWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &createReminderArgs{}
-	if err := sonic.UnmarshalString(argStr, args); err != nil {
-		return gresult.Err[string](err)
+func (createReminderHandler) ParseTool(raw string) (createReminderArgs, error) {
+	parsed := createReminderArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return createReminderArgs{}, err
 	}
+	return parsed, nil
+}
 
+func (createReminderHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"create_reminder",
+		"创建一个提醒。当用户要求设置闹钟、提醒我、到时通知等时使用此工具",
+		tools.NewParams("object").
+			AddProp("title", &tools.Prop{Type: "string", Desc: "提醒的标题，必填"}).
+			AddProp("content", &tools.Prop{Type: "string", Desc: "提醒的详细内容，可选"}).
+			AddProp("trigger_at", &tools.Prop{Type: "string", Desc: "触发时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS，必填"}).
+			AddProp("type", &tools.Prop{Type: "string", Desc: "提醒类型: once(一次性), daily(每天), weekly(每周), monthly(每月)，默认 once"}).
+			AddProp("todo_id", &tools.Prop{Type: "string", Desc: "关联的待办事项ID，可选"}).
+			AddRequired("title").
+			AddRequired("trigger_at"),
+	)
+}
+
+func (createReminderHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createReminderArgs) error {
 	triggerAt, err := parseTime(args.TriggerAt)
 	if err != nil {
-		return gresult.Err[string](fmt.Errorf("无法解析时间: %w", err))
+		return fmt.Errorf("无法解析时间: %w", err)
 	}
 
 	req := &CreateReminderRequest{
-		ChatID:     meta.ChatID,
-		CreatorID:  meta.UserID,
-		Title:      args.Title,
-		Content:    args.Content,
-		Type:       args.Type,
-		TriggerAt:  triggerAt,
-		TodoID:     args.TodoID,
+		ChatID:    metaData.ChatID,
+		CreatorID: metaData.UserID,
+		Title:     args.Title,
+		Content:   args.Content,
+		Type:      args.Type,
+		TriggerAt: triggerAt,
+		TodoID:    args.TodoID,
 	}
 
 	rem, err := GetService().CreateReminder(ctx, req)
 	if err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
 
 	result := fmt.Sprintf("⏰ 提醒创建成功！\n\n标题: %s\n触发时间: %s\nID: `%s`",
@@ -431,83 +373,77 @@ func createReminderWrap(ctx context.Context, argStr string, meta tools.FCMeta[la
 	if rem.Content != "" {
 		result += fmt.Sprintf("\n内容: %s", rem.Content)
 	}
-
-	return gresult.OK(result)
+	metaData.SetExtra(todoToolResultKey, result)
+	return nil
 }
 
-// ============================================
-// 列出提醒工具
-// ============================================
-
-func listRemindersTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("limit", &tools.Prop{
-			Type: "number",
-			Desc: "返回数量限制，默认 50",
-		})
-
-	ins.Add(unit.Name("list_reminders").
-		Desc("列出当前群组的所有待触发的提醒。当用户要求查看提醒列表、有什么闹钟时使用").
-		Params(params).
-		Func(listRemindersWrap))
-}
-
-type listRemindersArgs struct {
-	Limit int `json:"limit"`
-}
-
-func listRemindersWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &listRemindersArgs{}
-	_ = sonic.UnmarshalString(argStr, args)
-
-	req := &ListRemindersRequest{
-		ChatID: meta.ChatID,
-		Limit:  args.Limit,
+func (listRemindersHandler) ParseTool(raw string) (listRemindersArgs, error) {
+	parsed := listRemindersArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
 	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return listRemindersArgs{}, err
+	}
+	return parsed, nil
+}
 
+func (listRemindersHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"list_reminders",
+		"列出当前群组的所有待触发的提醒。当用户要求查看提醒列表、有什么闹钟时使用",
+		tools.NewParams("object").
+			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制，默认 50"}),
+	)
+}
+
+func (listRemindersHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listRemindersArgs) error {
+	req := &ListRemindersRequest{ChatID: metaData.ChatID, Limit: args.Limit}
 	reminders, err := GetService().ListReminders(ctx, req)
 	if err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
-
-	return gresult.OK(FormatReminderList(reminders))
+	metaData.SetExtra(todoToolResultKey, FormatReminderList(reminders))
+	return nil
 }
 
-// ============================================
-// 删除提醒工具
-// ============================================
-
-func deleteReminderTool(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	unit := tools.NewUnit[larkim.P2MessageReceiveV1]()
-	params := tools.NewParams("object").
-		AddProp("id", &tools.Prop{
-			Type: "string",
-			Desc: "要删除的提醒ID",
-		}).
-		AddRequired("id")
-
-	ins.Add(unit.Name("delete_reminder").
-		Desc("删除指定的提醒。当用户要求取消提醒、删除闹钟时使用").
-		Params(params).
-		Func(deleteReminderWrap))
-}
-
-type deleteReminderArgs struct {
-	ID string `json:"id"`
-}
-
-func deleteReminderWrap(ctx context.Context, argStr string, meta tools.FCMeta[larkim.P2MessageReceiveV1]) gresult.R[string] {
-	args := &deleteReminderArgs{}
-	if err := sonic.UnmarshalString(argStr, args); err != nil {
-		return gresult.Err[string](err)
+func (deleteReminderHandler) ParseTool(raw string) (deleteReminderArgs, error) {
+	parsed := deleteReminderArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return deleteReminderArgs{}, err
 	}
+	return parsed, nil
+}
 
+func (deleteReminderHandler) ToolSpec() xcommand.ToolSpec {
+	return toolResultSpec(
+		"delete_reminder",
+		"删除指定的提醒。当用户要求取消提醒、删除闹钟时使用",
+		tools.NewParams("object").
+			AddProp("id", &tools.Prop{Type: "string", Desc: "要删除的提醒ID"}).
+			AddRequired("id"),
+	)
+}
+
+func (deleteReminderHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteReminderArgs) error {
 	if err := GetService().DeleteReminder(ctx, args.ID); err != nil {
-		return gresult.Err[string](err)
+		return err
 	}
+	metaData.SetExtra(todoToolResultKey, fmt.Sprintf("✅ 提醒已删除！ID: `%s`", args.ID))
+	return nil
+}
 
-	return gresult.OK(fmt.Sprintf("✅ 提醒已删除！ID: `%s`", args.ID))
+func splitTags(input string) []string {
+	if input == "" {
+		return nil
+	}
+	tags := make([]string, 0)
+	for _, tag := range strings.Split(input, ",") {
+		if t := strings.TrimSpace(tag); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	return tags
 }
 
 // ============================================
@@ -515,7 +451,6 @@ func deleteReminderWrap(ctx context.Context, argStr string, meta tools.FCMeta[la
 // ============================================
 
 func parseTime(s string) (time.Time, error) {
-	// 尝试多种时间格式
 	formats := []string{
 		time.RFC3339,
 		"2006-01-02 15:04:05",
@@ -532,7 +467,6 @@ func parseTime(s string) (time.Time, error) {
 		}
 	}
 
-	// 尝试解析时间戳
 	if ts, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return time.Unix(ts/1000, 0).In(utils.UTC8Loc()), nil
 	}

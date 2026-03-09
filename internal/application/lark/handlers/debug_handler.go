@@ -46,7 +46,7 @@ type traceItem struct {
 	CreateTime string `json:"create_time"`
 }
 
-// DebugGetIDHandler to be filled
+// handleDebugGetID to be filled
 //
 //	@param ctx context.Context
 //	@param data *larkim.P2MessageReceiveV1
@@ -54,7 +54,7 @@ type traceItem struct {
 //	@return error
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:33
-func DebugGetIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugGetID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -72,7 +72,7 @@ func DebugGetIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 	return nil
 }
 
-// DebugGetGroupIDHandler to be filled
+// handleDebugGetGroupID to be filled
 //
 //	@param ctx context.Context
 //	@param data *larkim.P2MessageReceiveV1
@@ -80,7 +80,7 @@ func DebugGetIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 //	@return error
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:29
-func DebugGetGroupIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugGetGroupID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -97,7 +97,7 @@ func DebugGetGroupIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1
 	return nil
 }
 
-// DebugTryPanicHandler to be filled
+// handleDebugTryPanic to be filled
 //
 //	@param ctx context.Context
 //	@param data *larkim.P2MessageReceiveV1
@@ -105,7 +105,7 @@ func DebugGetGroupIDHandler(ctx context.Context, data *larkim.P2MessageReceiveV1
 //	@return error
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:25
-func DebugTryPanicHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugTryPanic(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -149,7 +149,7 @@ func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem],
 	}, nil
 }
 
-// DebugTraceHandler to be filled
+// handleDebugTrace to be filled
 //
 //	@param ctx context.Context
 //	@param data *larkim.P2MessageReceiveV1
@@ -157,7 +157,7 @@ func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem],
 //	@return error
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:23
-func DebugTraceHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugTrace(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -216,13 +216,13 @@ func DebugTraceHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 	return nil
 }
 
-// DebugRevertHandler DebugTraceHandler to be filled
+// handleDebugRevert handleDebugTrace to be filled
 //
 //	@param ctx context.Context
 //	@param data *larkim.P2MessageReceiveV1
 //	@param args ...string
 //	@return error
-func DebugRevertHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -269,7 +269,7 @@ func DebugRevertHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	return nil
 }
 
-func DebugRepeatHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugRepeat(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -314,7 +314,7 @@ func DebugRepeatHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	return nil
 }
 
-func DebugImageHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -351,7 +351,7 @@ func DebugImageHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 	return nil
 }
 
-func DebugConversationHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func handleDebugConversation(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
@@ -503,7 +503,7 @@ func Dedup[T, K comparable](slice []T, keyFunc func(T) K) []T {
 // 		argsSlice = append(argsSlice, "--t="+s.Time)
 // 	}
 // 	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, meta.ChatID, meta.UserID)
-// 	if err := DebugRevertHandler(ctx, meta.LarkData, metaData, argsSlice...); err != nil {
+// 	if err := handleDebugRevert(ctx, meta.LarkData, metaData, argsSlice...); err != nil {
 // 		return nil, err
 // 	}
 // 	return goption.Of(metaData.GetExtra("revert_result")).ValueOr("执行完成但没有结果"), nil

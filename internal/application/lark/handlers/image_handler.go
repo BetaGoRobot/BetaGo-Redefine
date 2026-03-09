@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
@@ -13,6 +14,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcopywriting"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -26,33 +29,70 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ImageAddHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return error
-//	@author heyuhengmatt
-//	@update 2024-08-06 08:27:13
-func ImageAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type ImageAddArgs struct {
+	URL    string `json:"url"`
+	ImgKey string `json:"img_key"`
+}
+
+type ImageGetArgs struct{}
+type ImageDeleteArgs struct{}
+
+type imageAddHandler struct{}
+type imageGetHandler struct{}
+type imageDeleteHandler struct{}
+
+var ImageAdd imageAddHandler
+var ImageGet imageGetHandler
+var ImageDelete imageDeleteHandler
+
+func (imageAddHandler) ParseCLI(args []string) (ImageAddArgs, error) {
+	argMap, _ := parseArgs(args...)
+	return ImageAddArgs{
+		URL:    argMap["url"],
+		ImgKey: argMap["img_key"],
+	}, nil
+}
+
+func (imageAddHandler) ParseTool(raw string) (ImageAddArgs, error) {
+	parsed := ImageAddArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ImageAddArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (imageAddHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "image_add",
+		Desc: "把图片素材加入当前群聊的图片素材库",
+		Params: arktools.NewParams("object").
+			AddProp("url", &arktools.Prop{
+				Type: "string",
+				Desc: "图片 URL。与 img_key 二选一；都不传时尝试使用当前引用/话题中的图片",
+			}).
+			AddProp("img_key", &arktools.Prop{
+				Type: "string",
+				Desc: "飞书图片 key。与 url 二选一；都不传时尝试使用当前引用/话题中的图片",
+			}),
+	}
+}
+
+func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ImageAddArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	logs.L().Ctx(ctx).Info("wordAddHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", argMap))
-	if len(argMap) > 0 {
-		var imgKey string
+	logs.L().Ctx(ctx).Info("wordAddHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	if arg.URL != "" || arg.ImgKey != "" {
+		imgKey := ""
 		// by url
-		picURL, ok := argMap["url"]
-		if ok {
-			imgKey = larkimg.UploadPicture2Lark(ctx, picURL)
+		if arg.URL != "" {
+			imgKey = larkimg.UploadPicture2Lark(ctx, arg.URL)
 		}
 		// by img_key
-		inputImgKey, ok := argMap["img_key"]
-		if ok {
-			imgKey = inputImgKey
+		if arg.ImgKey != "" {
+			imgKey = arg.ImgKey
 		}
 		err := createImage(ctx, *data.Event.Message.MessageId, *data.Event.Message.ChatId, imgKey, larkim.MsgTypeImage)
 		if err != nil {
@@ -109,19 +149,31 @@ func ImageAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 	return nil
 }
 
-// ImageGetHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return error
-func ImageGetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (imageGetHandler) ParseCLI(args []string) (ImageGetArgs, error) {
+	return ImageGetArgs{}, nil
+}
+
+func (imageGetHandler) ParseTool(raw string) (ImageGetArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return ImageGetArgs{}, err
+	}
+	return ImageGetArgs{}, nil
+}
+
+func (imageGetHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "image_get",
+		Desc:   "查看当前群聊已登记的图片素材",
+		Params: arktools.NewParams("object"),
+	}
+}
+
+func (imageGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ImageGetArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
-	argMap, _ := parseArgs(args...)
-	logs.L().Ctx(ctx).Info("replyGetHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", argMap))
+	logs.L().Ctx(ctx).Info("replyGetHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
 	ChatID := *data.Event.Message.ChatId
 
 	lines := make([]map[string]string, 0)
@@ -150,21 +202,33 @@ func ImageGetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaD
 	return nil
 }
 
-// ImageDelHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return error
-func ImageDelHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (imageDeleteHandler) ParseCLI(args []string) (ImageDeleteArgs, error) {
+	return ImageDeleteArgs{}, nil
+}
+
+func (imageDeleteHandler) ParseTool(raw string) (ImageDeleteArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return ImageDeleteArgs{}, err
+	}
+	return ImageDeleteArgs{}, nil
+}
+
+func (imageDeleteHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "image_delete",
+		Desc:   "删除当前引用消息或话题中对应的图片素材",
+		Params: arktools.NewParams("object"),
+	}
+}
+
+func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ImageDeleteArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
 
-	argMap, _ := parseArgs(args...)
-	logs.L().Ctx(ctx).Info("replyDelHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", argMap))
+	logs.L().Ctx(ctx).Info("replyDelHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
 
 	if data.Event.Message.ThreadId != nil {
 		// 找到话题中的所有图片

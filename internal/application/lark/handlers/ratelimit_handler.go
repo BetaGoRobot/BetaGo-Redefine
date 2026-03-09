@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -20,16 +23,55 @@ import (
 // 频控诊断命令
 // ==========================================
 
-// RateLimitStatsHandler 显示频控统计信息
-// 使用方式: /ratelimit stats [chat_id]
-func RateLimitStatsHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type RateLimitStatsArgs struct {
+	ChatID string `json:"chat_id"`
+}
+
+type RateLimitListArgs struct{}
+
+type rateLimitStatsHandler struct{}
+type rateLimitListHandler struct{}
+
+var RateLimitStats rateLimitStatsHandler
+var RateLimitList rateLimitListHandler
+
+func (rateLimitStatsHandler) ParseCLI(args []string) (RateLimitStatsArgs, error) {
+	argMap, _ := parseArgs(args...)
+	return RateLimitStatsArgs{
+		ChatID: argMap["chat_id"],
+	}, nil
+}
+
+func (rateLimitStatsHandler) ParseTool(raw string) (RateLimitStatsArgs, error) {
+	parsed := RateLimitStatsArgs{}
+	if raw == "" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return RateLimitStatsArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (rateLimitStatsHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "ratelimit_stats_get",
+		Desc: "查看某个群聊的频控统计与诊断信息",
+		Params: arktools.NewParams("object").
+			AddProp("chat_id", &arktools.Prop{
+				Type: "string",
+				Desc: "目标群聊 ID，不填则使用当前群聊",
+			}),
+	}
+}
+
+func (rateLimitStatsHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg RateLimitStatsArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(fmt.Sprintf("%v", data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	argMap, _ := parseArgs(args...)
-	targetChatID := argMap["chat_id"]
+	targetChatID := arg.ChatID
 	if targetChatID == "" {
 		targetChatID = *data.Event.Message.ChatId
 	}
@@ -173,9 +215,26 @@ func RateLimitStatsHandler(ctx context.Context, data *larkim.P2MessageReceiveV1,
 	return err
 }
 
-// RateLimitListHandler 列出所有会话的频控统计
-// 使用方式: /ratelimit list
-func RateLimitListHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (rateLimitListHandler) ParseCLI(args []string) (RateLimitListArgs, error) {
+	return RateLimitListArgs{}, nil
+}
+
+func (rateLimitListHandler) ParseTool(raw string) (RateLimitListArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return RateLimitListArgs{}, err
+	}
+	return RateLimitListArgs{}, nil
+}
+
+func (rateLimitListHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "ratelimit_list",
+		Desc:   "列出所有会话的频控统计概览",
+		Params: arktools.NewParams("object"),
+	}
+}
+
+func (rateLimitListHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg RateLimitListArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()

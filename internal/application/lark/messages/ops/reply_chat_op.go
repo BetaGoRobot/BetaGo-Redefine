@@ -6,9 +6,11 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -88,9 +90,13 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 
 	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 	msg = larkmsg.TrimAtMsg(ctx, msg)
-	err = handlers.ChatHandler("chat")(ctx, event, meta, strings.Split(msg, " ")...)
+	err = xcommand.BindCLI(handlers.Chat)(ctx, event, meta, strings.Split(msg, " ")...)
 	if !meta.SkipDone {
 		larkmsg.AddReactionAsync(ctx, "DONE", *event.Event.Message.MessageId)
 	}
+
+	// 记录回复
+	decider := ratelimit.GetDecider()
+	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
 	return
 }
