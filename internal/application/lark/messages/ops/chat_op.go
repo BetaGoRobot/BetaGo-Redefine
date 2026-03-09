@@ -68,9 +68,12 @@ func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 	defer func() { span.RecordError(err) }()
 
 	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" is command")
 	}
 
+	if larkmsg.IsMentioned(event.Event.Message.Mentions) {
+		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" is mentioned, should handle by reply_chat_op")
+	}
 	return
 }
 
