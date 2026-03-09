@@ -25,7 +25,6 @@ import (
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -42,24 +41,6 @@ const (
 	MODEL_TYPE_REASON = "reason"
 	MODEL_TYPE_NORMAL = "normal"
 )
-
-func ChatHandler(chatType string) func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	return func(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-		defer func() { metaData.SkipDone = true }()
-		newChatType := chatType
-		size := new(int)
-		*size = 20
-		argMap, input := parseArgs(args...)
-		if _, ok := argMap["r"]; ok {
-			newChatType = MODEL_TYPE_REASON
-		}
-		if _, ok := argMap["c"]; ok {
-			// no context
-			*size = 0
-		}
-		return ChatHandlerInner(ctx, event, newChatType, size, input)
-	}
-}
 
 func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())

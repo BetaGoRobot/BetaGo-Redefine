@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -18,6 +19,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/vadvisor"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -32,74 +34,164 @@ import (
 	"go.uber.org/zap"
 )
 
-func WordCloudHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type WordCloudArgs struct {
+	Days       int    `json:"days"`
+	Interval   string `json:"interval"`
+	MessageTop int    `json:"message_top" cli:"mtop"`
+	ChunkTop   int    `json:"chunk_top" cli:"ctop"`
+	ChatID     string `json:"chat_id"`
+	Sort       string `json:"sort"`
+	StartTime  string `json:"start_time" cli:"st"`
+	EndTime    string `json:"end_time" cli:"et"`
+}
+
+type wordCloudHandler struct{}
+
+var WordCloud wordCloudHandler
+
+func (wordCloudHandler) ParseCLI(args []string) (WordCloudArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := WordCloudArgs{
+		Days:       7,
+		Interval:   "1d",
+		MessageTop: 10,
+		ChunkTop:   5,
+		ChatID:     argMap["chat_id"],
+		Sort:       argMap["sort"],
+		StartTime:  argMap["st"],
+		EndTime:    argMap["et"],
+	}
+	if argMap["interval"] != "" {
+		parsed.Interval = argMap["interval"]
+	}
+	if daysStr := argMap["days"]; daysStr != "" {
+		if days, err := strconv.Atoi(daysStr); err == nil && days > 0 {
+			parsed.Days = days
+		}
+	}
+	if mTopStr := argMap["mtop"]; mTopStr != "" {
+		if mTop, err := strconv.Atoi(mTopStr); err == nil && mTop > 0 {
+			parsed.MessageTop = mTop
+		} else {
+			parsed.MessageTop = 15
+		}
+	}
+	if cTopStr := argMap["ctop"]; cTopStr != "" {
+		if cTop, err := strconv.Atoi(cTopStr); err == nil && cTop > 0 {
+			parsed.ChunkTop = cTop
+		}
+	}
+	return parsed, nil
+}
+
+func (wordCloudHandler) ParseTool(raw string) (WordCloudArgs, error) {
+	parsed := WordCloudArgs{
+		Days:       7,
+		Interval:   "1d",
+		MessageTop: 10,
+		ChunkTop:   5,
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return WordCloudArgs{}, err
+	}
+	if parsed.Days <= 0 {
+		parsed.Days = 7
+	}
+	if parsed.Interval == "" {
+		parsed.Interval = "1d"
+	}
+	if parsed.MessageTop <= 0 {
+		parsed.MessageTop = 10
+	}
+	if parsed.ChunkTop <= 0 {
+		parsed.ChunkTop = 5
+	}
+	if parsed.StartTime != "" && parsed.EndTime != "" {
+		parsed.StartTime = normalizeDateTime(parsed.StartTime)
+		parsed.EndTime = normalizeDateTime(parsed.EndTime)
+	}
+	return parsed, nil
+}
+
+func (wordCloudHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "word_cloud_get",
+		Desc: "生成群聊词云、活跃用户和热点话题摘要",
+		Params: arktools.NewParams("object").
+			AddProp("days", &arktools.Prop{
+				Type: "number",
+				Desc: "统计近几天的词云，默认 7",
+			}).
+			AddProp("interval", &arktools.Prop{
+				Type: "string",
+				Desc: "聚合间隔，例如 1d、12h、1h",
+			}).
+			AddProp("message_top", &arktools.Prop{
+				Type: "number",
+				Desc: "活跃用户 Top N，默认 10",
+			}).
+			AddProp("chunk_top", &arktools.Prop{
+				Type: "number",
+				Desc: "热点话题块 Top N，默认 5",
+			}).
+			AddProp("chat_id", &arktools.Prop{
+				Type: "string",
+				Desc: "目标群聊 ID，不填则使用当前群聊",
+			}).
+			AddProp("sort", &arktools.Prop{
+				Type: "string",
+				Desc: "摘要排序方式，可选值：relevance、time",
+			}).
+			AddProp("start_time", &arktools.Prop{
+				Type: "string",
+				Desc: "开始时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}).
+			AddProp("end_time", &arktools.Prop{
+				Type: "string",
+				Desc: "结束时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}),
+	}
+}
+
+func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg WordCloudArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
 	var (
-		days     = 7
-		interval = "1d"
-		st, et   time.Time
+		st, et time.Time
 	)
 	chatID := *data.Event.Message.ChatId
+	if arg.ChatID != "" {
+		chatID = arg.ChatID
+	}
 	var (
-		mTop        = 10
-		cTop        = 5
 		sort Sorter = NewScriptSort(
 			NewScript("script").Script("doc['msg_ids'].size()").Lang("painless"), "number",
 		).Order(false)
 	)
-	argMap, _ := parseArgs(args...)
-	if inputInterval, ok := argMap["interval"]; ok {
-		interval = inputInterval
-	}
-	if daysStr, ok := argMap["days"]; ok {
-		newDays, err := strconv.Atoi(daysStr)
-		if err == nil && newDays > 0 {
-			days = newDays
-		}
-	}
-	if chatIDInput, ok := argMap["chat_id"]; ok {
-		chatID = chatIDInput
-	}
-	if mTopStr, ok := argMap["mtop"]; ok {
-		if mTop, err = strconv.Atoi(mTopStr); err != nil || mTop <= 0 {
-			mTop = 15
-		}
-	}
-	if cTopStr, ok := argMap["ctop"]; ok {
-		if cTop, err = strconv.Atoi(cTopStr); err != nil || cTop <= 0 {
-			cTop = 5
-		}
-	}
-	if sortStr, ok := argMap["sort"]; ok {
-		if sortStr == "time" {
-			sort = NewFieldSort("timestamp_v2").Desc()
-		}
+	if arg.Sort == "time" {
+		sort = NewFieldSort("timestamp_v2").Desc()
 	}
 
-	st, et = GetBackDays(days)
-	// 如果有st，et的配置，用st，et的配置来覆盖
-	if stStr, ok := argMap["st"]; ok {
-		if etStr, ok := argMap["et"]; ok {
-			st, err = time.ParseInLocation(time.DateTime, stStr, utils.UTC8Loc())
-			if err != nil {
-				return err
-			}
-			et, err = time.ParseInLocation(time.DateTime, etStr, utils.UTC8Loc())
-			if err != nil {
-				return err
-			}
+	st, et = GetBackDays(arg.Days)
+	if arg.StartTime != "" && arg.EndTime != "" {
+		st, err = time.ParseInLocation(time.DateTime, arg.StartTime, utils.UTC8Loc())
+		if err != nil {
+			return err
+		}
+		et, err = time.ParseInLocation(time.DateTime, arg.EndTime, utils.UTC8Loc())
+		if err != nil {
+			return err
 		}
 	}
 
 	helper := &trendInternalHelper{
-		days: days, st: st, et: et, msgID: *data.Event.Message.MessageId, chatID: chatID, interval: interval,
+		days: arg.Days, st: st, et: et, msgID: *data.Event.Message.MessageId, chatID: chatID, interval: arg.Interval,
 	}
 
-	userList, err := genHotRate(ctx, helper, mTop)
+	userList, err := genHotRate(ctx, helper, arg.MessageTop)
 	if err != nil {
 		return
 	}
@@ -109,7 +201,7 @@ func WordCloudHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 		return
 	}
 
-	chunks, err := getChunks(ctx, chatID, st, et, cTop, sort)
+	chunks, err := getChunks(ctx, chatID, st, et, arg.ChunkTop, sort)
 	if err != nil {
 		return
 	}

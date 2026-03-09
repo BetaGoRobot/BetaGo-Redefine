@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
@@ -16,6 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/vadvisor"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
@@ -25,58 +27,122 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// TrendHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return err error
-//	@author kevinmatthe
-//	@update 2025-05-30 15:19:56
-func TrendHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type TrendArgs struct {
+	Days      int    `json:"days"`
+	Interval  string `json:"interval"`
+	ChartType string `json:"chart_type" cli:"play"`
+	StartTime string `json:"start_time" cli:"st"`
+	EndTime   string `json:"end_time" cli:"et"`
+}
+
+type trendHandler struct{}
+
+var Trend trendHandler
+
+func (trendHandler) ParseCLI(args []string) (TrendArgs, error) {
+	argMap, _ := parseArgs(args...)
+	parsed := TrendArgs{
+		Days:      7,
+		Interval:  "1d",
+		ChartType: argMap["play"],
+		StartTime: argMap["st"],
+		EndTime:   argMap["et"],
+	}
+	if parsed.ChartType == "" {
+		parsed.ChartType = "line"
+	}
+	if inputInterval := argMap["interval"]; inputInterval != "" {
+		parsed.Interval = inputInterval
+	}
+	if daysStr := argMap["days"]; daysStr != "" {
+		days, err := strconv.Atoi(daysStr)
+		if err != nil || days <= 0 {
+			parsed.Days = 30
+		} else {
+			parsed.Days = days
+		}
+	}
+	return parsed, nil
+}
+
+func (trendHandler) ParseTool(raw string) (TrendArgs, error) {
+	parsed := TrendArgs{
+		Days:     7,
+		Interval: "1d",
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return TrendArgs{}, err
+	}
+	if parsed.Days <= 0 {
+		parsed.Days = 7
+	}
+	if parsed.Interval == "" {
+		parsed.Interval = "1d"
+	}
+	switch parsed.ChartType {
+	case "", "line", "pie", "bar":
+	default:
+		parsed.ChartType = "line"
+	}
+	if parsed.StartTime != "" && parsed.EndTime != "" {
+		parsed.StartTime = normalizeRFC3339(parsed.StartTime)
+		parsed.EndTime = normalizeRFC3339(parsed.EndTime)
+	}
+	return parsed, nil
+}
+
+func (trendHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "talkrate_get",
+		Desc: "统计当前群聊的发言趋势，并生成趋势图",
+		Params: arktools.NewParams("object").
+			AddProp("days", &arktools.Prop{
+				Type: "number",
+				Desc: "统计近几天的发言趋势，默认 7",
+			}).
+			AddProp("interval", &arktools.Prop{
+				Type: "string",
+				Desc: "聚合间隔，例如 1d、12h、1h",
+			}).
+			AddProp("chart_type", &arktools.Prop{
+				Type: "string",
+				Desc: "图表类型，可选值：line、pie、bar，默认 line",
+			}).
+			AddProp("start_time", &arktools.Prop{
+				Type: "string",
+				Desc: "开始时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}).
+			AddProp("end_time", &arktools.Prop{
+				Type: "string",
+				Desc: "结束时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
+			}),
+	}
+}
+
+func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg TrendArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	var (
-		days     = 7
-		interval = "1d"
-		st, et   time.Time
-	)
-
-	argMap, _ := parseArgs(args...)
-	if inputInterval, ok := argMap["interval"]; ok {
-		interval = inputInterval
-	}
-	if daysStr, ok := argMap["days"]; ok {
-		days, err = strconv.Atoi(daysStr)
-		if err != nil || days <= 0 {
-			days = 30
+	st, et := GetBackDays(arg.Days)
+	if arg.StartTime != "" && arg.EndTime != "" {
+		st, err = time.Parse(time.RFC3339, arg.StartTime)
+		if err != nil {
+			return err
 		}
-	}
-
-	st, et = GetBackDays(days)
-	// 如果有st，et的配置，用st，et的配置来覆盖
-	if stStr, ok := argMap["st"]; ok {
-		if etStr, ok := argMap["et"]; ok {
-			st, err = time.Parse(time.RFC3339, stStr)
-			if err != nil {
-				return err
-			}
-			et, err = time.Parse(time.RFC3339, etStr)
-			if err != nil {
-				return err
-			}
+		et, err = time.Parse(time.RFC3339, arg.EndTime)
+		if err != nil {
+			return err
 		}
 	}
 	helper := &trendInternalHelper{
-		days:     days,
+		days:     arg.Days,
 		st:       st,
 		et:       et,
 		msgID:    *data.Event.Message.MessageId,
 		chatID:   *data.Event.Message.ChatId,
-		interval: interval,
+		interval: arg.Interval,
 	}
 
 	trend, err := helper.TrendByUser(ctx)
@@ -84,14 +150,12 @@ func TrendHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData
 		return err
 	}
 
-	if playType, ok := argMap["play"]; ok {
-		switch playType {
-		case "bar":
-			err = helper.DrawTrendBar(ctx, trend, !metaData.Refresh)
-		default:
-			err = helper.DrawTrendPie(ctx, trend, !metaData.Refresh)
-		}
-	} else {
+	switch arg.ChartType {
+	case "bar":
+		err = helper.DrawTrendBar(ctx, trend, !metaData.Refresh)
+	case "pie":
+		err = helper.DrawTrendPie(ctx, trend, !metaData.Refresh)
+	default:
 		graph := vadvisor.NewMultiSeriesLineGraph[string, int64](ctx)
 		graph.AddPointSeries(
 			func(yield func(vadvisor.XYSUnit[string, int64]) bool) {
@@ -109,7 +173,7 @@ func TrendHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData
 				}
 			},
 		)
-		title := fmt.Sprintf("[%s]水群频率表-%ddays", larkchat.GetChatName(ctx, *data.Event.Message.ChatId), days)
+		title := fmt.Sprintf("[%s]水群频率表-%ddays", larkchat.GetChatName(ctx, *data.Event.Message.ChatId), arg.Days)
 		cardContent := larkcard.NewCardBuildGraphHelper(graph).
 			SetTitle(title).Build(ctx)
 		if metaData.Refresh {

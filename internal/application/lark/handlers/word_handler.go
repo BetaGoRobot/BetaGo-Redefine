@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 
+	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -12,6 +13,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -22,60 +24,110 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// WordAddHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return error
-//	@author heyuhengmatt
-//	@update 2024-08-06 08:27:09
-func WordAddHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+type WordAddArgs struct {
+	Word string `json:"word"`
+	Rate int    `json:"rate"`
+}
+
+type WordGetArgs struct{}
+
+type wordAddHandler struct{}
+type wordGetHandler struct{}
+
+var WordAdd wordAddHandler
+var WordGet wordGetHandler
+
+func (wordAddHandler) ParseCLI(args []string) (WordAddArgs, error) {
+	argMap, _ := parseArgs(args...)
+	word := argMap["word"]
+	if word == "" {
+		return WordAddArgs{}, errors.New("word is required")
+	}
+	rateStr := argMap["rate"]
+	if rateStr == "" {
+		return WordAddArgs{}, errors.New("rate is required")
+	}
+	rate, err := strconv.Atoi(rateStr)
+	if err != nil {
+		return WordAddArgs{}, err
+	}
+	return WordAddArgs{Word: word, Rate: rate}, nil
+}
+
+func (wordAddHandler) ParseTool(raw string) (WordAddArgs, error) {
+	parsed := WordAddArgs{}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return WordAddArgs{}, err
+	}
+	if parsed.Word == "" {
+		return WordAddArgs{}, errors.New("word is required")
+	}
+	if parsed.Rate == 0 {
+		return WordAddArgs{}, errors.New("rate is required")
+	}
+	return parsed, nil
+}
+
+func (wordAddHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name: "word_add",
+		Desc: "新增或更新复读词条",
+		Params: arktools.NewParams("object").
+			AddProp("word", &arktools.Prop{
+				Type: "string",
+				Desc: "触发词",
+			}).
+			AddProp("rate", &arktools.Prop{
+				Type: "number",
+				Desc: "触发概率/权重",
+			}).
+			AddRequired("word").
+			AddRequired("rate"),
+	}
+}
+
+func (wordAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg WordAddArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
-
-	if len(args) < 2 {
-		return errors.ErrUnsupported
-	}
-	argMap, _ := parseArgs(args...)
-	logs.L().Ctx(ctx).Info("args", zap.Any("args", argMap))
-
-	word, ok := argMap["word"]
-	if !ok {
-		return errors.New("word is required")
-	}
-	rate, ok := argMap["rate"]
-	if !ok {
-		return errors.New("rate is required")
-	}
+	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
 
 	ChatID := *data.Event.Message.ChatId
 	return query.Q.RepeatWordsRateCustom.WithContext(ctx).Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&model.RepeatWordsRateCustom{
 		GuildID: ChatID,
-		Word:    word,
-		Rate:    int64(utils.MustAtoI(rate)),
+		Word:    arg.Word,
+		Rate:    int64(arg.Rate),
 	})
 }
 
-// WordGetHandler to be filled
-//
-//	@param ctx context.Context
-//	@param data *larkim.P2MessageReceiveV1
-//	@param args ...string
-//	@return error
-//	@author heyuhengmatt
-//	@update 2024-08-06 08:27:07
-func WordGetHandler(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
+func (wordGetHandler) ParseCLI(args []string) (WordGetArgs, error) {
+	return WordGetArgs{}, nil
+}
+
+func (wordGetHandler) ParseTool(raw string) (WordGetArgs, error) {
+	if err := parseEmptyToolArgs(raw); err != nil {
+		return WordGetArgs{}, err
+	}
+	return WordGetArgs{}, nil
+}
+
+func (wordGetHandler) ToolSpec() xcommand.ToolSpec {
+	return xcommand.ToolSpec{
+		Name:   "word_get",
+		Desc:   "查看当前群聊的复读词条配置",
+		Params: arktools.NewParams("object"),
+	}
+}
+
+func (wordGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg WordGetArgs) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
-	argMap, _ := parseArgs(args...)
-	logs.L().Ctx(ctx).Info("args", zap.Any("args", argMap))
+	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
 	ChatID := *data.Event.Message.ChatId
 
 	lines := make([]map[string]string, 0)

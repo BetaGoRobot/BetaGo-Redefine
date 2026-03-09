@@ -29,16 +29,17 @@ const (
 	TriggerTypeRandom   TriggerType = "random"   // 随机回复触发
 	TriggerTypeReaction TriggerType = "reaction" // 表情反应触发
 	TriggerTypeRepeat   TriggerType = "repeat"   // 复读触发
+	TriggerTypeMention  TriggerType = "mention"  // @机器人触发
 )
 
 // Redis key 前缀
 const (
-	keyPrefix           = "betago:ratelimit:"
-	statsKeyPrefix      = keyPrefix + "stats:"
-	recentSendsPrefix   = keyPrefix + "recent:"
-	hourlyActivityKey   = keyPrefix + "hourly:"
-	cooldownKeyPrefix   = keyPrefix + "cooldown:"
-	metricsKeyPrefix    = keyPrefix + "metrics:"
+	keyPrefix         = "betago:ratelimit:"
+	statsKeyPrefix    = keyPrefix + "stats:"
+	recentSendsPrefix = keyPrefix + "recent:"
+	hourlyActivityKey = keyPrefix + "hourly:"
+	cooldownKeyPrefix = keyPrefix + "cooldown:"
+	metricsKeyPrefix  = keyPrefix + "metrics:"
 )
 
 // ==========================================
@@ -60,10 +61,10 @@ type ChatStats struct {
 	RecentSends []SendRecord `json:"recent_sends,omitempty"`
 
 	// 计算字段（不持久化）
-	TotalMessages24h      int64   `json:"total_messages_24h"`
-	TotalMessages1h       int64   `json:"total_messages_1h"`
-	CurrentActivityScore  float64 `json:"current_activity_score"` // 当前活跃度评分 0-1
-	CurrentBurstFactor    float64 `json:"current_burst_factor"`   // 当前爆发因子
+	TotalMessages24h     int64   `json:"total_messages_24h"`
+	TotalMessages1h      int64   `json:"total_messages_1h"`
+	CurrentActivityScore float64 `json:"current_activity_score"` // 当前活跃度评分 0-1
+	CurrentBurstFactor   float64 `json:"current_burst_factor"`   // 当前爆发因子
 }
 
 // HourlyStats 小时统计数据
@@ -85,17 +86,17 @@ type SendRecord struct {
 
 // Config 频控配置
 type Config struct {
-	MaxMessagesPerHour    int           // 每小时最大消息数 (默认30)
-	MaxMessagesPerDay     int           // 每天最大消息数 (默认100)
-	MinIntervalSeconds    float64       // 最小间隔秒数 (默认5秒)
-	CooldownBaseSeconds   float64       // 基础冷却时间 (默认60秒)
-	MaxCooldownSeconds    float64       // 最大冷却时间 (默认1800秒)
-	ActivityThresholdLow  float64       // 低活跃度阈值 (0.2)
-	ActivityThresholdHigh float64       // 高活跃度阈值 (0.8)
-	BurstThreshold        int           // 爆发阈值 (5条)
-	BurstWindowSeconds    float64       // 爆发时间窗口 (300秒)
-	BurstPenaltyFactor    float64       // 爆发惩罚因子 (2.0)
-	HourlyWeights         [24]float64   // 24小时时间段权重
+	MaxMessagesPerHour    int         // 每小时最大消息数 (默认30)
+	MaxMessagesPerDay     int         // 每天最大消息数 (默认100)
+	MinIntervalSeconds    float64     // 最小间隔秒数 (默认5秒)
+	CooldownBaseSeconds   float64     // 基础冷却时间 (默认60秒)
+	MaxCooldownSeconds    float64     // 最大冷却时间 (默认1800秒)
+	ActivityThresholdLow  float64     // 低活跃度阈值 (0.2)
+	ActivityThresholdHigh float64     // 高活跃度阈值 (0.8)
+	BurstThreshold        int         // 爆发阈值 (5条)
+	BurstWindowSeconds    float64     // 爆发时间窗口 (300秒)
+	BurstPenaltyFactor    float64     // 爆发惩罚因子 (2.0)
+	HourlyWeights         [24]float64 // 24小时时间段权重
 }
 
 // DefaultConfig 默认配置
@@ -393,6 +394,7 @@ func NewSmartRateLimiter(config *Config, rdb *redis.Client) *SmartRateLimiter {
 			TriggerTypeRandom:   0.5,
 			TriggerTypeReaction: 0.3,
 			TriggerTypeRepeat:   0.7,
+			TriggerTypeMention:  0.5,
 		},
 	}
 }
