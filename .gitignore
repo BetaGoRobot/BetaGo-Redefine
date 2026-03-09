@@ -1,3 +1,4 @@
 .vscode
 .dev
 __debug_bin*
+.codex*

@@ -15,6 +15,8 @@ import (
 	"gorm.io/gorm/callbacks"
 )
 
+var globalDB *gorm.DB
+
 func Init(config *config.DBConfig) {
 	if config == nil {
 		panic("db config is nil")
@@ -23,10 +25,16 @@ func Init(config *config.DBConfig) {
 	if err != nil {
 		panic(err)
 	}
+	globalDB = db
 	// query cache callbacks...
 	db.Callback().Query().Replace("gorm:query", callbackQuery)
 	db.Callback().Query().After("gorm:after_query").Register("gorm:after_query_done", callbackAfter)
 	query.SetDefault(db)
+}
+
+// DB returns the global db instance
+func DB() *gorm.DB {
+	return globalDB
 }
 
 func callbackQuery(d *gorm.DB) {

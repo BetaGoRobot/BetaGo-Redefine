@@ -41,7 +41,22 @@ func main() {
 		}
 		return f
 	}))
-	tables := g.GenerateAllTable()
+	tableNames, err := gormdb.Migrator().GetTables()
+	if err != nil {
+		panic(err)
+	}
+	tables := make([]interface{}, 0, len(tableNames))
+	for _, tableName := range tableNames {
+		switch tableName {
+		case "todo_items":
+			tables = append(tables, g.GenerateModel(tableName,
+				gen.FieldType("due_at", "*time.Time"),
+				gen.FieldType("completed_at", "*time.Time"),
+			))
+		default:
+			tables = append(tables, g.GenerateModel(tableName))
+		}
+	}
 	g.ApplyBasic(tables...)
 	// Generate the code
 	g.Execute()

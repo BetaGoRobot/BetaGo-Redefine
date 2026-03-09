@@ -5,6 +5,7 @@ import (
 	"os"
 
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
+	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -45,6 +46,11 @@ func main() {
 	larkchunking.Init()
 	lark_dal.Init()
 	xhttp.Init()
+
+	// 初始化待办事项系统
+	todoapp.Init(db.DB())
+	// 启动提醒调度器
+	go todoapp.StartScheduler()
 
 	go registerHandlers(config)
 	select {}

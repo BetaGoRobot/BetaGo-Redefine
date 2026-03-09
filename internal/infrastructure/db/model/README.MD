@@ -1,0 +1,1 @@
+当前目录下的代码，均通过仓库的 cmd/generate/gorm-gen.go 生成。不要直接修改这里的代码，而是修改 cmd/generate/gorm-gen.go 中的模板代码来完成需要的变更。
