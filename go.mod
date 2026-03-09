@@ -8,7 +8,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bytedance/gg v1.1.0
-	github.com/bytedance/mockey v1.4.4
+	github.com/bytedance/mockey v1.4.5
 	github.com/bytedance/sonic v1.15.0
 	github.com/cloudwego/hertz v0.10.4
 	github.com/defensestation/osquery v1.0.0
