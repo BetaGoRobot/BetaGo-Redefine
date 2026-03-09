@@ -8,7 +8,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/vadvisor"
@@ -39,11 +38,15 @@ type ZhAStockArgs struct {
 	EndTime   string `json:"end_time" cli:"et"`
 }
 
-type goldHandler struct{}
-type zhAStockHandler struct{}
+type (
+	goldHandler     struct{}
+	zhAStockHandler struct{}
+)
 
-var Gold goldHandler
-var ZhAStock zhAStockHandler
+var (
+	Gold     goldHandler
+	ZhAStock zhAStockHandler
+)
 
 func (goldHandler) ParseCLI(args []string) (GoldArgs, error) {
 	argMap, _ := parseArgs(args...)
@@ -171,23 +174,15 @@ func (goldHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, 
 			}
 		}
 	} else {
+		st = time.Now().AddDate(0, 0, -1*defaultDays)
+		et = time.Now()
 		llmResult, cardContent, err = GetHistoryGoldGraph(ctx, st, et)
 		if err != nil {
 			return err
 		}
 	}
 
-	if metaData != nil && metaData.Refresh {
-		err = larkmsg.PatchCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId)
-	} else {
-		err = larkmsg.ReplyCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId, "", false)
-	}
-
-	return
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "", false)
 }
 
 func (zhAStockHandler) ParseCLI(args []string) (ZhAStockArgs, error) {
@@ -322,16 +317,7 @@ func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		SetStartTime(st).
 		SetEndTime(et).
 		Build(ctx)
-	if metaData != nil && metaData.Refresh {
-		err = larkmsg.PatchCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId)
-	} else {
-		err = larkmsg.ReplyCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId, "", false)
-	}
-	return
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "", false)
 }
 
 func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (string, *larktpl.TemplateCardContent, error) {

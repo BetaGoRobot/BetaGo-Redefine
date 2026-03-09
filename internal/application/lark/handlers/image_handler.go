@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -32,10 +33,14 @@ import (
 type ImageAddArgs struct {
 	URL    string `json:"url"`
 	ImgKey string `json:"img_key"`
+	Type   string `json:"type"`
 }
 
 type ImageGetArgs struct{}
-type ImageDeleteArgs struct{}
+type ImageDeleteArgs struct {
+	ImgKey string `json:"img_key"`
+	Type   string `json:"type"`
+}
 
 type imageAddHandler struct{}
 type imageGetHandler struct{}
@@ -50,6 +55,7 @@ func (imageAddHandler) ParseCLI(args []string) (ImageAddArgs, error) {
 	return ImageAddArgs{
 		URL:    argMap["url"],
 		ImgKey: argMap["img_key"],
+		Type:   argMap["type"],
 	}, nil
 }
 
@@ -73,6 +79,10 @@ func (imageAddHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("img_key", &arktools.Prop{
 				Type: "string",
 				Desc: "飞书图片 key。与 url 二选一；都不传时尝试使用当前引用/话题中的图片",
+			}).
+			AddProp("type", &arktools.Prop{
+				Type: "string",
+				Desc: "素材类型，可选值：image、sticker。使用 img_key 时可传，默认 image",
 			}),
 	}
 }
@@ -84,21 +94,37 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	defer func() { span.RecordError(err) }()
 
 	logs.L().Ctx(ctx).Info("wordAddHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
 	if arg.URL != "" || arg.ImgKey != "" {
-		imgKey := ""
+		imgKey := arg.ImgKey
+		msgType := normalizeImageType(arg.Type)
+		if msgType == "" {
+			msgType = larkim.MsgTypeImage
+		}
 		// by url
 		if arg.URL != "" {
 			imgKey = larkimg.UploadPicture2Lark(ctx, arg.URL)
+			msgType = larkim.MsgTypeImage
 		}
-		// by img_key
-		if arg.ImgKey != "" {
-			imgKey = arg.ImgKey
+		if imgKey == "" {
+			return errors.New("img_key is required")
 		}
-		err := createImage(ctx, *data.Event.Message.MessageId, *data.Event.Message.ChatId, imgKey, larkim.MsgTypeImage)
+		if msgType != larkim.MsgTypeImage && msgType != larkim.MsgTypeSticker {
+			return fmt.Errorf("unsupported image type: %s", msgType)
+		}
+		err := createImage(ctx, currentMessageID(data), chatID, imgKey, msgType)
 		if err != nil {
 			return err
 		}
-
+		if msgID := currentMessageID(data); msgID != "" {
+			larkmsg.AddReactionAsync(ctx, "DONE", msgID)
+		}
+		return nil
+	} else if data == nil {
+		return errors.New("url or img_key is required for scheduled execution")
 	} else if data.Event.Message.ThreadId != nil {
 		// 找到话题中的所有图片
 		var combinedErr error
@@ -109,7 +135,7 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		for _, msg := range resp.Data.Items {
 			if *msg.Sender.Id != config.Get().LarkConfig.BotOpenID {
 				if imgKey := getImageKey(msg); imgKey != "" {
-					err := createImage(ctx, *msg.MessageId, *msg.ChatId, imgKey, *msg.MsgType)
+					err := createImage(ctx, *msg.MessageId, chatID, imgKey, *msg.MsgType)
 					if err != nil {
 						if combinedErr == nil {
 							span.RecordError(err)
@@ -132,7 +158,7 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		if len(parentMsg.Data.Items) != 0 {
 			msg := parentMsg.Data.Items[0]
 			imgKey := getImageKey(msg)
-			err := createImage(ctx, *msg.MessageId, *data.Event.Message.ChatId, imgKey, *msg.MsgType)
+			err := createImage(ctx, *msg.MessageId, chatID, imgKey, *msg.MsgType)
 			if err != nil {
 				span.SetStatus(codes.Error, "addImage not complete with some error")
 				span.RecordError(err)
@@ -140,12 +166,14 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 			}
 			larkmsg.AddReactionAsync(ctx, "JIAYI", *msg.MessageId)
 		} else {
-			return errors.New(xcopywriting.GetSampleCopyWritings(ctx, *data.Event.Message.ChatId, xcopywriting.ImgQuoteNoParent))
+			return errors.New(xcopywriting.GetSampleCopyWritings(ctx, chatID, xcopywriting.ImgQuoteNoParent))
 		}
 	} else {
-		return errors.New(xcopywriting.GetSampleCopyWritings(ctx, *data.Event.Message.ChatId, xcopywriting.ImgNotAnyValidArgs))
+		return errors.New(xcopywriting.GetSampleCopyWritings(ctx, chatID, xcopywriting.ImgNotAnyValidArgs))
 	}
-	larkmsg.AddReactionAsync(ctx, "DONE", *data.Event.Message.MessageId)
+	if msgID := currentMessageID(data); msgID != "" {
+		larkmsg.AddReactionAsync(ctx, "DONE", msgID)
+	}
 	return nil
 }
 
@@ -174,7 +202,7 @@ func (imageGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	logs.L().Ctx(ctx).Info("replyGetHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
-	ChatID := *data.Event.Message.ChatId
+	ChatID := currentChatID(data, metaData)
 
 	lines := make([]map[string]string, 0)
 	ins := query.Q.ReactImageMeterial
@@ -195,29 +223,41 @@ func (imageGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		AddVariable("title2", "Picture").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_replyGet", false)
-	if err != nil {
-		return err
-	}
-	return nil
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_replyGet", false)
 }
 
 func (imageDeleteHandler) ParseCLI(args []string) (ImageDeleteArgs, error) {
-	return ImageDeleteArgs{}, nil
+	argMap, _ := parseArgs(args...)
+	return ImageDeleteArgs{
+		ImgKey: argMap["img_key"],
+		Type:   argMap["type"],
+	}, nil
 }
 
 func (imageDeleteHandler) ParseTool(raw string) (ImageDeleteArgs, error) {
-	if err := parseEmptyToolArgs(raw); err != nil {
+	parsed := ImageDeleteArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ImageDeleteArgs{}, err
 	}
-	return ImageDeleteArgs{}, nil
+	return parsed, nil
 }
 
 func (imageDeleteHandler) ToolSpec() xcommand.ToolSpec {
 	return xcommand.ToolSpec{
-		Name:   "image_delete",
-		Desc:   "删除当前引用消息或话题中对应的图片素材",
-		Params: arktools.NewParams("object"),
+		Name: "image_delete",
+		Desc: "删除图片素材。可显式传 img_key 和 type；不传时尝试删除当前引用消息或话题中的图片素材",
+		Params: arktools.NewParams("object").
+			AddProp("img_key", &arktools.Prop{
+				Type: "string",
+				Desc: "要删除的图片或贴纸 key。schedule 场景建议显式传入",
+			}).
+			AddProp("type", &arktools.Prop{
+				Type: "string",
+				Desc: "素材类型，可选值：image、sticker。不传则自动尝试两种类型",
+			}),
 	}
 }
 
@@ -229,6 +269,22 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer span.RecordError(err)
 
 	logs.L().Ctx(ctx).Info("replyDelHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
+	if arg.ImgKey != "" {
+		if err := deleteImageByKey(ctx, chatID, arg.ImgKey, normalizeImageType(arg.Type)); err != nil {
+			return err
+		}
+		if msgID := currentMessageID(data); msgID != "" {
+			larkmsg.AddReactionAsync(ctx, "GeneralDoNotDisturb", msgID)
+		}
+		return nil
+	}
+	if data == nil {
+		return errors.New("img_key is required for scheduled execution")
+	}
 
 	if data.Event.Message.ThreadId != nil {
 		// 找到话题中的所有图片
@@ -239,7 +295,7 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		}
 		for _, msg := range resp.Data.Items {
 			if imgKey := getImageKey(msg); imgKey != "" {
-				err = deleteImage(ctx, *msg.MessageId, *msg.ChatId, imgKey, *msg.MsgType)
+				err = deleteImageByKey(ctx, chatID, imgKey, normalizeImageType(*msg.MsgType))
 				if err != nil {
 					span.RecordError(err)
 					if combinedErr == nil {
@@ -262,7 +318,7 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 			msg := parentMsgResp.Data.Items[0]
 			if *msg.Sender.Id == config.Get().LarkConfig.BotOpenID {
 				if imgKey := getImageKey(msg); imgKey != "" {
-					err := deleteImage(ctx, *msg.MessageId, *msg.ChatId, imgKey, *msg.MsgType)
+					err := deleteImageByKey(ctx, chatID, imgKey, normalizeImageType(*msg.MsgType))
 					if err != nil {
 						span.SetStatus(codes.Error, "delImage not complete with some error")
 						span.RecordError(err)
@@ -310,6 +366,19 @@ func getImageKey(msg *larkim.Message) string {
 	return ""
 }
 
+func normalizeImageType(input string) string {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "":
+		return ""
+	case "img", larkim.MsgTypeImage:
+		return larkim.MsgTypeImage
+	case larkim.MsgTypeSticker:
+		return larkim.MsgTypeSticker
+	default:
+		return strings.ToLower(strings.TrimSpace(input))
+	}
+}
+
 func deleteImage(ctx context.Context, msgID, chatID, imgKey, msgType string) error {
 	ins := query.Q.ReactImageMeterial
 	switch msgType {
@@ -338,6 +407,25 @@ func deleteImage(ctx context.Context, msgID, chatID, imgKey, msgType string) err
 		// do nothing
 	}
 	return nil
+}
+
+func deleteImageByKey(ctx context.Context, chatID, imgKey, msgType string) error {
+	switch msgType {
+	case "":
+		errImage := deleteImage(ctx, "", chatID, imgKey, larkim.MsgTypeImage)
+		if errImage == nil {
+			return nil
+		}
+		errSticker := deleteImage(ctx, "", chatID, imgKey, larkim.MsgTypeSticker)
+		if errSticker == nil {
+			return nil
+		}
+		return errors.Wrapf(errImage, "%v", errSticker)
+	case larkim.MsgTypeImage, larkim.MsgTypeSticker:
+		return deleteImage(ctx, "", chatID, imgKey, msgType)
+	default:
+		return fmt.Errorf("unsupported image type: %s", msgType)
+	}
 }
 
 func createImage(ctx context.Context, msgID, chatID, imgKey, msgType string) error {

@@ -34,6 +34,7 @@ type ReplyAddArgs struct {
 	Type      string `json:"type"`
 	Reply     string `json:"reply"`
 	ReplyType string `json:"reply_type"`
+	ImageKey  string `json:"image_key"`
 }
 
 type ReplyGetArgs struct{}
@@ -51,6 +52,7 @@ func (replyAddHandler) ParseCLI(args []string) (ReplyAddArgs, error) {
 		Type:      argMap["type"],
 		Reply:     argMap["reply"],
 		ReplyType: argMap["reply_type"],
+		ImageKey:  argMap["image_key"],
 	}
 	if parsed.Word == "" {
 		return ReplyAddArgs{}, errors.New("arg word is required")
@@ -60,6 +62,8 @@ func (replyAddHandler) ParseCLI(args []string) (ReplyAddArgs, error) {
 	}
 	if parsed.ReplyType == "" {
 		parsed.ReplyType = string(xmodel.ReplyTypeText)
+	} else {
+		parsed.ReplyType = normalizeReplyType(parsed.ReplyType)
 	}
 	return parsed, nil
 }
@@ -77,6 +81,8 @@ func (replyAddHandler) ParseTool(raw string) (ReplyAddArgs, error) {
 	}
 	if parsed.ReplyType == "" {
 		parsed.ReplyType = string(xmodel.ReplyTypeText)
+	} else {
+		parsed.ReplyType = normalizeReplyType(parsed.ReplyType)
 	}
 	return parsed, nil
 }
@@ -97,6 +103,10 @@ func (replyAddHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("reply", &arktools.Prop{
 				Type: "string",
 				Desc: "文本回复内容。reply_type=img 时可以不传，改为使用当前引用图片",
+			}).
+			AddProp("image_key", &arktools.Prop{
+				Type: "string",
+				Desc: "reply_type=image 时可直接指定图片 key，适合 schedule 场景",
 			}).
 			AddProp("reply_type", &arktools.Prop{
 				Type: "string",
@@ -122,14 +132,21 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	if arg.Type != string(xmodel.MatchTypeSubStr) && arg.Type != string(xmodel.MatchTypeRegex) && arg.Type != string(xmodel.MatchTypeFull) {
 		return errors.New("type must be substr, regex or full")
 	}
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
 
 	reply := arg.Reply
-	if arg.ReplyType == string(xmodel.ReplyTypeImg) {
-		if data.Event.Message.ParentId == nil {
-			return errors.New("reply_type **img** must reply to a image message")
+	replyType := normalizeReplyType(arg.ReplyType)
+	if replyType == string(xmodel.ReplyTypeImg) {
+		if arg.ImageKey != "" {
+			reply = arg.ImageKey
+		} else if data == nil || data.Event.Message.ParentId == nil {
+			return errors.New("reply_type=image requires image_key or replying to an image message")
 		}
 		parentMsg := larkmsg.GetMsgFullByID(ctx, *data.Event.Message.ParentId)
-		if len(parentMsg.Data.Items) != 0 {
+		if len(parentMsg.Data.Items) != 0 && reply == "" {
 			parentMsgItem := parentMsg.Data.Items[0]
 			contentMap := make(map[string]string)
 			err := sonic.UnmarshalString(*parentMsgItem.Body.Content, &contentMap)
@@ -175,6 +192,9 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 				return errors.New("reply_type **img** must reply to a image message")
 			}
 		}
+		if reply == "" {
+			return errors.New("reply_type=image requires image_key or replying to an image message")
+		}
 	} else if reply == "" {
 		return errors.New("arg reply is required")
 	}
@@ -182,16 +202,15 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	ins := query.Q.QuoteReplyMsgCustom
 	if err := ins.WithContext(ctx).
 		Create(&model.QuoteReplyMsgCustom{
-			GuildID:   *data.Event.Message.ChatId,
+			GuildID:   chatID,
 			MatchType: string(xmodel.WordMatchType(arg.Type)),
 			Keyword:   arg.Word,
 			Reply:     reply,
-			ReplyType: arg.ReplyType,
+			ReplyType: replyType,
 		}); err != nil {
 		return err
 	}
-	larkmsg.ReplyMsgText(ctx, "回复语句添加成功", *data.Event.Message.MessageId, "_replyAdd", false)
-	return nil
+	return sendCompatibleText(ctx, data, metaData, "回复语句添加成功", "_replyAdd", false)
 }
 
 func (replyGetHandler) ParseCLI(args []string) (ReplyGetArgs, error) {
@@ -219,7 +238,7 @@ func (replyGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
-	ChatID := *data.Event.Message.ChatId
+	ChatID := currentChatID(data, metaData)
 
 	lines := make([]map[string]string, 0)
 	ins := query.Q.QuoteReplyMsgCustom
@@ -229,7 +248,7 @@ func (replyGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	}
 	for _, res := range resListCustom {
 		if res.GuildID == ChatID {
-			if res.ReplyType == larkim.MsgTypeImage {
+			if isImageReplyType(res.ReplyType) {
 				if strings.HasPrefix(res.Reply, "img") {
 					res.Reply = fmt.Sprintf("![picture](%s)", res.Reply)
 				} else {
@@ -250,7 +269,7 @@ func (replyGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		return err
 	}
 	for _, res := range resListGlobal {
-		if string(res.ReplyType) == larkim.MsgTypeImage {
+		if isImageReplyType(string(res.ReplyType)) {
 			if strings.HasPrefix(res.Reply, "img") {
 				res.Reply = fmt.Sprintf("![picture](%s)", res.Reply)
 			} else {
@@ -274,11 +293,7 @@ func (replyGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		AddVariable("title4", "MatchType").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_replyGet", false)
-	if err != nil {
-		return err
-	}
-	return nil
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_replyGet", false)
 }
 
 func (replyAddHandler) CommandDescription() string {
@@ -299,5 +314,25 @@ func (replyAddHandler) CommandExamples() []string {
 func (replyGetHandler) CommandExamples() []string {
 	return []string{
 		"/reply get",
+	}
+}
+
+func normalizeReplyType(input string) string {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "", string(xmodel.ReplyTypeText):
+		return string(xmodel.ReplyTypeText)
+	case "image", "img":
+		return string(xmodel.ReplyTypeImg)
+	default:
+		return strings.ToLower(strings.TrimSpace(input))
+	}
+}
+
+func isImageReplyType(replyType string) bool {
+	switch strings.ToLower(strings.TrimSpace(replyType)) {
+	case string(xmodel.ReplyTypeImg), larkim.MsgTypeImage:
+		return true
+	default:
+		return false
 	}
 }

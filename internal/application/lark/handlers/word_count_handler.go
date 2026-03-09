@@ -162,7 +162,7 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	var (
 		st, et time.Time
 	)
-	chatID := *data.Event.Message.ChatId
+	chatID := currentChatID(data, metaData)
 	if arg.ChatID != "" {
 		chatID = arg.ChatID
 	}
@@ -188,7 +188,7 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	}
 
 	helper := &trendInternalHelper{
-		days: arg.Days, st: st, et: et, msgID: *data.Event.Message.MessageId, chatID: chatID, interval: arg.Interval,
+		days: arg.Days, st: st, et: et, msgID: currentMessageID(data), chatID: chatID, interval: arg.Interval,
 	}
 
 	userList, err := genHotRate(ctx, helper, arg.MessageTop)
@@ -226,16 +226,7 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	}
 	tpl.WithData(cardVar)
 	cardContent := larktpl.NewCardContentV2(ctx, tpl)
-	if metaData != nil && metaData.Refresh {
-		err = larkmsg.PatchCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId)
-	} else {
-		err = larkmsg.ReplyCard(ctx,
-			cardContent,
-			*data.Event.Message.MessageId, "", false)
-	}
-	return
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "", false)
 }
 
 type WordCountType struct {

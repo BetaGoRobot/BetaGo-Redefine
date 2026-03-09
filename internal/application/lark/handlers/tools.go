@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -9,12 +10,18 @@ import (
 
 func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := tools.New[larkim.P2MessageReceiveV1]().WebSearch()
+	registerBaseTools(ins)
+	revert(ins)
+	scheduleapp.RegisterTools(ins)
+	return ins
+}
+
+func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	musicSearch(ins)
 	oneWordTool(ins)
 	muteBot(ins)
 	goldReport(ins)
 	stockZhATool(ins)
-	revert(ins)
 	hybridSearch(ins)
 	trendReportTool(ins)
 	wordCloudTool(ins)
@@ -26,6 +33,11 @@ func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	rateLimitTools(ins)
 	sendMessageTool(ins)
 	todoapp.RegisterTools(ins)
+}
+
+func BuildSchedulableTools() *tools.Impl[larkim.P2MessageReceiveV1] {
+	ins := tools.New[larkim.P2MessageReceiveV1]()
+	registerBaseTools(ins)
 	return ins
 }
 

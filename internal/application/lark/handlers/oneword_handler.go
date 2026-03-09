@@ -6,7 +6,6 @@ import (
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/hitokoto"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -107,8 +106,7 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 		return err
 	}
 	msg := fmt.Sprintf("%s 很喜欢《%s》中的一句话\n%s", emoji.Mountain.String(), hitokotoRes.From, hitokotoRes.Hitokoto)
-	_, err = larkmsg.ReplyMsgText(ctx, msg, *data.Event.Message.MessageId, "_oneWord", false)
-	return
+	return sendCompatibleText(ctx, data, metaData, msg, "_oneWord", false)
 }
 
 func (oneWordHandler) CommandDescription() string {

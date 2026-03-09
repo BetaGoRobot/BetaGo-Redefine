@@ -296,7 +296,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 			},
 		},
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_medium,
+			Effort: responses.ReasoningEffort_minimal,
 		},
 		Stream: gptr.Of(true),
 	}

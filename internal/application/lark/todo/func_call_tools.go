@@ -57,9 +57,6 @@ func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	xcommand.RegisterTool(ins, UpdateTodo)
 	xcommand.RegisterTool(ins, ListTodos)
 	xcommand.RegisterTool(ins, DeleteTodo)
-	xcommand.RegisterTool(ins, CreateReminder)
-	xcommand.RegisterTool(ins, ListReminders)
-	xcommand.RegisterTool(ins, DeleteReminder)
 }
 
 type createTodoArgs struct {
@@ -91,22 +88,6 @@ type deleteTodoArgs struct {
 	ID string `json:"id"`
 }
 
-type createReminderArgs struct {
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	TriggerAt string `json:"trigger_at"`
-	Type      string `json:"type"`
-	TodoID    string `json:"todo_id"`
-}
-
-type listRemindersArgs struct {
-	Limit int `json:"limit"`
-}
-
-type deleteReminderArgs struct {
-	ID string `json:"id"`
-}
-
 type createTodoHandler struct{}
 
 type updateTodoHandler struct{}
@@ -115,19 +96,10 @@ type listTodosHandler struct{}
 
 type deleteTodoHandler struct{}
 
-type createReminderHandler struct{}
-
-type listRemindersHandler struct{}
-
-type deleteReminderHandler struct{}
-
 var CreateTodo createTodoHandler
 var UpdateTodo updateTodoHandler
 var ListTodos listTodosHandler
 var DeleteTodo deleteTodoHandler
-var CreateReminder createReminderHandler
-var ListReminders listRemindersHandler
-var DeleteReminder deleteReminderHandler
 
 func toolResultSpec(name, desc string, params *tools.Param) xcommand.ToolSpec {
 	return xcommand.ToolSpec{
@@ -334,117 +306,6 @@ func (deleteTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 		return err
 	}
 	metaData.SetExtra(todoToolResultKey, fmt.Sprintf("✅ 待办已删除！ID: `%s`", args.ID))
-	return nil
-}
-
-func (createReminderHandler) ParseTool(raw string) (createReminderArgs, error) {
-	parsed := createReminderArgs{}
-	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
-		return createReminderArgs{}, err
-	}
-	return parsed, nil
-}
-
-func (createReminderHandler) ToolSpec() xcommand.ToolSpec {
-	return toolResultSpec(
-		"create_reminder",
-		"创建一个提醒。当用户要求设置闹钟、提醒我、到时通知等时使用此工具",
-		tools.NewParams("object").
-			AddProp("title", &tools.Prop{Type: "string", Desc: "提醒的标题，必填"}).
-			AddProp("content", &tools.Prop{Type: "string", Desc: "提醒的详细内容，可选"}).
-			AddProp("trigger_at", &tools.Prop{Type: "string", Desc: "触发时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS，必填"}).
-			AddProp("type", &tools.Prop{Type: "string", Desc: "提醒类型: once(一次性), daily(每天), weekly(每周), monthly(每月)，默认 once"}).
-			AddProp("todo_id", &tools.Prop{Type: "string", Desc: "关联的待办事项ID，可选"}).
-			AddRequired("title").
-			AddRequired("trigger_at"),
-	)
-}
-
-func (createReminderHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createReminderArgs) error {
-	triggerAt, err := parseTime(args.TriggerAt)
-	if err != nil {
-		return fmt.Errorf("无法解析时间: %w", err)
-	}
-
-	req := &CreateReminderRequest{
-		ChatID:    metaData.ChatID,
-		CreatorID: metaData.UserID,
-		Title:     args.Title,
-		Content:   args.Content,
-		Type:      args.Type,
-		TriggerAt: triggerAt,
-		TodoID:    args.TodoID,
-	}
-
-	rem, err := GetService().CreateReminder(ctx, req)
-	if err != nil {
-		return err
-	}
-
-	result := fmt.Sprintf("⏰ 提醒创建成功！\n\n标题: %s\n触发时间: %s\nID: `%s`",
-		rem.Title,
-		rem.TriggerAt.In(utils.UTC8Loc()).Format("2006-01-02 15:04:05"),
-		rem.ID)
-	if rem.Content != "" {
-		result += fmt.Sprintf("\n内容: %s", rem.Content)
-	}
-	metaData.SetExtra(todoToolResultKey, result)
-	return nil
-}
-
-func (listRemindersHandler) ParseTool(raw string) (listRemindersArgs, error) {
-	parsed := listRemindersArgs{}
-	if raw == "" || raw == "{}" {
-		return parsed, nil
-	}
-	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
-		return listRemindersArgs{}, err
-	}
-	return parsed, nil
-}
-
-func (listRemindersHandler) ToolSpec() xcommand.ToolSpec {
-	return toolResultSpec(
-		"list_reminders",
-		"列出当前群组的所有待触发的提醒。当用户要求查看提醒列表、有什么闹钟时使用",
-		tools.NewParams("object").
-			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制，默认 50"}),
-	)
-}
-
-func (listRemindersHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listRemindersArgs) error {
-	req := &ListRemindersRequest{ChatID: metaData.ChatID, Limit: args.Limit}
-	reminders, err := GetService().ListReminders(ctx, req)
-	if err != nil {
-		return err
-	}
-	metaData.SetExtra(todoToolResultKey, FormatReminderList(reminders))
-	return nil
-}
-
-func (deleteReminderHandler) ParseTool(raw string) (deleteReminderArgs, error) {
-	parsed := deleteReminderArgs{}
-	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
-		return deleteReminderArgs{}, err
-	}
-	return parsed, nil
-}
-
-func (deleteReminderHandler) ToolSpec() xcommand.ToolSpec {
-	return toolResultSpec(
-		"delete_reminder",
-		"删除指定的提醒。当用户要求取消提醒、删除闹钟时使用",
-		tools.NewParams("object").
-			AddProp("id", &tools.Prop{Type: "string", Desc: "要删除的提醒ID"}).
-			AddRequired("id"),
-	)
-}
-
-func (deleteReminderHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteReminderArgs) error {
-	if err := GetService().DeleteReminder(ctx, args.ID); err != nil {
-		return err
-	}
-	metaData.SetExtra(todoToolResultKey, fmt.Sprintf("✅ 提醒已删除！ID: `%s`", args.ID))
 	return nil
 }
 

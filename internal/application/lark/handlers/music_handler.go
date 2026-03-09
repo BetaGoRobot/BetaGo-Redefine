@@ -6,7 +6,6 @@ import (
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -118,11 +117,7 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		return errors.New("Unknown search type")
 	}
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_musicSearch", utils.GetIfInthread(ctx, metaData, config.Get().NeteaseMusicConfig.MusicCardInThread))
-	if err != nil {
-		return err
-	}
-	return
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_musicSearch", utils.GetIfInthread(ctx, metaData, config.Get().NeteaseMusicConfig.MusicCardInThread))
 }
 
 func (musicSearchHandler) CommandDescription() string {

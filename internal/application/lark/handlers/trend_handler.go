@@ -136,12 +136,16 @@ func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1,
 			return err
 		}
 	}
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return fmt.Errorf("chat_id is required")
+	}
 	helper := &trendInternalHelper{
 		days:     arg.Days,
 		st:       st,
 		et:       et,
-		msgID:    *data.Event.Message.MessageId,
-		chatID:   *data.Event.Message.ChatId,
+		msgID:    currentMessageID(data),
+		chatID:   chatID,
 		interval: arg.Interval,
 	}
 
@@ -173,14 +177,10 @@ func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1,
 				}
 			},
 		)
-		title := fmt.Sprintf("[%s]水群频率表-%ddays", larkchat.GetChatName(ctx, *data.Event.Message.ChatId), arg.Days)
+		title := fmt.Sprintf("[%s]水群频率表-%ddays", larkchat.GetChatName(ctx, chatID), arg.Days)
 		cardContent := larkcard.NewCardBuildGraphHelper(graph).
 			SetTitle(title).Build(ctx)
-		if metaData.Refresh {
-			err = larkmsg.PatchCard(ctx, cardContent, *data.Event.Message.MessageId)
-		} else {
-			err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "", false)
-		}
+		err = sendCompatibleCard(ctx, data, metaData, cardContent, "", false)
 	}
 
 	return
@@ -222,6 +222,9 @@ func (h *trendInternalHelper) DrawTrendPie(ctx context.Context, trend history.Tr
 		SetStartTime(h.st).
 		SetEndTime(h.et).
 		SetTitle(title).Build(ctx)
+	if h.msgID == "" {
+		return larkmsg.CreateMsgCard(ctx, cardContent, h.chatID)
+	}
 	if reply {
 		return larkmsg.ReplyCard(ctx, cardContent, h.msgID, "", false)
 	}
@@ -261,6 +264,9 @@ func (h *trendInternalHelper) DrawTrendBar(ctx context.Context, trend history.Tr
 		SetStartTime(h.st).
 		SetEndTime(h.et).
 		SetTitle(title).Build(ctx)
+	if h.msgID == "" {
+		return larkmsg.CreateMsgCard(ctx, cardContent, h.chatID)
+	}
 	if reply {
 		return larkmsg.ReplyCard(ctx, cardContent, h.msgID, "", false)
 	}

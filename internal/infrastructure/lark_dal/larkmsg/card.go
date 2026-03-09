@@ -56,3 +56,33 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 	go RecordReplyMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
 	return
 }
+
+func CreateMsgCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, chatID string) (err error) {
+	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	span.SetAttributes(attribute.Key("chatID").String(chatID))
+
+	defer span.End()
+	defer func() { span.RecordError(err) }()
+
+	resp, err := lark_dal.Client().Im.V1.Message.Create(
+		ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType(larkim.ReceiveIdTypeChatId).
+			Body(
+				larkim.NewCreateMessageReqBodyBuilder().
+					ReceiveId(chatID).
+					MsgType(larkim.MsgTypeInteractive).
+					Content(cardContent.String()).
+					Build(),
+			).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	go RecordMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
+	return nil
+}

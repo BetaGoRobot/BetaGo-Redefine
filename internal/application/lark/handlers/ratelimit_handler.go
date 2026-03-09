@@ -8,7 +8,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -73,7 +72,7 @@ func (rateLimitStatsHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 
 	targetChatID := arg.ChatID
 	if targetChatID == "" {
-		targetChatID = *data.Event.Message.ChatId
+		targetChatID = currentChatID(data, metaData)
 	}
 
 	// 获取频控器和 metrics
@@ -211,8 +210,7 @@ func (rateLimitStatsHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		AddVariable("title4", "值2").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_ratelimitStats", false)
-	return err
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_ratelimitStats", false)
 }
 
 func (rateLimitListHandler) ParseCLI(args []string) (RateLimitListArgs, error) {
@@ -293,8 +291,7 @@ func (rateLimitListHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		AddVariable("title4", "拒绝率").
 		AddVariable("table_raw_array_1", lines)
 
-	err = larkmsg.ReplyCard(ctx, cardContent, *data.Event.Message.MessageId, "_ratelimitList", false)
-	return err
+	return sendCompatibleCard(ctx, data, metaData, cardContent, "_ratelimitList", false)
 }
 
 func (rateLimitStatsHandler) CommandDescription() string {
