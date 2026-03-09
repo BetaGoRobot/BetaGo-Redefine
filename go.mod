@@ -47,7 +47,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.42.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gen v0.3.28-0.20251230105250-93ec9a609775
 	gorm.io/gorm v1.31.1
