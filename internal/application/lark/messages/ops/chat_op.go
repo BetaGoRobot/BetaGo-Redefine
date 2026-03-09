@@ -98,6 +98,8 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 		// 使用频控决策器决定是否回复
 		decision := decider.DecideIntentReply(ctx, chatID, analysis)
 		if decision.Allowed {
+			// 先记录，再回复；因为回复的时延可能高的一批。。
+			decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
 			logs.L().Ctx(ctx).Info("decided to reply by intent recognition with rate limit",
 				zap.String("intent_type", string(analysis.IntentType)),
 				zap.Int("confidence", analysis.ReplyConfidence),
@@ -109,8 +111,6 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 			if err != nil {
 				return err
 			}
-			// 记录回复
-			decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
 			return nil
 		}
 		logs.L().Ctx(ctx).Info("skipped reply by intent recognition",
@@ -154,6 +154,8 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 	// 使用频控决策器
 	decision := decider.DecideRandomReply(ctx, chatID, baseProbability)
 	if decision.Allowed {
+		// 先记录，再回复；因为回复的时延可能高的一批。。
+		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeRandom)
 		logs.L().Ctx(ctx).Info("decided to reply by random rate with rate limit",
 			zap.Int("rate", realRate),
 			zap.String("ratelimit_reason", decision.Reason),
@@ -163,8 +165,6 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 		if err != nil {
 			return err
 		}
-		// 记录回复
-		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeRandom)
 	} else {
 		logs.L().Ctx(ctx).Info("skipped reply by random rate",
 			zap.Int("rate", realRate),
