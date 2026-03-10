@@ -9,6 +9,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -41,17 +42,17 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 	}
 	lines := make([]map[string]interface{}, len(res))
 	var buttonName string
-	var buttonType string
+	var actionName string
 	switch resourceType {
 	case CommentTypeSong:
 		buttonName = "点击播放"
-		buttonType = "song"
+		actionName = cardaction.ActionMusicPlay
 	case CommentTypeAlbum:
 		buttonName = "查看专辑"
-		buttonType = "album"
+		actionName = cardaction.ActionMusicAlbum
 	default:
 		buttonName = "点击查看"
-		buttonType = "null"
+		actionName = "null"
 	}
 
 	var (
@@ -75,10 +76,7 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 					"field_2":     map[string]any{"img_key": item.ImageKey},
 					"button_info": buttonName,
 					"element_id":  item.ID,
-					"button_val": map[string]string{
-						"type": buttonType,
-						"id":   item.ID,
-					},
+					"button_val":  cardaction.New(actionName).WithID(item.ID).Payload(),
 				}
 				if len(comment.Data.Comments) != 0 {
 					line["field_3"] = comment.Data.Comments[0].Content

@@ -2,3 +2,6 @@
 .dev
 __debug_bin*
 .codex*
+.cache
+.env
+*.test

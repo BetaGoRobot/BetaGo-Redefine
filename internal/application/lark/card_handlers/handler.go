@@ -19,6 +19,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
+	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -170,8 +171,8 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 		AddVariable("sub_title", songDetail.Ar[0].Name).
 		AddVariable("imgkey", map[string]any{"img_key": imageKey}).
 		AddVariable("player_url", playerURL).
-		AddVariable("full_lyrics_button", map[string]string{"type": "lyrics", "id": musicID}).
-		AddVariable("refresh_id", map[string]string{"type": "refresh", "id": musicID})
+		AddVariable("full_lyrics_button", cardaction.New(cardaction.ActionMusicLyrics).WithID(musicID).Payload()).
+		AddVariable("refresh_id", cardaction.New(cardaction.ActionMusicRefresh).WithID(musicID).Payload())
 }
 
 func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID string, msgID string, page int) {

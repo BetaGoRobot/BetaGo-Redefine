@@ -40,6 +40,23 @@ func DB() *gorm.DB {
 func callbackQuery(d *gorm.DB) {
 	if d.Error == nil {
 		callbacks.BuildQuerySQL(d)
+		if IsQueryCacheBypassed(d) {
+			rows, err := d.Statement.ConnPool.QueryContext(d.Statement.Context, d.Statement.SQL.String(), d.Statement.Vars...)
+			if err != nil {
+				d.AddError(err)
+				return
+			}
+			defer func() {
+				d.AddError(rows.Close())
+			}()
+			gorm.Scan(rows, d, 0)
+
+			if d.Statement.Result != nil {
+				d.Statement.Result.RowsAffected = d.RowsAffected
+			}
+			return
+		}
+
 		sql := d.Statement.SQL.String()
 		vars := d.Statement.Vars
 		for i, v := range vars {
@@ -71,7 +88,7 @@ func callbackQuery(d *gorm.DB) {
 }
 
 func callbackAfter(d *gorm.DB) {
-	if d.Error != nil {
+	if d.Error != nil || IsQueryCacheBypassed(d) {
 		return
 	}
 	sql := d.Statement.SQL.String()

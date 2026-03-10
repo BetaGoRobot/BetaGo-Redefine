@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -115,10 +116,10 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 	t.AddVariable("withdraw_info", "撤回卡片")
 	t.AddVariable("withdraw_title", "撤回本条消息")
 	t.AddVariable("withdraw_confirm", "你确定要撤回这条消息吗？")
-	t.AddVariable("withdraw_object", map[string]string{"type": "withdraw"})
+	t.AddVariable("withdraw_object", cardaction.New(cardaction.ActionCardWithdraw).Payload())
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil {
 		t.AddVariable("raw_cmd", srcCmd.(string))
-		t.AddVariable("refresh_obj", map[string]string{"type": "refresh_obj", "command": srcCmd.(string)})
+		t.AddVariable("refresh_obj", cardaction.New(cardaction.ActionCommandRefresh).WithCommand(srcCmd.(string)).Payload())
 	}
 	t.AddVariable("refresh_time", time.Now().In(utils.UTC8Loc()).Format(time.DateTime))
 	return t
@@ -150,12 +151,12 @@ func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersio
 		WithdrawInfo:    "撤回卡片",
 		WithdrawTitle:   "撤回本条消息",
 		WithdrawConfirm: "你确定要撤回这条消息吗？",
-		WithdrawObject:  WithDrawObj{Type: "withdraw"},
+		WithdrawObject:  WithDrawObj{Action: cardaction.ActionCardWithdraw},
 		RefreshTime:     time.Now().In(utils.UTC8Loc()).Format(time.DateTime),
 	}
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil {
 		v.RawCmd = gptr.Of(srcCmd.(string))
-		v.RefreshObj = &RefreshObj{Type: "refresh_obj", Command: srcCmd.(string)}
+		v.RefreshObj = &RefreshObj{Action: cardaction.ActionCommandRefresh, Command: srcCmd.(string)}
 	}
 	t.AddVariableStruct(v)
 

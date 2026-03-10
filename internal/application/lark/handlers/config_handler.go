@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -157,76 +155,15 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	scopeStr := arg.Scope
-
-	var scope config.ConfigScope
 	chatID := currentChatID(data, metaData)
 	userID := currentUserID(data, metaData)
-
-	switch scopeStr {
-	case "global":
-		scope = config.ScopeGlobal
-	case "chat":
-		scope = config.ScopeChat
-	case "user":
-		scope = config.ScopeUser
-	default:
-		return errors.New("invalid scope, use: global, chat, user")
-	}
-
-	entries, err := config.GetManager().ListConfigs(ctx, scope, chatID, userID)
+	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, arg.Scope, chatID, userID, config.ConfigCardViewOptions{
+		BypassCache: true,
+	})
 	if err != nil {
-		logs.L().Ctx(ctx).Error("failed to list configs", zap.Error(err))
 		return err
 	}
-
-	allKeys := config.GetAllConfigKeys()
-	lines := make([]map[string]string, 0)
-
-	for _, entry := range entries {
-		lines = append(lines, map[string]string{
-			"title1": string(entry.Scope),
-			"title2": string(entry.Key),
-			"title3": entry.Value,
-			"title4": config.GetConfigDescription(entry.Key),
-		})
-	}
-
-	configuredKeys := make(map[string]bool)
-	for _, entry := range entries {
-		configuredKeys[string(entry.Key)] = true
-	}
-
-	mgr := config.GetManager()
-	for _, key := range allKeys {
-		if !configuredKeys[string(key)] {
-			var defaultValue string
-			switch key {
-			case config.KeyIntentRecognitionEnabled:
-				defaultValue = strconv.FormatBool(mgr.GetBool(ctx, key, chatID, userID))
-			default:
-				defaultValue = strconv.Itoa(mgr.GetInt(ctx, key, chatID, userID))
-			}
-			lines = append(lines, map[string]string{
-				"title1": "default",
-				"title2": string(key),
-				"title3": defaultValue,
-				"title4": config.GetConfigDescription(key),
-			})
-		}
-	}
-
-	cardContent := larktpl.NewCardContent(
-		ctx,
-		larktpl.FourColSheetTemplate,
-	).
-		AddVariable("title1", "Scope").
-		AddVariable("title2", "Key").
-		AddVariable("title3", "Value").
-		AddVariable("title4", "Description").
-		AddVariable("table_raw_array_1", lines)
-
-	return sendCompatibleCard(ctx, data, metaData, cardContent, "_configList", false)
+	return sendCompatibleCardJSON(ctx, data, metaData, cardData, "_configList", false)
 }
 
 func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ConfigSetArgs) (err error) {
@@ -235,66 +172,21 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	key := arg.Key
-	value := arg.Value
-	scopeStr := arg.Scope
-
-	var scope config.ConfigScope
-	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-
-	switch scopeStr {
-	case "global":
-		scope = config.ScopeGlobal
-		chatID = ""
-		userID = ""
-	case "chat":
-		scope = config.ScopeChat
-		userID = ""
-	case "user":
-		scope = config.ScopeUser
-	default:
-		return errors.New("invalid scope, use: global, chat, user")
+	req := &config.ConfigActionRequest{
+		Action: config.ConfigActionSet,
+		Key:    arg.Key,
+		Value:  arg.Value,
+		Scope:  arg.Scope,
+		ChatID: currentChatID(data, metaData),
+		UserID: currentUserID(data, metaData),
 	}
-
-	validKey := false
-	allKeys := config.GetAllConfigKeys()
-	for _, k := range allKeys {
-		if string(k) == key {
-			validKey = true
-			break
-		}
-	}
-	if !validKey {
-		return fmt.Errorf("invalid config key: %s, available keys: %v", key, allKeys)
-	}
-
-	configKey := config.ConfigKey(key)
-	mgr := config.GetManager()
-	switch configKey {
-	case config.KeyIntentRecognitionEnabled:
-		boolVal, err := strconv.ParseBool(value)
-		if err != nil {
-			return errors.New("value must be true/false")
-		}
-		err = mgr.SetBool(ctx, configKey, scope, chatID, userID, boolVal)
-	default:
-		intVal, err := strconv.Atoi(value)
-		if err != nil {
-			return errors.New("value must be integer")
-		}
-		if intVal < 0 || intVal > 100 {
-			return errors.New("value must be between 0 and 100")
-		}
-		err = mgr.SetInt(ctx, configKey, scope, chatID, userID, intVal)
-	}
-
+	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("failed to set config", zap.Error(err))
+		logs.L().Ctx(ctx).Error("failed to set config", zap.Error(err), zap.String("message", resp.Message))
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ 配置已设置\n\nKey: %s\nValue: %s\nScope: %s", key, value, scopeStr)
+	msg := fmt.Sprintf("✅ %s\n\nKey: %s\nValue: %s\nScope: %s", resp.Message, req.Key, req.Value, req.Scope)
 	return sendCompatibleText(ctx, data, metaData, msg, "_configSet", false)
 }
 
@@ -350,34 +242,20 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	key := arg.Key
-	scopeStr := arg.Scope
-
-	var scope config.ConfigScope
-	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-
-	switch scopeStr {
-	case "global":
-		scope = config.ScopeGlobal
-		chatID = ""
-		userID = ""
-	case "chat":
-		scope = config.ScopeChat
-		userID = ""
-	case "user":
-		scope = config.ScopeUser
-	default:
-		return errors.New("invalid scope, use: global, chat, user")
+	req := &config.ConfigActionRequest{
+		Action: config.ConfigActionDelete,
+		Key:    arg.Key,
+		Scope:  arg.Scope,
+		ChatID: currentChatID(data, metaData),
+		UserID: currentUserID(data, metaData),
 	}
-
-	err = config.GetManager().DeleteConfig(ctx, config.ConfigKey(key), scope, chatID, userID)
+	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("failed to delete config", zap.Error(err))
+		logs.L().Ctx(ctx).Error("failed to delete config", zap.Error(err), zap.String("message", resp.Message))
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ 配置已删除\n\nKey: %s\nScope: %s", key, scopeStr)
+	msg := fmt.Sprintf("✅ %s\n\nKey: %s\nScope: %s", resp.Message, req.Key, req.Scope)
 	return sendCompatibleText(ctx, data, metaData, msg, "_configDelete", false)
 }
 
@@ -412,35 +290,15 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 
 	chatID := currentChatID(data, metaData)
 	userID := currentUserID(data, metaData)
-	mgr := config.GetManager()
-
-	allFeatures := config.GetAllFeatures()
-	lines := make([]map[string]string, 0, len(allFeatures))
-
-	for _, f := range allFeatures {
-		status := "✅ Enabled"
-		if !mgr.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID) {
-			status = "❌ Blocked"
-		}
-		lines = append(lines, map[string]string{
-			"title1": f.Name,
-			"title2": f.Description,
-			"title3": f.Category,
-			"title4": status,
-		})
+	rawCard, err := config.BuildFeatureCard(ctx, chatID, userID)
+	if err != nil {
+		return err
 	}
-
-	cardContent := larktpl.NewCardContent(
-		ctx,
-		larktpl.FourColSheetTemplate,
-	).
-		AddVariable("title1", "Name").
-		AddVariable("title2", "Description").
-		AddVariable("title3", "Category").
-		AddVariable("title4", "Status").
-		AddVariable("table_raw_array_1", lines)
-
-	return sendCompatibleCard(ctx, data, metaData, cardContent, "_featureList", false)
+	content, err := rawCard.JSON()
+	if err != nil {
+		return err
+	}
+	return sendCompatibleRawCard(ctx, data, metaData, content, "_featureList", false)
 }
 
 func (featureBlockHandler) ParseCLI(args []string) (FeatureBlockArgs, error) {
@@ -495,34 +353,17 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	feature := arg.Feature
-	scopeStr := arg.Scope
-
-	var scope config.ConfigScope
-	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-
-	switch scopeStr {
-	case "chat":
-		scope = config.ScopeChat
-		userID = ""
-	case "user":
-		scope = config.ScopeUser
-		chatID = ""
-	case "chat_user":
-		scope = config.ScopeUser
-	default:
-		return errors.New("invalid scope, use: chat, user, chat_user")
+	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentUserID(data, metaData), true)
+	if reqErr != nil {
+		return reqErr
 	}
-
-	mgr := config.GetManager()
-	err = mgr.BlockFeature(ctx, feature, scope, chatID, userID, "")
+	resp, err := config.HandleFeatureAction(ctx, req)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("failed to block feature", zap.Error(err))
+		logs.L().Ctx(ctx).Error("failed to block feature", zap.Error(err), zap.String("message", resp.Message))
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ 功能已屏蔽\n\nFeature: %s\nScope: %s", feature, scopeStr)
+	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, arg.Scope)
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureBlock", false)
 }
 
@@ -578,35 +419,53 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	feature := arg.Feature
-	scopeStr := arg.Scope
-
-	var scope config.ConfigScope
-	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-
-	switch scopeStr {
-	case "chat":
-		scope = config.ScopeChat
-		userID = ""
-	case "user":
-		scope = config.ScopeUser
-		chatID = ""
-	case "chat_user":
-		scope = config.ScopeUser
-	default:
-		return errors.New("invalid scope, use: chat, user, chat_user")
+	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentUserID(data, metaData), false)
+	if reqErr != nil {
+		return reqErr
 	}
-
-	mgr := config.GetManager()
-	err = mgr.UnblockFeature(ctx, feature, scope, chatID, userID)
+	resp, err := config.HandleFeatureAction(ctx, req)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("failed to unblock feature", zap.Error(err))
+		logs.L().Ctx(ctx).Error("failed to unblock feature", zap.Error(err), zap.String("message", resp.Message))
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ 功能已取消屏蔽\n\nFeature: %s\nScope: %s", feature, scopeStr)
+	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, arg.Scope)
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureUnblock", false)
+}
+
+func buildFeatureActionRequest(scopeStr, feature, chatID, userID string, block bool) (*config.FeatureActionRequest, error) {
+	req := &config.FeatureActionRequest{
+		Feature: feature,
+		ChatID:  chatID,
+		UserID:  userID,
+	}
+
+	switch scopeStr {
+	case "chat":
+		req.UserID = ""
+		if block {
+			req.Action = config.FeatureActionBlockChat
+		} else {
+			req.Action = config.FeatureActionUnblockChat
+		}
+	case "user":
+		req.ChatID = ""
+		if block {
+			req.Action = config.FeatureActionBlockUser
+		} else {
+			req.Action = config.FeatureActionUnblockUser
+		}
+	case "chat_user":
+		if block {
+			req.Action = config.FeatureActionBlockChatUser
+		} else {
+			req.Action = config.FeatureActionUnblockChatUser
+		}
+	default:
+		return nil, errors.New("invalid scope, use: chat, user, chat_user")
+	}
+
+	return req, nil
 }
 
 func (configSetHandler) CommandDescription() string {

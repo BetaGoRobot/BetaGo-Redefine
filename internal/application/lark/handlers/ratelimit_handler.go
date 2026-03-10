@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
@@ -74,143 +73,11 @@ func (rateLimitStatsHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if targetChatID == "" {
 		targetChatID = currentChatID(data, metaData)
 	}
-
-	// 获取频控器和 metrics
-	limiter := ratelimit.Get()
-	metrics := ratelimit.GetMetrics()
-
-	// 获取频控统计
-	stats := limiter.GetStats(ctx, targetChatID)
-
-	// 获取内存 metrics
-	chatMetrics := metrics.GetChatStats(targetChatID)
-
-	// 构建表格数据
-	lines := make([]map[string]string, 0)
-
-	// 基础信息
-	lines = append(lines, map[string]string{
-		"title1": "会话ID",
-		"title2": targetChatID,
-		"title3": "-",
-		"title4": "-",
-	})
-
-	lines = append(lines, map[string]string{
-		"title1": "历史总发送",
-		"title2": strconv.FormatInt(stats.TotalMessagesSent, 10),
-		"title3": "近24小时",
-		"title4": strconv.FormatInt(stats.TotalMessages24h, 10),
-	})
-
-	lines = append(lines, map[string]string{
-		"title1": "近1小时发送",
-		"title2": strconv.FormatInt(stats.TotalMessages1h, 10),
-		"title3": "活跃度评分",
-		"title4": fmt.Sprintf("%.2f", stats.CurrentActivityScore),
-	})
-
-	lines = append(lines, map[string]string{
-		"title1": "爆发因子",
-		"title2": fmt.Sprintf("%.2f", stats.CurrentBurstFactor),
-		"title3": "冷却等级",
-		"title4": strconv.Itoa(stats.CooldownLevel),
-	})
-
-	if !stats.CooldownUntil.IsZero() {
-		remaining := stats.CooldownUntil.Sub(time.Now()).Seconds()
-		if remaining > 0 {
-			lines = append(lines, map[string]string{
-				"title1": "冷却剩余",
-				"title2": fmt.Sprintf("%.0f 秒", remaining),
-				"title3": "-",
-				"title4": "-",
-			})
-		}
+	cardData, err := ratelimit.BuildStatsCardJSON(ctx, targetChatID)
+	if err != nil {
+		return err
 	}
-
-	// 如果有内存 metrics，添加
-	if chatMetrics != nil {
-		lines = append(lines, map[string]string{
-			"title1": "---",
-			"title2": "诊断 Metrics",
-			"title3": "---",
-			"title4": "---",
-		})
-
-		lines = append(lines, map[string]string{
-			"title1": "检查次数",
-			"title2": strconv.FormatInt(chatMetrics.ChecksTotal, 10),
-			"title3": "通过次数",
-			"title4": strconv.FormatInt(chatMetrics.AllowedTotal, 10),
-		})
-
-		lines = append(lines, map[string]string{
-			"title1": "拒绝次数",
-			"title2": strconv.FormatInt(chatMetrics.BlockedTotal, 10),
-			"title3": "实际发送",
-			"title4": strconv.FormatInt(chatMetrics.MessagesSentTotal, 10),
-		})
-
-		blockedRate := 0.0
-		if chatMetrics.ChecksTotal > 0 {
-			blockedRate = float64(chatMetrics.BlockedTotal) / float64(chatMetrics.ChecksTotal) * 100
-		}
-		allowedRate := 0.0
-		if chatMetrics.ChecksTotal > 0 {
-			allowedRate = float64(chatMetrics.AllowedTotal) / float64(chatMetrics.ChecksTotal) * 100
-		}
-		lines = append(lines, map[string]string{
-			"title1": "拒绝率",
-			"title2": fmt.Sprintf("%.1f%%", blockedRate),
-			"title3": "通过率",
-			"title4": fmt.Sprintf("%.1f%%", allowedRate),
-		})
-
-		lines = append(lines, map[string]string{
-			"title1": "冷却中",
-			"title2": strconv.FormatBool(chatMetrics.InCooldown),
-			"title3": "最后更新",
-			"title4": chatMetrics.LastUpdated.Format("15:04:05"),
-		})
-	}
-
-	// 最近发送记录
-	if len(stats.RecentSends) > 0 {
-		lines = append(lines, map[string]string{
-			"title1": "---",
-			"title2": "最近发送记录",
-			"title3": "---",
-			"title4": "---",
-		})
-
-		// 显示最近5条
-		start := 0
-		if len(stats.RecentSends) > 5 {
-			start = len(stats.RecentSends) - 5
-		}
-		for i := start; i < len(stats.RecentSends); i++ {
-			send := stats.RecentSends[i]
-			lines = append(lines, map[string]string{
-				"title1": fmt.Sprintf("#%d", i+1),
-				"title2": string(send.TriggerType),
-				"title3": send.Timestamp.Format("15:04:05"),
-				"title4": "-",
-			})
-		}
-	}
-
-	cardContent := larktpl.NewCardContent(
-		ctx,
-		larktpl.FourColSheetTemplate,
-	).
-		AddVariable("title1", "项").
-		AddVariable("title2", "值").
-		AddVariable("title3", "项2").
-		AddVariable("title4", "值2").
-		AddVariable("table_raw_array_1", lines)
-
-	return sendCompatibleCard(ctx, data, metaData, cardContent, "_ratelimitStats", false)
+	return sendCompatibleCardJSON(ctx, data, metaData, cardData, "_ratelimitStats", false)
 }
 
 func (rateLimitListHandler) ParseCLI(args []string) (RateLimitListArgs, error) {

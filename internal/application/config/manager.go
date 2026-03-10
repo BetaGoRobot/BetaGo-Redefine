@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -82,9 +83,13 @@ func buildFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) str
 
 // Manager 配置管理器
 type Manager struct {
-	cache            map[string]string
-	mu               sync.RWMutex
-	getFeaturesFunc  func() []Feature // 获取功能列表的回调
+	cache           map[string]string
+	mu              sync.RWMutex
+	getFeaturesFunc func() []Feature // 获取功能列表的回调
+}
+
+type ConfigReadOptions struct {
+	BypassCache bool
 }
 
 // NewManager 创建新的配置管理器
@@ -186,21 +191,38 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, userID str
 
 // getConfig 从数据库获取配置
 func (m *Manager) getConfig(ctx context.Context, scope ConfigScope, chatID, userID string, key ConfigKey) (string, bool) {
+	return m.getConfigWithOptions(ctx, scope, chatID, userID, key, ConfigReadOptions{})
+}
+
+func (m *Manager) getConfigWithOptions(ctx context.Context, scope ConfigScope, chatID, userID string, key ConfigKey, options ConfigReadOptions) (string, bool) {
 	fullKey := buildConfigKey(scope, chatID, userID, key)
-	return m.getConfigByFullKey(ctx, fullKey)
+	return m.getConfigByFullKeyWithOptions(ctx, fullKey, options)
 }
 
 // getConfigByFullKey 通过完整键获取配置
 func (m *Manager) getConfigByFullKey(ctx context.Context, fullKey string) (string, bool) {
-	m.mu.RLock()
-	if val, ok := m.cache[fullKey]; ok {
-		m.mu.RUnlock()
-		return val, true
-	}
-	m.mu.RUnlock()
+	return m.getConfigByFullKeyWithOptions(ctx, fullKey, ConfigReadOptions{})
+}
 
-	cfgs, err := query.Q.DynamicConfig.WithContext(ctx).
-		Where(query.DynamicConfig.Key.Eq(fullKey)).
+func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey string, options ConfigReadOptions) (string, bool) {
+	if !options.BypassCache {
+		m.mu.RLock()
+		if val, ok := m.cache[fullKey]; ok {
+			m.mu.RUnlock()
+			return val, true
+		}
+		m.mu.RUnlock()
+	}
+
+	ins := query.Q.DynamicConfig
+	if options.BypassCache {
+		if noCacheQuery := infraDB.QueryWithoutCache(); noCacheQuery != nil {
+			ins = noCacheQuery.DynamicConfig
+		}
+	}
+
+	cfgs, err := ins.WithContext(ctx).
+		Where(ins.Key.Eq(fullKey)).
 		Find()
 
 	if err == nil && len(cfgs) > 0 {

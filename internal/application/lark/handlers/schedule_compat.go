@@ -74,3 +74,37 @@ func sendCompatibleCard(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	}
 	return larkmsg.CreateMsgCard(ctx, cardContent, chatID)
 }
+
+func sendCompatibleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, content, suffix string, replyInThread bool) error {
+	msgID := currentMessageID(data)
+	if msgID != "" {
+		if metaData != nil && metaData.Refresh {
+			return larkmsg.PatchRawCard(ctx, msgID, content)
+		}
+		return larkmsg.ReplyRawCard(ctx, msgID, content, suffix, replyInThread)
+	}
+
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
+	msgID = fmt.Sprintf("schedule-compat-card-%d", time.Now().UnixNano())
+	return larkmsg.CreateRawCard(ctx, chatID, content, msgID, suffix)
+}
+
+func sendCompatibleCardJSON(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cardData any, suffix string, replyInThread bool) error {
+	msgID := currentMessageID(data)
+	if msgID != "" {
+		if metaData != nil && metaData.Refresh {
+			return larkmsg.PatchCardJSON(ctx, msgID, cardData)
+		}
+		return larkmsg.ReplyCardJSON(ctx, msgID, cardData, suffix, replyInThread)
+	}
+
+	chatID := currentChatID(data, metaData)
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
+	msgID = fmt.Sprintf("schedule-compat-cardjson-%d", time.Now().UnixNano())
+	return larkmsg.CreateCardJSON(ctx, chatID, cardData, msgID, suffix)
+}

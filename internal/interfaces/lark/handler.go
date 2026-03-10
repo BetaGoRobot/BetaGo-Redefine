@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
+	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -54,65 +54,6 @@ func runMessageProcessorAsync(spanName, msgID string, event *larkim.P2MessageRec
 	}()
 }
 
-func hasCardFormValue(cardAction *callback.CardActionTriggerEvent) bool {
-	return len(cardAction.Event.Action.FormValue) > 0
-}
-
-func cardActionType(cardAction *callback.CardActionTriggerEvent) (string, bool) {
-	return actionStringValue(cardAction, "type")
-}
-
-func cardActionID(cardAction *callback.CardActionTriggerEvent) (string, bool) {
-	return actionStringValue(cardAction, "id")
-}
-
-func actionStringValue(cardAction *callback.CardActionTriggerEvent, key string) (string, bool) {
-	value, ok := cardAction.Event.Action.Value[key]
-	if !ok {
-		return "", false
-	}
-	str, ok := value.(string)
-	return str, ok
-}
-
-func dispatchCardAction(ctx context.Context, metaData *xhandler.BaseMetaData, cardAction *callback.CardActionTriggerEvent) {
-	buttonType, ok := cardActionType(cardAction)
-	if !ok {
-		return
-	}
-
-	switch buttonType {
-	case "song":
-		dispatchCardActionWithID(cardAction, func(id string) {
-			go cardhandlers.SendMusicCard(ctx, metaData, id, cardAction.Event.Context.OpenMessageID, 1)
-		})
-	case "album":
-		dispatchCardActionWithID(cardAction, func(id string) {
-			go cardhandlers.SendAlbumCard(ctx, metaData, id, cardAction.Event.Context.OpenMessageID)
-		})
-	case "lyrics":
-		dispatchCardActionWithID(cardAction, func(id string) {
-			go cardhandlers.HandleFullLyrics(ctx, metaData, id, cardAction.Event.Context.OpenMessageID)
-		})
-	case "withdraw":
-		go cardhandlers.HandleWithDraw(ctx, cardAction)
-	case "refresh":
-		dispatchCardActionWithID(cardAction, func(id string) {
-			go cardhandlers.HandleRefreshMusic(ctx, id, cardAction.Event.Context.OpenMessageID)
-		})
-	case "refresh_obj":
-		go cardhandlers.HandleRefreshObj(ctx, cardAction)
-	}
-}
-
-func dispatchCardActionWithID(cardAction *callback.CardActionTriggerEvent, fn func(string)) {
-	id, ok := cardActionID(cardAction)
-	if !ok {
-		return
-	}
-	fn(id)
-}
-
 func MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) (err error) {
 	fn := reflecting.GetCurrentFunc()
 	ctx, span := otel.T().Start(ctx, fn)
@@ -157,12 +98,13 @@ func CardActionHandler(ctx context.Context, cardAction *callback.CardActionTrigg
 	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
 	// 记录一下操作记录
 	defer func() { go larkmsg.RecordCardAction2Opensearch(ctx, cardAction) }()
-	if hasCardFormValue(cardAction) {
-		go cardhandlers.HandleSubmit(ctx, cardAction)
-		return
+	appcardaction.RegisterBuiltins()
+	resp, dispatchErr := appcardaction.Dispatch(ctx, cardAction, metaData)
+	if dispatchErr != nil {
+		logs.L().Ctx(ctx).Warn("dispatch card action failed", zap.Error(dispatchErr))
+		return nil, nil
 	}
-	dispatchCardAction(ctx, metaData, cardAction)
-	return
+	return resp, nil
 }
 
 func AuditV6Handler(ctx context.Context, event *larkapplication.P2ApplicationAppVersionAuditV6) (err error) {

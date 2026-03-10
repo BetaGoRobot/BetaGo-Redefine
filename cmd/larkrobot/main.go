@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
@@ -65,6 +66,7 @@ func initInfrastructure(cfg *config.BaseConfig) {
 }
 
 func initApplications() {
+	appcardaction.RegisterBuiltins()
 	todoapp.Init(db.DB())
 	scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
 }
