@@ -3,10 +3,13 @@ package otel
 import (
 	"context"
 	stdlog "log"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/go_utils/reflecting"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	log2 "go.opentelemetry.io/otel/sdk/log"
@@ -45,6 +48,53 @@ func LoggerProvider() *log2.LoggerProvider {
 
 func T() trace.Tracer {
 	return OtelTracer
+}
+
+func Start(ctx context.Context, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	return T().Start(ctx, reflecting.GetCurrentFuncDepth(2), opts...)
+}
+
+func StartNamed(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	if strings.TrimSpace(name) == "" {
+		return Start(ctx, opts...)
+	}
+	return T().Start(ctx, name, opts...)
+}
+
+func RecordError(span trace.Span, err error) {
+	if span == nil || err == nil {
+		return
+	}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+}
+
+func RecordErrorPtr(span trace.Span, err *error) {
+	if err == nil {
+		return
+	}
+	RecordError(span, *err)
+}
+
+func PreviewString(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
+}
+
+func PreviewAttrs(key, value string, limit int) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Int(key+".len", len([]rune(strings.TrimSpace(value)))),
+		attribute.String(key+".preview", PreviewString(value, limit)),
+	}
 }
 
 func Init(config *config.OtelConfig) {

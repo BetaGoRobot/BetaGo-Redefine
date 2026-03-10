@@ -22,8 +22,10 @@ import (
 )
 
 var (
-	globalService TodoService = noopService{reason: "todo service not initialized"}
-	warnOnce      sync.Once
+	globalService     TodoService = noopService{reason: "todo service not initialized"}
+	serviceRegistry               = make(map[string]TodoService)
+	serviceRegistryMu sync.RWMutex
+	warnOnce          sync.Once
 )
 
 const todoToolResultKey = "todo_tool_result"
@@ -40,12 +42,27 @@ func Init(db *gorm.DB) {
 		return
 	}
 	repo := todo.NewRepository(db, identity)
-	globalService = NewService(repo, identity)
+	serviceRegistryMu.Lock()
+	serviceRegistry[todoServiceKey(identity)] = NewService(repo, identity)
+	serviceRegistryMu.Unlock()
 }
 
 // GetService 获取全局服务实例
 func GetService() TodoService {
+	identity := botidentity.Current()
+	if identity.Valid() {
+		serviceRegistryMu.RLock()
+		service, ok := serviceRegistry[todoServiceKey(identity)]
+		serviceRegistryMu.RUnlock()
+		if ok {
+			return service
+		}
+	}
 	return globalService
+}
+
+func todoServiceKey(identity botidentity.Identity) string {
+	return identity.NamespaceKey("todo_service")
 }
 
 func setNoopService(reason string) {

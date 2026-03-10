@@ -20,7 +20,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -41,14 +40,14 @@ import (
 //	@author kevinmatthe
 //	@update 2025-04-27 20:15:38
 func DownImgFromMsgSync(ctx context.Context, msgID, fileType, fileKey string) (b64Data string, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.Key("msgID").String(msgID),
 		attribute.Key("fileKey").String(fileKey),
 		attribute.Key("fileType").String(fileType),
 	)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := larkim.NewGetMessageResourceReqBuilder().
 		MessageId(msgID).
@@ -95,14 +94,14 @@ func DownImgFromMsgSync(ctx context.Context, msgID, fileType, fileKey string) (b
 //	@author kevinmatthe
 //	@update 2025-04-27 20:15:38
 func DownImgFromMsgAsync(ctx context.Context, msgID, fileType, fileKey string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.Key("msgID").String(msgID),
 		attribute.Key("fileKey").String(fileKey),
 		attribute.Key("fileType").String(fileType),
 	)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := larkim.NewGetMessageResourceReqBuilder().
 		MessageId(msgID).
@@ -210,10 +209,10 @@ type contentData struct {
 //	@author kevinmatthe
 //	@update 2025-04-28 19:47:21
 func GetAllImgTagFromMsg(ctx context.Context, message *larkim.Message) (imageKeys iter.Seq[string], err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("message").String(larkcore.Prettify(message)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("message", larkcore.Prettify(message), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	if msgType := *message.MsgType; msgType == larkim.MsgTypeImage {
 		var msg *larkim.MessageImage
@@ -249,10 +248,10 @@ func GetAllImgTagFromMsg(ctx context.Context, message *larkim.Message) (imageKey
 //	@author kevinmatthe
 //	@update 2025-04-28 19:47:21
 func GetAllImageFromMsgEvent(ctx context.Context, message *larkim.EventMessage) (imageKeys iter.Seq[string], err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("message").String(larkcore.Prettify(message)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("message", larkcore.Prettify(message), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	if msgType := *message.MessageType; msgType == larkim.MsgTypeImage {
 		var msg *larkim.MessageImage
@@ -284,7 +283,7 @@ func GetAllImageFromMsgEvent(ctx context.Context, message *larkim.EventMessage) 
 
 func getAllImage(ctx context.Context, msg *postData) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+		_, span := otel.Start(ctx)
 		defer span.End()
 		for _, elements := range msg.Content {
 			for _, element := range elements {
@@ -310,9 +309,9 @@ func jsonTrans[T any](s string) (*T, error) {
 type visitedMsgKey struct{}
 
 func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[string], err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	resp := larkmsg.GetMsgFullByID(ctx, msgID)
 	if len(resp.Data.Items) == 0 {
@@ -333,9 +332,9 @@ func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[str
 		return nil, err
 	}
 	return func(yield func(string) bool) {
-		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+		ctx, span := otel.Start(ctx)
 		defer span.End()
-		defer func() { span.RecordError(err) }()
+		defer func() { otel.RecordError(span, err) }()
 
 		for imageKey := range seq {
 			url, err := DownImgFromMsgSync(ctx, *msg.MessageId, *msg.MsgType, imageKey)
@@ -398,10 +397,10 @@ func GetAllImgURLFromParent(ctx context.Context, data *larkim.P2MessageReceiveV1
 }
 
 func GetAndResizePicFromURL(ctx context.Context, imageURL string) (res []byte, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("imgURL").String(imageURL))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("img_url", imageURL, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	picResp, err := xrequest.Req().SetDoNotParseResponse(true).Get(imageURL)
 	if err != nil {
@@ -427,10 +426,11 @@ func checkDBCache(ctx context.Context, musicID string) (imgKey string, err error
 }
 
 func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS bool) (key string, ossURL string, err error) { // also minio
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("imgURL").String(imageURL))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("music.id", musicID))
+	span.SetAttributes(otel.PreviewAttrs("img_url", imageURL, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	imgKey, err := checkDBCache(ctx, musicID)
 	if err != nil {
@@ -476,9 +476,9 @@ func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS 
 }
 
 func Upload2Lark(ctx context.Context, musicID string, bodyReader io.ReadCloser) (imgKey string, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := larkim.NewCreateImageReqBuilder().
 		Body(
@@ -510,7 +510,7 @@ func Upload2Lark(ctx context.Context, musicID string, bodyReader io.ReadCloser) 
 }
 
 func UploadPicture2LarkReader(ctx context.Context, picture io.Reader) (imgKey string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	req := larkim.NewCreateImageReqBuilder().
@@ -536,7 +536,7 @@ func UploadPicture2LarkReader(ctx context.Context, picture io.Reader) (imgKey st
 }
 
 func UploadPicture2Lark(ctx context.Context, URL string) (imgKey string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	picData, err := GetAndResizePicFromURL(ctx, URL)

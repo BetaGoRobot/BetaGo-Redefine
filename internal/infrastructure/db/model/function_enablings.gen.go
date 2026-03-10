@@ -8,9 +8,11 @@ const TableNameFunctionEnabling = "function_enablings"
 
 // FunctionEnabling mapped from table <function_enablings>
 type FunctionEnabling struct {
-	GuildID  string `gorm:"column:guild_id;primaryKey" json:"guild_id"`
-	Function string `gorm:"column:function;primaryKey" json:"function"`
-	Disable  bool   `gorm:"column:disable;not null" json:"disable"`
+	GuildID   string `gorm:"column:guild_id;primaryKey" json:"guild_id"`
+	Function  string `gorm:"column:function;primaryKey" json:"function"`
+	Disable   bool   `gorm:"column:disable;not null" json:"disable"`
+	AppID     string `gorm:"column:app_id;primaryKey;default:cli_a570c2871fe3500e;comment:功能开关所属的飞书应用 AppID" json:"app_id"`                          // 功能开关所属的飞书应用 AppID
+	BotOpenID string `gorm:"column:bot_open_id;primaryKey;default:ou_8817f540f718affd21718f415b81597f;comment:功能开关所属的机器人 OpenID" json:"bot_open_id"` // 功能开关所属的机器人 OpenID
 }
 
 // TableName FunctionEnabling's table name

@@ -8,7 +8,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/dlclark/regexp2"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -28,7 +27,7 @@ func AtUser(userID, userName string) string {
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:39:05
 func TrimAtMsg(ctx context.Context, msg string) string {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	match, err := atMsgRepattern.FindStringMatch(msg)
 	if err != nil {

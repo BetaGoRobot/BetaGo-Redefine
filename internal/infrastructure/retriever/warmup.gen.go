@@ -7,6 +7,6 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*RAGSystem).AddDocuments) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/retriever/retriver.go:187
-	reflecting.GetFunctionName(NewRAGSystem)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/retriever/retriver.go:132
+	reflecting.GetFunctionName((*RAGSystem).AddDocuments) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/retriever/retriver.go:179
+	reflecting.GetFunctionName(NewRAGSystem)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/retriever/retriver.go:124
 }

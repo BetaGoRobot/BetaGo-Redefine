@@ -21,7 +21,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/dlclark/regexp2"
 	"github.com/minio/minio-go/v7"
@@ -121,7 +120,7 @@ func (neteaseCtx *NetEaseContext) GetDailyRecommendID() (musicIDs map[string]str
 //	@return InfoList
 //	@return err
 func (neteaseCtx *NetEaseContext) GetMusicURLByIDs(ctx context.Context, musicIDs []string) (musicIDURL map[string]string, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	musicIDURL = make(map[string]string)
@@ -158,7 +157,7 @@ func (neteaseCtx *NetEaseContext) GetMusicURLByIDs(ctx context.Context, musicIDs
 }
 
 func uploadMusic(ctx context.Context, URL string, ID string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("songID").String(ID))
 	defer span.End()
 	parsedURL, err := url.Parse(URL)
@@ -182,7 +181,7 @@ func uploadMusic(ctx context.Context, URL string, ID string) {
 //	@return InfoList
 //	@return err
 func (neteaseCtx *NetEaseContext) GetMusicURLByID(ctx context.Context, musicIDName []*MusicIDName) (InfoList []MusicInfo, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	var id string
@@ -224,7 +223,7 @@ func (neteaseCtx *NetEaseContext) GetMusicURLByID(ctx context.Context, musicIDNa
 }
 
 func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID string) (url string, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("songID").String(ID))
 	defer span.End()
 	var (
@@ -274,7 +273,7 @@ func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID string) (u
 }
 
 func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string) (musicDetail *MusicDetail) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("songID").String(musicID))
 	defer span.End()
 
@@ -316,7 +315,7 @@ func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string)
 }
 
 func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID string) (lyrics string, lyricsURL string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("songID").String(songID))
 	defer span.End()
 
@@ -422,7 +421,7 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 //	@return result
 //	@return err
 func (neteaseCtx *NetEaseContext) SearchMusicByKeyWord(ctx context.Context, keywords ...string) (result []*SearchMusicItem, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("keywords").StringSlice(keywords))
 	defer span.End()
 
@@ -466,7 +465,7 @@ func (neteaseCtx *NetEaseContext) SearchPlaylistByKeyWord(ctx context.Context, k
 //	@author heyuhengmatt
 //	@update 2024-08-07 08:46:58
 func (neteaseCtx *NetEaseContext) SearchAlbumByKeyWord(ctx context.Context, keywords ...string) (result []*Album, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("keywords").StringSlice(keywords))
 	defer span.End()
 
@@ -502,7 +501,7 @@ func (neteaseCtx *NetEaseContext) SearchAlbumByKeyWord(ctx context.Context, keyw
 //	@return result []*Album
 //	@return err error
 func (neteaseCtx *NetEaseContext) GetAlbumDetail(ctx context.Context, albumID string) (result *AlbumDetail, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("albumID").String(albumID))
 	defer span.End()
 
@@ -529,7 +528,7 @@ func (neteaseCtx *NetEaseContext) GetAlbumDetail(ctx context.Context, albumID st
 }
 
 func asyncUploadPics(ctx context.Context, musicInfos SearchMusic) map[string]string {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	var (
 		c  = make(chan [2]string)
@@ -563,7 +562,7 @@ func uploadPicWorker(ctx context.Context, wg *sync.WaitGroup, url string, musicI
 }
 
 func (neteaseCtx *NetEaseContext) InnerAsyncGetSearchRes(ctx context.Context, searchMusic SearchMusic, err error, urlChan chan *SearchMusicItem) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer close(urlChan)
 
@@ -592,7 +591,7 @@ func (neteaseCtx *NetEaseContext) InnerAsyncGetSearchRes(ctx context.Context, se
 }
 
 func (neteaseCtx *NetEaseContext) GetComment(ctx context.Context, commentType CommentType, id string) (res *CommentResult, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("commentType").String(string(commentType)))
 	defer span.End()
 

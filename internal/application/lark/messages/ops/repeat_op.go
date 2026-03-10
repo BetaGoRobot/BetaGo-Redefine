@@ -9,7 +9,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
-	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/pkg/errors"
 )
@@ -56,15 +54,15 @@ func (r *RepeatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:35:35
 func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
 		return err
 	}
 	if ext, err := redis_dal.GetRedisClient().
-		Exists(ctx, handlers.MuteRedisKeyPrefix+*event.Event.Message.ChatId).Result(); err != nil {
+		Exists(ctx, handlers.MuteRedisKey(*event.Event.Message.ChatId)).Result(); err != nil {
 		return err
 	} else if ext != 0 {
 		return skipStage(r.Name(), "is muted")
@@ -82,15 +80,15 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:35:41
 func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	// Repeat
 	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 
 	// 开始摇骰子, 默认概率10%
-	realRate := infraconfig.Get().RateConfig.RepeatDefaultRate
+	realRate := messageConfigAccessor(ctx, event, meta).RepeatDefaultRate()
 	// 群聊定制化
 	ins := query.Q.RepeatWordsRateCustom
 	config, err := ins.WithContext(ctx).Where(

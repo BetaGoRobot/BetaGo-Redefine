@@ -4,20 +4,24 @@ import (
 	"context"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/pkg/errors"
 )
 
 const (
-	MuteRedisKeyPrefix = "mute:"
+	MuteRedisKeyPrefix = "betago:mute"
 )
+
+func MuteRedisKey(chatID string) string {
+	return botidentity.Current().NamespaceKey(MuteRedisKeyPrefix, chatID)
+}
 
 type MuteArgs struct {
 	Time   string `json:"time" cli:"t"`
@@ -66,9 +70,9 @@ func (muteHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg MuteArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	var (
 		res              string
 		muteTimeDuration time.Duration
@@ -82,13 +86,13 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 		// 取消禁言
 		// 先检查是否已经取消禁言
 		if ext, err := redis.GetRedisClient().
-			Exists(ctx, MuteRedisKeyPrefix+chatID).Result(); err != nil {
+			Exists(ctx, MuteRedisKey(chatID)).Result(); err != nil {
 			return err
 		} else if ext == 0 {
 			res = "没有禁言，不需要取消, 直接发言即可"
 			return nil // Do nothing
 		}
-		if err := redis.GetRedisClient().Del(ctx, MuteRedisKeyPrefix+chatID).Err(); err != nil {
+		if err := redis.GetRedisClient().Del(ctx, MuteRedisKey(chatID)).Err(); err != nil {
 			return err
 		}
 		res = "禁言已取消"
@@ -102,7 +106,7 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	}
 	if muteTimeDuration > 0 {
 		if err := redis.GetRedisClient().
-			Set(ctx, MuteRedisKeyPrefix+chatID, 1, muteTimeDuration).
+			Set(ctx, MuteRedisKey(chatID), 1, muteTimeDuration).
 			Err(); err != nil {
 			return err
 		}

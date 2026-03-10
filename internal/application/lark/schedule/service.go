@@ -13,11 +13,13 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	scheduleinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schedule"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/robfig/cron/v3"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -28,8 +30,10 @@ const (
 )
 
 var (
-	globalService TaskService = noopService{reason: "schedule service not initialized"}
-	warnOnce      sync.Once
+	globalService     TaskService = noopService{reason: "schedule service not initialized"}
+	serviceRegistry               = make(map[string]TaskService)
+	serviceRegistryMu sync.RWMutex
+	warnOnce          sync.Once
 )
 
 var errScheduleServiceUnavailable = errors.New("schedule service unavailable")
@@ -97,14 +101,25 @@ func Init(db *gorm.DB, schedulableTools *toolkit.Impl[larkim.P2MessageReceiveV1]
 		setNoopService(err.Error())
 		return
 	}
-	globalService = &Service{
+	serviceRegistryMu.Lock()
+	serviceRegistry[serviceRegistryKey(identity)] = &Service{
 		repo:     scheduleinfra.NewRepository(db, identity),
 		executor: NewToolExecutor(schedulableTools, identity),
 		identity: identity,
 	}
+	serviceRegistryMu.Unlock()
 }
 
 func GetService() TaskService {
+	identity := botidentity.Current()
+	if identity.Valid() {
+		serviceRegistryMu.RLock()
+		service, ok := serviceRegistry[serviceRegistryKey(identity)]
+		serviceRegistryMu.RUnlock()
+		if ok {
+			return service
+		}
+	}
 	return globalService
 }
 
@@ -115,6 +130,10 @@ func setNoopService(reason string) {
 			zap.String("reason", reason),
 		)
 	})
+}
+
+func serviceRegistryKey(identity botidentity.Identity) string {
+	return identity.NamespaceKey("schedule_service")
 }
 
 func NewService(repo *scheduleinfra.Repository, executor *ToolExecutor, identity botidentity.Identity) *Service {
@@ -133,6 +152,18 @@ func (s *Service) AvailableTools() []string {
 }
 
 func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*model.ScheduledTask, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.create")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	if req != nil {
+		span.SetAttributes(
+			attribute.String("schedule.type", strings.TrimSpace(req.Type)),
+			attribute.String("schedule.chat_id", strings.TrimSpace(req.ChatID)),
+			attribute.String("schedule.tool_name", strings.TrimSpace(req.ToolName)),
+			attribute.String("schedule.name.preview", otel.PreviewString(req.Name, 128)),
+		)
+	}
 	if !s.Available() {
 		return nil, errScheduleServiceUnavailable
 	}
@@ -175,16 +206,30 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 }
 
 func (s *Service) ListTasks(ctx context.Context, req *ListTasksRequest) ([]*model.ScheduledTask, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.list")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
 	if !s.Available() {
 		return nil, errScheduleServiceUnavailable
 	}
 	if req.Limit <= 0 {
 		req.Limit = 50
 	}
+	span.SetAttributes(
+		attribute.String("schedule.chat_id", req.ChatID),
+		attribute.Int("schedule.limit", req.Limit),
+		attribute.Int("schedule.offset", req.Offset),
+	)
 	return s.repo.ListTasksByChatID(ctx, req.ChatID, req.Limit, req.Offset)
 }
 
 func (s *Service) DeleteTask(ctx context.Context, id string) error {
+	ctx, span := otel.StartNamed(ctx, "schedule.delete")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(attribute.String("schedule.task_id", id))
 	if !s.Available() {
 		return errScheduleServiceUnavailable
 	}
@@ -192,6 +237,11 @@ func (s *Service) DeleteTask(ctx context.Context, id string) error {
 }
 
 func (s *Service) PauseTask(ctx context.Context, id string) error {
+	ctx, span := otel.StartNamed(ctx, "schedule.pause")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(attribute.String("schedule.task_id", id))
 	if !s.Available() {
 		return errScheduleServiceUnavailable
 	}
@@ -206,6 +256,11 @@ func (s *Service) PauseTask(ctx context.Context, id string) error {
 }
 
 func (s *Service) ResumeTask(ctx context.Context, id string) (*model.ScheduledTask, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.resume")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(attribute.String("schedule.task_id", id))
 	if !s.Available() {
 		return nil, errScheduleServiceUnavailable
 	}
@@ -231,6 +286,11 @@ func (s *Service) ResumeTask(ctx context.Context, id string) (*model.ScheduledTa
 }
 
 func (s *Service) GetDueTasks(ctx context.Context, limit int) ([]*model.ScheduledTask, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.get_due")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(attribute.Int("schedule.limit", limit))
 	if !s.Available() {
 		return nil, errScheduleServiceUnavailable
 	}
@@ -241,6 +301,17 @@ func (s *Service) GetDueTasks(ctx context.Context, limit int) ([]*model.Schedule
 }
 
 func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledTask, now time.Time) (bool, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.claim")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	if task != nil {
+		span.SetAttributes(
+			attribute.String("schedule.task_id", task.ID),
+			attribute.String("schedule.type", task.Type),
+			attribute.String("schedule.status", task.Status),
+		)
+	}
 	if !s.Available() {
 		return false, errScheduleServiceUnavailable
 	}
@@ -262,6 +333,7 @@ func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledT
 	}
 
 	ok, err := s.repo.ClaimTaskRun(ctx, task.ID, now, updates)
+	span.SetAttributes(attribute.Bool("schedule.claimed", ok))
 	if ok {
 		task.LastRunAt = &now
 	}
@@ -269,6 +341,17 @@ func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledT
 }
 
 func (s *Service) ExecuteTask(ctx context.Context, task *model.ScheduledTask) (string, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.execute")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	if task != nil {
+		span.SetAttributes(
+			attribute.String("schedule.task_id", task.ID),
+			attribute.String("schedule.tool_name", task.ToolName),
+			attribute.String("schedule.chat_id", task.ChatID),
+		)
+	}
 	if !s.Available() {
 		return "", errScheduleServiceUnavailable
 	}
@@ -276,6 +359,20 @@ func (s *Service) ExecuteTask(ctx context.Context, task *model.ScheduledTask) (s
 }
 
 func (s *Service) FinalizeTaskExecution(ctx context.Context, task *model.ScheduledTask, resultText string, execErr error, finishedAt time.Time) error {
+	ctx, span := otel.StartNamed(ctx, "schedule.finalize")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	if task != nil {
+		span.SetAttributes(
+			attribute.String("schedule.task_id", task.ID),
+			attribute.String("schedule.status", task.Status),
+			attribute.Int("schedule.result.len", len(resultText)),
+			attribute.String("schedule.result.preview", otel.PreviewString(resultText, 128)),
+			attribute.Bool("schedule.exec_error", execErr != nil),
+		)
+	}
+	otel.RecordError(span, execErr)
 	if !s.Available() {
 		return errScheduleServiceUnavailable
 	}

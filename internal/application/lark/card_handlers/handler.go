@@ -25,7 +25,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/minio/minio-go/v7"
 
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -72,7 +71,7 @@ func HandleSubmit(ctx context.Context, cardAction *callback.CardActionTriggerEve
 }
 
 func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.TemplateCardContent {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("musicID").String(musicID))
 	defer span.End()
 
@@ -176,7 +175,7 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 }
 
 func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID string, msgID string, page int) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("musicID").String(musicID))
 	defer span.End()
 
@@ -188,7 +187,7 @@ func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID
 }
 
 func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID string, msgID string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("albumID").String(albumID))
 	defer span.End()
 
@@ -218,7 +217,7 @@ func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID
 }
 
 func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musicID, msgID string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").String(musicID))
 	defer span.End()
 	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
@@ -274,7 +273,7 @@ func HandleWithDraw(ctx context.Context, cardAction *callback.CardActionTriggerE
 }
 
 func HandleRefreshMusic(ctx context.Context, musicID, msgID string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").String(musicID))
 	defer span.End()
 
@@ -296,7 +295,6 @@ func HandleRefreshMusic(ctx context.Context, musicID, msgID string) {
 		logs.L().Ctx(ctx).Error("Refresh music card error", zap.Error(err))
 		return
 	}
-	return
 }
 
 func HandleRefreshObj(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {

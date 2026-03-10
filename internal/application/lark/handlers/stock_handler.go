@@ -17,10 +17,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -108,10 +106,10 @@ func (goldHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (goldHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg GoldArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	var (
 		cardContent *larktpl.TemplateCardContent
@@ -251,10 +249,10 @@ func (zhAStockHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ZhAStockArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	var (
 		days                  = arg.Days
@@ -321,7 +319,7 @@ func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 }
 
 func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (string, *larktpl.TemplateCardContent, error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	logs.L().Ctx(ctx).Info("GetHistoryGoldGraph", zap.String("st", st.Format(time.RFC3339)), zap.String("et", et.Format(time.RFC3339)))

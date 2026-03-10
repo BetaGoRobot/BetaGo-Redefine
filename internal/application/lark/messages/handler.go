@@ -35,6 +35,11 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[lark
 		WithDefer(recording.CollectMessage).
 		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
 			if !meta.IsCommandMarked() { // 过滤Command
+				if privateModeEnabled, err := larkmsg.IsPrivateModeEnabled(ctx, *event.Event.Message.ChatId); err != nil {
+					return
+				} else if privateModeEnabled {
+					return
+				}
 				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
 			}
 		}).
@@ -71,9 +76,16 @@ func init() {
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
+	userID := ""
+	if event.Event.Sender.SenderId.OpenId != nil {
+		userID = *event.Event.Sender.SenderId.OpenId
+	} else if event.Event.Sender.SenderId.UserId != nil {
+		userID = *event.Event.Sender.SenderId.UserId
+	}
+
 	return &xhandler.BaseMetaData{
 		ChatID: *event.Event.Message.ChatId,
 		IsP2P:  *event.Event.Message.ChatType == "p2p",
-		UserID: *event.Event.Sender.SenderId.UserId,
+		UserID: userID,
 	}
 }

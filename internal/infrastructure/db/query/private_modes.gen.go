@@ -27,6 +27,8 @@ func newPrivateMode(db *gorm.DB, opts ...gen.DOOption) privateMode {
 	_privateMode.ALL = field.NewAsterisk(tableName)
 	_privateMode.ChatID = field.NewString(tableName, "chat_id")
 	_privateMode.Enable = field.NewBool(tableName, "enable")
+	_privateMode.AppID = field.NewString(tableName, "app_id")
+	_privateMode.BotOpenID = field.NewString(tableName, "bot_open_id")
 
 	_privateMode.fillFieldMap()
 
@@ -36,9 +38,11 @@ func newPrivateMode(db *gorm.DB, opts ...gen.DOOption) privateMode {
 type privateMode struct {
 	privateModeDo privateModeDo
 
-	ALL    field.Asterisk
-	ChatID field.String
-	Enable field.Bool
+	ALL       field.Asterisk
+	ChatID    field.String
+	Enable    field.Bool
+	AppID     field.String // 隐私模式所属的飞书应用 AppID
+	BotOpenID field.String // 隐私模式所属的机器人 OpenID
 
 	fieldMap map[string]field.Expr
 }
@@ -57,6 +61,8 @@ func (p *privateMode) updateTableName(table string) *privateMode {
 	p.ALL = field.NewAsterisk(table)
 	p.ChatID = field.NewString(table, "chat_id")
 	p.Enable = field.NewBool(table, "enable")
+	p.AppID = field.NewString(table, "app_id")
+	p.BotOpenID = field.NewString(table, "bot_open_id")
 
 	p.fillFieldMap()
 
@@ -83,9 +89,11 @@ func (p *privateMode) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (p *privateMode) fillFieldMap() {
-	p.fieldMap = make(map[string]field.Expr, 2)
+	p.fieldMap = make(map[string]field.Expr, 4)
 	p.fieldMap["chat_id"] = p.ChatID
 	p.fieldMap["enable"] = p.Enable
+	p.fieldMap["app_id"] = p.AppID
+	p.fieldMap["bot_open_id"] = p.BotOpenID
 }
 
 func (p privateMode) clone(db *gorm.DB) privateMode {

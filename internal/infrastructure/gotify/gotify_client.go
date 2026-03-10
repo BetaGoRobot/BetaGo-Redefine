@@ -2,6 +2,7 @@ package gotify
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"sync"
@@ -64,12 +65,19 @@ func setNoop(reason string) {
 	})
 }
 
+func ErrUnavailable() error {
+	if sender, ok := defaultSender.(noopSender); ok {
+		return errors.New(sender.reason)
+	}
+	return nil
+}
+
 func SendMessage(ctx context.Context, title, msg string, priority int) {
 	defaultSender.SendMessage(ctx, title, msg, priority)
 }
 
 func (s clientSender) SendMessage(ctx context.Context, title, msg string, priority int) {
-	ctx, span := otel.T().Start(ctx, "SendMessage")
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	logs.L().Ctx(ctx).Info("SendMessage...")
 

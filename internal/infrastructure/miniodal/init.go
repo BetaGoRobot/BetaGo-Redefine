@@ -105,6 +105,11 @@ func ErrUnavailable() error {
 	return errors.New(reason)
 }
 
+func Status() (bool, string) {
+	reason := defaultBackend.Reason()
+	return reason == "", reason
+}
+
 func setNoop(reason string) {
 	defaultBackend = noopBackend{reason: reason}
 	warnOnce.Do(func() {

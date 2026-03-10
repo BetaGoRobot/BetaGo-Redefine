@@ -48,6 +48,11 @@ func main() {
 	tables := make([]interface{}, 0, len(tableNames))
 	for _, tableName := range tableNames {
 		switch tableName {
+		case "permission_grants":
+			tables = append(tables, g.GenerateModel(tableName,
+				gen.FieldType("resource_chat_id", "*string"),
+				gen.FieldType("resource_user_id", "*string"),
+			))
 		case "todo_items":
 			tables = append(tables, g.GenerateModel(tableName,
 				gen.FieldType("due_at", "*time.Time"),

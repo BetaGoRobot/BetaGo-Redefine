@@ -3,12 +3,10 @@ package larkmsg
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -22,13 +20,14 @@ import (
 //	@author kevinmatthe
 //	@update 2025-06-05 13:23:46
 func PatchCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, msgID string) (err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("msgID").String(msgID))
-	for k, v := range cardContent.Data.TemplateVariable {
-		span.SetAttributes(attribute.Key(k).String(fmt.Sprintf("%v", v)))
-	}
+	_, span := otel.Start(ctx)
+	span.SetAttributes(
+		attribute.String("message.id", msgID),
+		attribute.Int("card.variable.count", len(cardContent.Data.TemplateVariable)),
+	)
+	span.SetAttributes(otel.PreviewAttrs("card.content", cardContent.String(), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	resp, err := lark_dal.Client().Im.V1.Message.Patch(
 		ctx, larkim.NewPatchMessageReqBuilder().
 			MessageId(msgID).

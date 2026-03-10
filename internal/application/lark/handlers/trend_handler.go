@@ -19,12 +19,10 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 type TrendArgs struct {
@@ -120,10 +118,10 @@ func (trendHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg TrendArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	st, et := GetBackDays(arg.Days)
 	if arg.StartTime != "" && arg.EndTime != "" {
@@ -194,9 +192,9 @@ type trendInternalHelper struct {
 }
 
 func (h *trendInternalHelper) DrawTrendPie(ctx context.Context, trend history.TrendSeries, reply bool) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	graph := vadvisor.NewPieChartsGraphWithPlayer[string, int64]()
 	for _, item := range trend {
@@ -232,9 +230,9 @@ func (h *trendInternalHelper) DrawTrendPie(ctx context.Context, trend history.Tr
 }
 
 func (h *trendInternalHelper) DrawTrendBar(ctx context.Context, trend history.TrendSeries, reply bool) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	graph := vadvisor.NewBarChartsGraphWithPlayer[string, int64]()
 	for _, item := range trend {
@@ -274,9 +272,9 @@ func (h *trendInternalHelper) DrawTrendBar(ctx context.Context, trend history.Tr
 }
 
 func (h *trendInternalHelper) TrendByUser(ctx context.Context) (trend history.TrendSeries, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	trend, err = history.New(ctx).
 		Query(
@@ -296,9 +294,9 @@ func (h *trendInternalHelper) TrendByUser(ctx context.Context) (trend history.Tr
 }
 
 func (h *trendInternalHelper) TrendRate(ctx context.Context, indexName, field string, size uint64) (singleDimAggs *history.SingleDimAggregate, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	singleDimAggs = &history.SingleDimAggregate{}
 	// 通过Opensearch统计发言数量

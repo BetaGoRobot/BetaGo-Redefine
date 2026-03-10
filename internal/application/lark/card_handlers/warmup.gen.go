@@ -7,9 +7,9 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(GetCardMusicByPage) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:74
-	reflecting.GetFunctionName(HandleFullLyrics)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:215
-	reflecting.GetFunctionName(HandleRefreshMusic) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:266
-	reflecting.GetFunctionName(SendAlbumCard)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:185
-	reflecting.GetFunctionName(SendMusicCard)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:173
+	reflecting.GetFunctionName(GetCardMusicByPage) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:75
+	reflecting.GetFunctionName(HandleFullLyrics)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:221
+	reflecting.GetFunctionName(HandleRefreshMusic) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:277
+	reflecting.GetFunctionName(SendAlbumCard)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:191
+	reflecting.GetFunctionName(SendMusicCard)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:179
 }

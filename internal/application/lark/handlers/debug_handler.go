@@ -29,12 +29,10 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -246,10 +244,10 @@ type traceItem struct {
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:33
 func handleDebugGetID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	if data.Event.Message.ParentId == nil {
 		return errors.New("No parent Msg Quoted")
@@ -272,10 +270,10 @@ func handleDebugGetID(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:29
 func handleDebugGetGroupID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	chatID := data.Event.Message.ChatId
 	if chatID != nil {
 		err := larkmsg.ReplyCardText(ctx, getGroupIDText+*chatID, *data.Event.Message.MessageId, "_getGroupID", false)
@@ -297,10 +295,10 @@ func handleDebugGetGroupID(ctx context.Context, data *larkim.P2MessageReceiveV1,
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:25
 func handleDebugTryPanic(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	panic(errors.New("try panic!"))
 }
 
@@ -317,7 +315,7 @@ func (t *traceItem) TraceURLMD() string {
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:37
 func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem], error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	ins := query.Q.MsgTraceLog
@@ -349,10 +347,10 @@ func GetTraceFromMsgID(ctx context.Context, msgID string) (iter.Seq[*traceItem],
 //	@author heyuhengmatt
 //	@update 2024-08-06 08:27:23
 func handleDebugTrace(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	var (
 		m             = map[string]struct{}{}
 		traceIDs      = make([]string, 0)
@@ -414,10 +412,10 @@ func handleDebugTrace(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 //	@param args ...string
 //	@return error
 func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	var res string = "撤回成功"
 	defer func() { metaData.SetExtra("revert_result", res) }()
 
@@ -461,10 +459,10 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 }
 
 func handleDebugRepeat(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	if data.Event.Message.ThreadId != nil {
 		return nil
@@ -497,10 +495,10 @@ func handleDebugRepeat(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 }
 
 func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	seq, err := larkimg.GetAllImgURLFromParent(ctx, data)
 	if err != nil {
 		return err
@@ -521,7 +519,7 @@ func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 	}
 
 	dataSeq, err := ark_dal.
-		New(*data.Event.Message.ChatId, *data.Event.Sender.SenderId.UserId, &data).
+		New(*data.Event.Message.ChatId, currentUserID(data, metaData), &data).
 		Do(ctx, "", inputPrompt, urls...)
 	if err != nil {
 		return err
@@ -534,10 +532,10 @@ func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 }
 
 func handleDebugConversation(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	msgs, err := larkmsg.GetAllParentMsg(ctx, data)
 	if err != nil {

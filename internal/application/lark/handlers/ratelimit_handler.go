@@ -12,9 +12,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 // ==========================================
@@ -64,10 +62,10 @@ func (rateLimitStatsHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (rateLimitStatsHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg RateLimitStatsArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(fmt.Sprintf("%v", data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", fmt.Sprintf("%v", data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	targetChatID := arg.ChatID
 	if targetChatID == "" {
@@ -100,9 +98,9 @@ func (rateLimitListHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (rateLimitListHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg RateLimitListArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	metrics := ratelimit.GetMetrics()
 	allStats := metrics.GetAllChatStats()

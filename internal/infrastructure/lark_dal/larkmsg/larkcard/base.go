@@ -5,8 +5,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-
-	"github.com/BetaGoRobot/go_utils/reflecting"
 )
 
 type CardBuilderBase struct {
@@ -35,7 +33,7 @@ func (h *CardBuilderBase) SetContent(text string) *CardBuilderBase {
 }
 
 func (h *CardBuilderBase) Build(ctx context.Context) *larktpl.TemplateCardContent {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	cardContent := larktpl.NewCardContent(ctx, larktpl.NormalCardReplyTemplate)
 	return cardContent.

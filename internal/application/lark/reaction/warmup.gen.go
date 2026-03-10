@@ -7,6 +7,6 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*FollowReactionOperator).Run) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/reaction/follow_react.go:50
-	reflecting.GetFunctionName((*RecordReactionOperator).Run) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/reaction/record_reaction.go:51
+	reflecting.GetFunctionName((*FollowReactionOperator).Run) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/reaction/follow_react.go:35
+	reflecting.GetFunctionName((*RecordReactionOperator).Run) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/reaction/record_reaction.go:36
 }

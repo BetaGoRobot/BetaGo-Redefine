@@ -9,7 +9,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.uber.org/zap"
@@ -49,9 +48,9 @@ func (r *RecordMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:35:41
 func (r *RecordMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	imgSeq, err := larkimg.GetAllImageFromMsgEvent(ctx, event.Event.Message)
 	if err != nil {

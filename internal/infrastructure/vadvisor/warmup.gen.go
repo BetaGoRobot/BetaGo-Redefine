@@ -7,6 +7,6 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*MultiSeriesLineGraph[string, float64]).AddData)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/stock_handler.go:404
-	reflecting.GetFunctionName((*MultiSeriesLineGraph[string, float64]).UpdateMinMax) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/stock_handler.go:405
+	reflecting.GetFunctionName((*MultiSeriesLineGraph[string, float64]).AddData)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/stock_handler.go:390
+	reflecting.GetFunctionName((*MultiSeriesLineGraph[string, float64]).UpdateMinMax) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/stock_handler.go:391
 }

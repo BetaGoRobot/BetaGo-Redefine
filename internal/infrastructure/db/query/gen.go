@@ -35,6 +35,7 @@ var (
 	LarkImg               *larkImg
 	MessageLog            *messageLog
 	MsgTraceLog           *msgTraceLog
+	PermissionGrant       *permissionGrant
 	PrivateMode           *privateMode
 	PromptConf            *promptConf
 	PromptTemplateArg     *promptTemplateArg
@@ -72,6 +73,7 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	LarkImg = &Q.LarkImg
 	MessageLog = &Q.MessageLog
 	MsgTraceLog = &Q.MsgTraceLog
+	PermissionGrant = &Q.PermissionGrant
 	PrivateMode = &Q.PrivateMode
 	PromptConf = &Q.PromptConf
 	PromptTemplateArg = &Q.PromptTemplateArg
@@ -110,6 +112,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		LarkImg:               newLarkImg(db, opts...),
 		MessageLog:            newMessageLog(db, opts...),
 		MsgTraceLog:           newMsgTraceLog(db, opts...),
+		PermissionGrant:       newPermissionGrant(db, opts...),
 		PrivateMode:           newPrivateMode(db, opts...),
 		PromptConf:            newPromptConf(db, opts...),
 		PromptTemplateArg:     newPromptTemplateArg(db, opts...),
@@ -149,6 +152,7 @@ type Query struct {
 	LarkImg               larkImg
 	MessageLog            messageLog
 	MsgTraceLog           msgTraceLog
+	PermissionGrant       permissionGrant
 	PrivateMode           privateMode
 	PromptConf            promptConf
 	PromptTemplateArg     promptTemplateArg
@@ -189,6 +193,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		LarkImg:               q.LarkImg.clone(db),
 		MessageLog:            q.MessageLog.clone(db),
 		MsgTraceLog:           q.MsgTraceLog.clone(db),
+		PermissionGrant:       q.PermissionGrant.clone(db),
 		PrivateMode:           q.PrivateMode.clone(db),
 		PromptConf:            q.PromptConf.clone(db),
 		PromptTemplateArg:     q.PromptTemplateArg.clone(db),
@@ -236,6 +241,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		LarkImg:               q.LarkImg.replaceDB(db),
 		MessageLog:            q.MessageLog.replaceDB(db),
 		MsgTraceLog:           q.MsgTraceLog.replaceDB(db),
+		PermissionGrant:       q.PermissionGrant.replaceDB(db),
 		PrivateMode:           q.PrivateMode.replaceDB(db),
 		PromptConf:            q.PromptConf.replaceDB(db),
 		PromptTemplateArg:     q.PromptTemplateArg.replaceDB(db),
@@ -273,6 +279,7 @@ type queryCtx struct {
 	LarkImg               ILarkImgDo
 	MessageLog            IMessageLogDo
 	MsgTraceLog           IMsgTraceLogDo
+	PermissionGrant       IPermissionGrantDo
 	PrivateMode           IPrivateModeDo
 	PromptConf            IPromptConfDo
 	PromptTemplateArg     IPromptTemplateArgDo
@@ -310,6 +317,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		LarkImg:               q.LarkImg.WithContext(ctx),
 		MessageLog:            q.MessageLog.WithContext(ctx),
 		MsgTraceLog:           q.MsgTraceLog.WithContext(ctx),
+		PermissionGrant:       q.PermissionGrant.WithContext(ctx),
 		PrivateMode:           q.PrivateMode.WithContext(ctx),
 		PromptConf:            q.PromptConf.WithContext(ctx),
 		PromptTemplateArg:     q.PromptTemplateArg.WithContext(ctx),

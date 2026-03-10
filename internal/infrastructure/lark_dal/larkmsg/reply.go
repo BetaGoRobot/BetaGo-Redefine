@@ -2,23 +2,22 @@ package larkmsg
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
 func ReplyMsgRawContentType(ctx context.Context, msgID, msgType, content, suffix string, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("msgType").String(msgType), attribute.Key("content").String(content))
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("message.id", msgID), attribute.String("message.type", msgType))
+	span.SetAttributes(otel.PreviewAttrs("message.content", content, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	uuid := (msgID + suffix)
 	if len(uuid) > 50 {
 		uuid = uuid[:50]
@@ -41,18 +40,20 @@ func ReplyMsgRawContentType(ctx context.Context, msgID, msgType, content, suffix
 //	@param text
 //	@param msgID
 func ReplyMsgText(ctx context.Context, text, msgID, suffix string, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("content").String(text))
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("message.id", msgID))
+	span.SetAttributes(otel.PreviewAttrs("message.text", text, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	return ReplyMsgRawAsText(ctx, msgID, larkim.MsgTypeText, text, suffix, replyInThread)
 }
 
 func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix string, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("msgType").String(msgType), attribute.Key("content").String(content))
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("message.id", msgID), attribute.String("message.type", msgType))
+	span.SetAttributes(otel.PreviewAttrs("message.content", content, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	uuid := (msgID + suffix)
 	if len(uuid) > 50 {
 		uuid = uuid[:50]
@@ -75,9 +76,13 @@ func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix stri
 //	@param text
 //	@param msgID
 func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, msgID, suffix string, replyInThread bool) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(
+		attribute.String("message.id", msgID),
+		attribute.Int("card.variable.count", len(cardContent.Data.TemplateVariable)),
+	)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	uuid := msgID + suffix
 	if len(uuid) > 50 {
@@ -102,10 +107,7 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 		return
 	}
 
-	span.SetAttributes(attribute.Key("msgID").String(msgID))
-	for k, v := range cardContent.Data.TemplateVariable {
-		span.SetAttributes(attribute.Key(k).String(fmt.Sprintf("%v", v)))
-	}
+	span.SetAttributes(otel.PreviewAttrs("card.content", cardContent.String(), 256)...)
 	logs.L().Ctx(ctx).Info(
 		"reply card",
 		zap.String("msgID", msgID),

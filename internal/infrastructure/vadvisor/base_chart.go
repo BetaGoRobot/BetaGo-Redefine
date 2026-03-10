@@ -8,7 +8,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xconstraints"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 )
 
 type BaseChartsGraphWithPlayer[X xconstraints.ValidType, Y xconstraints.Numeric] struct {
@@ -225,19 +224,19 @@ func (h *BaseChartsGraphWithPlayer[X, Y]) SetSortFunc(cmp func(a *ValueUnit[X, Y
 }
 
 func (h *BaseChartsGraphWithPlayer[X, Y]) BuildWithPlayer(ctx context.Context) *BaseChartsGraphWithPlayer[X, Y] {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	return h.BuildInner(ctx, true)
 }
 
 func (h *BaseChartsGraphWithPlayer[X, Y]) Build(ctx context.Context) *BaseChartsGraphWithPlayer[X, Y] {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	return h.BuildInner(ctx, false)
 }
 
 func (h *BaseChartsGraphWithPlayer[X, Y]) BuildInner(ctx context.Context, player bool) *BaseChartsGraphWithPlayer[X, Y] {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	// Merge Data

@@ -3,14 +3,12 @@ package ops
 import (
 	"context"
 
-	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -45,14 +43,14 @@ func (r *ReactMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 //	@param event
 //	@return err
 func (r *ReactMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	// React
 
 	// 开始摇骰子, 默认概率10%
-	realRate := infraconfig.Get().RateConfig.ReactionDefaultRate
+	realRate := messageConfigAccessor(ctx, event, meta).ReactionDefaultRate()
 	if utils.Prob(float64(realRate) / 100) {
 		_, err := larkmsg.AddReaction(ctx, larkmsg.GetRandomEmoji(), *event.Event.Message.MessageId)
 		if err != nil {

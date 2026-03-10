@@ -28,6 +28,8 @@ func newFunctionEnabling(db *gorm.DB, opts ...gen.DOOption) functionEnabling {
 	_functionEnabling.GuildID = field.NewString(tableName, "guild_id")
 	_functionEnabling.Function = field.NewString(tableName, "function")
 	_functionEnabling.Disable = field.NewBool(tableName, "disable")
+	_functionEnabling.AppID = field.NewString(tableName, "app_id")
+	_functionEnabling.BotOpenID = field.NewString(tableName, "bot_open_id")
 
 	_functionEnabling.fillFieldMap()
 
@@ -37,10 +39,12 @@ func newFunctionEnabling(db *gorm.DB, opts ...gen.DOOption) functionEnabling {
 type functionEnabling struct {
 	functionEnablingDo functionEnablingDo
 
-	ALL      field.Asterisk
-	GuildID  field.String
-	Function field.String
-	Disable  field.Bool
+	ALL       field.Asterisk
+	GuildID   field.String
+	Function  field.String
+	Disable   field.Bool
+	AppID     field.String // 功能开关所属的飞书应用 AppID
+	BotOpenID field.String // 功能开关所属的机器人 OpenID
 
 	fieldMap map[string]field.Expr
 }
@@ -60,6 +64,8 @@ func (f *functionEnabling) updateTableName(table string) *functionEnabling {
 	f.GuildID = field.NewString(table, "guild_id")
 	f.Function = field.NewString(table, "function")
 	f.Disable = field.NewBool(table, "disable")
+	f.AppID = field.NewString(table, "app_id")
+	f.BotOpenID = field.NewString(table, "bot_open_id")
 
 	f.fillFieldMap()
 
@@ -88,10 +94,12 @@ func (f *functionEnabling) GetFieldByName(fieldName string) (field.OrderExpr, bo
 }
 
 func (f *functionEnabling) fillFieldMap() {
-	f.fieldMap = make(map[string]field.Expr, 3)
+	f.fieldMap = make(map[string]field.Expr, 5)
 	f.fieldMap["guild_id"] = f.GuildID
 	f.fieldMap["function"] = f.Function
 	f.fieldMap["disable"] = f.Disable
+	f.fieldMap["app_id"] = f.AppID
+	f.fieldMap["bot_open_id"] = f.BotOpenID
 }
 
 func (f functionEnabling) clone(db *gorm.DB) functionEnabling {

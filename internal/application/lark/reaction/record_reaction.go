@@ -10,10 +10,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 var _ Op = &RecordReactionOperator{}
@@ -33,10 +31,10 @@ type RecordReactionOperator struct {
 //	@param event
 //	@return err
 func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2MessageReactionCreatedV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 	chatID, err := larkmsg.GetChatIDFromMsgID(ctx, *event.Event.MessageId)
 	if err != nil {
 		return err

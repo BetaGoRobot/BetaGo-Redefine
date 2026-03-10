@@ -22,7 +22,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -30,7 +29,6 @@ import (
 	"github.com/olivere/elastic/v7"
 	. "github.com/olivere/elastic/v7"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -154,10 +152,10 @@ func (wordCloudHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg WordCloudArgs) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	var (
 		st, et time.Time

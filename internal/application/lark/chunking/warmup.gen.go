@@ -7,5 +7,5 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(Init) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/chunking/chunking.go:29
+	reflecting.GetFunctionName(Init) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/chunking/chunking.go:15
 }

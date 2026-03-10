@@ -6,12 +6,11 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"go.uber.org/zap"
 )
 
 func ResizeIMGFromReader(ctx context.Context, r io.ReadCloser) (output []byte) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	imgBody, err := io.ReadAll(r)
 	if err != nil {

@@ -12,7 +12,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gresult"
 	"github.com/bytedance/sonic"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
@@ -47,9 +46,9 @@ type EmbeddingFunc func(ctx context.Context, text string) (vector []float32, tok
 
 // HybridSearch 执行混合搜索
 func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc EmbeddingFunc) (searchResults []*SearchResult, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	logs.L().Ctx(ctx).Info("开始混合搜索", zap.String("query_text", strings.Join(req.QueryText, " ")))
 	if req.TopK <= 0 {

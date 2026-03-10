@@ -131,7 +131,7 @@ func NewMultiSeriesLineGraph[X xconstraints.ValidType, Y xconstraints.Numeric](c
 }
 
 func (g *MultiSeriesLineGraph[X, Y]) AddData(x X, y Y, seriesField string) *MultiSeriesLineGraph[X, Y] {
-	_, span := otel.T().Start(g, reflecting.GetCurrentFunc())
+	_, span := otel.Start(g)
 	defer span.End()
 
 	g.Data.Values = append(g.Data.Values, &DataValue[X, Y]{
@@ -181,7 +181,7 @@ func (g *MultiSeriesLineGraph[X, Y]) SetStack() *MultiSeriesLineGraph[X, Y] {
 }
 
 func (g *MultiSeriesLineGraph[X, Y]) String() string {
-	_, span := otel.T().Start(g, reflecting.GetCurrentFunc())
+	_, span := otel.Start(g)
 	defer span.End()
 
 	s, _ := sonic.MarshalString(g)
@@ -198,7 +198,7 @@ type (
 
 // 一般来讲都是适配Y轴的最大最小值，不要处理X轴
 func (g *MultiSeriesLineGraph[X, Y]) UpdateMinMax(yVals ...float64) {
-	_, span := otel.T().Start(g, reflecting.GetCurrentFunc())
+	_, span := otel.Start(g)
 	defer span.End()
 
 	// 如约定,Y轴是第二根轴
@@ -223,7 +223,7 @@ func (g *MultiSeriesLineGraph[X, Y]) AddPointSeries(
 	var min, max *Y
 	fName := "_pFunc_" + reflecting.GetFunctionName(pFunc)
 	for v := range pFunc {
-		_, span := otel.T().Start(g, fName)
+		_, span := otel.StartNamed(g, fName)
 		if min == nil || max == nil {
 			min, max = new(Y), new(Y)
 			*min, *max = v.Y, v.Y

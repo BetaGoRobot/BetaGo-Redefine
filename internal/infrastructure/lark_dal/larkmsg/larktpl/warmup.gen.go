@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(NewCardContent)                                                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/larktpl/template.go:94
-	reflecting.GetFunctionName(NewCardContentV2[ChunkMetaData])                               // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/debug_handler.go:636
+	reflecting.GetFunctionName(NewCardContent)                                                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/larktpl/template.go:95
+	reflecting.GetFunctionName(NewCardContentV2[ChunkMetaData])                               // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/debug_handler.go:633
 	reflecting.GetFunctionName(NewCardContentV2[WordCountCardVars[xmodel.MessageChunkLogV3]]) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/word_count_handler.go:228
 }

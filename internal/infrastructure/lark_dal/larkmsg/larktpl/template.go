@@ -14,7 +14,6 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
@@ -92,7 +91,7 @@ type (
 )
 
 func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
@@ -126,7 +125,7 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 }
 
 func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersionV2[T]) *TemplateCardContent {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()

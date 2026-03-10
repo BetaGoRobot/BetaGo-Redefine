@@ -5,7 +5,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"go.opentelemetry.io/otel/attribute"
@@ -21,12 +20,15 @@ import (
 func EmbeddingText(ctx context.Context, input string) (embedded []float32, tokenUsage model.Usage, err error) {
 	runtime, cfg, err := runtimeClient()
 	if err != nil {
-		return nil, model.Usage{}, nil
+		return nil, model.Usage{}, err
 	}
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("input").String(input))
+	ctx, span := otel.StartNamed(ctx, "ark.embedding.create")
+	span.SetAttributes(
+		attribute.String("model.id", cfg.EmbeddingModel),
+	)
+	span.SetAttributes(otel.PreviewAttrs("input", input, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := model.EmbeddingRequestStrings{
 		Input: []string{input},

@@ -9,22 +9,22 @@ import (
 func init() {
 	reflecting.GetFunctionName(AddReaction)                   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reaction.go:19
 	reflecting.GetFunctionName(AddReactionAsync)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reaction.go:38
-	reflecting.GetFunctionName(CreateMsgTextRaw)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:37
+	reflecting.GetFunctionName(CreateMsgCard)                 // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/card.go:54
+	reflecting.GetFunctionName(CreateMsgTextRaw)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:38
 	reflecting.GetFunctionName(GetChatIDFromMsgID)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/parse.go:95
 	reflecting.GetFunctionName(PatchCard)                     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/patch.go:25
 	reflecting.GetFunctionName(PreGetTextMsg)                 // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/parse.go:49
-	reflecting.GetFunctionName(RecordCardAction2Opensearch)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/record.go:192
-	reflecting.GetFunctionName(RecordMessage2Opensearch)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/record.go:101
+	reflecting.GetFunctionName(RecordCardAction2Opensearch)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/record.go:193
+	reflecting.GetFunctionName(RecordMessage2Opensearch)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/record.go:102
 	reflecting.GetFunctionName(RecordReplyMessage2Opensearch) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/record.go:32
 	reflecting.GetFunctionName(RemoveReactionAsync)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reaction.go:60
-	reflecting.GetFunctionName(ReplyCard)                     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:101
-	reflecting.GetFunctionName(ReplyCardText)                 // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/card.go:20
-	reflecting.GetFunctionName(ReplyMsgRawAsText)             // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:65
-	reflecting.GetFunctionName(ReplyMsgRawContentType)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:21
-	reflecting.GetFunctionName(ReplyMsgText)                  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:57
-	reflecting.GetFunctionName(SendAndReplyStreamingCard)     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:72
-	reflecting.GetFunctionName(SendAndUpdateStreamingCard)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:270
+	reflecting.GetFunctionName(ReplyCard)                     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:78
+	reflecting.GetFunctionName(ReplyCardText)                 // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/card.go:18
+	reflecting.GetFunctionName(ReplyMsgRawAsText)             // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:52
+	reflecting.GetFunctionName(ReplyMsgRawContentType)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:18
+	reflecting.GetFunctionName(ReplyMsgText)                  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:44
+	reflecting.GetFunctionName(SendAndReplyStreamingCard)     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:79
+	reflecting.GetFunctionName(SendAndUpdateStreamingCard)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:277
 	reflecting.GetFunctionName(TrimAtMsg)                     // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/content.go:31
-	reflecting.GetFunctionName(doSendCard)                    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/reply.go:128
-	reflecting.GetFunctionName(updateCardFunc)                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:142, /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:152, /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:178
+	reflecting.GetFunctionName(updateCardFunc)                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:149, /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:159, /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/send.go:185
 }

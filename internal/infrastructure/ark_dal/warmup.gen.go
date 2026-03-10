@@ -8,8 +8,8 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*ResponsesImpl[*larkim.P2MessageReceiveV1]).Do) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/debug_handler.go:528
-	reflecting.GetFunctionName((*ResponsesImpl[larkim.P2MessageReceiveV1]).Do)  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/chat_handler.go:270
+	reflecting.GetFunctionName((*ResponsesImpl[*larkim.P2MessageReceiveV1]).Do) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/debug_handler.go:525
+	reflecting.GetFunctionName((*ResponsesImpl[larkim.P2MessageReceiveV1]).Do)  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/chat_handler.go:272
 	reflecting.GetFunctionName(EmbeddingText)                                   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/ark_dal/embedding.go:26
 	reflecting.GetFunctionName(ResponseWithCache)                               // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/ark_dal/responses_raw.go:24
 }

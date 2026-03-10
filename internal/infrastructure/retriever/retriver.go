@@ -12,7 +12,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	opensearchgo "github.com/opensearch-project/opensearch-go"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -95,6 +94,16 @@ func setNoop(reason string, fields ...zap.Field) {
 	})
 }
 
+func Status() (bool, string) {
+	if cli != nil && cli.ready() {
+		return true, ""
+	}
+	if noop, ok := defaultClient.(noopClient); ok {
+		return false, noop.reason
+	}
+	return false, "retriever not initialized"
+}
+
 // RAGSystem 结构体封装了 RAG 应用所需的所有核心组件
 type RAGSystem struct {
 	llm      *openai.LLM
@@ -121,7 +130,7 @@ type Config struct {
 // NewRAGSystem 是 RAGSystem 的构造函数，负责初始化所有客户端和组件
 // 这是我们的第一个“原子能力”：系统初始化
 func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	// 1. 创建 LLM 和 Embedding 模型
@@ -176,7 +185,7 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 	if !rs.ready() {
 		return nil
 	}
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	if utils.IsDevChan() {

@@ -6,14 +6,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
 type Scheduler struct {
 	service   TaskService
+	executor  taskSubmitter
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -22,14 +26,26 @@ type Scheduler struct {
 	checkTick *time.Ticker
 }
 
-var globalScheduler *Scheduler
+var (
+	globalSchedulers   = make(map[string]*Scheduler)
+	globalSchedulersMu sync.Mutex
+)
+
+type taskSubmitter interface {
+	Submit(context.Context, string, func(context.Context) error) error
+}
 
 func NewScheduler(service TaskService) *Scheduler {
+	return NewSchedulerWithExecutor(service, nil)
+}
+
+func NewSchedulerWithExecutor(service TaskService, executor taskSubmitter) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		service: service,
-		ctx:     ctx,
-		cancel:  cancel,
+		service:  service,
+		executor: executor,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -81,14 +97,17 @@ func (s *Scheduler) run() {
 }
 
 func (s *Scheduler) checkAndTrigger() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := s.ctx
+	ctx, span := otel.StartNamed(ctx, "schedule.scheduler.check")
+	defer span.End()
 
 	tasks, err := s.service.GetDueTasks(ctx, 100)
 	if err != nil {
+		otel.RecordError(span, err)
 		logs.L().Ctx(ctx).Error("Get due scheduled tasks failed", zap.Error(err))
 		return
 	}
+	span.SetAttributes(attribute.Int("schedule.due_tasks.count", len(tasks)))
 	if len(tasks) == 0 {
 		return
 	}
@@ -98,6 +117,7 @@ func (s *Scheduler) checkAndTrigger() {
 	for _, task := range tasks {
 		claimed, err := s.service.ClaimTaskExecution(ctx, task, now)
 		if err != nil {
+			otel.RecordError(span, err)
 			logs.L().Ctx(ctx).Error("Claim scheduled task failed",
 				zap.Error(err),
 				zap.String("task_id", task.ID),
@@ -109,20 +129,37 @@ func (s *Scheduler) checkAndTrigger() {
 		}
 
 		task.LastRunAt = &now
-		go s.executeTask(task)
+		if s.executor != nil {
+			if err := s.executor.Submit(s.ctx, "schedule_task:"+task.ID, func(taskCtx context.Context) error {
+				s.executeTask(taskCtx, task)
+				return nil
+			}); err != nil {
+				logs.L().Ctx(ctx).Error("Submit scheduled task failed",
+					zap.Error(err),
+					zap.String("task_id", task.ID),
+					zap.String("task_name", task.Name))
+			}
+			continue
+		}
+		go s.executeTask(s.ctx, task)
 	}
 }
 
-func (s *Scheduler) executeTask(task *model.ScheduledTask) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
+func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) {
+	ctx, span := otel.StartNamed(ctx, "schedule.scheduler.execute")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("schedule.task_id", task.ID),
+		attribute.String("schedule.task_name.preview", otel.PreviewString(task.Name, 128)),
+		attribute.String("schedule.tool_name", task.ToolName),
+	)
 	logs.L().Ctx(ctx).Info("Executing scheduled task",
 		zap.String("task_id", task.ID),
 		zap.String("task_name", task.Name),
 		zap.String("tool_name", task.ToolName))
 
 	result, err := s.service.ExecuteTask(ctx, task)
+	otel.RecordError(span, err)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Scheduled task execution failed",
 			zap.Error(err),
@@ -138,6 +175,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask) {
 
 	finishedAt := time.Now()
 	if updateErr := s.service.FinalizeTaskExecution(ctx, task, result, err, finishedAt); updateErr != nil {
+		otel.RecordError(span, updateErr)
 		logs.L().Ctx(ctx).Error("Finalize scheduled task execution failed",
 			zap.Error(updateErr),
 			zap.String("task_id", task.ID))
@@ -160,8 +198,19 @@ func (s *Scheduler) notify(ctx context.Context, chatID, taskID, content string) 
 	if chatID == "" || content == "" {
 		return
 	}
+	ctx, span := otel.StartNamed(ctx, "schedule.notify")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(
+		attribute.String("schedule.task_id", taskID),
+		attribute.String("schedule.chat_id", chatID),
+		attribute.Int("schedule.content.len", len(content)),
+		attribute.String("schedule.content.preview", otel.PreviewString(content, 128)),
+	)
 	notifyID := fmt.Sprintf("schedule-notify-%s-%d", taskID, time.Now().UnixNano())
-	if err := larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), notifyID, chatID); err != nil {
+	err = larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), notifyID, chatID)
+	if err != nil {
 		logs.L().Ctx(ctx).Error("Send scheduled task notification failed",
 			zap.Error(err),
 			zap.String("chat_id", chatID))
@@ -169,16 +218,34 @@ func (s *Scheduler) notify(ctx context.Context, chatID, taskID, content string) 
 }
 
 func StartScheduler() {
-	if !GetService().Available() {
+	identity := botidentity.Current()
+	service := GetService()
+	if !service.Available() {
 		logs.L().Warn("Scheduled task service not initialized, scheduler not started")
 		return
 	}
-	globalScheduler = NewScheduler(GetService())
-	globalScheduler.Start()
+
+	key := serviceRegistryKey(identity)
+	scheduler := NewScheduler(service)
+
+	globalSchedulersMu.Lock()
+	prev := globalSchedulers[key]
+	globalSchedulers[key] = scheduler
+	globalSchedulersMu.Unlock()
+
+	if prev != nil {
+		prev.Stop()
+	}
+	scheduler.Start()
 }
 
 func StopScheduler() {
-	if globalScheduler != nil {
-		globalScheduler.Stop()
+	key := serviceRegistryKey(botidentity.Current())
+	globalSchedulersMu.Lock()
+	scheduler := globalSchedulers[key]
+	delete(globalSchedulers, key)
+	globalSchedulersMu.Unlock()
+	if scheduler != nil {
+		scheduler.Stop()
 	}
 }

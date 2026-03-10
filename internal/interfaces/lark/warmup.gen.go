@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(CardActionHandler)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:77
-	reflecting.GetFunctionName(MessageReactionHandler) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:67
-	reflecting.GetFunctionName(MessageV2Handler)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:37
+	reflecting.GetFunctionName(CardActionHandler)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:93
+	reflecting.GetFunctionName(MessageReactionHandler) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:83
+	reflecting.GetFunctionName(MessageV2Handler)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/interfaces/lark/handler.go:58
 }

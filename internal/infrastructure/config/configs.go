@@ -13,21 +13,47 @@ var config *BaseConfig
 type BaseConfig struct {
 	// NOTE: 强依赖
 	// 关系数据库
-	BaseInfo           *BaseInfo           `json:"base_info" yaml:"base_info" toml:"base_info"`
-	DBConfig           *DBConfig           `json:"db_config" yaml:"db_config" toml:"db_config"`
-	OtelConfig         *OtelConfig         `json:"otel_config" yaml:"otel_config" toml:"otel_config"`
-	OpensearchConfig   *OpensearchConfig   `json:"opensearch_config" yaml:"opensearch_config" toml:"opensearch_config"`
-	LarkConfig         *LarkConfig         `json:"lark_config" yaml:"lark_config" toml:"lark_config"`
-	MinioConfig        *MinioConfig        `json:"minio_config" yaml:"minio_config" toml:"minio_config"`
-	ArkConfig          *ArkConfig          `json:"ark_config" yaml:"ark_config" toml:"ark_config"`
-	NeteaseMusicConfig *NeteaseMusicConfig `json:"netease_music_config" yaml:"netease_music_config" toml:"netease_music_config"`
-	RateConfig         *RateConfig         `json:"rate_config" yaml:"rate_config" toml:"rate_config"`
-	RateLimitConfig    *RateLimitConfig    `json:"ratelimit_config" yaml:"ratelimit_config" toml:"ratelimit_config"`
-	ProxyConfig        *ProxyConfig        `json:"proxy_config" yaml:"proxy_config" toml:"proxy_config"`
-	AKToolConfig       *AKToolConfig       `json:"aktool_config" yaml:"aktool_config" toml:"aktool_config"`
-	GotifyConfig       *GotifyConfig       `json:"gotify_config" yaml:"gotify_config" toml:"gotify_config"`
-	RedisConfig        *RedisConfig        `json:"redis_config" yaml:"redis_config" toml:"redis_config"`
-	KuttConfig         *KuttConfig         `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
+	BaseInfo             *BaseInfo             `json:"base_info" yaml:"base_info" toml:"base_info"`
+	DBConfig             *DBConfig             `json:"db_config" yaml:"db_config" toml:"db_config"`
+	OtelConfig           *OtelConfig           `json:"otel_config" yaml:"otel_config" toml:"otel_config"`
+	OpensearchConfig     *OpensearchConfig     `json:"opensearch_config" yaml:"opensearch_config" toml:"opensearch_config"`
+	LarkConfig           *LarkConfig           `json:"lark_config" yaml:"lark_config" toml:"lark_config"`
+	MinioConfig          *MinioConfig          `json:"minio_config" yaml:"minio_config" toml:"minio_config"`
+	ArkConfig            *ArkConfig            `json:"ark_config" yaml:"ark_config" toml:"ark_config"`
+	NeteaseMusicConfig   *NeteaseMusicConfig   `json:"netease_music_config" yaml:"netease_music_config" toml:"netease_music_config"`
+	RateConfig           *RateConfig           `json:"rate_config" yaml:"rate_config" toml:"rate_config"`
+	RateLimitConfig      *RateLimitConfig      `json:"ratelimit_config" yaml:"ratelimit_config" toml:"ratelimit_config"`
+	ProxyConfig          *ProxyConfig          `json:"proxy_config" yaml:"proxy_config" toml:"proxy_config"`
+	AKToolConfig         *AKToolConfig         `json:"aktool_config" yaml:"aktool_config" toml:"aktool_config"`
+	GotifyConfig         *GotifyConfig         `json:"gotify_config" yaml:"gotify_config" toml:"gotify_config"`
+	RedisConfig          *RedisConfig          `json:"redis_config" yaml:"redis_config" toml:"redis_config"`
+	KuttConfig           *KuttConfig           `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
+	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
+	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
+}
+
+type RuntimeConfig struct {
+	ShutdownTimeoutSeconds     int `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
+	MessageWorkers             int `json:"message_workers" yaml:"message_workers" toml:"message_workers"`
+	MessageQueueSize           int `json:"message_queue_size" yaml:"message_queue_size" toml:"message_queue_size"`
+	MessageTimeoutSeconds      int `json:"message_timeout_seconds" yaml:"message_timeout_seconds" toml:"message_timeout_seconds"`
+	ReactionWorkers            int `json:"reaction_workers" yaml:"reaction_workers" toml:"reaction_workers"`
+	ReactionQueueSize          int `json:"reaction_queue_size" yaml:"reaction_queue_size" toml:"reaction_queue_size"`
+	ReactionTimeoutSeconds     int `json:"reaction_timeout_seconds" yaml:"reaction_timeout_seconds" toml:"reaction_timeout_seconds"`
+	RecordingWorkers           int `json:"recording_workers" yaml:"recording_workers" toml:"recording_workers"`
+	RecordingQueueSize         int `json:"recording_queue_size" yaml:"recording_queue_size" toml:"recording_queue_size"`
+	RecordingTimeoutSeconds    int `json:"recording_timeout_seconds" yaml:"recording_timeout_seconds" toml:"recording_timeout_seconds"`
+	ChunkWorkers               int `json:"chunk_workers" yaml:"chunk_workers" toml:"chunk_workers"`
+	ChunkQueueSize             int `json:"chunk_queue_size" yaml:"chunk_queue_size" toml:"chunk_queue_size"`
+	ChunkTimeoutSeconds        int `json:"chunk_timeout_seconds" yaml:"chunk_timeout_seconds" toml:"chunk_timeout_seconds"`
+	ScheduleWorkers            int `json:"schedule_workers" yaml:"schedule_workers" toml:"schedule_workers"`
+	ScheduleQueueSize          int `json:"schedule_queue_size" yaml:"schedule_queue_size" toml:"schedule_queue_size"`
+	ScheduleTaskTimeoutSeconds int `json:"schedule_task_timeout_seconds" yaml:"schedule_task_timeout_seconds" toml:"schedule_task_timeout_seconds"`
+}
+
+type ManagementHTTPConfig struct {
+	Addr                   string `json:"addr" yaml:"addr" toml:"addr"`
+	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
 }
 
 type KuttConfig struct {
@@ -142,29 +168,38 @@ type ArkConfig struct {
 }
 
 type LarkConfig struct {
-	AppID           string `json:"app_id" yaml:"app_id" toml:"app_id"`
-	AppSecret       string `json:"app_secret" yaml:"app_secret" toml:"app_secret"`
-	Encryption      string `json:"encryption" yaml:"encryption" toml:"encryption"`
-	Verification    string `json:"verification" yaml:"verification" toml:"verification"`
-	BotOpenID       string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
-	WithDrawReplace bool   `json:"with_draw_replace" yaml:"with_draw_replace" toml:"with_draw_replace"`
+	AppID                string `json:"app_id" yaml:"app_id" toml:"app_id"`
+	AppSecret            string `json:"app_secret" yaml:"app_secret" toml:"app_secret"`
+	Encryption           string `json:"encryption" yaml:"encryption" toml:"encryption"`
+	Verification         string `json:"verification" yaml:"verification" toml:"verification"`
+	BotOpenID            string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
+	BootstrapAdminOpenID string `json:"bootstrap_admin_open_id" yaml:"bootstrap_admin_open_id" toml:"bootstrap_admin_open_id"`
+	WithDrawReplace      bool   `json:"with_draw_replace" yaml:"with_draw_replace" toml:"with_draw_replace"`
 }
 
 func NewConfigs() *BaseConfig {
 	return &BaseConfig{}
 }
 
-func LoadFile(path string) *BaseConfig {
+func LoadFileE(path string) (*BaseConfig, error) {
 	config = NewConfigs()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	err = toml.Unmarshal(data, config)
 	if err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func LoadFile(path string) *BaseConfig {
+	cfg, err := LoadFileE(path)
+	if err != nil {
 		panic(err)
 	}
-	return config
+	return cfg
 }
 
 func Get() *BaseConfig {

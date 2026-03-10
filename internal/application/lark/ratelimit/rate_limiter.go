@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -34,13 +35,39 @@ const (
 
 // Redis key 前缀
 const (
-	keyPrefix         = "betago:ratelimit:"
-	statsKeyPrefix    = keyPrefix + "stats:"
-	recentSendsPrefix = keyPrefix + "recent:"
-	hourlyActivityKey = keyPrefix + "hourly:"
-	cooldownKeyPrefix = keyPrefix + "cooldown:"
-	metricsKeyPrefix  = keyPrefix + "metrics:"
+	keyPrefix = "betago:ratelimit"
 )
+
+func ratelimitRedisKey(scope string, parts ...string) string {
+	keyParts := make([]string, 0, len(parts)+2)
+	keyParts = append(keyParts, keyPrefix, scope)
+	keyParts = append(keyParts, parts...)
+	return botidentity.Current().NamespaceKey(keyParts...)
+}
+
+func statsRedisKey(chatID string) string {
+	return ratelimitRedisKey("stats", chatID)
+}
+
+func recentSendsRedisKey(chatID string) string {
+	return ratelimitRedisKey("recent", chatID)
+}
+
+func hourlyActivityRedisKey(chatID string) string {
+	return ratelimitRedisKey("hourly", chatID)
+}
+
+func cooldownRedisKey(chatID string) string {
+	return ratelimitRedisKey("cooldown", chatID)
+}
+
+func metricsRedisKey(chatID string) string {
+	return ratelimitRedisKey("metrics", chatID)
+}
+
+func metricsScanPrefix() string {
+	return metricsRedisKey("") + ":"
+}
 
 // ==========================================
 // 数据结构定义
@@ -216,7 +243,7 @@ func NewMetrics(rdb *redis.Client) *Metrics {
 }
 
 func (m *Metrics) getOrCreateChatMetrics(ctx context.Context, chatID string) (*ChatMetrics, error) {
-	key := metricsKeyPrefix + chatID
+	key := metricsRedisKey(chatID)
 	data, err := m.rdb.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		cm := &ChatMetrics{LastUpdated: time.Now()}
@@ -234,7 +261,7 @@ func (m *Metrics) getOrCreateChatMetrics(ctx context.Context, chatID string) (*C
 }
 
 func (m *Metrics) saveChatMetrics(ctx context.Context, chatID string, cm *ChatMetrics) error {
-	key := metricsKeyPrefix + chatID
+	key := metricsRedisKey(chatID)
 	cm.LastUpdated = time.Now()
 	data, err := json.Marshal(cm)
 	if err != nil {
@@ -244,7 +271,7 @@ func (m *Metrics) saveChatMetrics(ctx context.Context, chatID string, cm *ChatMe
 }
 
 func (m *Metrics) getChatStats(ctx context.Context, chatID string) *ChatMetrics {
-	key := metricsKeyPrefix + chatID
+	key := metricsRedisKey(chatID)
 	data, err := m.rdb.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		return nil
@@ -345,12 +372,13 @@ func (m *Metrics) GetAllChatStats() map[string]*ChatMetrics {
 	defer cancel()
 
 	result := make(map[string]*ChatMetrics)
-	pattern := metricsKeyPrefix + "*"
+	pattern := metricsScanPrefix() + "*"
 	iter := m.rdb.Scan(ctx, 0, pattern, 0).Iterator()
+	prefix := metricsScanPrefix()
 
 	for iter.Next(ctx) {
 		key := iter.Val()
-		chatID := key[len(metricsKeyPrefix):]
+		chatID := key[len(prefix):]
 		cm := m.GetChatStats(chatID)
 		if cm != nil {
 			result[chatID] = cm
@@ -404,15 +432,16 @@ func NewSmartRateLimiter(config *Config, rdb *redis.Client) *SmartRateLimiter {
 
 // getOrCreateChatStats 从 Redis 获取或创建会话统计
 func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID string) (*ChatStats, error) {
+	cacheKey := statsRedisKey(chatID)
 	// 先尝试本地缓存
 	s.localCacheMu.RLock()
-	if stats, ok := s.localCache[chatID]; ok {
+	if stats, ok := s.localCache[cacheKey]; ok {
 		s.localCacheMu.RUnlock()
 		return stats, nil
 	}
 	s.localCacheMu.RUnlock()
 
-	key := statsKeyPrefix + chatID
+	key := cacheKey
 	data, err := s.rdb.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		// 创建新的
@@ -421,7 +450,7 @@ func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID stri
 		}
 		// 保存到本地缓存
 		s.localCacheMu.Lock()
-		s.localCache[chatID] = stats
+		s.localCache[cacheKey] = stats
 		s.localCacheMu.Unlock()
 		return stats, nil
 	}
@@ -436,7 +465,7 @@ func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID stri
 
 	// 保存到本地缓存
 	s.localCacheMu.Lock()
-	s.localCache[chatID] = &stats
+	s.localCache[cacheKey] = &stats
 	s.localCacheMu.Unlock()
 
 	return &stats, nil
@@ -444,7 +473,7 @@ func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID stri
 
 // saveChatStats 保存会话统计到 Redis
 func (s *SmartRateLimiter) saveChatStats(ctx context.Context, stats *ChatStats) error {
-	key := statsKeyPrefix + stats.ChatID
+	key := statsRedisKey(stats.ChatID)
 	data, err := json.Marshal(stats)
 	if err != nil {
 		return err
@@ -452,7 +481,7 @@ func (s *SmartRateLimiter) saveChatStats(ctx context.Context, stats *ChatStats) 
 
 	// 更新本地缓存
 	s.localCacheMu.Lock()
-	s.localCache[stats.ChatID] = stats
+	s.localCache[key] = stats
 	s.localCacheMu.Unlock()
 
 	// 保存到 Redis，设置 7 天过期
@@ -461,7 +490,7 @@ func (s *SmartRateLimiter) saveChatStats(ctx context.Context, stats *ChatStats) 
 
 // getRecentSends 从 Redis 获取最近发送记录
 func (s *SmartRateLimiter) getRecentSends(ctx context.Context, chatID string) ([]SendRecord, error) {
-	key := recentSendsPrefix + chatID
+	key := recentSendsRedisKey(chatID)
 	dataList, err := s.rdb.LRange(ctx, key, 0, -1).Result()
 	if err != nil {
 		return nil, err
@@ -479,7 +508,7 @@ func (s *SmartRateLimiter) getRecentSends(ctx context.Context, chatID string) ([
 
 // addRecentSend 添加发送记录到 Redis
 func (s *SmartRateLimiter) addRecentSend(ctx context.Context, chatID string, record SendRecord) error {
-	key := recentSendsPrefix + chatID
+	key := recentSendsRedisKey(chatID)
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
@@ -501,7 +530,7 @@ func (s *SmartRateLimiter) addRecentSend(ctx context.Context, chatID string, rec
 
 // getHourlyActivity 获取小时统计
 func (s *SmartRateLimiter) getHourlyActivity(ctx context.Context, chatID string) ([24]HourlyStats, error) {
-	key := hourlyActivityKey + chatID
+	key := hourlyActivityRedisKey(chatID)
 	var hourly [24]HourlyStats
 
 	for h := 0; h < 24; h++ {
@@ -526,7 +555,7 @@ func (s *SmartRateLimiter) getHourlyActivity(ctx context.Context, chatID string)
 
 // incrementHourlyActivity 增加小时统计
 func (s *SmartRateLimiter) incrementHourlyActivity(ctx context.Context, chatID string, hour int) error {
-	key := hourlyActivityKey + chatID
+	key := hourlyActivityRedisKey(chatID)
 	if err := s.rdb.HIncrBy(ctx, key, strconv.Itoa(hour), 1).Err(); err != nil {
 		return err
 	}
@@ -535,7 +564,7 @@ func (s *SmartRateLimiter) incrementHourlyActivity(ctx context.Context, chatID s
 
 // getCooldown 获取冷却状态
 func (s *SmartRateLimiter) getCooldown(ctx context.Context, chatID string) (time.Time, int, error) {
-	key := cooldownKeyPrefix + chatID
+	key := cooldownRedisKey(chatID)
 	dataMap, err := s.rdb.HGetAll(ctx, key).Result()
 	if err != nil {
 		return time.Time{}, 0, err
@@ -555,7 +584,7 @@ func (s *SmartRateLimiter) getCooldown(ctx context.Context, chatID string) (time
 
 // setCooldown 设置冷却状态
 func (s *SmartRateLimiter) setCooldown(ctx context.Context, chatID string, until time.Time, level int) error {
-	key := cooldownKeyPrefix + chatID
+	key := cooldownRedisKey(chatID)
 	return s.rdb.HSet(ctx, key,
 		"until", until.Unix(),
 		"level", level,

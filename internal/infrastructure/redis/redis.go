@@ -2,6 +2,7 @@ package redis_dal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,21 +12,76 @@ import (
 
 // RedisClient  12
 var RedisClient *redis.Client
+var redisDisableReason string
 
 func HasConfig() bool {
 	cfg := config.Get().RedisConfig
 	return cfg != nil && cfg.Addr != ""
 }
 
+func Init(ctx context.Context) error {
+	if !HasConfig() {
+		redisDisableReason = "redis config missing or incomplete"
+		return errors.New(redisDisableReason)
+	}
+	redisDisableReason = ""
+	return Ping(ctx)
+}
+
 // GetRedisClient 1
 func GetRedisClient() *redis.Client {
 	if RedisClient == nil {
+		cfg := config.Get().RedisConfig
+		if cfg == nil {
+			return nil
+		}
+		clientName := ""
+		if baseInfo := config.Get().BaseInfo; baseInfo != nil {
+			clientName = baseInfo.RobotName
+		}
 		RedisClient = redis.NewClient(&redis.Options{
-			Addr:       config.Get().RedisConfig.Addr,
-			ClientName: config.Get().BaseInfo.RobotName,
+			Addr:       cfg.Addr,
+			Password:   cfg.Password,
+			DB:         cfg.DB,
+			ClientName: clientName,
 		})
 	}
 	return RedisClient
+}
+
+func Ping(ctx context.Context) error {
+	client := GetRedisClient()
+	if client == nil {
+		if redisDisableReason == "" {
+			redisDisableReason = "redis client unavailable"
+		}
+		return errors.New(redisDisableReason)
+	}
+	if err := client.Ping(ctx).Err(); err != nil {
+		redisDisableReason = err.Error()
+		return err
+	}
+	redisDisableReason = ""
+	return nil
+}
+
+func Close() error {
+	if RedisClient == nil {
+		return nil
+	}
+	err := RedisClient.Close()
+	RedisClient = nil
+	return err
+}
+
+func Status() (bool, string) {
+	if redisDisableReason != "" {
+		return false, redisDisableReason
+	}
+	if RedisClient == nil {
+		return false, "redis not initialized"
+	}
+	return true, ""
 }
 
 // (使用我们上面修改的版本)

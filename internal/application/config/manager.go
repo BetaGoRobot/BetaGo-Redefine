@@ -7,12 +7,16 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -49,14 +53,20 @@ type Feature struct {
 	DefaultEnabled bool   `json:"default_enabled"` // 默认是否启用
 }
 
+var currentBotIdentity = botidentity.Current
+
 // IsValidFeature 检查功能名称是否有效（始终返回 true，兼容旧代码）
 func IsValidFeature(name string) bool {
 	return true
 }
 
 // buildConfigKey 构建带作用域的配置键
-// 格式: scope:chat_id:user_id:key
+// 格式: bot:app_id:bot_open_id:scope:chat_id:user_id:key
 func buildConfigKey(scope ConfigScope, chatID, userID string, key ConfigKey) string {
+	return namespaceConfigKey(buildRawConfigKey(scope, chatID, userID, key))
+}
+
+func buildRawConfigKey(scope ConfigScope, chatID, userID string, key ConfigKey) string {
 	parts := []string{string(scope)}
 	if chatID != "" {
 		parts = append(parts, chatID)
@@ -70,6 +80,10 @@ func buildConfigKey(scope ConfigScope, chatID, userID string, key ConfigKey) str
 
 // buildFeatureBlockKey 构建功能屏蔽的配置键
 func buildFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) string {
+	return namespaceConfigKey(buildRawFeatureBlockKey(scope, chatID, userID, feature))
+}
+
+func buildRawFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) string {
 	parts := []string{"feature_block", string(scope)}
 	if chatID != "" {
 		parts = append(parts, chatID)
@@ -79,6 +93,72 @@ func buildFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) str
 	}
 	parts = append(parts, feature)
 	return strings.Join(parts, ":")
+}
+
+func namespaceConfigKey(rawKey string) string {
+	if rawKey == "" {
+		return ""
+	}
+	namespace := currentBotNamespacePrefix()
+	if namespace == "" {
+		return rawKey
+	}
+	return namespace + ":" + rawKey
+}
+
+func currentBotNamespacePrefix() string {
+	identity := currentBotIdentity()
+	if !identity.Valid() {
+		return ""
+	}
+	return strings.Join([]string{
+		"bot",
+		strings.TrimSpace(identity.AppID),
+		strings.TrimSpace(identity.BotOpenID),
+	}, ":")
+}
+
+func buildConfigListPrefix(scope ConfigScope, chatID, userID string) string {
+	rawPrefix := buildRawConfigListPrefix(scope, chatID, userID)
+	namespace := currentBotNamespacePrefix()
+	switch {
+	case namespace == "":
+		return rawPrefix
+	case rawPrefix == "":
+		return namespace + ":"
+	default:
+		return namespace + ":" + rawPrefix
+	}
+}
+
+func buildRawConfigListPrefix(scope ConfigScope, chatID, userID string) string {
+	switch scope {
+	case ScopeGlobal:
+		return "global:"
+	case ScopeChat:
+		if chatID != "" {
+			return fmt.Sprintf("chat:%s:", chatID)
+		}
+		return "chat:"
+	case ScopeUser:
+		if chatID != "" && userID != "" {
+			return fmt.Sprintf("user:%s:%s:", chatID, userID)
+		}
+		if userID != "" {
+			return fmt.Sprintf("user::%s:", userID)
+		}
+		return "user:"
+	default:
+		return ""
+	}
+}
+
+func stripBotNamespace(fullKey string) string {
+	parts := strings.SplitN(fullKey, ":", 4)
+	if len(parts) == 4 && parts[0] == "bot" {
+		return parts[3]
+	}
+	return fullKey
 }
 
 // Manager 配置管理器
@@ -205,14 +285,23 @@ func (m *Manager) getConfigByFullKey(ctx context.Context, fullKey string) (strin
 }
 
 func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey string, options ConfigReadOptions) (string, bool) {
+	ctx, span := otel.StartNamed(ctx, "config.get")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("config.key.preview", otel.PreviewString(fullKey, 128)),
+		attribute.Int("config.key.len", len(fullKey)),
+		attribute.Bool("config.bypass_cache", options.BypassCache),
+	)
 	if !options.BypassCache {
 		m.mu.RLock()
 		if val, ok := m.cache[fullKey]; ok {
 			m.mu.RUnlock()
+			span.AddEvent("config.cache.hit")
 			return val, true
 		}
 		m.mu.RUnlock()
 	}
+	span.AddEvent("config.cache.miss")
 
 	ins := query.Q.DynamicConfig
 	if options.BypassCache {
@@ -227,11 +316,14 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 
 	if err == nil && len(cfgs) > 0 {
 		cfg := cfgs[0]
+		span.SetAttributes(attribute.Bool("config.found", true))
 		m.mu.Lock()
 		m.cache[fullKey] = cfg.Value
 		m.mu.Unlock()
 		return cfg.Value, true
 	}
+	otel.RecordError(span, err)
+	span.SetAttributes(attribute.Bool("config.found", false))
 
 	return "", false
 }
@@ -327,17 +419,28 @@ func (m *Manager) SetString(ctx context.Context, key ConfigKey, scope ConfigScop
 }
 
 // setConfigByFullKey 通过完整键设置配置
-func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string) error {
-	return query.Q.Transaction(func(tx *query.Query) error {
+func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string) (err error) {
+	ctx, span := otel.StartNamed(ctx, "config.set")
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(
+		attribute.String("config.key.preview", otel.PreviewString(fullKey, 128)),
+		attribute.Int("config.key.len", len(fullKey)),
+		attribute.String("config.value.preview", otel.PreviewString(value, 128)),
+		attribute.Int("config.value.len", len(value)),
+	)
+	err = query.Q.Transaction(func(tx *query.Query) error {
 		existing, err := tx.DynamicConfig.WithContext(ctx).
 			Where(query.DynamicConfig.Key.Eq(fullKey)).
 			First()
 
 		if err == nil && existing != nil {
+			span.AddEvent("config.update")
 			_, err = tx.DynamicConfig.WithContext(ctx).
 				Where(query.DynamicConfig.Key.Eq(fullKey)).
 				Update(query.DynamicConfig.Value, value)
 		} else {
+			span.AddEvent("config.create")
 			err = tx.DynamicConfig.WithContext(ctx).
 				Create(&model.DynamicConfig{
 					Key:   fullKey,
@@ -355,6 +458,7 @@ func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string)
 
 		return nil
 	})
+	return err
 }
 
 // DeleteConfig 删除配置
@@ -364,8 +468,15 @@ func (m *Manager) DeleteConfig(ctx context.Context, key ConfigKey, scope ConfigS
 }
 
 // deleteConfigByFullKey 通过完整键删除配置
-func (m *Manager) deleteConfigByFullKey(ctx context.Context, fullKey string) error {
-	_, err := query.Q.DynamicConfig.WithContext(ctx).
+func (m *Manager) deleteConfigByFullKey(ctx context.Context, fullKey string) (err error) {
+	ctx, span := otel.StartNamed(ctx, "config.delete")
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(
+		attribute.String("config.key.preview", otel.PreviewString(fullKey, 128)),
+		attribute.Int("config.key.len", len(fullKey)),
+	)
+	_, err = query.Q.DynamicConfig.WithContext(ctx).
 		Where(query.DynamicConfig.Key.Eq(fullKey)).
 		Delete()
 
@@ -392,29 +503,22 @@ type ConfigEntry struct {
 }
 
 // ListConfigs 列出指定作用域的配置
-func (m *Manager) ListConfigs(ctx context.Context, scope ConfigScope, chatID, userID string) ([]ConfigEntry, error) {
-	var prefix string
-	switch scope {
-	case ScopeGlobal:
-		prefix = "global:"
-	case ScopeChat:
-		if chatID != "" {
-			prefix = fmt.Sprintf("chat:%s:", chatID)
-		} else {
-			prefix = "chat:"
-		}
-	case ScopeUser:
-		if chatID != "" && userID != "" {
-			prefix = fmt.Sprintf("user:%s:%s:", chatID, userID)
-		} else if userID != "" {
-			prefix = fmt.Sprintf("user::%s:", userID)
-		} else {
-			prefix = "user:"
-		}
+func (m *Manager) ListConfigs(ctx context.Context, scope ConfigScope, chatID, userID string) (entries []ConfigEntry, err error) {
+	ctx, span := otel.StartNamed(ctx, "config.list")
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+	if scope == "" {
+		scope = ScopeChat
 	}
+	prefix := buildConfigListPrefix(scope, chatID, userID)
+	span.SetAttributes(
+		attribute.String("config.scope", string(scope)),
+		attribute.String("config.chat_id", chatID),
+		attribute.String("config.user_id", userID),
+		attribute.String("config.prefix.preview", otel.PreviewString(prefix, 128)),
+	)
 
 	var results []*model.DynamicConfig
-	var err error
 
 	if prefix != "" {
 		results, err = query.Q.DynamicConfig.WithContext(ctx).
@@ -428,19 +532,20 @@ func (m *Manager) ListConfigs(ctx context.Context, scope ConfigScope, chatID, us
 		return nil, err
 	}
 
-	entries := make([]ConfigEntry, 0, len(results))
+	entries = make([]ConfigEntry, 0, len(results))
 	for _, cfg := range results {
 		if entry, ok := parseConfigKey(cfg.Key, cfg.Value); ok {
 			entries = append(entries, entry)
 		}
 	}
+	span.SetAttributes(attribute.Int("config.entries.count", len(entries)))
 
 	return entries, nil
 }
 
 // parseConfigKey 解析配置键
 func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
-	parts := strings.Split(fullKey, ":")
+	parts := strings.Split(stripBotNamespace(fullKey), ":")
 	if len(parts) < 2 {
 		return ConfigEntry{}, false
 	}
@@ -476,9 +581,18 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // 优先级: chat_user > user > chat > global > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
 func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, userID string) bool {
+	ctx, span := otel.StartNamed(ctx, "config.feature_check")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("feature.name", feature),
+		attribute.Bool("feature.default_enabled", defaultEnabled),
+		attribute.String("feature.chat_id", chatID),
+		attribute.String("feature.user_id", userID),
+	)
 	// 1. 检查 chat_user 级别
 	if chatID != "" && userID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, userID, feature) {
+			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeUser))))
 			logs.L().Ctx(ctx).Debug("feature blocked at chat_user level",
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
@@ -491,6 +605,7 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 	// 2. 检查 user 级别
 	if userID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, "", userID, feature) {
+			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", "user")))
 			logs.L().Ctx(ctx).Debug("feature blocked at user level",
 				zap.String("feature", feature),
 				zap.String("user_id", userID),
@@ -502,6 +617,7 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 	// 3. 检查 chat 级别（使用 dynamic_configs）
 	if chatID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeChat, chatID, "", feature) {
+			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeChat))))
 			logs.L().Ctx(ctx).Debug("feature blocked at chat level",
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
@@ -512,6 +628,7 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 
 	// 4. 检查 global 级别
 	if m.isFeatureBlockedAtScope(ctx, ScopeGlobal, "", "", feature) {
+		span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeGlobal))))
 		logs.L().Ctx(ctx).Debug("feature blocked at global level",
 			zap.String("feature", feature),
 		)
@@ -520,24 +637,36 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 
 	// 5. 兼容检查旧的 function_enablings 表
 	if chatID != "" {
-		fcs, err := query.Q.FunctionEnabling.WithContext(ctx).
-			Where(query.FunctionEnabling.GuildID.Eq(chatID)).
-			Where(query.FunctionEnabling.Function.Eq(feature)).
-			Find()
+		identity := currentBotIdentity()
+		if identity.Valid() {
+			fcQuery := query.Q.FunctionEnabling.WithContext(ctx).
+				Where(query.FunctionEnabling.GuildID.Eq(chatID)).
+				Where(query.FunctionEnabling.Function.Eq(feature))
+			if identity.AppID != "" {
+				fcQuery = fcQuery.Where(query.FunctionEnabling.AppID.Eq(identity.AppID))
+			}
+			if identity.BotOpenID != "" {
+				fcQuery = fcQuery.Where(query.FunctionEnabling.BotOpenID.Eq(identity.BotOpenID))
+			}
 
-		if err == nil && len(fcs) > 0 {
-			fc := fcs[0]
-			if fc.Disable {
-				logs.L().Ctx(ctx).Debug("feature disabled in legacy table",
-					zap.String("feature", feature),
-					zap.String("chat_id", chatID),
-				)
-				return false
+			fcs, err := fcQuery.Find()
+
+			if err == nil && len(fcs) > 0 {
+				fc := fcs[0]
+				if fc.Disable {
+					span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", "legacy")))
+					logs.L().Ctx(ctx).Debug("feature disabled in legacy table",
+						zap.String("feature", feature),
+						zap.String("chat_id", chatID),
+					)
+					return false
+				}
 			}
 		}
 	}
 
 	// 6. 返回功能的默认值
+	span.SetAttributes(attribute.Bool("feature.enabled", defaultEnabled))
 	return defaultEnabled
 }
 

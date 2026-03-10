@@ -18,7 +18,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -35,10 +34,11 @@ type KV[K comparable, V any] struct {
 
 // CreateMsgTextRaw 需要自行BuildText
 func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("content").String(content))
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Key("msgID").String(msgID))
+	span.SetAttributes(otel.PreviewAttrs("content", content, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	// TODO: Add id saving
 	if msgID == "" {
 		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
@@ -76,9 +76,9 @@ func createMsgRawContentType(ctx context.Context, chatID, msgType, content, msgI
 }
 
 func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	// create Card
 	// 创建卡片实体
@@ -146,9 +146,9 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 }
 
 func updateCardFunc(ctx context.Context, res iter.Seq[*ark_dal.ModelStreamRespReasoning], cardID string) (err error, lastIdx int) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	idx := &atomic.Int32{}
 	idx.Store(0)
 
@@ -156,9 +156,10 @@ func updateCardFunc(ctx context.Context, res iter.Seq[*ark_dal.ModelStreamRespRe
 		lastIdx = int(idx.Load())
 	}()
 	sendFunc := func(key, content string) {
-		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+		ctx, span := otel.Start(ctx)
+		span.SetAttributes(otel.PreviewAttrs("content", content, 256)...)
 		defer span.End()
-		defer func() { span.RecordError(err) }()
+		defer func() { otel.RecordError(span, err) }()
 		body := larkcardkit.NewContentCardElementReqBodyBuilder().Content(content).Sequence(int(idx.Add(1))).Build()
 		req := larkcardkit.NewContentCardElementReqBuilder().CardId(cardID).ElementId(key).Body(body).Build()
 		resp, err := lark_dal.Client().Cardkit.V1.CardElement.Content(ctx, req)
@@ -182,9 +183,9 @@ func updateCardFunc(ctx context.Context, res iter.Seq[*ark_dal.ModelStreamRespRe
 		defer close(msgChan)
 
 		writeFunc := func(data ark_dal.ModelStreamRespReasoning) error {
-			_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+			_, span := otel.Start(ctx)
 			defer span.End()
-			defer func() { span.RecordError(err) }()
+			defer func() { otel.RecordError(span, err) }()
 
 			if data.ReasoningContent != "" {
 				contentSlice := []string{}
@@ -254,12 +255,12 @@ updateChunkLoop:
 //	@param msgID
 //	@param err
 func SendRecoveredMsg(ctx context.Context, err any, msgID string) {
-	_, span := otel.T().Start(ctx, "RecoverMsg")
+	_, span := otel.StartNamed(ctx, "RecoverMsg")
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
 	if e, ok := err.(error); ok {
-		span.RecordError(e)
+		otel.RecordError(span, e)
 	}
 	stack := string(debug.Stack())
 	logs.L().Ctx(ctx).Error("panic-detected!", zap.Any("Error", err), zap.String("trace_id", traceID), zap.String("msg_id", msgID), zap.Stack("stack"))
@@ -274,9 +275,9 @@ func SendRecoveredMsg(ctx context.Context, err any, msgID string) {
 }
 
 func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	// create Card
 	// 创建卡片实体

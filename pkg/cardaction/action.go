@@ -9,17 +9,21 @@ import (
 )
 
 const (
-	ActionField     = "action"
-	IDField         = "id"
-	CommandField    = "command"
-	KeyField        = "key"
-	ValueField      = "value"
-	FormFieldField  = "form_field"
-	ScopeField      = "scope"
-	ChatIDField     = "chat_id"
-	UserIDField     = "user_id"
-	FeatureField    = "feature"
-	LegacyTypeField = "type"
+	ActionField          = "action"
+	IDField              = "id"
+	CommandField         = "command"
+	KeyField             = "key"
+	ValueField           = "value"
+	FormFieldField       = "form_field"
+	ScopeField           = "scope"
+	ChatIDField          = "chat_id"
+	UserIDField          = "user_id"
+	TargetUserIDField    = "target_user_id"
+	FeatureField         = "feature"
+	PermissionPointField = "permission_point"
+	ResourceChatIDField  = "resource_chat_id"
+	ResourceUserIDField  = "resource_user_id"
+	LegacyTypeField      = "type"
 
 	ActionMusicPlay              = "music.play"
 	ActionMusicAlbum             = "music.album"
@@ -37,6 +41,9 @@ const (
 	ActionConfigSet              = "config.set"
 	ActionConfigDelete           = "config.delete"
 	ActionConfigViewScope        = "config.view_scope"
+	ActionPermissionGrant        = "permission.grant"
+	ActionPermissionRevoke       = "permission.revoke"
+	ActionPermissionView         = "permission.view"
 )
 
 var (

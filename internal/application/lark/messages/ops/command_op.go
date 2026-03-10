@@ -12,11 +12,9 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/pkg/errors"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -41,9 +39,9 @@ func (r *CommandOperator) Name() string {
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:34:09
 func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	return requireCommand(ctx, r.Name(), event)
 }
@@ -55,20 +53,20 @@ func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 //	@param event
 //	@return err
 func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 	rawCommand := messageText(ctx, event)
 
 	return ExecuteFromRawCommand(ctx, event, meta, rawCommand)
 }
 
 func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	rawCommand = strings.ReplaceAll(rawCommand, "<b>", " ")
 	rawCommand = strings.ReplaceAll(rawCommand, "</b>", " ")
@@ -80,7 +78,7 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 		defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 		err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
 		if err != nil {
-			span.RecordError(err)
+			otel.RecordError(span, err)
 			if errors.Is(err, xerror.ErrCommandNotFound) {
 				meta.SetIsCommand(false)
 				meta.SetMainCommand("")

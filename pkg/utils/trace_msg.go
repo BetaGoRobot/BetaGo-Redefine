@@ -7,12 +7,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"go.uber.org/zap"
 )
 
 func AddTrace2DB(ctx context.Context, msgID string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	logs.L().Ctx(ctx).Info("AddTraceLog2DB",

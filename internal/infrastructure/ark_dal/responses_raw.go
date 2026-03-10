@@ -2,18 +2,20 @@ package ark_dal
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
 	"github.com/redis/go-redis/v9"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -21,19 +23,34 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 	if _, _, err := runtimeClient(); err != nil {
 		return "", err
 	}
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	span.SetAttributes(attribute.Key("sys_prompt").String(sysPrompt))
-	span.SetAttributes(attribute.Key("user_prompt").String(userPrompt))
+	ctx, span := otel.StartNamed(ctx, "ark.responses.cache")
+	span.SetAttributes(attribute.String("model.id", modelID))
+	span.SetAttributes(otel.PreviewAttrs("sys_prompt", sysPrompt, 256)...)
+	span.SetAttributes(otel.PreviewAttrs("user_prompt", userPrompt, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	key := fmt.Sprintf("ark:response:cache:chunking:%s:%s", modelID, userPrompt)
+	defer func() { otel.RecordError(span, err) }()
+	key := botidentity.Current().NamespaceKey("ark", "response", "cache", "chunking", modelID, hashChunkingCacheInput(sysPrompt, userPrompt))
+	span.SetAttributes(
+		attribute.String("cache.key.preview", otel.PreviewString(key, 128)),
+		attribute.Int("cache.key.len", len(key)),
+	)
 
-	respID, err := redis_dal.GetRedisClient().Get(ctx, key).Result()
+	redisGetCtx, redisGetSpan := otel.StartNamed(ctx, "ark.responses.cache_get")
+	respID, err := redis_dal.GetRedisClient().Get(redisGetCtx, key).Result()
+	otel.RecordError(redisGetSpan, err)
+	redisGetSpan.End()
 	if err != nil && err != redis.Nil {
 		logs.L().Ctx(ctx).Error("get cache error", zap.Error(err))
 		return
 	}
 	if respID == "" {
+		span.AddEvent(
+			"cache_miss",
+			trace.WithAttributes(
+				attribute.String("cache.key.preview", otel.PreviewString(key, 128)),
+				attribute.Int("cache.key.len", len(key)),
+			),
+		)
 		exp := time.Now().Add(time.Hour).Unix()
 		req := &responses.ResponsesRequest{
 			Model: modelID,
@@ -67,15 +84,31 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 			logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
 			return "", err
 		}
-		if err := redis_dal.GetRedisClient().Set(ctx, key, resp.Id, 0).Err(); err != nil && err != redis.Nil {
+		redisSetCtx, redisSetSpan := otel.StartNamed(ctx, "ark.responses.cache_set")
+		if err := redis_dal.GetRedisClient().Set(redisSetCtx, key, resp.Id, 0).Err(); err != nil && err != redis.Nil {
+			otel.RecordError(redisSetSpan, err)
+			redisSetSpan.End()
 			logs.L().Ctx(ctx).Error("set cache error", zap.Error(err))
 			return "", err
 		}
-		if err := redis_dal.GetRedisClient().ExpireAt(ctx, key, time.Unix(exp, 0)).Err(); err != nil && err != redis.Nil {
+		redisSetSpan.End()
+		redisExpireCtx, redisExpireSpan := otel.StartNamed(ctx, "ark.responses.cache_expire")
+		if err := redis_dal.GetRedisClient().ExpireAt(redisExpireCtx, key, time.Unix(exp, 0)).Err(); err != nil && err != redis.Nil {
+			otel.RecordError(redisExpireSpan, err)
+			redisExpireSpan.End()
 			logs.L().Ctx(ctx).Error("expire cache error", zap.Error(err))
 			return "", err
 		}
+		redisExpireSpan.End()
 		respID = resp.Id
+	} else {
+		span.AddEvent(
+			"cache_hit",
+			trace.WithAttributes(
+				attribute.String("cache.key.preview", otel.PreviewString(key, 128)),
+				attribute.Int("cache.key.len", len(key)),
+			),
+		)
 	}
 
 	previousResponseID := respID
@@ -116,4 +149,9 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 		}
 	}
 	return "", errors.New("text is nil")
+}
+
+func hashChunkingCacheInput(sysPrompt, userPrompt string) string {
+	sum := sha256.Sum256([]byte(sysPrompt + "\x00" + userPrompt))
+	return hex.EncodeToString(sum[:])
 }

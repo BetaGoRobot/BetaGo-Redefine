@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -14,10 +15,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/opensearch-project/opensearch-go/opensearchutil"
 	"github.com/opensearch-project/opensearch-go/v4"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -62,9 +64,15 @@ func (l liveBackend) Reason() string {
 }
 
 func (l liveBackend) InsertData(ctx context.Context, index string, id string, data any) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx,
+		trace.WithAttributes(
+			attribute.String("index.name", index),
+			attribute.String("document.id", id),
+			attribute.String("payload.type", fmt.Sprintf("%T", data)),
+		),
+	)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	index += "-" + time.Now().In(utils.UTC8Loc()).Format("2006-01-02")
 	req := opensearchapi.IndexReq{
@@ -81,9 +89,14 @@ func (l liveBackend) InsertData(ctx context.Context, index string, id string, da
 }
 
 func (l liveBackend) SearchData(ctx context.Context, index string, data any) (resp *opensearchapi.SearchResp, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx,
+		trace.WithAttributes(
+			attribute.String("index.name", index),
+			attribute.String("payload.type", fmt.Sprintf("%T", data)),
+		),
+	)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := &opensearchapi.SearchReq{
 		Indices: []string{index},
@@ -93,9 +106,12 @@ func (l liveBackend) SearchData(ctx context.Context, index string, data any) (re
 }
 
 func (l liveBackend) SearchDataStr(ctx context.Context, index string, data string) (resp *opensearchapi.SearchResp, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx,
+		trace.WithAttributes(attribute.String("index.name", index)),
+	)
+	span.SetAttributes(otel.PreviewAttrs("query", data, 256)...)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	req := &opensearchapi.SearchReq{
 		Indices: []string{index},
@@ -141,6 +157,11 @@ func setNoop(reason string) {
 
 func unavailableErr() error {
 	return errors.New(backend.Reason())
+}
+
+func Status() (bool, string) {
+	reason := backend.Reason()
+	return reason == "", reason
 }
 
 func InsertData(ctx context.Context, index string, id string, data any) (err error) {

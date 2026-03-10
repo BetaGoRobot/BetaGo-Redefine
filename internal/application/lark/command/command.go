@@ -153,5 +153,8 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 				AddSubCommand(
 					newTypedCmd("list", handlers.RateLimitList),
 				),
+		).
+		AddSubCommand(
+			newTypedCmd("permission", handlers.PermissionManage),
 		)
 }

@@ -8,26 +8,26 @@ import (
 
 func init() {
 	reflecting.GetFunctionName((*NetEaseContext).CheckIfLogin)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:253
-	reflecting.GetFunctionName((*NetEaseContext).GetAlbumDetail)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:506
-	reflecting.GetFunctionName((*NetEaseContext).GetComment)             // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:596
-	reflecting.GetFunctionName((*NetEaseContext).GetDetail)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:278
-	reflecting.GetFunctionName((*NetEaseContext).GetLyrics)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:320
-	reflecting.GetFunctionName((*NetEaseContext).GetMusicURL)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:228
-	reflecting.GetFunctionName((*NetEaseContext).GetMusicURLByID)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:186
-	reflecting.GetFunctionName((*NetEaseContext).GetMusicURLByIDs)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:125
+	reflecting.GetFunctionName((*NetEaseContext).GetAlbumDetail)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:505
+	reflecting.GetFunctionName((*NetEaseContext).GetComment)             // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:595
+	reflecting.GetFunctionName((*NetEaseContext).GetDetail)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:277
+	reflecting.GetFunctionName((*NetEaseContext).GetLyrics)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:319
+	reflecting.GetFunctionName((*NetEaseContext).GetMusicURL)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:227
+	reflecting.GetFunctionName((*NetEaseContext).GetMusicURLByID)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:185
+	reflecting.GetFunctionName((*NetEaseContext).GetMusicURLByIDs)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:124
 	reflecting.GetFunctionName((*NetEaseContext).GetQRBase64)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:92
 	reflecting.GetFunctionName((*NetEaseContext).GetUniKey)              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:71
-	reflecting.GetFunctionName((*NetEaseContext).InnerAsyncGetSearchRes) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:567
+	reflecting.GetFunctionName((*NetEaseContext).InnerAsyncGetSearchRes) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:566
 	reflecting.GetFunctionName((*NetEaseContext).LoginNetEase)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:207
 	reflecting.GetFunctionName((*NetEaseContext).LoginNetEaseQR)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:170
 	reflecting.GetFunctionName((*NetEaseContext).RefreshLogin)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:34
 	reflecting.GetFunctionName((*NetEaseContext).SaveCookie)             // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:318
-	reflecting.GetFunctionName((*NetEaseContext).SearchAlbumByKeyWord)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:470
-	reflecting.GetFunctionName((*NetEaseContext).SearchMusicByKeyWord)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:426
+	reflecting.GetFunctionName((*NetEaseContext).SearchAlbumByKeyWord)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:469
+	reflecting.GetFunctionName((*NetEaseContext).SearchMusicByKeyWord)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:425
 	reflecting.GetFunctionName((*NetEaseContext).TryGetLastCookie)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:288
-	reflecting.GetFunctionName(BuildMusicListCard[Album])                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/music_handler.go:92
-	reflecting.GetFunctionName(BuildMusicListCard[SearchMusicItem])      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:200, /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/music_handler.go:108
-	reflecting.GetFunctionName(asyncUploadPics)                          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:533
+	reflecting.GetFunctionName(BuildMusicListCard[Album])                // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/music_handler.go:91
+	reflecting.GetFunctionName(BuildMusicListCard[SearchMusicItem])      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/card_handlers/handler.go:206, /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/handlers/music_handler.go:107
+	reflecting.GetFunctionName(asyncUploadPics)                          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:532
 	reflecting.GetFunctionName(qrImgReadCloser)                          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/auth.go:193
-	reflecting.GetFunctionName(uploadMusic)                              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:162
+	reflecting.GetFunctionName(uploadMusic)                              // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/neteaseapi/netease.go:161
 }

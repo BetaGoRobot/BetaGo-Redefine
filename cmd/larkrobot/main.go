@@ -2,92 +2,47 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 
-	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
-	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
-	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
-	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/miniodal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
+	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
-
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
-	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
+	"go.uber.org/zap"
 )
 
+// main 只保留进程级控制流：
+// 1. 读取配置；
+// 2. 构造运行时 App；
+// 3. 在信号上下文中启动；
+// 4. 收到退出信号后按统一生命周期关闭。
+//
+// 具体的模块装配和依赖顺序已经拆到同目录下的其他文件中，避免入口文件
+// 同时承担配置、依赖初始化、探针和业务装配职责。
 func main() {
-	cfg := loadConfig()
-	initInfrastructure(cfg)
-	initApplications()
-	go scheduleapp.StartScheduler()
-	go startLarkClient(cfg)
-	select {}
-}
-
-func loadConfig() *config.BaseConfig {
-	return config.LoadFile(loadConfigPath())
-}
-
-func loadConfigPath() string {
-	if path := os.Getenv("BETAGO_CONFIG_PATH"); path != "" {
-		return path
-	}
-	return ".dev/config.toml"
-}
-
-func initInfrastructure(cfg *config.BaseConfig) {
-	otel.Init(cfg.OtelConfig)
-	logs.Init() // 有先后顺序的.应当在otel之后
-	db.Init(cfg.DBConfig)
-	opensearch.Init(cfg.OpensearchConfig)
-	ark_dal.Init(cfg.ArkConfig)
-	miniodal.Init(cfg.MinioConfig)
-	retriever.Init()
-	neteaseapi.Init()
-	aktool.Init()
-	gotify.Init()
-	larkchunking.Init()
-	lark_dal.Init()
-	xhttp.Init()
-}
-
-func initApplications() {
-	appcardaction.RegisterBuiltins()
-	todoapp.Init(db.DB())
-	scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
-}
-
-func newEventDispatcher() *dispatcher.EventDispatcher {
-	return dispatcher.
-		NewEventDispatcher("", "").
-		OnP2MessageReactionCreatedV1(lark.MessageReactionHandler).
-		OnP2MessageReceiveV1(lark.MessageV2Handler).
-		OnP2ApplicationAppVersionAuditV6(lark.AuditV6Handler).
-		OnP2CardActionTrigger(lark.CardActionHandler)
-}
-
-func startLarkClient(cfg *config.BaseConfig) {
-	cli := larkws.NewClient(cfg.LarkConfig.AppID, cfg.LarkConfig.AppSecret,
-		larkws.WithEventHandler(newEventDispatcher()),
-		larkws.WithLogLevel(larkcore.LogLevelInfo),
-	)
-
-	err := cli.Start(context.Background())
+	cfg, err := loadConfig()
 	if err != nil {
 		panic(err)
+	}
+
+	app, err := buildApp(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := app.Start(ctx); err != nil {
+		panic(err)
+	}
+
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), appruntime.ShutdownTimeout(cfg))
+	defer cancel()
+	if err := app.Stop(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
+		logs.L().Error("app stop failed", zap.Error(err))
 	}
 }

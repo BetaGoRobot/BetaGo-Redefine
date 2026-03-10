@@ -9,7 +9,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
@@ -83,9 +82,9 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
 
 // AnalyzeMessage 分析消息意图
 func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalysis, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	span.SetAttributes(
 		attribute.Key("message.len").Int(len(message)),

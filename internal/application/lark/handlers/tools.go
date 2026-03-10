@@ -9,20 +9,22 @@ import (
 )
 
 func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
-	return buildTools(true, true, true)
+	ins := buildTools(true, true, true, true)
+	xcommand.RegisterTool(ins, PermissionManage)
+	return ins
 }
 
 func BuildSchedulableTools() *tools.Impl[larkim.P2MessageReceiveV1] {
-	return buildTools(false, false, false)
+	return buildTools(false, false, false, false)
 }
 
-func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools bool) *tools.Impl[larkim.P2MessageReceiveV1] {
+func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools, allowTargetChatOverride bool) *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := tools.New[larkim.P2MessageReceiveV1]()
 	if enableWebSearch {
 		ins.WebSearch()
 	}
 
-	registerBaseTools(ins)
+	registerBaseTools(ins, allowTargetChatOverride)
 	if includeDebugRevert {
 		xcommand.RegisterTool(ins, DebugRevert)
 	}
@@ -32,7 +34,7 @@ func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools bool) 
 	return ins
 }
 
-func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
+func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetChatOverride bool) {
 	xcommand.RegisterTool(ins, SearchHistory)
 	xcommand.RegisterTool(ins, MusicSearch)
 	xcommand.RegisterTool(ins, Mute)
@@ -63,6 +65,10 @@ func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	xcommand.RegisterTool(ins, RateLimitStats)
 	xcommand.RegisterTool(ins, RateLimitList)
 
-	xcommand.RegisterTool(ins, SendMessage)
+	if allowTargetChatOverride {
+		xcommand.RegisterTool(ins, SendMessage)
+	} else {
+		xcommand.RegisterTool(ins, ScheduledSendMessage)
+	}
 	todoapp.RegisterTools(ins)
 }

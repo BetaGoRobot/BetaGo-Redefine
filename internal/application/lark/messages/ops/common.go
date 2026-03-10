@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"strings"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
@@ -14,7 +15,6 @@ import (
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	pkgerrors "github.com/pkg/errors"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -25,6 +25,35 @@ type (
 
 func messageText(ctx context.Context, event *larkim.P2MessageReceiveV1) string {
 	return larkmsg.PreGetTextMsg(ctx, event).GetText()
+}
+
+func messageChatID(event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) string {
+	if event != nil && event.Event != nil && event.Event.Message != nil && event.Event.Message.ChatId != nil {
+		return *event.Event.Message.ChatId
+	}
+	if meta != nil {
+		return meta.ChatID
+	}
+	return ""
+}
+
+func messageUserID(event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) string {
+	if event != nil && event.Event != nil && event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
+		if event.Event.Sender.SenderId.OpenId != nil {
+			return *event.Event.Sender.SenderId.OpenId
+		}
+		if event.Event.Sender.SenderId.UserId != nil {
+			return *event.Event.Sender.SenderId.UserId
+		}
+	}
+	if meta != nil {
+		return meta.UserID
+	}
+	return ""
+}
+
+func messageConfigAccessor(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) *appconfig.Accessor {
+	return appconfig.NewAccessor(ctx, messageChatID(event, meta), messageUserID(event, meta))
 }
 
 func isCommandMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) bool {
@@ -79,13 +108,6 @@ func addDoneReactionIfNeeded(ctx context.Context, msgID string, meta *xhandler.B
 		return
 	}
 	larkmsg.AddReactionAsync(ctx, "DONE", msgID)
-}
-
-func recordSpanError(span trace.Span, err *error) {
-	if err == nil || *err == nil {
-		return
-	}
-	span.RecordError(*err)
 }
 
 func buildMediaReply(msgType, fileID string) (string, error) {

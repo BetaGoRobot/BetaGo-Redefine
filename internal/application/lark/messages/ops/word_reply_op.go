@@ -13,7 +13,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.uber.org/zap"
 )
@@ -51,9 +50,9 @@ func (r *WordReplyMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 //	@author heyuhengmatt
 //	@update 2024-07-17 01:35:17
 func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	return skipIfCommand(ctx, r.Name(), event)
 }
@@ -65,9 +64,9 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 //	@param event
 //	@return err
 func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer recordSpanError(span, &err)
+	defer otel.RecordErrorPtr(span, &err)
 
 	msg := messageText(ctx, event)
 	var replyItem *xmodel.ReplyNType
@@ -101,7 +100,7 @@ func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageR
 	}
 	if len(replyList) > 0 {
 		replyItem = utils.SampleSlice(replyList)
-		_, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+		_, subSpan := otel.Start(ctx)
 		defer subSpan.End()
 		err := replyTypedMessage(ctx, *event.Event.Message.MessageId, replyItem, "_wordReply")
 		if err != nil {

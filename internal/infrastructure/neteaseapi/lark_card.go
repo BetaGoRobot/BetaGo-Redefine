@@ -12,7 +12,6 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +32,7 @@ func MusicItemTransAlbum(album *Album) *SearchMusicItem {
 }
 
 func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musicItemTransFunc[T], resourceType CommentType, keywords ...string) (content *larktpl.TemplateCardContent, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	res := make([]*SearchMusicItem, len(resList))

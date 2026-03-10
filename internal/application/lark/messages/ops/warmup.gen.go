@@ -7,18 +7,18 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*ChatMsgOperator).PreRun)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/chat_op.go:66
-	reflecting.GetFunctionName((*ChatMsgOperator).Run)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/chat_op.go:86
+	reflecting.GetFunctionName((*ChatMsgOperator).PreRun)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/chat_op.go:62
+	reflecting.GetFunctionName((*ChatMsgOperator).Run)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/chat_op.go:85
 	reflecting.GetFunctionName((*CommandOperator).PreRun)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:44
-	reflecting.GetFunctionName((*CommandOperator).Run)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:62
-	reflecting.GetFunctionName((*IntentRecognizeOperator).Fetch) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/intent_recognize_op.go:60
-	reflecting.GetFunctionName((*ReactMsgOperator).Run)          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/react_op.go:63
-	reflecting.GetFunctionName((*RecordMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/record_op.go:68
-	reflecting.GetFunctionName((*RepeatMsgOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:62
-	reflecting.GetFunctionName((*RepeatMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:88
-	reflecting.GetFunctionName((*ReplyChatOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/reply_chat_op.go:57
-	reflecting.GetFunctionName((*ReplyChatOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/reply_chat_op.go:78
-	reflecting.GetFunctionName((*WordReplyMsgOperator).PreRun)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:58
-	reflecting.GetFunctionName((*WordReplyMsgOperator).Run)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:114, /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:77
-	reflecting.GetFunctionName(ExecuteFromRawCommand)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:73
+	reflecting.GetFunctionName((*CommandOperator).Run)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:58
+	reflecting.GetFunctionName((*IntentRecognizeOperator).Fetch) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/intent_recognize_op.go:58
+	reflecting.GetFunctionName((*ReactMsgOperator).Run)          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/react_op.go:48
+	reflecting.GetFunctionName((*RecordMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/record_op.go:52
+	reflecting.GetFunctionName((*RepeatMsgOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:59
+	reflecting.GetFunctionName((*RepeatMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:85
+	reflecting.GetFunctionName((*ReplyChatOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/reply_chat_op.go:52
+	reflecting.GetFunctionName((*ReplyChatOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/reply_chat_op.go:69
+	reflecting.GetFunctionName((*WordReplyMsgOperator).PreRun)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:54
+	reflecting.GetFunctionName((*WordReplyMsgOperator).Run)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:104, /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:68
+	reflecting.GetFunctionName(ExecuteFromRawCommand)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:68
 }

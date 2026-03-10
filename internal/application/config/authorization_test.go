@@ -5,12 +5,28 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
 )
+
+func useTestBotIdentity(t *testing.T) {
+	t.Helper()
+	oldIdentity := currentBotIdentity
+	currentBotIdentity = func() botidentity.Identity {
+		return botidentity.Identity{
+			AppID:     "cli_test_app",
+			BotOpenID: "ou_test_bot",
+		}
+	}
+	t.Cleanup(func() {
+		currentBotIdentity = oldIdentity
+	})
+}
 
 func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
+	useTestBotIdentity(t)
 
 	var calledWith permissioninfra.GrantFilter
 	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
@@ -33,6 +49,9 @@ func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
 	if calledWith.SubjectType != permissioninfra.SubjectTypeUser {
 		t.Fatalf("expected subject type %q, got %q", permissioninfra.SubjectTypeUser, calledWith.SubjectType)
 	}
+	if calledWith.AppID != "cli_test_app" || calledWith.BotOpenID != "ou_test_bot" {
+		t.Fatalf("expected bot identity cli_test_app/ou_test_bot, got %q/%q", calledWith.AppID, calledWith.BotOpenID)
+	}
 	if calledWith.ResourceChatID != "" || calledWith.ResourceUserID != "" {
 		t.Fatalf("expected empty resource ids for global scope, got chat=%q user=%q", calledWith.ResourceChatID, calledWith.ResourceUserID)
 	}
@@ -41,6 +60,7 @@ func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
 func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestUserID(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
+	useTestBotIdentity(t)
 
 	calledWith := ""
 	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
@@ -59,6 +79,7 @@ func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestUserID(t *testing.T)
 func TestEnsureGlobalConfigMutationAllowedRejectsMissingPermissionGrant(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
+	useTestBotIdentity(t)
 
 	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
 		return false, nil
@@ -76,6 +97,7 @@ func TestEnsureGlobalConfigMutationAllowedRejectsMissingPermissionGrant(t *testi
 func TestEnsureGlobalConfigMutationAllowedPropagatesLookupError(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
+	useTestBotIdentity(t)
 
 	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
 		return false, errors.New("lookup failed")
@@ -96,6 +118,29 @@ func TestEnsureGlobalConfigMutationAllowedRejectsMissingActorIdentity(t *testing
 		t.Fatalf("expected identity error")
 	}
 	if err.Error() != "global config modification requires operator identity" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureGlobalConfigMutationAllowedRejectsMissingBotIdentity(t *testing.T) {
+	oldChecker := permissionGrantExists
+	oldIdentity := currentBotIdentity
+	defer func() {
+		permissionGrantExists = oldChecker
+		currentBotIdentity = oldIdentity
+	}()
+
+	currentBotIdentity = func() botidentity.Identity { return botidentity.Identity{} }
+	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
+		t.Fatal("permission lookup should not be called without bot identity")
+		return false, nil
+	}
+
+	err := ensureGlobalConfigMutationAllowed(context.Background(), "ou_actor", "")
+	if err == nil {
+		t.Fatalf("expected bot identity error")
+	}
+	if err.Error() != "lark bot identity is missing: app_id and bot_open_id are both empty" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

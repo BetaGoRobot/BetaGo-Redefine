@@ -4,71 +4,82 @@ import (
 	"context"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"gorm.io/gorm"
 )
 
 // Querier 简化的查询接口
 type Querier struct {
-	db       *gorm.DB
+	q        *query.Query
+	ctx      context.Context
 	identity botidentity.Identity
 }
 
 // NewQuerier 创建查询器
 func NewQuerier(db *gorm.DB, identity botidentity.Identity) *Querier {
-	return &Querier{db: db, identity: identity}
+	return &Querier{
+		q:        query.Use(infraDB.WithoutQueryCache(db)),
+		identity: identity,
+	}
 }
 
 // WithContext 带上下文
 func (q *Querier) WithContext(ctx context.Context) *Querier {
-	return &Querier{db: q.db.WithContext(ctx), identity: q.identity}
+	return &Querier{q: q.q, ctx: ctx, identity: q.identity}
 }
 
-func (q *Querier) scopedDB() *gorm.DB {
-	db := q.db
+func (q *Querier) queryContext() context.Context {
+	if q.ctx != nil {
+		return q.ctx
+	}
+	return context.Background()
+}
+
+func (q *Querier) scopedTodoItem() query.ITodoItemDo {
+	ins := q.q.TodoItem
+	todoQuery := ins.WithContext(q.queryContext())
 	if q.identity.AppID != "" {
-		db = db.Where("app_id = ?", q.identity.AppID)
+		todoQuery = todoQuery.Where(ins.AppID.Eq(q.identity.AppID))
 	}
 	if q.identity.BotOpenID != "" {
-		db = db.Where("bot_open_id = ?", q.identity.BotOpenID)
+		todoQuery = todoQuery.Where(ins.BotOpenID.Eq(q.identity.BotOpenID))
 	}
-	return db
+	return todoQuery
 }
 
 // CreateTodoItem 创建待办
 func (q *Querier) CreateTodoItem(item *model.TodoItem) error {
-	return q.db.Create(item).Error
+	return q.q.TodoItem.WithContext(q.queryContext()).Create(item)
 }
 
 // UpdateTodoItem 更新待办
 func (q *Querier) UpdateTodoItem(id string, item *model.TodoItem) (int64, error) {
-	result := q.scopedDB().Model(&model.TodoItem{}).Where("id = ?", id).Updates(item)
-	return result.RowsAffected, result.Error
+	ins := q.q.TodoItem
+	result, err := q.scopedTodoItem().Where(ins.ID.Eq(id)).Updates(item)
+	return result.RowsAffected, err
 }
 
 // GetTodoItemByID 根据ID获取待办
 func (q *Querier) GetTodoItemByID(id string) (*model.TodoItem, error) {
-	var item model.TodoItem
-	err := q.scopedDB().Where("id = ?", id).First(&item).Error
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
+	ins := q.q.TodoItem
+	return q.scopedTodoItem().Where(ins.ID.Eq(id)).Take()
 }
 
 // ListTodoItemsByChatID 获取群待办列表
 func (q *Querier) ListTodoItemsByChatID(chatID string, status *string, limit, offset int) ([]*model.TodoItem, error) {
-	var items []*model.TodoItem
-	query := q.scopedDB().Where("chat_id = ?", chatID)
+	ins := q.q.TodoItem
+	todoQuery := q.scopedTodoItem().Where(ins.ChatID.Eq(chatID))
 	if status != nil {
-		query = query.Where("status = ?", *status)
+		todoQuery = todoQuery.Where(ins.Status.Eq(*status))
 	}
-	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&items).Error
-	return items, err
+	return todoQuery.Order(ins.CreatedAt.Desc()).Limit(limit).Offset(offset).Find()
 }
 
 // DeleteTodoItem 删除待办
 func (q *Querier) DeleteTodoItem(id string) (int64, error) {
-	result := q.scopedDB().Where("id = ?", id).Delete(&model.TodoItem{})
-	return result.RowsAffected, result.Error
+	ins := q.q.TodoItem
+	result, err := q.scopedTodoItem().Where(ins.ID.Eq(id)).Delete()
+	return result.RowsAffected, err
 }

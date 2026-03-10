@@ -2,14 +2,16 @@ package larkmsg
 
 import (
 	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
@@ -18,9 +20,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"gorm.io/gorm"
 
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
@@ -29,8 +29,23 @@ import (
 )
 
 func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessageResp, contents ...string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
+	if resp == nil || resp.Data == nil {
+		return
+	}
+	if privateModeEnabled, err := IsPrivateModeEnabled(ctx, utils.AddrOrNil(resp.Data.ChatId)); err != nil {
+		logs.L().Ctx(ctx).Warn("check private mode failed", zap.Error(err))
+		return
+	} else if privateModeEnabled {
+		return
+	}
+	if shouldRecord, err := ClaimMessageRecord(ctx, utils.AddrOrNil(resp.Data.MessageId)); err != nil || !shouldRecord {
+		if err != nil {
+			logs.L().Ctx(ctx).Warn("skip reply message record dedup check failed", zap.Error(err))
+		}
+		return
+	}
 
 	go utils.AddTrace2DB(ctx, *resp.Data.MessageId)
 	defer larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageRespReply{resp})
@@ -99,8 +114,26 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 }
 
 func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageResp, contents ...string) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
+	if resp == nil || resp.Data == nil {
+		return
+	}
+	if privateModeEnabled, err := IsPrivateModeEnabled(ctx, utils.AddrOrNil(resp.Data.ChatId)); err != nil {
+		logs.L().Ctx(ctx).Warn("check private mode failed", zap.Error(err))
+		return
+	} else if privateModeEnabled {
+		logs.L().Ctx(ctx).Info("ChatID hit private config, will not record data...",
+			zap.String("chat_id", utils.AddrOrNil(resp.Data.ChatId)),
+		)
+		return
+	}
+	if shouldRecord, err := ClaimMessageRecord(ctx, utils.AddrOrNil(resp.Data.MessageId)); err != nil || !shouldRecord {
+		if err != nil {
+			logs.L().Ctx(ctx).Warn("skip create message record dedup check failed", zap.Error(err))
+		}
+		return
+	}
 	go utils.AddTrace2DB(ctx, *resp.Data.MessageId)
 	defer larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageRespCreate{resp})
 
@@ -110,27 +143,6 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 	} else {
 		content = GetContentFromTextMsg(utils.AddrOrNil(resp.Data.Body.Content))
 	}
-	ins := query.Q.PrivateMode
-	configs, err := ins.WithContext(ctx).Where(ins.ChatID.Eq(utils.AddrOrNil(resp.Data.ChatId))).Find()
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		logs.L().Ctx(ctx).Error("FindByCacheFunc error", zap.Error(err))
-		return
-	}
-	enable := false
-	for _, config := range configs {
-		if config.Enable {
-			enable = true
-			break
-		}
-	}
-	if configs != nil && enable {
-		// 隐私模式，不存了
-		logs.L().Ctx(ctx).Info("ChatID hit private config, will not record data...",
-			zap.String("chat_id", utils.AddrOrNil(resp.Data.ChatId)),
-		)
-		return
-	}
-
 	msgLog := &xmodel.MessageLog{
 		MessageID:   utils.AddrOrNil(resp.Data.MessageId),
 		RootID:      utils.AddrOrNil(resp.Data.RootId),
@@ -190,7 +202,7 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 }
 
 func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	chatID := cardAction.Event.Context.OpenChatID
@@ -210,11 +222,57 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 	}
 	err = opensearch.InsertData(ctx,
 		config.Get().OpensearchConfig.LarkCardActionIndex,
-		cardAction.Event.Operator.OpenID,
+		cardActionDocID(cardAction),
 		idxData,
 	)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
 		return
 	}
+}
+
+func cardActionDocID(cardAction *callback.CardActionTriggerEvent) string {
+	if cardAction == nil {
+		return ""
+	}
+	if cardAction.EventV2Base != nil && cardAction.EventV2Base.Header != nil {
+		if eventID := strings.TrimSpace(cardAction.EventV2Base.Header.EventID); eventID != "" {
+			return eventID
+		}
+	}
+	if cardAction.EventReq != nil {
+		if requestID := strings.TrimSpace(cardAction.RequestId()); requestID != "" {
+			return requestID
+		}
+	}
+
+	openMessageID := ""
+	operatorOpenID := ""
+	createTime := ""
+	actionValueJSON := []byte("null")
+	if cardAction.Event != nil {
+		if cardAction.Event.Context != nil {
+			openMessageID = strings.TrimSpace(cardAction.Event.Context.OpenMessageID)
+		}
+		if cardAction.Event.Operator != nil {
+			operatorOpenID = strings.TrimSpace(cardAction.Event.Operator.OpenID)
+		}
+		if cardAction.Event.Action != nil {
+			if data, err := json.Marshal(cardAction.Event.Action.Value); err == nil {
+				actionValueJSON = data
+			}
+		}
+	}
+	if cardAction.EventV2Base != nil && cardAction.EventV2Base.Header != nil {
+		createTime = strings.TrimSpace(cardAction.EventV2Base.Header.CreateTime)
+	}
+
+	sum := sha256.Sum256(actionValueJSON)
+	return fmt.Sprintf(
+		"card_action:%s:%s:%s:%s",
+		openMessageID,
+		operatorOpenID,
+		createTime,
+		hex.EncodeToString(sum[:]),
+	)
 }

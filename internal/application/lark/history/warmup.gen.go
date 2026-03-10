@@ -7,9 +7,9 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName((*Helper).GetAll)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:160
-	reflecting.GetFunctionName((*Helper).GetMsg)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:127
-	reflecting.GetFunctionName((*Helper).GetRaw)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:140
-	reflecting.GetFunctionName((*Helper).GetTrend) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:214
+	reflecting.GetFunctionName((*Helper).GetAll)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:201
+	reflecting.GetFunctionName((*Helper).GetMsg)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:166
+	reflecting.GetFunctionName((*Helper).GetRaw)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:179
+	reflecting.GetFunctionName((*Helper).GetTrend) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/msg.go:255
 	reflecting.GetFunctionName(HybridSearch)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/history/search.go:50
 }

@@ -54,3 +54,18 @@ func (i Identity) EnsureMatch(appID, botOpenID string) error {
 	}
 	return fmt.Errorf("bot identity mismatch: task belongs to another bot")
 }
+
+func (i Identity) NamespaceKey(parts ...string) string {
+	keyParts := make([]string, 0, len(parts)+3)
+	if i.Valid() {
+		keyParts = append(keyParts, "bot", strings.TrimSpace(i.AppID), strings.TrimSpace(i.BotOpenID))
+	}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		keyParts = append(keyParts, part)
+	}
+	return strings.Join(keyParts, ":")
+}

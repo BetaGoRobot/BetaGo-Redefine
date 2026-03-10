@@ -8,8 +8,10 @@ const TableNamePrivateMode = "private_modes"
 
 // PrivateMode mapped from table <private_modes>
 type PrivateMode struct {
-	ChatID string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
-	Enable bool   `gorm:"column:enable" json:"enable"`
+	ChatID    string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
+	Enable    bool   `gorm:"column:enable" json:"enable"`
+	AppID     string `gorm:"column:app_id;primaryKey;comment:隐私模式所属的飞书应用 AppID" json:"app_id"`           // 隐私模式所属的飞书应用 AppID
+	BotOpenID string `gorm:"column:bot_open_id;primaryKey;comment:隐私模式所属的机器人 OpenID" json:"bot_open_id"` // 隐私模式所属的机器人 OpenID
 }
 
 // TableName PrivateMode's table name

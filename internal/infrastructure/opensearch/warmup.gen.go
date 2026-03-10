@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(liveBackend.InsertData)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:84
-	reflecting.GetFunctionName(liveBackend.SearchData)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:103
-	reflecting.GetFunctionName(liveBackend.SearchDataStr) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:115
+	reflecting.GetFunctionName(liveBackend.InsertData)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:65
+	reflecting.GetFunctionName(liveBackend.SearchData)    // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:84
+	reflecting.GetFunctionName(liveBackend.SearchDataStr) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/opensearch/os.go:96
 }

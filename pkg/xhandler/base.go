@@ -346,7 +346,7 @@ type fetcherWrapper[T, K any] struct {
 //	@return error
 func (p *Processor[T, K]) RunParallelStages() error {
 	var span trace.Span
-	p.Context, span = otel.T().Start(p.Context, reflecting.GetCurrentFunc())
+	p.Context, span = otel.Start(p.Context)
 	defer span.End()
 
 	// 1. 收集所有依赖的 Fetcher（去重）
@@ -474,7 +474,7 @@ func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, 
 		if errors.Is(err, xerror.ErrStageSkip) {
 			logs.L().Ctx(ctx).Info("Skipped pre run stage", zap.String("stage", op.Name()), zap.Error(err))
 		} else {
-			trace.SpanFromContext(ctx).RecordError(err)
+			otel.RecordError(trace.SpanFromContext(ctx), err)
 			logs.L().Ctx(ctx).Error("pre run stage error", zap.String("stage", op.Name()), zap.Error(err))
 		}
 		return err
@@ -486,7 +486,7 @@ func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, 
 		if errors.Is(err, xerror.ErrStageSkip) {
 			logs.L().Ctx(ctx).Info("run stage skipped", zap.String("stage", op.Name()), zap.Error(err))
 		} else {
-			trace.SpanFromContext(ctx).RecordError(err)
+			otel.RecordError(trace.SpanFromContext(ctx), err)
 			logs.L().Ctx(ctx).Error("run stage error", zap.String("stage", op.Name()), zap.Error(err), zap.Stack("stack"))
 		}
 		return err
@@ -494,7 +494,7 @@ func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, 
 
 	err = op.PostRun(ctx, p.data, p.metaData)
 	if err != nil {
-		trace.SpanFromContext(ctx).RecordError(err)
+		otel.RecordError(trace.SpanFromContext(ctx), err)
 		if errors.Is(err, xerror.ErrStageSkip) {
 			logs.L().Ctx(ctx).Info("post run stage skipped", zap.String("stage", op.Name()), zap.Error(err))
 		} else {

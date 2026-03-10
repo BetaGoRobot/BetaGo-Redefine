@@ -11,10 +11,10 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/kevinmatthe/zaplog"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +46,7 @@ func (r *MsgResult) Raw() string {
 }
 
 func PreGetTextMsg(ctx context.Context, event *larkim.P2MessageReceiveV1) (res *MsgResult) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	res = NewMsgResult()
 	res.rawContent = *event.Event.Message.Content
@@ -92,9 +92,10 @@ func GetMsgFullByID(ctx context.Context, msgID string) *larkim.GetMessageResp {
 }
 
 func GetChatIDFromMsgID(ctx context.Context, msgID string) (chatID string, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("message.id", msgID))
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	resp := GetMsgFullByID(ctx, msgID)
 	if !resp.Success() {

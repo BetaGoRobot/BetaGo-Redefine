@@ -74,7 +74,7 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
 | --- | --- |
 | `base_info` | 机器人基础信息，如机器人名称 |
 | `db_config` | PostgreSQL 连接配置 |
-| `lark_config` | 飞书应用 `app_id`、`app_secret`、机器人 OpenID 等 |
+| `lark_config` | 飞书应用 `app_id`、`app_secret`、机器人 OpenID，以及 `bootstrap_admin_open_id` |
 | `ark_config` | 方舟 API Key 与 `reasoning/normal/embedding/vision/chunk` 模型 |
 | `otel_config` | OTLP 上报配置 |
 | `opensearch_config` | 历史消息、卡片动作、chunk 检索相关索引配置 |
@@ -110,7 +110,7 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
 
 - `todo_items`：Todo 能力
 - `dynamic_configs`、`function_enablings`：配置和功能开关
-- `permission_grants`：权限点授权，当前用于约束 `config.write@global`
+- `permission_grants`：权限点授权，当前用于约束 `config.write@global` 和权限面板的授权管理
 - `interaction_stats`：互动统计
 - `react_image_meterials`、`sticker_mappings`、`lark_imgs`：图片/贴纸素材能力
 - `private_modes`、`msg_trace_logs`、`template_versions`：隐私模式、链路追踪、卡片模板增强
@@ -199,6 +199,21 @@ docker build -f script/neteaseapi/Dockerfile -t betago-neteaseapi:local .
 | `/wc` | 词云统计 |
 | `/ratelimit stats/list` | 查看频控面板 |
 | `/mute` | 群级别禁言机器人 |
+| `/permission` | 查看当前机器人支持的权限点，并交互式管理用户授权 |
+
+权限管理面板目前内建两个权限点：
+
+- `permission.manage@global`
+- `config.write@global`
+
+首次引导时，可以在 `config.toml` 里配置：
+
+```toml
+[lark_config]
+bootstrap_admin_open_id = "ou_xxx"
+```
+
+这个 bootstrap admin 只用于启动阶段进入权限面板和授予首批权限，不会自动写入 `permission_grants`。
 
 ### Todo 与 Schedule
 

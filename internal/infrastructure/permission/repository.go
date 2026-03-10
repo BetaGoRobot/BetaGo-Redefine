@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"gorm.io/gorm"
 )
 
@@ -18,6 +19,8 @@ type Grant struct {
 	SubjectID       string         `gorm:"column:subject_id" json:"subject_id"`
 	PermissionPoint string         `gorm:"column:permission_point" json:"permission_point"`
 	Scope           string         `gorm:"column:scope" json:"scope"`
+	AppID           string         `gorm:"column:app_id;not null" json:"app_id"`
+	BotOpenID       string         `gorm:"column:bot_open_id;not null" json:"bot_open_id"`
 	ResourceChatID  *string        `gorm:"column:resource_chat_id" json:"resource_chat_id"`
 	ResourceUserID  *string        `gorm:"column:resource_user_id" json:"resource_user_id"`
 	Remark          string         `gorm:"column:remark" json:"remark"`
@@ -35,53 +38,60 @@ type GrantFilter struct {
 	SubjectID       string
 	PermissionPoint string
 	Scope           string
+	AppID           string
+	BotOpenID       string
 	ResourceChatID  string
 	ResourceUserID  string
 }
 
 func Exists(ctx context.Context, filter GrantFilter) (bool, error) {
-	db := infraDB.DBWithoutQueryCache()
-	if db == nil {
-		return false, errors.New("db is not initialized")
-	}
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(
+		attribute.String("subject.type", strings.TrimSpace(filter.SubjectType)),
+		attribute.String("subject.id", otel.PreviewString(strings.TrimSpace(filter.SubjectID), 128)),
+		attribute.String("permission.point", strings.TrimSpace(filter.PermissionPoint)),
+		attribute.String("permission.scope", strings.TrimSpace(filter.Scope)),
+	)
+	defer span.End()
 
 	subjectType := strings.TrimSpace(filter.SubjectType)
 	subjectID := strings.TrimSpace(filter.SubjectID)
 	permissionPoint := strings.TrimSpace(filter.PermissionPoint)
 	scope := strings.TrimSpace(filter.Scope)
 	if subjectType == "" || subjectID == "" || permissionPoint == "" || scope == "" {
-		return false, errors.New("permission grant filter is incomplete")
+		err := errors.New("permission grant filter is incomplete")
+		otel.RecordError(span, err)
+		return false, err
 	}
-
-	query := db.WithContext(ctx).
-		Model(&Grant{}).
-		Where("subject_type = ?", subjectType).
-		Where("subject_id = ?", subjectID).
-		Where("permission_point = ?", permissionPoint).
-		Where("scope = ?", scope)
-
-	resourceChatID := strings.TrimSpace(filter.ResourceChatID)
-	if resourceChatID == "" {
-		query = query.Where("resource_chat_id IS NULL")
-	} else {
-		query = query.Where("resource_chat_id = ?", resourceChatID)
+	q, err := permissionGrantQueryWithoutCache()
+	if err != nil {
+		otel.RecordError(span, err)
+		return false, err
 	}
+	fields := permissionGrantFieldSet(q)
 
-	resourceUserID := strings.TrimSpace(filter.ResourceUserID)
-	if resourceUserID == "" {
-		query = query.Where("resource_user_id IS NULL")
-	} else {
-		query = query.Where("resource_user_id = ?", resourceUserID)
-	}
-
-	var grant Grant
-	err := query.Select("id").Limit(1).Take(&grant).Error
+	_, err = applyGrantFilter(q.PermissionGrant.WithContext(ctx), fields, GrantFilter{
+		SubjectType:     subjectType,
+		SubjectID:       subjectID,
+		PermissionPoint: permissionPoint,
+		Scope:           scope,
+		AppID:           filter.AppID,
+		BotOpenID:       filter.BotOpenID,
+		ResourceChatID:  filter.ResourceChatID,
+		ResourceUserID:  filter.ResourceUserID,
+	}).
+		Select(fields.ID).
+		Limit(1).
+		Take()
 	switch {
 	case err == nil:
+		span.SetAttributes(attribute.Bool("permission.exists", true))
 		return true, nil
 	case errors.Is(err, gorm.ErrRecordNotFound):
+		span.SetAttributes(attribute.Bool("permission.exists", false))
 		return false, nil
 	default:
+		otel.RecordError(span, err)
 		return false, err
 	}
 }

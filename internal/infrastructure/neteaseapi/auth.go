@@ -20,7 +20,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/minio/minio-go/v7"
 	"go.uber.org/zap"
@@ -31,7 +30,7 @@ import (
 //	@receiver ctx
 //	@return error
 func (neteaseCtx *NetEaseContext) RefreshLogin(ctx context.Context) error {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	logs.L().Ctx(ctx).Info("RefreshLogin...")
 
@@ -68,7 +67,7 @@ func (neteaseCtx *NetEaseContext) RefreshLogin(ctx context.Context) error {
 }
 
 func (neteaseCtx *NetEaseContext) GetUniKey(ctx context.Context) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	logs.L().Ctx(ctx).Info("getUniKey...")
 
@@ -89,7 +88,7 @@ func (neteaseCtx *NetEaseContext) GetUniKey(ctx context.Context) (err error) {
 }
 
 func (neteaseCtx *NetEaseContext) GetQRBase64(ctx context.Context) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	logs.L().Ctx(ctx).Info("getQRBase64...")
 
@@ -167,7 +166,7 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 //	@receiver ctx
 //	@return err
 func (neteaseCtx *NetEaseContext) LoginNetEaseQR(ctx context.Context) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	logs.L().Ctx(ctx).Info("LoginNetEaseQR...")
@@ -190,7 +189,7 @@ func (neteaseCtx *NetEaseContext) LoginNetEaseQR(ctx context.Context) (err error
 }
 
 func qrImgReadCloser(ctx context.Context, imgBase64 string) (r io.ReadCloser) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	i := strings.Index(imgBase64, ",") // string is img/png;base64,xxx
@@ -204,7 +203,7 @@ func qrImgReadCloser(ctx context.Context, imgBase64 string) (r io.ReadCloser) {
 //	@receiver ctx
 //	@return err
 func (neteaseCtx *NetEaseContext) LoginNetEase(ctx context.Context) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	logs.L().Ctx(ctx).Info("LoginNetEase...")
@@ -250,7 +249,7 @@ func (neteaseCtx *NetEaseContext) LoginNetEase(ctx context.Context) (err error) 
 //	@receiver ctx
 //	@return bool
 func (neteaseCtx *NetEaseContext) CheckIfLogin(ctx context.Context) (login bool) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	logs.L().Ctx(ctx).Info("CheckIfLogin start...")
 	defer func() {
@@ -285,7 +284,7 @@ func (neteaseCtx *NetEaseContext) CheckIfLogin(ctx context.Context) (login bool)
 //
 //	@receiver ctx
 func (neteaseCtx *NetEaseContext) TryGetLastCookie(ctx context.Context) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 
 	f, err := os.Open("/data/last_cookie.json")
@@ -315,7 +314,7 @@ func (neteaseCtx *NetEaseContext) TryGetLastCookie(ctx context.Context) {
 //
 //	@receiver ctx
 func (neteaseCtx *NetEaseContext) SaveCookie(ctx context.Context) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	if neteaseCtx.cookies == nil && len(neteaseCtx.cookies) == 0 {
 		return

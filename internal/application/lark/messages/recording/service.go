@@ -3,6 +3,7 @@ package recording
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -17,23 +18,56 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/yanyiwu/gojieba"
 	"go.uber.org/zap"
 )
 
-func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
-	go func() {
-		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-		defer span.End()
+type taskSubmitter interface {
+	Submit(context.Context, string, func(context.Context) error) error
+}
 
+var (
+	backgroundSubmitter taskSubmitter
+	submitterMu         sync.RWMutex
+)
+
+func SetBackgroundSubmitter(submitter taskSubmitter) {
+	submitterMu.Lock()
+	defer submitterMu.Unlock()
+	backgroundSubmitter = submitter
+}
+
+func getBackgroundSubmitter() taskSubmitter {
+	submitterMu.RLock()
+	defer submitterMu.RUnlock()
+	return backgroundSubmitter
+}
+
+func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
+	recordFunc := func(taskCtx context.Context) error {
+		ctx = taskCtx
+		ctx, span := otel.Start(ctx)
+		defer span.End()
 		chatID := *event.Event.Message.ChatId
+		if privateModeEnabled, err := larkmsg.IsPrivateModeEnabled(ctx, chatID); err != nil {
+			logs.L().Ctx(ctx).Warn("check private mode failed", zap.Error(err))
+			return err
+		} else if privateModeEnabled {
+			return nil
+		}
+		if shouldRecord, err := larkmsg.ClaimMessageRecord(ctx, utils.AddrOrNil(event.Event.Message.MessageId)); err != nil || !shouldRecord {
+			if err != nil {
+				logs.L().Ctx(ctx).Warn("skip inbound message record dedup check failed", zap.Error(err))
+				return err
+			}
+			return nil
+		}
 
 		userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 		if err != nil {
-			return
+			return err
 		}
 		userName := ""
 		if userInfo == nil {
@@ -59,7 +93,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		embedded, usage, err := ark_dal.EmbeddingText(ctx, content)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err), zap.String("content", content))
-			return
+			return err
 		}
 		jieba := gojieba.NewJieba()
 		defer jieba.Free()
@@ -116,5 +150,17 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		if err != nil {
 			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err), zap.String("content", content))
 		}
+		return nil
+	}
+
+	if submitter := getBackgroundSubmitter(); submitter != nil {
+		if err := submitter.Submit(ctx, "record_message:"+utils.AddrOrNil(event.Event.Message.MessageId), recordFunc); err != nil {
+			logs.L().Ctx(ctx).Error("submit record message task failed", zap.Error(err))
+		}
+		return
+	}
+
+	go func() {
+		_ = recordFunc(ctx)
 	}()
 }

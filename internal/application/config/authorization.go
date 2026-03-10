@@ -8,7 +8,7 @@ import (
 	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
 )
 
-const permissionPointConfigWrite = "config.write"
+const permissionPointConfigWrite = permissioninfra.PermissionPointConfigWrite
 
 var permissionGrantExists = permissioninfra.Exists
 
@@ -21,11 +21,17 @@ func ensureGlobalConfigMutationAllowed(ctx context.Context, actorUserID, fallbac
 		return errors.New("global config modification requires operator identity")
 	}
 
+	identity := currentBotIdentity()
+	if err := identity.Validate(); err != nil {
+		return err
+	}
 	ok, err := permissionGrantExists(ctx, permissioninfra.GrantFilter{
 		SubjectType:     permissioninfra.SubjectTypeUser,
 		SubjectID:       actorUserID,
 		PermissionPoint: permissionPointConfigWrite,
 		Scope:           string(ScopeGlobal),
+		AppID:           identity.AppID,
+		BotOpenID:       identity.BotOpenID,
 	})
 	if err != nil {
 		return err

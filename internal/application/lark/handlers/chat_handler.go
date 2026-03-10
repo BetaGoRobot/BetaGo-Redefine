@@ -29,7 +29,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	jsonrepair "github.com/RealAlexandreAI/json-repair"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
@@ -94,9 +93,9 @@ func (h chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV
 }
 
 func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	var (
 		res   iter.Seq[*ark_dal.ModelStreamRespReasoning]
@@ -104,7 +103,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 	)
 	if !larkmsg.IsMentioned(event.Event.Message.Mentions) { // 禁言判断只对非at的生效
 		if ext, err := redis.GetRedisClient().
-			Exists(ctx, MuteRedisKeyPrefix+*event.Event.Message.ChatId).Result(); err != nil {
+			Exists(ctx, MuteRedisKey(*event.Event.Message.ChatId)).Result(); err != nil {
 			return err
 		} else if ext != 0 {
 			return nil // Do nothing
@@ -176,9 +175,9 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 }
 
 func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	// 默认获取最近20条消息
 	if size == nil {
@@ -267,7 +266,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	}
 
 	iter, err := ark_dal.
-		New(chatID, *event.Event.Sender.SenderId.UserId, event).
+		New(chatID, currentUserID(event, nil), event).
 		WithTools(larktools()).
 		Do(ctx, b.String(), strings.Join(fullTpl.UserInput, "\n"), files...)
 

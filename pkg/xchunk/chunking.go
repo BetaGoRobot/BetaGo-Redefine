@@ -14,12 +14,15 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -33,15 +36,34 @@ const (
 	// INACTIVITY_TIMEOUT = 30 * time.Second
 	INACTIVITY_TIMEOUT = 3 * time.Minute
 	// MAX_CHUNK_SIZE 定义在强制合并前一个块中的最大消息数
-	MAX_CHUNK_SIZE = 50
+	MAX_CHUNK_SIZE       = 50
+	chunkMessageDedupTTL = 7 * 24 * time.Hour
 )
 
-var (
-	// redisSessionKeyPrefix is the prefix for the session buffer hash
-	redisSessionKeyPrefix = "chat:session:" + config.Get().LarkConfig.AppID + ":"
-	// redisActiveSessionsKey is the key for the sorted set indexing active sessions
-	redisActiveSessionsKey = "active_sessions:" + config.Get().LarkConfig.AppID
-)
+func chunkRedisNamespace() []string {
+	cfg := config.Get()
+	if cfg == nil || cfg.LarkConfig == nil {
+		return []string{"betago", "chunk"}
+	}
+	return []string{"betago", "chunk", cfg.LarkConfig.AppID, cfg.LarkConfig.BotOpenID}
+}
+
+func chunkRedisKey(parts ...string) string {
+	keyParts := append(chunkRedisNamespace(), parts...)
+	return strings.Join(keyParts, ":")
+}
+
+func redisSessionKey(groupID string) string {
+	return chunkRedisKey("session", groupID)
+}
+
+func redisActiveSessionsKey() string {
+	return chunkRedisKey("active_sessions")
+}
+
+func chunkMessageDedupKey(msgID string) string {
+	return strings.Join([]string{"betago", "chunk", "message_dedup", msgID}, ":")
+}
 
 // SessionBuffer 代表在Redis中存储的会话缓冲区
 type SessionBuffer struct {
@@ -81,6 +103,39 @@ func BuildStdMsg(msg GenericMsg) StandardMsg {
 	}
 }
 
+func dedupeMessagesByMsgID(messages []StandardMsg) []StandardMsg {
+	if len(messages) <= 1 {
+		return messages
+	}
+
+	seen := make(map[string]struct{}, len(messages))
+	result := make([]StandardMsg, 0, len(messages))
+	for _, message := range messages {
+		msgID := strings.TrimSpace(message.MsgID())
+		if msgID != "" {
+			if _, ok := seen[msgID]; ok {
+				continue
+			}
+			seen[msgID] = struct{}{}
+		}
+		result = append(result, message)
+	}
+	return result
+}
+
+func containsMessageID(messages []StandardMsg, msgID string) bool {
+	msgID = strings.TrimSpace(msgID)
+	if msgID == "" {
+		return false
+	}
+	for _, message := range messages {
+		if strings.TrimSpace(message.MsgID()) == msgID {
+			return true
+		}
+	}
+	return false
+}
+
 type Chunk struct {
 	GroupID  string
 	Messages []StandardMsg
@@ -92,6 +147,11 @@ type Management struct {
 	processingQueue chan *Chunk
 	enabled         bool
 	disableReason   string
+	executor        chunkSubmitter
+}
+
+type chunkSubmitter interface {
+	Submit(context.Context, string, func(context.Context) error) error
 }
 
 type GenericMsg interface {
@@ -130,23 +190,77 @@ func NewNoopManagement(reason string) *Management {
 	}
 }
 
+func (m *Management) SetExecutor(executor chunkSubmitter) {
+	if m == nil {
+		return
+	}
+	m.executor = executor
+}
+
+func (m *Management) Enabled() bool {
+	return m != nil && m.enabled
+}
+
+func (m *Management) DisableReason() string {
+	if m == nil {
+		return ""
+	}
+	return m.disableReason
+}
+
 // SubmitMessage 处理新的传入消息。它将消息添加到Redis中相应的会话缓冲区。
 // 如果缓冲区达到MAX_CHUNK_SIZE，它会触发立即合并。否则，它会更新会话的
 // 最后活动时间戳，以用于基于超时的机制。
 func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err error) {
+	groupID := msg.GroupID()
+	msgID := strings.TrimSpace(msg.MsgID())
+	ctx, span := otel.StartNamed(ctx, "chunk.submit",
+		trace.WithAttributes(
+			attribute.String("group.id", groupID),
+			attribute.String("message.id", msgID),
+			attribute.Int64("message.timestamp", msg.TimeStamp()),
+		),
+	)
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+
 	if m == nil || !m.enabled {
+		span.AddEvent("chunk_disabled")
 		return nil
 	}
-	groupID := msg.GroupID()
 	newTimestamp := msg.TimeStamp()
 	if groupID == "" {
 		return fmt.Errorf("group ID is empty, skipping message")
 	}
+	if msgID != "" {
+		dedupeCtx, dedupeSpan := otel.StartNamed(ctx, "chunk.redis.claim_dedupe",
+			trace.WithAttributes(attribute.String("message.id", msgID)),
+		)
+		claimed, claimErr := m.redisClient.SetNX(dedupeCtx, chunkMessageDedupKey(msgID), "1", chunkMessageDedupTTL).Result()
+		otel.RecordError(dedupeSpan, claimErr)
+		dedupeSpan.End()
+		if claimErr != nil {
+			logs.L().Ctx(ctx).Warn("Failed to claim chunk message dedup", zap.String("groupID", groupID), zap.String("msg_id", msgID), zap.Error(claimErr))
+			span.AddEvent("dedupe_claim_failed", trace.WithAttributes(attribute.String("message.id", msgID)))
+		} else if !claimed {
+			logs.L().Ctx(ctx).Debug("Duplicate message skipped by global chunk dedup",
+				zap.String("groupID", groupID),
+				zap.String("msg_id", msgID),
+			)
+			span.AddEvent("duplicate_message", trace.WithAttributes(attribute.String("message.id", msgID)))
+			return nil
+		}
+	}
 
-	sessionKey := redisSessionKeyPrefix + groupID
+	sessionKey := redisSessionKey(groupID)
 
 	// 1. 从Redis获取当前会话
-	val, err := m.redisClient.Get(ctx, sessionKey).Result()
+	sessionCtx, sessionSpan := otel.StartNamed(ctx, "chunk.redis.session_get",
+		trace.WithAttributes(attribute.String("group.id", groupID)),
+	)
+	val, err := m.redisClient.Get(sessionCtx, sessionKey).Result()
+	otel.RecordError(sessionSpan, err)
+	sessionSpan.End()
 	if err != nil && err != redis.Nil {
 		logs.L().Ctx(ctx).Error("Failed to get session from Redis", zap.String("groupID", groupID), zap.Error(err), zap.String("val", val))
 		return err
@@ -160,27 +274,43 @@ func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err err
 			// 数据可能已损坏，从一个新缓冲区开始
 			m.redisClient.Del(ctx, sessionKey)
 			buffer = SessionBuffer{}
+			span.AddEvent("session_buffer_reset", trace.WithAttributes(attribute.String("group.id", groupID)))
 		}
 	}
+	if containsMessageID(buffer.Messages, msg.MsgID()) {
+		logs.L().Ctx(ctx).Debug("Duplicate message skipped for chunk buffer",
+			zap.String("groupID", groupID),
+			zap.String("msg_id", msg.MsgID()),
+		)
+		span.AddEvent("duplicate_message_in_buffer", trace.WithAttributes(attribute.String("message.id", msg.MsgID())))
+		return nil
+	}
 	// 2. 附加新消息并更新时间戳
-	buffer.Messages = append(buffer.Messages, BuildStdMsg(msg))
+	buffer.Messages = dedupeMessagesByMsgID(append(buffer.Messages, BuildStdMsg(msg)))
 	buffer.LastActiveTs = newTimestamp
 
 	// 3. 检查缓冲区大小是否超过限制
 	if len(buffer.Messages) >= MAX_CHUNK_SIZE {
 		logs.L().Ctx(ctx).Info("Chunk reached max size, triggering immediate merge", zap.String("groupID", groupID), zap.Int("size", len(buffer.Messages)))
+		span.AddEvent("chunk_max_size_reached", trace.WithAttributes(attribute.Int("message.count", len(buffer.Messages))))
 
 		// 将完整的块发送到处理队列
 		m.processingQueue <- &Chunk{
 			GroupID:  groupID,
 			Messages: buffer.Messages,
 		}
+		span.AddEvent("chunk_enqueued", trace.WithAttributes(attribute.Int("message.count", len(buffer.Messages))))
 
 		// 通过删除会话键并将其从活动集合中移除来清理Redis
+		cleanupCtx, cleanupSpan := otel.StartNamed(ctx, "chunk.redis.session_cleanup",
+			trace.WithAttributes(attribute.String("group.id", groupID)),
+		)
 		pipe := m.redisClient.Pipeline()
-		pipe.Del(ctx, sessionKey)
-		pipe.ZRem(ctx, redisActiveSessionsKey, groupID)
-		_, err = pipe.Exec(ctx)
+		pipe.Del(cleanupCtx, sessionKey)
+		pipe.ZRem(cleanupCtx, redisActiveSessionsKey(), groupID)
+		_, err = pipe.Exec(cleanupCtx)
+		otel.RecordError(cleanupSpan, err)
+		cleanupSpan.End()
 		if err != nil {
 			// 记录错误但继续，因为块已排队等待处理。
 			// 超时机制后续可能会尝试处理一个不存在的键，这是无害的。
@@ -196,34 +326,61 @@ func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err err
 		return err
 	}
 
+	updateCtx, updateSpan := otel.StartNamed(ctx, "chunk.redis.session_set",
+		trace.WithAttributes(
+			attribute.String("group.id", groupID),
+			attribute.Int("message.count", len(buffer.Messages)),
+		),
+	)
 	pipe := m.redisClient.Pipeline()
 	// 持久化会话数据。后台任务将在超时时清理它。
-	pipe.Set(ctx, sessionKey, bufferJSON, 0)
+	pipe.Set(updateCtx, sessionKey, bufferJSON, 0)
 	// 更新有序集合中的分数以反映新的活动时间。
-	pipe.ZAdd(ctx, redisActiveSessionsKey, redis.Z{Score: float64(newTimestamp), Member: groupID})
-	_, err = pipe.Exec(ctx)
+	pipe.ZAdd(updateCtx, redisActiveSessionsKey(), redis.Z{Score: float64(newTimestamp), Member: groupID})
+	_, err = pipe.Exec(updateCtx)
+	otel.RecordError(updateSpan, err)
+	updateSpan.End()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to execute Redis update pipeline", zap.String("groupID", groupID), zap.Error(err))
 		return err
 	}
 
 	logs.L().Ctx(ctx).Debug("Message submitted and session updated", zap.String("groupID", groupID), zap.Int("buffer_size", len(buffer.Messages)))
+	span.SetAttributes(attribute.Int("buffer.size", len(buffer.Messages)))
 	return nil
 }
 
 // OnMerge is called when a chunk is ready to be processed.
 // It builds a single string from the chunk and sends it to an LLM.
 func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
+	groupID := ""
+	messageCount := 0
+	if chunk != nil {
+		groupID = chunk.GroupID
+		messageCount = len(chunk.Messages)
+	}
+	ctx, span := otel.StartNamed(ctx, "chunk.merge",
+		trace.WithAttributes(
+			attribute.String("group.id", groupID),
+			attribute.Int("message.count", messageCount),
+		),
+	)
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+
 	if m == nil || !m.enabled {
+		span.AddEvent("chunk_disabled")
 		return nil
 	}
 	if chunk == nil || len(chunk.Messages) == 0 {
+		span.AddEvent("chunk_empty")
 		return nil
 	}
 	// 写入大模型
-	chunkLines := make([]string, len(chunk.Messages))
-	msgIDs := make([]string, len(chunk.Messages))
-	for idx, c := range chunk.Messages {
+	messages := dedupeMessagesByMsgID(chunk.Messages)
+	chunkLines := make([]string, len(messages))
+	msgIDs := make([]string, len(messages))
+	for idx, c := range messages {
 		msgLine := c.BuildLine()
 		chunkLines[idx] = msgLine
 		msgIDs[idx] = c.MsgID()
@@ -231,7 +388,12 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 
 	// Note: It's better to fetch templates once, not on every merge. This is kept as per the original code.
 	ins := query.Q.PromptTemplateArg
-	templates, err := ins.WithContext(ctx).Where(ins.PromptID.Eq(3)).Find()
+	templateCtx, templateSpan := otel.StartNamed(ctx, "chunk.prompt_template.load",
+		trace.WithAttributes(attribute.Int("prompt.id", 3)),
+	)
+	templates, err := ins.WithContext(templateCtx).Where(ins.PromptID.Eq(3)).Find()
+	otel.RecordError(templateSpan, err)
+	templateSpan.End()
 	if err != nil {
 		return fmt.Errorf("prompt template with ID 3 not found: %w", err)
 	}
@@ -249,7 +411,17 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 		return
 	}
 	chunkStr := strings.Join(chunkLines, "\n")
-	res, err := ark_dal.ResponseWithCache(ctx, sysPrompt.String(), chunkStr, config.Get().ArkConfig.ChunkModel)
+	span.SetAttributes(
+		attribute.Int("chunk.lines.count", len(chunkLines)),
+		attribute.Int("chunk.text.len", len(chunkStr)),
+		attribute.String("chunk.text.preview", otel.PreviewString(chunkStr, 256)),
+	)
+	arkCtx, arkSpan := otel.StartNamed(ctx, "chunk.ark.response",
+		trace.WithAttributes(attribute.String("model.id", config.Get().ArkConfig.ChunkModel)),
+	)
+	res, err := ark_dal.ResponseWithCache(arkCtx, sysPrompt.String(), chunkStr, config.Get().ArkConfig.ChunkModel)
+	otel.RecordError(arkSpan, err)
+	arkSpan.End()
 	if err != nil {
 		if ark_dal.IsUnavailable(err) {
 			m.enabled = false
@@ -264,6 +436,10 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	res = strings.Trim(res, "```")
 	res = strings.TrimLeft(res, "json")
 	logs.L().Ctx(ctx).Info("OnMerge chunk processed by LLM", zap.String("groupID", chunk.GroupID), zap.String("chunkStr", chunkStr), zap.String("res", res))
+	span.SetAttributes(
+		attribute.Int("chunk.response.len", len(res)),
+		attribute.String("chunk.response.preview", otel.PreviewString(res, 256)),
+	)
 
 	chunkLog := &xmodel.MessageChunkLogV3{
 		ID:          uuid.NewV1().String(),
@@ -277,16 +453,24 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	if err != nil {
 		return
 	}
-	embedding, _, err := ark_dal.EmbeddingText(ctx, BuildEmbeddingInput(chunkLog))
+	embeddingCtx, embeddingSpan := otel.StartNamed(ctx, "chunk.embedding")
+	embedding, _, err := ark_dal.EmbeddingText(embeddingCtx, BuildEmbeddingInput(chunkLog))
+	otel.RecordError(embeddingSpan, err)
+	embeddingSpan.End()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("embedding error", zap.String("groupID", chunk.GroupID), zap.Error(err))
 		return
 	}
 	chunkLog.ConversationEmbedding = Normalize(embedding)
+	searchCtx, searchSpan := otel.StartNamed(ctx, "chunk.search.insert",
+		trace.WithAttributes(attribute.String("index.name", config.Get().OpensearchConfig.LarkChunkIndex)),
+	)
 	err = opensearch.InsertData(
-		ctx, config.Get().OpensearchConfig.LarkChunkIndex, uuid.NewV4().String(),
+		searchCtx, config.Get().OpensearchConfig.LarkChunkIndex, uuid.NewV4().String(),
 		chunkLog,
 	)
+	otel.RecordError(searchSpan, err)
+	searchSpan.End()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("insert chunk log error", zap.String("groupID", chunk.GroupID), zap.Error(err))
 		return
@@ -297,23 +481,44 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 
 // StartBackgroundCleaner starts a goroutine to periodically scan for and process timed-out sessions.
 func (m *Management) StartBackgroundCleaner(ctx context.Context) {
+	_, span := otel.StartNamed(ctx, "chunk.cleaner.start")
+	defer span.End()
+
 	if m == nil || !m.enabled {
 		reason := ""
 		if m != nil {
 			reason = m.disableReason
 		}
+		span.SetAttributes(attribute.String("disable.reason", reason))
+		span.AddEvent("chunk_disabled")
 		logs.L().Ctx(ctx).Warn("Chunking disabled, background cleaner not started",
 			zap.String("reason", reason),
 		)
 		return
 	}
 	logs.L().Ctx(ctx).Info("Starting background cleaner for timed-out sessions...")
+	span.AddEvent("cleaner_started")
 	// Start the consumer goroutine
 	go func() {
 		for chunk := range m.processingQueue {
 			if chunk == nil {
 				continue
 			}
+			if m.executor != nil {
+				submitErr := m.executor.Submit(ctx, "chunk_merge:"+chunk.GroupID, func(taskCtx context.Context) error {
+					logs.L().Ctx(taskCtx).Info("Processing a merged chunk", zap.Int("message_count", len(chunk.Messages)))
+					if err := m.OnMerge(taskCtx, chunk); err != nil {
+						logs.L().Ctx(taskCtx).Error("Error during OnMerge", zap.Error(err))
+						return err
+					}
+					return nil
+				})
+				if submitErr != nil {
+					logs.L().Ctx(ctx).Error("Failed to submit merged chunk", zap.String("groupID", chunk.GroupID), zap.Error(submitErr))
+				}
+				continue
+			}
+
 			// Each chunk is processed in its own goroutine to avoid blocking the queue consumer
 			go func(c *Chunk) {
 				logs.L().Ctx(ctx).Info("Processing a merged chunk", zap.Int("message_count", len(c.Messages)))
@@ -342,50 +547,69 @@ func (m *Management) StartBackgroundCleaner(ctx context.Context) {
 
 // scanAndProcessTimeouts is the internal logic for the background cleaner.
 func (m *Management) scanAndProcessTimeouts(ctx context.Context) {
+	ctx, span := otel.StartNamed(ctx, "chunk.timeout.scan")
+	defer span.End()
+
 	if m == nil || !m.enabled {
+		span.AddEvent("chunk_disabled")
 		return
 	}
 	logs.L().Ctx(ctx).Debug("Scanning for timed-out sessions...")
 	// Calculate the timestamp threshold for timeout. Sessions older than this will be processed.
 	timeoutThreshold := time.Now().Add(-INACTIVITY_TIMEOUT).UnixMilli()
+	span.SetAttributes(attribute.Int64("timeout.threshold", timeoutThreshold))
 
 	// 1. Find all group IDs that have timed out using ZRangeByScore
-	timedOutGroupIDs, err := m.redisClient.ZRangeByScore(ctx, redisActiveSessionsKey, &redis.ZRangeBy{
+	listCtx, listSpan := otel.StartNamed(ctx, "chunk.redis.timeout_scan")
+	timedOutGroupIDs, err := m.redisClient.ZRangeByScore(listCtx, redisActiveSessionsKey(), &redis.ZRangeBy{
 		Min: "0",
 		Max: strconv.FormatInt(timeoutThreshold, 10),
 	}).Result()
+	otel.RecordError(listSpan, err)
+	listSpan.End()
 	if err != nil {
+		otel.RecordError(span, err)
 		logs.L().Ctx(ctx).Error("Failed to get timed-out sessions from Redis", zap.Error(err))
 		return
 	}
 
 	if len(timedOutGroupIDs) == 0 {
-		logs.L().Ctx(ctx).Info("not session is timed out, will do nothing...")
+		span.SetAttributes(attribute.Int("timeout.group.count", 0))
+		logs.L().Ctx(ctx).Debug("not session is timed out, will do nothing...")
 		return // Nothing to do
 	}
+	span.SetAttributes(attribute.Int("timeout.group.count", len(timedOutGroupIDs)))
 	logs.L().Ctx(ctx).Info("Found timed-out sessions", zap.Int("count", len(timedOutGroupIDs)), zap.Strings("group_ids", timedOutGroupIDs))
 
 	// 2. Process and clean up each timed-out session
 	for _, groupID := range timedOutGroupIDs {
-		sessionKey := redisSessionKeyPrefix + groupID
+		sessionKey := redisSessionKey(groupID)
 		// Atomically get the session data and delete the key.
 		// This prevents a race condition where a new message arrives while we are processing the timeout.
-		val, err := m.redisClient.GetDel(ctx, sessionKey).Result()
+		sessionCtx, sessionSpan := otel.StartNamed(ctx, "chunk.redis.session_getdel",
+			trace.WithAttributes(attribute.String("group.id", groupID)),
+		)
+		val, err := m.redisClient.GetDel(sessionCtx, sessionKey).Result()
+		otel.RecordError(sessionSpan, err)
+		sessionSpan.End()
 		if err == redis.Nil {
 			// Session was already processed or removed. Clean up the sorted set entry just in case.
-			m.redisClient.ZRem(ctx, redisActiveSessionsKey, groupID)
+			m.redisClient.ZRem(ctx, redisActiveSessionsKey(), groupID)
+			span.AddEvent("timeout_session_missing", trace.WithAttributes(attribute.String("group.id", groupID)))
 			continue
 		}
 		if err != nil {
+			span.AddEvent("timeout_session_getdel_failed", trace.WithAttributes(attribute.String("group.id", groupID)))
 			logs.L().Ctx(ctx).Error("Failed to GetDel session from Redis", zap.String("groupID", groupID), zap.Error(err))
 			continue
 		}
 
 		// At this point, the session key is deleted from Redis. Now we clean up the sorted set.
-		m.redisClient.ZRem(ctx, redisActiveSessionsKey, groupID)
+		m.redisClient.ZRem(ctx, redisActiveSessionsKey(), groupID)
 
 		var buffer SessionBuffer
 		if err := sonic.Unmarshal([]byte(val), &buffer); err != nil {
+			otel.RecordError(span, err)
 			logs.L().Ctx(ctx).Error("Failed to unmarshal timed-out session buffer", zap.String("groupID", groupID), zap.Error(err))
 			continue
 		}
@@ -396,6 +620,12 @@ func (m *Management) scanAndProcessTimeouts(ctx context.Context) {
 				GroupID:  groupID,
 				Messages: buffer.Messages,
 			}
+			span.AddEvent("timed_out_chunk_enqueued",
+				trace.WithAttributes(
+					attribute.String("group.id", groupID),
+					attribute.Int("message.count", len(buffer.Messages)),
+				),
+			)
 		}
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -163,9 +162,9 @@ func (h *Helper) traceSize() int64 {
 }
 
 func (h *Helper) GetMsg() (messageList OpensearchMsgLogList, err error) {
-	_, span := otel.T().Start(h.Context, reflecting.GetCurrentFunc())
+	_, span := otel.Start(h.Context)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	resp, err := h.GetRaw()
 	if err != nil {
@@ -176,9 +175,9 @@ func (h *Helper) GetMsg() (messageList OpensearchMsgLogList, err error) {
 }
 
 func (h *Helper) GetRaw() (resp *opensearchapi.SearchResp, err error) {
-	ctx, span := otel.T().Start(h.Context, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(h.Context)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 	req := h.buildRequest()
 	index := h.resolvedIndex()
 	span.SetAttributes(
@@ -198,9 +197,9 @@ func (h *Helper) GetRaw() (resp *opensearchapi.SearchResp, err error) {
 }
 
 func (h *Helper) GetAll() (messageList []*xmodel.MessageIndex, err error) {
-	_, span := otel.T().Start(h.Context, reflecting.GetCurrentFunc())
+	_, span := otel.Start(h.Context)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	resp, err := h.GetRaw()
 	return commonutils.TransSlice(resp.Hits.Hits, func(hit opensearchapi.SearchHit) *xmodel.MessageIndex {
@@ -252,9 +251,9 @@ type (
 )
 
 func (h *Helper) GetTrend(interval, termField string) (trendList TrendSeries, err error) {
-	ctx, span := otel.T().Start(h.Context, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(h.Context)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	span.SetAttributes(
 		attribute.Key("index").String(h.resolvedIndex()),

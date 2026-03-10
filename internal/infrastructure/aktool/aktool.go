@@ -10,7 +10,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/avast/retry-go/v4"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/hertz/pkg/app/client"
@@ -76,6 +75,13 @@ func ErrUnavailable() error {
 		return errors.New(provider.reason)
 	}
 	return errors.New("aktool not initialized")
+}
+
+func Status() (bool, string) {
+	if provider, ok := defaultProvider.(noopProvider); ok {
+		return false, provider.reason
+	}
+	return true, ""
 }
 
 func setNoop(reason string) {
@@ -144,7 +150,7 @@ func GetRealtimeGoldPrice(ctx context.Context) (GoldPriceDataRTList, error) {
 }
 
 func (p httpProvider) GetRealtimeGoldPrice(ctx context.Context) (res GoldPriceDataRTList, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	res = make(GoldPriceDataRTList, 0)
@@ -170,7 +176,7 @@ func GetHistoryGoldPrice(ctx context.Context) (GoldPriceDataHS, error) {
 }
 
 func (p httpProvider) GetHistoryGoldPrice(ctx context.Context) (res GoldPriceDataHS, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	res = make(GoldPriceDataHS, 0)
@@ -196,7 +202,7 @@ func GetStockPriceRT(ctx context.Context, symbol string) (StockPriceDataRTList, 
 }
 
 func (p httpProvider) GetStockPriceRT(ctx context.Context, symbol string) (res StockPriceDataRTList, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	res = make(StockPriceDataRTList, 0)
@@ -224,7 +230,7 @@ func GetStockSymbolInfo(ctx context.Context, symbol string) (string, error) {
 }
 
 func (p httpProvider) GetStockSymbolInfo(ctx context.Context, symbol string) (stockName string, err error) {
-	_, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	res := make([]map[string]any, 0)

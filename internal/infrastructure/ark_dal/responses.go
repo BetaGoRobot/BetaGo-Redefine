@@ -14,11 +14,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/gg/gresult"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -130,16 +130,19 @@ func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Eve
 }
 
 func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Event) (resp *arkutils.ResponsesStreamReader, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.StartNamed(ctx, "ark.responses.tool_args")
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer func() { otel.RecordError(span, err) }()
 
 	argsDoneEvent := event.GetFunctionCallArgumentsDone()
 	args := argsDoneEvent.GetArguments()
+	span.SetAttributes(attribute.String("call.id", argsDoneEvent.GetItemId()))
+	span.SetAttributes(otel.PreviewAttrs("call.args", args, 256)...)
 	r.functionInput[r.lastCallID] = args
 	handlerName := r.functionCallMap[r.lastCallID]
+	span.SetAttributes(attribute.String("handler.name", handlerName))
 	logs.L().Ctx(ctx).Info("OnCallArgs",
-		zap.String("args", args),
+		zap.String("args_preview", otel.PreviewString(args, 256)),
 		zap.String("handlerName", handlerName),
 	)
 	if handler, ok := r.handlers[handlerName]; ok {
@@ -189,7 +192,7 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 }
 
 func (r *ResponsesImpl[T]) OnReasoningDelta(ctx context.Context, event *responses.Event) {
-	// ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	// ctx, span := otel.Start(ctx)
 	// defer span.End()
 
 	part := event.GetReasoningText()
@@ -198,7 +201,7 @@ func (r *ResponsesImpl[T]) OnReasoningDelta(ctx context.Context, event *response
 }
 
 func (r *ResponsesImpl[T]) OnNormalDelta(ctx context.Context, event *responses.Event) {
-	// ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	// ctx, span := otel.Start(ctx)
 	// defer span.End()
 
 	part := event.GetText()
@@ -207,10 +210,10 @@ func (r *ResponsesImpl[T]) OnNormalDelta(ctx context.Context, event *responses.E
 }
 
 func (r *ResponsesImpl[T]) OnOthers(ctx context.Context, event *responses.Event) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
-	// 其他事件，直接忽略
-	// 简单记录一下eventType
+	trace.SpanFromContext(ctx).AddEvent(
+		"ignored_event",
+		trace.WithAttributes(attribute.String("event.type", event.GetEventType())),
+	)
 }
 
 func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event) (newRes *arkutils.ResponsesStreamReader, err error) {
@@ -235,7 +238,7 @@ func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesS
 }
 
 func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.StartNamed(ctx, "ark.responses.sync")
 	defer span.End()
 
 	var (
@@ -243,13 +246,26 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 		fcSlice = make([]string, 0)
 	)
 
+	previewCap := len(r.functionResult)
+	if previewCap > 10 {
+		previewCap = 10
+	}
+	resultPreview := make([]string, 0, previewCap)
 	for callID, res := range r.functionResult {
 		funcName := r.functionCallMap[callID]
-		fcSlice = append(fcSlice, funcName+"_"+callID+"==>"+res.Value())
+		preview := funcName + "_" + callID + "==>" + otel.PreviewString(res.Value(), 128)
+		fcSlice = append(fcSlice, preview)
 		fields = append(fields, zap.String(funcName+"_"+callID, res.Value()))
+		if len(resultPreview) < 10 {
+			resultPreview = append(resultPreview, preview)
+		}
 	}
-	span.SetAttributes(attribute.Key("funcion_results").StringSlice(fcSlice))
-	span.SetAttributes(attribute.Key("output").String(utils.MustMarshalString(r.textOutput)))
+	span.SetAttributes(attribute.Int("function_results.count", len(fcSlice)))
+	if len(resultPreview) > 0 {
+		span.SetAttributes(attribute.StringSlice("function_results.preview", resultPreview))
+	}
+	outputText := utils.MustMarshalString(r.textOutput)
+	span.SetAttributes(otel.PreviewAttrs("output", outputText, 256)...)
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
 }
 
@@ -258,9 +274,9 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 	if err != nil {
 		return nil, err
 	}
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.StartNamed(ctx, "ark.responses.run")
 	defer span.End()
-	defer func() { span.RecordError(err) }() // 这里的err需要捕获闭包内的错误
+	defer func() { otel.RecordError(span, err) }()
 
 	var (
 		req     *responses.ResponsesRequest
@@ -269,12 +285,18 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 	)
 
 	span.SetAttributes(
-		attribute.Key("sys_prompt.len").Int(len(sysPrompt)),
-		attribute.Key("sys_prompt.preview").String(sysPrompt),
 		attribute.Key("model_id").String(modelID),
 		attribute.Key("files.count").Int(len(files)),
-		attribute.Key("files").StringSlice(files),
 	)
+	span.SetAttributes(otel.PreviewAttrs("sys_prompt", sysPrompt, 256)...)
+	span.SetAttributes(otel.PreviewAttrs("user_prompt", userPrompt, 256)...)
+	if len(files) > 0 {
+		filePreview := files
+		if len(filePreview) > 10 {
+			filePreview = filePreview[:10]
+		}
+		span.SetAttributes(attribute.StringSlice("files.preview", filePreview))
+	}
 	if len(files) > 0 {
 		items = append(items, buildImageInputMessages(files...)...)
 	}
@@ -308,9 +330,9 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 	}
 
 	return func(yield func(*ModelStreamRespReasoning) bool) {
-		subCtx, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc()+".StreamIter")
+		subCtx, subSpan := otel.StartNamed(ctx, "ark.responses.stream")
 		defer subSpan.End()
-		defer func() { subSpan.RecordError(err) }() // 这里的err需要捕获闭包内的错误
+		defer func() { otel.RecordError(subSpan, err) }()
 		defer r.SyncResult(subCtx)
 
 		for {

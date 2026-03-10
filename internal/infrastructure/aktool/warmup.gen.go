@@ -7,8 +7,8 @@ import (
 )
 
 func init() {
-	reflecting.GetFunctionName(httpProvider.GetHistoryGoldPrice)  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:186
-	reflecting.GetFunctionName(httpProvider.GetRealtimeGoldPrice) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:160
-	reflecting.GetFunctionName(httpProvider.GetStockPriceRT)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:212
-	reflecting.GetFunctionName(httpProvider.GetStockSymbolInfo)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:240
+	reflecting.GetFunctionName(httpProvider.GetHistoryGoldPrice)  // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:173
+	reflecting.GetFunctionName(httpProvider.GetRealtimeGoldPrice) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:147
+	reflecting.GetFunctionName(httpProvider.GetStockPriceRT)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:199
+	reflecting.GetFunctionName(httpProvider.GetStockSymbolInfo)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/aktool/aktool.go:227
 }

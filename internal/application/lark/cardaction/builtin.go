@@ -6,6 +6,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
+	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
@@ -30,6 +31,9 @@ func RegisterBuiltins() {
 		RegisterSync(cardactionproto.ActionConfigSet, handleConfigAction)
 		RegisterSync(cardactionproto.ActionConfigDelete, handleConfigAction)
 		RegisterSync(cardactionproto.ActionConfigViewScope, handleConfigView)
+		RegisterSync(cardactionproto.ActionPermissionGrant, handlePermissionAction)
+		RegisterSync(cardactionproto.ActionPermissionRevoke, handlePermissionAction)
+		RegisterSync(cardactionproto.ActionPermissionView, handlePermissionView)
 	})
 }
 
@@ -136,6 +140,36 @@ func handleConfigView(ctx context.Context, actionCtx *Context) (*callback.CardAc
 	card, err := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.UserID, appconfig.ConfigCardViewOptions{
 		BypassCache: true,
 	})
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(card), nil
+}
+
+func handlePermissionAction(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := apppermission.ParseActionRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	req.ActorUserID = actionCtx.UserID()
+
+	resp, err := apppermission.HandleAction(ctx, req)
+	if err != nil {
+		return ErrorToast(resp.Message), nil
+	}
+	card, cardErr := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.UserID(), req.TargetUserID)
+	if cardErr != nil {
+		return InfoToast(resp.Message), nil
+	}
+	return InfoToastWithRawCardPayload(resp.Message, card), nil
+}
+
+func handlePermissionView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := apppermission.ParseViewRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	card, err := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.UserID(), req.TargetUserID)
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}

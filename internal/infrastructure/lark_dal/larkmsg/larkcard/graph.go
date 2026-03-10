@@ -7,7 +7,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/go_utils/reflecting"
 )
 
 type CardBuilderGraph struct {
@@ -52,7 +51,7 @@ func (h *CardBuilderGraph) SetEndTime(t time.Time) *CardBuilderGraph {
 }
 
 func (h *CardBuilderGraph) Build(ctx context.Context) *larktpl.TemplateCardContent {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
+	ctx, span := otel.Start(ctx)
 	defer span.End()
 	cardContent := larktpl.NewCardContent(ctx, larktpl.NormalCardGraphReplyTemplate)
 	if !h.st.IsZero() && !h.et.IsZero() {
