@@ -133,8 +133,9 @@ type MessageLog struct {
 type PromptTemplateArg struct {
 	*model.PromptTemplateArg
 
-	HistoryRecords []string `json:"history_records" gorm:"-"`
-	Context        []string `json:"context" gorm:"-"`
-	Topics         []string `json:"topics" gorm:"-"`
-	UserInput      []string `json:"user_input" gorm:"-"`
+	HistoryRecords   []string `json:"history_records" gorm:"-"`
+	Context          []string `json:"context" gorm:"-"`
+	Topics           []string `json:"topics" gorm:"-"`
+	UserInput        []string `json:"user_input" gorm:"-"`
+	CurrentTimeStamp string   `json:"current_timestamp" gorm:"-"`
 }

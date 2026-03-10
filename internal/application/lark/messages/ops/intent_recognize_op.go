@@ -7,10 +7,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
@@ -59,20 +57,18 @@ func (r *IntentRecognizeOperator) FeatureInfo() *xhandler.FeatureInfo {
 func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
 	// 检查是否启用了意图识别（TOML 配置的总开关）
 	if !infraconfig.Get().RateConfig.IntentRecognitionEnabled {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}
 
-	// 跳过命令消息
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" command message skipped")
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
 	}
 
-	textMsg := larkmsg.PreGetTextMsg(ctx, event)
-	text := textMsg.GetText()
+	text := messageText(ctx, event)
 
 	if text == "" {
 		logs.L().Ctx(ctx).Warn("empty message, skip intent recognition")

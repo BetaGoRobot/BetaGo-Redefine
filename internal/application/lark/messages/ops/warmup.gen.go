@@ -12,9 +12,7 @@ func init() {
 	reflecting.GetFunctionName((*CommandOperator).PreRun)        // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:44
 	reflecting.GetFunctionName((*CommandOperator).Run)           // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:62
 	reflecting.GetFunctionName((*IntentRecognizeOperator).Fetch) // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/intent_recognize_op.go:60
-	reflecting.GetFunctionName((*ReactMsgOperator).PreRun)       // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/react_op.go:49
 	reflecting.GetFunctionName((*ReactMsgOperator).Run)          // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/react_op.go:63
-	reflecting.GetFunctionName((*RecordMsgOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/record_op.go:52
 	reflecting.GetFunctionName((*RecordMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/record_op.go:68
 	reflecting.GetFunctionName((*RepeatMsgOperator).PreRun)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:62
 	reflecting.GetFunctionName((*RepeatMsgOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/repeat_op.go:88
@@ -22,6 +20,5 @@ func init() {
 	reflecting.GetFunctionName((*ReplyChatOperator).Run)         // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/reply_chat_op.go:78
 	reflecting.GetFunctionName((*WordReplyMsgOperator).PreRun)   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:58
 	reflecting.GetFunctionName((*WordReplyMsgOperator).Run)      // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:114, /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/word_reply_op.go:77
-	reflecting.GetFunctionName(CollectMessage)                   // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/base.go:42
 	reflecting.GetFunctionName(ExecuteFromRawCommand)            // from /mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/command_op.go:73
 }

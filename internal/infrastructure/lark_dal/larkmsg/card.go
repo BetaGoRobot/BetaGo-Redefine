@@ -2,10 +2,8 @@ package larkmsg
 
 import (
 	"context"
-	"errors"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -34,26 +32,21 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 		zap.Bool("replyInThread", replyInThread),
 		zap.String("cardContent", cardContent.String()),
 	)
-	resp, err := lark_dal.Client().Im.V1.Message.Reply(
-		ctx, larkim.NewReplyMessageReqBuilder().
-			MessageId(msgID).
-			Body(
-				larkim.NewReplyMessageReqBodyBuilder().
-					MsgType(larkim.MsgTypeInteractive).
-					Content(cardContent.String()).
-					Uuid(utils.GenUUIDStr(msgID+suffix+config.Get().LarkConfig.BotOpenID, 50)).
-					ReplyInThread(replyInThread).
-					Build(),
-			).
-			Build(),
-	)
+	req := larkim.NewReplyMessageReqBuilder().
+		MessageId(msgID).
+		Body(
+			larkim.NewReplyMessageReqBodyBuilder().
+				MsgType(larkim.MsgTypeInteractive).
+				Content(cardContent.String()).
+				Uuid(utils.GenUUIDStr(msgID+suffix+config.Get().LarkConfig.BotOpenID, 50)).
+				ReplyInThread(replyInThread).
+				Build(),
+		).
+		Build()
+	_, err = sendReplyMessage(ctx, req, cardContent.GetVariables()...)
 	if err != nil {
 		return
 	}
-	if !resp.Success() {
-		return errors.New(resp.Error())
-	}
-	go RecordReplyMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
 	return
 }
 
@@ -64,25 +57,6 @@ func CreateMsgCard(ctx context.Context, cardContent *larktpl.TemplateCardContent
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	resp, err := lark_dal.Client().Im.V1.Message.Create(
-		ctx,
-		larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType(larkim.ReceiveIdTypeChatId).
-			Body(
-				larkim.NewCreateMessageReqBodyBuilder().
-					ReceiveId(chatID).
-					MsgType(larkim.MsgTypeInteractive).
-					Content(cardContent.String()).
-					Build(),
-			).
-			Build(),
-	)
-	if err != nil {
-		return err
-	}
-	if !resp.Success() {
-		return errors.New(resp.Error())
-	}
-	go RecordMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
-	return nil
+	_, err = createMsgRawContentType(ctx, chatID, larkim.MsgTypeInteractive, cardContent.String(), "", "_card", cardContent.GetVariables()...)
+	return err
 }

@@ -20,10 +20,8 @@ FROM prebuild AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
 
-RUN mkdir -p /tmp/jieba_dict && \
-    cp -r /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
+RUN go mod download
 
 COPY . .
 
@@ -33,7 +31,6 @@ RUN cd cmd/larkrobot && \
 
 FROM kevinmatt/libvips AS runner
 
-COPY --from=builder /tmp/jieba_dict/dict /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo/ /usr/share/zoneinfo
 COPY --from=builder /app/larkrobot /larkrobot

@@ -4,21 +4,16 @@ import (
 	"context"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
-	"go.uber.org/zap"
 )
 
 var _ Op = &ReplyChatOperator{}
@@ -56,16 +51,12 @@ func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
 func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	if *event.Event.Message.ChatType != "p2p" && !larkmsg.IsMentioned(event.Event.Message.Mentions) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
+	defer recordSpanError(span, &err)
+	if err := requireMentionOrP2P(r.Name(), event); err != nil {
+		return err
 	}
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
-	}
-
-	return
+	return skipIfCommand(ctx, r.Name(), event)
 }
 
 // Run  Repeat
@@ -78,25 +69,17 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	defer span.RecordError(err)
+	defer recordSpanError(span, &err)
 
-	reactionID, err := larkmsg.AddReaction(ctx, "OnIt", *event.Event.Message.MessageId)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("Add reaction to msg failed", zap.Error(err))
-	} else {
-		defer larkmsg.RemoveReactionAsync(ctx, reactionID, *event.Event.Message.MessageId)
-	}
+	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
-	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
+	msg := messageText(ctx, event)
 	msg = larkmsg.TrimAtMsg(ctx, msg)
 	// 记录回复
 	decider := ratelimit.GetDecider()
 	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
 	err = xcommand.BindCLI(handlers.Chat)(ctx, event, meta, strings.Split(msg, " ")...)
-	if !meta.SkipDone {
-		larkmsg.AddReactionAsync(ctx, "DONE", *event.Event.Message.MessageId)
-	}
+	addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
 
 	return
 }

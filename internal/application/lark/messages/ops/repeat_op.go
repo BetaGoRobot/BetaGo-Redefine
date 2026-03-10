@@ -5,25 +5,22 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/pkg/errors"
 )
 
 var _ Op = &RepeatMsgOperator{}
@@ -61,16 +58,16 @@ func (r *RepeatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
 	}
 	if ext, err := redis_dal.GetRedisClient().
 		Exists(ctx, handlers.MuteRedisKeyPrefix+*event.Event.Message.ChatId).Result(); err != nil {
 		return err
 	} else if ext != 0 {
-		return errors.Wrap(xerror.ErrStageSkip, "RepeatMsgOperator: Muted")
+		return skipStage(r.Name(), "is muted")
 	}
 
 	return
@@ -87,8 +84,7 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
 	// Repeat
 	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
@@ -136,31 +132,24 @@ func (r *RepeatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 				*event.Event.Message.ChatId,
 			)
 			if err != nil {
-				logs.L().Ctx(ctx).Error("repeatMessage error", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+				logs.L().Ctx(ctx).Error("repeatMessage error", zap.Error(err))
 			}
 		} else {
-			repeatReq := larkim.NewCreateMessageReqBuilder().
-				Body(
-					larkim.NewCreateMessageReqBodyBuilder().
-						Content(*event.Event.Message.Content).
-						ReceiveId(*event.Event.Message.ChatId).
-						MsgType(*event.Event.Message.MessageType).
-						Build(),
-				).
-				ReceiveIdType(larkim.ReceiveIdTypeChatId).
-				Build()
-			resp, err := lark_dal.Client().Im.V1.Message.Create(ctx, repeatReq)
+			_, err = larkmsg.CreateMsgRawContentType(
+				ctx,
+				*event.Event.Message.ChatId,
+				*event.Event.Message.MessageType,
+				*event.Event.Message.Content,
+				*event.Event.Message.MessageId,
+				"_repeat",
+			)
 			if err != nil {
-				return err
-			}
-			if !resp.Success() {
-				if strings.Contains(resp.Error(), "invalid image_key") {
-					logs.L().Ctx(ctx).Error("repeatMessage error", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+				if strings.Contains(err.Error(), "invalid image_key") {
+					logs.L().Ctx(ctx).Error("repeatMessage error", zap.Error(err))
 					return nil
 				}
-				return errors.New(resp.Error())
+				return err
 			}
-			go larkmsg.RecordMessage2Opensearch(ctx, resp)
 		}
 	}
 	return nil

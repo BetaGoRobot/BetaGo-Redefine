@@ -17,7 +17,6 @@ func AddTrace2DB(ctx context.Context, msgID string) {
 
 	logs.L().Ctx(ctx).Info("AddTraceLog2DB",
 		zap.String("msgID", msgID),
-		zap.String("traceID", span.SpanContext().TraceID().String()),
 	)
 	ins := query.Q.MsgTraceLog
 	err := ins.WithContext(ctx).Create(&model.MsgTraceLog{

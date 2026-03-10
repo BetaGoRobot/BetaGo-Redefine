@@ -2,6 +2,7 @@ package xhandler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -55,6 +56,8 @@ type MetaDataWithUser interface {
 type (
 	OperatorBase[T, K any] struct{}
 	BaseMetaData           struct {
+		mu sync.RWMutex
+
 		ChatID      string
 		UserID      string
 		IsP2P       bool
@@ -74,8 +77,9 @@ type (
 )
 
 func (m *BaseMetaData) GetExtra(key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.Extra == nil {
-		m.Extra = make(map[string]string)
 		return "", false
 	}
 	val, ok := m.Extra[key]
@@ -83,10 +87,48 @@ func (m *BaseMetaData) GetExtra(key string) (string, bool) {
 }
 
 func (m *BaseMetaData) SetExtra(key string, val string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.Extra == nil {
 		m.Extra = make(map[string]string)
 	}
 	m.Extra[key] = val
+}
+
+func (m *BaseMetaData) SetIsCommand(v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.IsCommand = v
+}
+
+func (m *BaseMetaData) IsCommandMarked() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.IsCommand
+}
+
+func (m *BaseMetaData) SetMainCommand(command string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MainCommand = command
+}
+
+func (m *BaseMetaData) GetMainCommand() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.MainCommand
+}
+
+func (m *BaseMetaData) SetSkipDone(v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SkipDone = v
+}
+
+func (m *BaseMetaData) ShouldSkipDone() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.SkipDone
 }
 
 // GetChatID 实现 MetaDataWithUser 接口
@@ -153,6 +195,36 @@ func (p *Processor[T, K]) WithCtx(ctx context.Context) *Processor[T, K] {
 	return p
 }
 
+func (p *Processor[T, K]) Clone() *Processor[T, K] {
+	if p == nil {
+		return &Processor[T, K]{}
+	}
+
+	cloned := *p
+	cloned.Context = nil
+	cloned.data = nil
+	cloned.metaData = nil
+
+	if p.asyncStages != nil {
+		cloned.asyncStages = append([]Operator[T, K](nil), p.asyncStages...)
+	}
+	if p.deferFn != nil {
+		cloned.deferFn = append([]ProcDeferFunc[T, K](nil), p.deferFn...)
+	}
+	if p.features != nil {
+		cloned.features = make(map[string]FeatureInfo, len(p.features))
+		for key, value := range p.features {
+			cloned.features[key] = value
+		}
+	}
+
+	return &cloned
+}
+
+func (p *Processor[T, K]) NewExecution() *Processor[T, K] {
+	return p.Clone()
+}
+
 // WithFeatureChecker 设置功能检查函数（依赖注入）
 func (p *Processor[T, K]) WithFeatureChecker(checker FeatureCheckFunc) *Processor[T, K] {
 	p.featureChecker = checker
@@ -189,17 +261,22 @@ func (p *Processor[T, K]) Data() *T {
 }
 
 func (p *Processor[T, K]) Clean() *Processor[T, K] {
-	p.data = nil
-	p.Context = nil
-	return p
+	return p.NewExecution()
 }
 
 func (p *Processor[T, K]) Defer() {
-	if err := recover(); err != nil {
+	if recovered := recover(); recovered != nil {
 		if p.onPanicFn != nil {
-			p.onPanicFn(p.Context, err.(error), p.data, p.metaData)
+			p.onPanicFn(p.Context, panicAsError(recovered), p.data, p.metaData)
 		}
 	}
+}
+
+func panicAsError(recovered any) error {
+	if err, ok := recovered.(error); ok {
+		return err
+	}
+	return fmt.Errorf("panic: %v", recovered)
 }
 
 // AddAsync  添加并行处理阶段

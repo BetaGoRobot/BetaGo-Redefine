@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"iter"
 	"strings"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -78,7 +79,7 @@ func (h chatHandler) ParseCLI(args []string) (ChatArgs, error) {
 }
 
 func (h chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
-	defer func() { metaData.SkipDone = true }()
+	defer func() { metaData.SetSkipDone(true) }()
 
 	chatType := h.defaultType
 	size := 20
@@ -203,6 +204,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	}
 	fullTpl := xmodel.PromptTemplateArg{
 		PromptTemplateArg: tpls[0],
+		CurrentTimeStamp:  time.Now().In(utils.UTC8Loc()).Format(time.DateTime),
 	}
 	promptTemplateStr := tpls[0].TemplateStr
 	tp, err := template.New("prompt").Parse(promptTemplateStr)

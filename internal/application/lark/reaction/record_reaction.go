@@ -26,21 +26,6 @@ type RecordReactionOperator struct {
 	OpBase
 }
 
-// PreRun Music
-//
-//	@receiver r *MusicMsgOperator
-//	@param ctx context.Context
-//	@param event *larkim.P2MessageReactionCreatedV1
-//	@return err error
-//	@author heyuhengmatt
-//	@update 2024-07-17 01:34:09
-func (r *RecordReactionOperator) PreRun(ctx context.Context, event *larkim.P2MessageReactionCreatedV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
-	defer func() { span.RecordError(err) }()
-	return
-}
-
 // Run  Repeat
 //
 //	@receiver r
@@ -51,8 +36,7 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	defer span.RecordError(err)
+	defer recordSpanError(span, &err)
 	chatID, err := larkmsg.GetChatIDFromMsgID(ctx, *event.Event.MessageId)
 	if err != nil {
 		return err
