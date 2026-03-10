@@ -20,10 +20,8 @@ FROM prebuild AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
 
-RUN mkdir -p /tmp/jieba_dict && \
-    cp -r $GOPATH/pkg/mod/github.com/yanyiwu/gojieba@v1.4.7/deps/cppjieba/dict /tmp/jieba_dict
+RUN go mod download
 
 COPY . .
 
