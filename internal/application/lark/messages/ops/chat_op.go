@@ -3,20 +3,16 @@ package ops
 import (
 	"context"
 
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	"github.com/BetaGoRobot/go_utils/reflecting"
@@ -65,14 +61,14 @@ func (r *ChatMsgOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1
 func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" is command")
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
 	}
 
-	if larkmsg.IsMentioned(event.Event.Message.Mentions) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" is mentioned, should handle by reply_chat_op")
+	if err := skipIfMentioned(r.Name(), event); err != nil {
+		return err
 	}
 	return
 }
@@ -88,7 +84,7 @@ func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
 	chatID := *event.Event.Message.ChatId
 	decider := ratelimit.GetDecider()

@@ -22,6 +22,7 @@ import (
 	larkapplication "github.com/larksuite/oapi-sdk-go/v3/service/application/v6"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -33,12 +34,91 @@ func isOutDated(createTime string) bool {
 	return time.Now().Sub(time.UnixMilli(stamp)) > time.Second*10
 }
 
+func recordSpanError(span trace.Span, err *error) {
+	if err == nil || *err == nil {
+		return
+	}
+	span.RecordError(*err)
+}
+
+func runProcessorAsync[T any](ctx context.Context, processor *xhandler.Processor[T, xhandler.BaseMetaData], event *T) {
+	go processor.NewExecution().WithCtx(ctx).WithData(event).Run()
+}
+
+func runMessageProcessorAsync(spanName, msgID string, event *larkim.P2MessageReceiveV1) {
+	go func() {
+		subCtx, span := otel.T().Start(context.Background(), spanName+"_RealRun")
+		defer span.End()
+		span.SetAttributes(attribute.String("msgID", msgID))
+		messages.Handler.NewExecution().WithCtx(subCtx).WithData(event).Run()
+	}()
+}
+
+func hasCardFormValue(cardAction *callback.CardActionTriggerEvent) bool {
+	return len(cardAction.Event.Action.FormValue) > 0
+}
+
+func cardActionType(cardAction *callback.CardActionTriggerEvent) (string, bool) {
+	return actionStringValue(cardAction, "type")
+}
+
+func cardActionID(cardAction *callback.CardActionTriggerEvent) (string, bool) {
+	return actionStringValue(cardAction, "id")
+}
+
+func actionStringValue(cardAction *callback.CardActionTriggerEvent, key string) (string, bool) {
+	value, ok := cardAction.Event.Action.Value[key]
+	if !ok {
+		return "", false
+	}
+	str, ok := value.(string)
+	return str, ok
+}
+
+func dispatchCardAction(ctx context.Context, metaData *xhandler.BaseMetaData, cardAction *callback.CardActionTriggerEvent) {
+	buttonType, ok := cardActionType(cardAction)
+	if !ok {
+		return
+	}
+
+	switch buttonType {
+	case "song":
+		dispatchCardActionWithID(cardAction, func(id string) {
+			go cardhandlers.SendMusicCard(ctx, metaData, id, cardAction.Event.Context.OpenMessageID, 1)
+		})
+	case "album":
+		dispatchCardActionWithID(cardAction, func(id string) {
+			go cardhandlers.SendAlbumCard(ctx, metaData, id, cardAction.Event.Context.OpenMessageID)
+		})
+	case "lyrics":
+		dispatchCardActionWithID(cardAction, func(id string) {
+			go cardhandlers.HandleFullLyrics(ctx, metaData, id, cardAction.Event.Context.OpenMessageID)
+		})
+	case "withdraw":
+		go cardhandlers.HandleWithDraw(ctx, cardAction)
+	case "refresh":
+		dispatchCardActionWithID(cardAction, func(id string) {
+			go cardhandlers.HandleRefreshMusic(ctx, id, cardAction.Event.Context.OpenMessageID)
+		})
+	case "refresh_obj":
+		go cardhandlers.HandleRefreshObj(ctx, cardAction)
+	}
+}
+
+func dispatchCardActionWithID(cardAction *callback.CardActionTriggerEvent, fn func(string)) {
+	id, ok := cardActionID(cardAction)
+	if !ok {
+		return
+	}
+	fn(id)
+}
+
 func MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) (err error) {
 	fn := reflecting.GetCurrentFunc()
 	ctx, span := otel.T().Start(ctx, fn)
 	defer larkmsg.RecoverMsg(ctx, *event.Event.Message.MessageId)
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(event)))
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
 	if isOutDated(*event.Event.Message.CreateTime) {
 		return nil
@@ -47,12 +127,7 @@ func MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) (er
 		return nil
 	}
 	logs.L().Ctx(ctx).Info("Inside the child span for complex handler", zap.String("event", larkcore.Prettify(event)))
-	go func() {
-		subCtx, span := otel.T().Start(context.Background(), fn+"_RealRun")
-		defer span.End()
-		span.SetAttributes(attribute.String("msgID", utils.AddrOrNil(event.Event.Message.MessageId)))
-		messages.Handler.Clean().WithCtx(subCtx).WithData(event).Run()
-	}()
+	runMessageProcessorAsync(fn, utils.AddrOrNil(event.Event.Message.MessageId), event)
 
 	logs.L().Ctx(ctx).Info("Message event received", zap.String("event", larkcore.Prettify(event)))
 	return nil
@@ -67,9 +142,9 @@ func MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReaction
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer larkmsg.RecoverMsg(ctx, *event.Event.MessageId)
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
-	go reaction.Handler.Clean().WithCtx(ctx).WithData(event).Run()
+	runProcessorAsync(ctx, reaction.Handler, event)
 	return nil
 }
 
@@ -78,39 +153,15 @@ func CardActionHandler(ctx context.Context, cardAction *callback.CardActionTrigg
 	defer larkmsg.RecoverMsg(ctx, cardAction.Event.Context.OpenMessageID)
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(cardAction)))
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
 	// 记录一下操作记录
 	defer func() { go larkmsg.RecordCardAction2Opensearch(ctx, cardAction) }()
-	if len(cardAction.Event.Action.FormValue) > 0 {
+	if hasCardFormValue(cardAction) {
 		go cardhandlers.HandleSubmit(ctx, cardAction)
-	} else if buttonType, ok := cardAction.Event.Action.Value["type"]; ok {
-		switch buttonType {
-		case "song":
-			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
-				go cardhandlers.SendMusicCard(ctx, metaData, musicID.(string), cardAction.Event.Context.OpenMessageID, 1)
-			}
-		case "album":
-			if albumID, ok := cardAction.Event.Action.Value["id"]; ok {
-				_ = albumID
-				go cardhandlers.SendAlbumCard(ctx, metaData, albumID.(string), cardAction.Event.Context.OpenMessageID)
-			}
-		case "lyrics":
-			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
-				go cardhandlers.HandleFullLyrics(ctx, metaData, musicID.(string), cardAction.Event.Context.OpenMessageID)
-			}
-		case "withdraw":
-			// 撤回消息
-			go cardhandlers.HandleWithDraw(ctx, cardAction)
-		case "refresh":
-			if musicID, ok := cardAction.Event.Action.Value["id"]; ok {
-				go cardhandlers.HandleRefreshMusic(ctx, musicID.(string), cardAction.Event.Context.OpenMessageID)
-			}
-		case "refresh_obj":
-			// 通用的卡片刷新结构，重点是记录触发的command重新触发？
-			go cardhandlers.HandleRefreshObj(ctx, cardAction)
-		}
+		return
 	}
+	dispatchCardAction(ctx, metaData, cardAction)
 	return
 }
 

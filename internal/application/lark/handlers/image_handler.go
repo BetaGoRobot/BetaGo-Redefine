@@ -93,7 +93,7 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	logs.L().Ctx(ctx).Info("wordAddHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	logs.L().Ctx(ctx).Info("wordAddHandler", zap.Any("args", arg))
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
 		return errors.New("chat_id is required")
@@ -201,7 +201,7 @@ func (imageGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	span.SetAttributes(attribute.Key("event").String(larkcore.Prettify(data)))
 	defer span.End()
 	defer func() { span.RecordError(err) }()
-	logs.L().Ctx(ctx).Info("replyGetHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	logs.L().Ctx(ctx).Info("replyGetHandler", zap.Any("args", arg))
 	ChatID := currentChatID(data, metaData)
 
 	lines := make([]map[string]string, 0)
@@ -268,7 +268,7 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer func() { span.RecordError(err) }()
 	defer span.RecordError(err)
 
-	logs.L().Ctx(ctx).Info("replyDelHandler", zap.String("TraceID", span.SpanContext().TraceID().String()), zap.Any("args", arg))
+	logs.L().Ctx(ctx).Info("replyDelHandler", zap.Any("args", arg))
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
 		return errors.New("chat_id is required")

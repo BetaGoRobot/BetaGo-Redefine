@@ -31,11 +31,17 @@ import (
 type Helper struct {
 	context.Context
 
-	req    *osquery.SearchRequest
 	index  string
 	query  osquery.Mappable
 	source []string
-	size   uint64
+	size   *uint64
+	aggs   []osquery.Aggregation
+	sorts  []sortField
+}
+
+type sortField struct {
+	name  string
+	order osquery.Order
 }
 
 // New to be filled
@@ -46,7 +52,6 @@ type Helper struct {
 func New(ctx context.Context) *Helper {
 	return &Helper{
 		Context: ctx,
-		req:     osquery.Search(),
 	}
 }
 
@@ -70,7 +75,7 @@ func (h *Helper) Index(index string) *Helper {
 //	@author kevinmatthe
 //	@update 2025-04-30 13:16:42
 func (h *Helper) Size(size uint64) *Helper {
-	h.req.Size(size)
+	h.size = &size
 	return h
 }
 
@@ -82,7 +87,7 @@ func (h *Helper) Size(size uint64) *Helper {
 //	@author kevinmatthe
 //	@update 2025-04-30 13:09:55
 func (h *Helper) Query(query osquery.Mappable) *Helper {
-	h.req.Query(query)
+	h.query = query
 	return h
 }
 
@@ -94,7 +99,7 @@ func (h *Helper) Query(query osquery.Mappable) *Helper {
 //	@author kevinmatthe
 //	@update 2025-04-30 13:09:55
 func (h *Helper) Aggs(aggs ...osquery.Aggregation) *Helper {
-	h.req.Aggs(aggs...)
+	h.aggs = append(h.aggs, aggs...)
 	return h
 }
 
@@ -106,7 +111,7 @@ func (h *Helper) Aggs(aggs ...osquery.Aggregation) *Helper {
 //	@author kevinmatthe
 //	@update 2025-04-30 13:10:00
 func (h *Helper) Source(source ...string) *Helper {
-	h.req.SourceIncludes(source...)
+	h.source = append([]string(nil), source...)
 	return h
 }
 
@@ -119,8 +124,42 @@ func (h *Helper) Source(source ...string) *Helper {
 //	@author kevinmatthe
 //	@update 2025-04-30 13:14:55
 func (h *Helper) Sort(name string, order osquery.Order) *Helper {
-	h.req.Sort(name, order)
+	h.sorts = append(h.sorts, sortField{name: name, order: order})
 	return h
+}
+
+func (h *Helper) buildRequest() *osquery.SearchRequest {
+	req := osquery.Search()
+	if h.query != nil {
+		req.Query(h.query)
+	}
+	if h.size != nil {
+		req.Size(*h.size)
+	}
+	if len(h.source) > 0 {
+		req.SourceIncludes(h.source...)
+	}
+	if len(h.aggs) > 0 {
+		req.Aggs(h.aggs...)
+	}
+	for _, sort := range h.sorts {
+		req.Sort(sort.name, sort.order)
+	}
+	return req
+}
+
+func (h *Helper) resolvedIndex() string {
+	if strings.TrimSpace(h.index) != "" {
+		return h.index
+	}
+	return config.Get().OpensearchConfig.LarkMsgIndex
+}
+
+func (h *Helper) traceSize() int64 {
+	if h.size == nil {
+		return 0
+	}
+	return int64(*h.size)
 }
 
 func (h *Helper) GetMsg() (messageList OpensearchMsgLogList, err error) {
@@ -140,18 +179,20 @@ func (h *Helper) GetRaw() (resp *opensearchapi.SearchResp, err error) {
 	ctx, span := otel.T().Start(h.Context, reflecting.GetCurrentFunc())
 	defer span.End()
 	defer func() { span.RecordError(err) }()
+	req := h.buildRequest()
+	index := h.resolvedIndex()
 	span.SetAttributes(
-		attribute.Key("index").String(h.index),
+		attribute.Key("index").String(index),
 		attribute.Key("query").String(utils.MustMarshalString(h.query)),
 		attribute.Key("source").StringSlice(h.source),
-		attribute.Key("size").Int64(int64(h.size)),
+		attribute.Key("size").Int64(h.traceSize()),
 	)
 
 	resp, err = opensearch.
 		SearchData(
 			ctx,
-			config.Get().OpensearchConfig.LarkMsgIndex,
-			h.req,
+			index,
+			req,
 		)
 	return
 }
@@ -216,15 +257,16 @@ func (h *Helper) GetTrend(interval, termField string) (trendList TrendSeries, er
 	defer func() { span.RecordError(err) }()
 
 	span.SetAttributes(
-		attribute.Key("index").String(h.index),
+		attribute.Key("index").String(h.resolvedIndex()),
 		attribute.Key("query").String(utils.MustMarshalString(h.query)),
 		attribute.Key("source").StringSlice(h.source),
-		attribute.Key("size").Int64(int64(h.size)),
+		attribute.Key("size").Int64(h.traceSize()),
 	)
 
 	aggKey1 := "agg1"
 	aggKey2 := "agg2"
-	h.req.Aggs(
+	req := h.buildRequest()
+	req.Aggs(
 		osquery.CustomAgg(
 			aggKey1,
 			map[string]any{
@@ -245,8 +287,8 @@ func (h *Helper) GetTrend(interval, termField string) (trendList TrendSeries, er
 	resp, err := opensearch.
 		SearchData(
 			ctx,
-			config.Get().OpensearchConfig.LarkMsgIndex,
-			h.req,
+			h.resolvedIndex(),
+			req,
 		)
 	if err != nil {
 		return

@@ -2,16 +2,13 @@ package larkmsg
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/go_utils/reflecting"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -35,17 +32,7 @@ func ReplyMsgRawContentType(ctx context.Context, msgID, msgType, content, suffix
 			Uuid(utils.GenUUIDStr(uuid, 50)).Build(),
 	).MessageId(msgID).Build()
 
-	resp, err = lark_dal.Client().Im.V1.Message.Reply(ctx, req)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err))
-		return nil, err
-	}
-	if !resp.Success() {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.String("Error", larkcore.Prettify(resp.CodeError.Err)))
-		return nil, errors.New(resp.Error())
-	}
-	go RecordReplyMessage2Opensearch(ctx, resp, content)
-	return
+	return sendReplyMessage(ctx, req, content)
 }
 
 // ReplyMsgText ReplyMsgText 注意：不要传入已经Build过的文本
@@ -79,17 +66,7 @@ func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix stri
 			Uuid(utils.GenUUIDStr(uuid, 50)).Build(),
 	).MessageId(msgID).Build()
 
-	resp, err = lark_dal.Client().Im.V1.Message.Reply(ctx, req)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err))
-		return nil, err
-	}
-	if !resp.Success() {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.String("Error", larkcore.Prettify(resp.CodeError.Err)))
-		return nil, errors.New(resp.Error())
-	}
-	go RecordReplyMessage2Opensearch(ctx, resp, content)
-	return
+	return sendReplyMessage(ctx, req, content)
 }
 
 // ReplyCard  注意：不要传入已经Build过的文本
@@ -102,10 +79,26 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 	defer span.End()
 	defer func() { span.RecordError(err) }()
 
-	// 先把卡片发送了，再记录日志和指标，避免指标记录的耗时过程拖慢整个请求
-	resp, err := doSendCard(ctx, msgID, suffix, cardContent, replyInThread)
+	uuid := msgID + suffix
+	if len(uuid) > 50 {
+		uuid = uuid[:50]
+	}
+
+	req := larkim.NewReplyMessageReqBuilder().
+		MessageId(msgID).
+		Body(
+			larkim.NewReplyMessageReqBodyBuilder().
+				MsgType(larkim.MsgTypeInteractive).
+				Content(cardContent.String()).
+				Uuid(utils.GenUUIDStr(uuid, 50)).
+				ReplyInThread(replyInThread).
+				Build(),
+		).
+		Build()
+
+	_, err = sendReplyMessage(ctx, req, cardContent.GetVariables()...)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("doSendCard failed", zap.Error(err))
+		logs.L().Ctx(ctx).Error("ReplyCard failed", zap.Error(err))
 		return
 	}
 
@@ -120,32 +113,26 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 		zap.Bool("replyInThread", replyInThread),
 		zap.String("cardContent", cardContent.String()),
 	)
-	go RecordReplyMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
 	return
 }
 
 func doSendCard(ctx context.Context, msgID, suffix string, cardContent *larktpl.TemplateCardContent, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
-	resp, err = lark_dal.Client().Im.V1.Message.Reply(
-		ctx, larkim.NewReplyMessageReqBuilder().
-			MessageId(msgID).
-			Body(
-				larkim.NewReplyMessageReqBodyBuilder().
-					MsgType(larkim.MsgTypeInteractive).
-					Content(cardContent.String()).
-					// Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
-					ReplyInThread(replyInThread).
-					Build(),
-			).
-			Build(),
-	)
-	if err != nil {
-		return
+	uuid := msgID + suffix
+	if len(uuid) > 50 {
+		uuid = uuid[:50]
 	}
-	if !resp.Success() {
-		return resp, errors.New(resp.Error())
-	}
-	go RecordReplyMessage2Opensearch(ctx, resp, cardContent.GetVariables()...)
-	return
+
+	req := larkim.NewReplyMessageReqBuilder().
+		MessageId(msgID).
+		Body(
+			larkim.NewReplyMessageReqBodyBuilder().
+				MsgType(larkim.MsgTypeInteractive).
+				Content(cardContent.String()).
+				Uuid(utils.GenUUIDStr(uuid, 50)).
+				ReplyInThread(replyInThread).
+				Build(),
+		).
+		Build()
+
+	return sendReplyMessage(ctx, req, cardContent.GetVariables()...)
 }

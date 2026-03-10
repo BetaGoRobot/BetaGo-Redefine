@@ -8,21 +8,23 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-// Handler  消息处理器
-var Handler = &xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]{}
+// Handler 反应处理器模板（保留用于向后兼容）
+var Handler *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
 
 type (
 	OpBase = xhandler.OperatorBase[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
 	Op     = xhandler.Operator[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
 )
 
-func larkDeferFunc(ctx context.Context, err error, event *larkim.P2MessageReactionCreatedV1, metaData *xhandler.BaseMetaData) {
-	larkmsg.SendRecoveredMsg(ctx, err, *event.Event.MessageId)
+func NewReactionProcessor() *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData] {
+	return (&xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]{}).
+		OnPanic(func(ctx context.Context, err error, event *larkim.P2MessageReactionCreatedV1, metaData *xhandler.BaseMetaData) {
+			larkmsg.SendRecoveredMsg(ctx, err, *event.Event.MessageId)
+		}).
+		AddAsync(&FollowReactionOperator{}).
+		AddAsync(&RecordReactionOperator{})
 }
 
 func init() {
-	Handler = Handler.
-		OnPanic(larkDeferFunc).
-		AddAsync(&FollowReactionOperator{}).
-		AddAsync(&RecordReactionOperator{})
+	Handler = NewReactionProcessor()
 }

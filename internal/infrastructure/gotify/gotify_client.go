@@ -71,7 +71,7 @@ func SendMessage(ctx context.Context, title, msg string, priority int) {
 func (s clientSender) SendMessage(ctx context.Context, title, msg string, priority int) {
 	ctx, span := otel.T().Start(ctx, "SendMessage")
 	defer span.End()
-	logs.L().Ctx(ctx).Info("SendMessage...", zap.String("traceID", span.SpanContext().TraceID().String()))
+	logs.L().Ctx(ctx).Info("SendMessage...")
 
 	if title == "" {
 		title = "BetaGo Notification"

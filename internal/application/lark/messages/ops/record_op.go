@@ -40,22 +40,6 @@ func (r *RecordMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 	}
 }
 
-// PreRun Repeat
-//
-//	@receiver r *RepeatMsgOperator
-//	@param ctx context.Context
-//	@param event *larkim.P2MessageReceiveV1
-//	@return err error
-//	@author heyuhengmatt
-//	@update 2024-07-17 01:35:35
-func (r *RecordMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
-	defer span.End()
-	defer func() { span.RecordError(err) }()
-
-	return
-}
-
 // Run Repeat
 //
 //	@receiver r *RepeatMsgOperator
@@ -67,7 +51,7 @@ func (r *RecordMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 func (r *RecordMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
+	defer recordSpanError(span, &err)
 
 	imgSeq, err := larkimg.GetAllImageFromMsgEvent(ctx, event.Event.Message)
 	if err != nil {

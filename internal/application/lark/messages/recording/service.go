@@ -1,4 +1,4 @@
-package ops
+package recording
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	infraconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
@@ -14,7 +14,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
-
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -25,24 +24,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// Handler  消息处理器
-var Handler = &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{}
-
-type (
-	OpBase = xhandler.OperatorBase[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
-	Op     = xhandler.Operator[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
-)
-
-func larkDeferFunc(ctx context.Context, err error, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
-	larkmsg.SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
-}
-
 func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
 	go func() {
 		ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 		defer span.End()
 
 		chatID := *event.Event.Message.ChatId
+
 		userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 		if err != nil {
 			return
@@ -70,7 +58,8 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		content := larkmsg.PreGetTextMsg(ctx, event).GetText()
 		embedded, usage, err := ark_dal.EmbeddingText(ctx, content)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))
+			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err), zap.String("content", content))
+			return
 		}
 		jieba := gojieba.NewJieba()
 		defer jieba.Free()
@@ -79,7 +68,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		}
 		ws := jieba.Cut(content, true)
 		wts := jieba.Tag(content)
-		wsTags := []*xmodel.WordWithTag{}
+		wsTags := make([]*xmodel.WordWithTag, 0, len(wts))
 		for _, tag := range wts {
 			sp := strings.Split(tag, "/")
 			if sp[0] = strings.TrimSpace(sp[0]); sp[0] == "" {
@@ -87,8 +76,11 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			}
 			wsTags = append(wsTags, &xmodel.WordWithTag{Word: sp[0], Tag: sp[1]})
 		}
+
+		isCommand := metaData.IsCommandMarked()
+		mainCommand := metaData.GetMainCommand()
 		err = opensearch.InsertData(
-			ctx, infraconfig.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
+			ctx, config.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
 			&xmodel.MessageIndex{
 				MessageLog:           msgLog,
 				ChatName:             larkchat.GetChatName(ctx, chatID),
@@ -102,13 +94,14 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				UserID:               *event.Event.Sender.SenderId.OpenId,
 				UserName:             userName,
 				TokenUsage:           usage,
-				IsCommand:            metaData.IsCommand,
-				MainCommand:          metaData.MainCommand,
+				IsCommand:            isCommand,
+				MainCommand:          mainCommand,
 			},
 		)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("InsertData error", zap.Error(err))
 		}
+
 		err = retriever.Cli().AddDocuments(ctx, utils.AddrOrNil(event.Event.Message.ChatId),
 			[]schema.Document{{
 				PageContent: content,
@@ -121,7 +114,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				},
 			}})
 		if err != nil {
-			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err))
+			logs.L().Ctx(ctx).Error("AddDocuments error", zap.Error(err), zap.String("content", content))
 		}
 	}()
 }

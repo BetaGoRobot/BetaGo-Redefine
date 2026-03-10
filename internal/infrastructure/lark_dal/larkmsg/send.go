@@ -43,33 +43,36 @@ func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err e
 	if msgID == "" {
 		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
 	}
-	uuid := (msgID + "_create")
+	_, err = CreateMsgRawContentType(ctx, chatID, larkim.MsgTypeText, content, msgID, "_create")
+	return err
+}
+
+func CreateMsgRawContentType(ctx context.Context, chatID, msgType, content, msgID, suffix string) (resp *larkim.CreateMessageResp, err error) {
+	return createMsgRawContentType(ctx, chatID, msgType, content, msgID, suffix)
+}
+
+func createMsgRawContentType(ctx context.Context, chatID, msgType, content, msgID, suffix string, recordContents ...string) (resp *larkim.CreateMessageResp, err error) {
+	if msgID == "" {
+		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
+	}
+	uuid := msgID + suffix
 	if len(uuid) > 50 {
 		uuid = uuid[:50]
 	}
-	resp, err := lark_dal.Client().Im.Message.Create(ctx,
-		larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType(larkim.ReceiveIdTypeChatId).
-			Body(
-				larkim.NewCreateMessageReqBodyBuilder().
-					ReceiveId(chatID).
-					Content(content).
-					Uuid(utils.GenUUIDStr(uuid, 50)).
-					MsgType(larkim.MsgTypeText).
-					Build(),
-			).
-			Build(),
-	)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("CreateMessage", zap.Error(err))
-		return err
-	}
-	if !resp.Success() {
-		logs.L().Ctx(ctx).Error("CreateMessage", zap.String("respError", resp.Error()))
-		return errors.New(resp.Error())
-	}
-	go RecordMessage2Opensearch(ctx, resp)
-	return
+
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(larkim.ReceiveIdTypeChatId).
+		Body(
+			larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				Content(content).
+				Uuid(utils.GenUUIDStr(uuid, 50)).
+				MsgType(msgType).
+				Build(),
+		).
+		Build()
+
+	return sendCreateMessage(ctx, req, recordContents...)
 }
 
 func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {

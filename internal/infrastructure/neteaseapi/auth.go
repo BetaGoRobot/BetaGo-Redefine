@@ -70,7 +70,7 @@ func (neteaseCtx *NetEaseContext) RefreshLogin(ctx context.Context) error {
 func (neteaseCtx *NetEaseContext) GetUniKey(ctx context.Context) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	logs.L().Ctx(ctx).Info("getUniKey...", zap.String("traceID", span.SpanContext().TraceID().String()))
+	logs.L().Ctx(ctx).Info("getUniKey...")
 
 	resp, err := xrequest.Req().Post(NetEaseAPIBaseURL + "/login/qr/key")
 	if err != nil || resp.StatusCode() != 200 {
@@ -91,7 +91,7 @@ func (neteaseCtx *NetEaseContext) GetUniKey(ctx context.Context) (err error) {
 func (neteaseCtx *NetEaseContext) GetQRBase64(ctx context.Context) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	logs.L().Ctx(ctx).Info("getQRBase64...", zap.String("traceID", span.SpanContext().TraceID().String()))
+	logs.L().Ctx(ctx).Info("getQRBase64...")
 
 	resp, err := xrequest.
 		ReqTimestamp().
@@ -170,7 +170,7 @@ func (neteaseCtx *NetEaseContext) LoginNetEaseQR(ctx context.Context) (err error
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
 
-	logs.L().Ctx(ctx).Info("LoginNetEaseQR...", zap.String("traceID", span.SpanContext().TraceID().String()))
+	logs.L().Ctx(ctx).Info("LoginNetEaseQR...")
 	neteaseCtx.GetUniKey(ctx)
 
 	neteaseCtx.GetQRBase64(ctx)

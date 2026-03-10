@@ -148,7 +148,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask) {
 		return
 	}
 	if err == nil && task.NotifyResult && result != "" {
-		s.notify(ctx, task.ChatID, task.ID, fmt.Sprintf("⏲️ 定时任务执行结果\n\n任务: %s\n工具: %s\n结果: %s", task.Name, task.ToolName, result))
+		logs.L().Ctx(ctx).Info("Scheduled task execution result",
+			zap.String("task_id", task.ID),
+			zap.String("task_name", task.Name),
+			zap.String("tool_name", task.ToolName),
+			zap.String("result", result))
 	}
 }
 

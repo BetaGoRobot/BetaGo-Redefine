@@ -29,18 +29,32 @@ import (
 )
 
 func main() {
-	path := ".dev/config.toml"
-	if os.Getenv("BETAGO_CONFIG_PATH") != "" {
-		path = os.Getenv("BETAGO_CONFIG_PATH")
-	}
-	config := config.LoadFile(path)
+	cfg := loadConfig()
+	initInfrastructure(cfg)
+	initApplications()
+	go scheduleapp.StartScheduler()
+	go startLarkClient(cfg)
+	select {}
+}
 
-	otel.Init(config.OtelConfig)
+func loadConfig() *config.BaseConfig {
+	return config.LoadFile(loadConfigPath())
+}
+
+func loadConfigPath() string {
+	if path := os.Getenv("BETAGO_CONFIG_PATH"); path != "" {
+		return path
+	}
+	return ".dev/config.toml"
+}
+
+func initInfrastructure(cfg *config.BaseConfig) {
+	otel.Init(cfg.OtelConfig)
 	logs.Init() // 有先后顺序的.应当在otel之后
-	db.Init(config.DBConfig)
-	opensearch.Init(config.OpensearchConfig)
-	ark_dal.Init(config.ArkConfig)
-	miniodal.Init(config.MinioConfig)
+	db.Init(cfg.DBConfig)
+	opensearch.Init(cfg.OpensearchConfig)
+	ark_dal.Init(cfg.ArkConfig)
+	miniodal.Init(cfg.MinioConfig)
 	retriever.Init()
 	neteaseapi.Init()
 	aktool.Init()
@@ -48,32 +62,28 @@ func main() {
 	larkchunking.Init()
 	lark_dal.Init()
 	xhttp.Init()
-
-	// 初始化待办事项系统
-	todoapp.Init(db.DB())
-	// 初始化定时任务系统
-	scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
-	// 启动统一 schedule 调度器
-	go scheduleapp.StartScheduler()
-
-	go registerHandlers(config)
-	select {}
 }
 
-func registerHandlers(config *config.BaseConfig) {
-	eventHandler := dispatcher.
+func initApplications() {
+	todoapp.Init(db.DB())
+	scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
+}
+
+func newEventDispatcher() *dispatcher.EventDispatcher {
+	return dispatcher.
 		NewEventDispatcher("", "").
 		OnP2MessageReactionCreatedV1(lark.MessageReactionHandler).
 		OnP2MessageReceiveV1(lark.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(lark.AuditV6Handler).
 		OnP2CardActionTrigger(lark.CardActionHandler)
+}
 
-	cli := larkws.NewClient(config.LarkConfig.AppID, config.LarkConfig.AppSecret,
-		larkws.WithEventHandler(eventHandler),
+func startLarkClient(cfg *config.BaseConfig) {
+	cli := larkws.NewClient(cfg.LarkConfig.AppID, cfg.LarkConfig.AppSecret,
+		larkws.WithEventHandler(newEventDispatcher()),
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
 
-	// 启动客户端
 	err := cli.Start(context.Background())
 	if err != nil {
 		panic(err)

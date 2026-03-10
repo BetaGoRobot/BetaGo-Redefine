@@ -15,7 +15,9 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-type testEvent struct{}
+type testEvent struct {
+	id int
+}
 
 type gatedFetcher struct {
 	name    string
@@ -241,6 +243,57 @@ func TestRun_InitializesMetaAndExecutesHooks(t *testing.T) {
 	}
 	if !deferCalled.Load() {
 		t.Fatal("defer hook was not called")
+	}
+}
+
+func TestNewExecutionDoesNotReuseRequestState(t *testing.T) {
+	templateEvent := &testEvent{id: 1}
+	execEvent := &testEvent{id: 2}
+
+	template := (&Processor[testEvent, BaseMetaData]{}).
+		WithCtx(context.Background()).
+		WithData(templateEvent)
+
+	exec := template.NewExecution().
+		WithCtx(context.TODO()).
+		WithData(execEvent)
+
+	if template.Context == nil {
+		t.Fatal("template context should remain unchanged")
+	}
+	if template.Data() == nil {
+		t.Fatal("template data should remain unchanged")
+	}
+	if exec == template {
+		t.Fatal("NewExecution should return a cloned processor")
+	}
+	if exec.Context == template.Context {
+		t.Fatal("execution context should not alias template context")
+	}
+	if exec.Data() == template.Data() {
+		t.Fatal("execution data should not alias template data")
+	}
+}
+
+func TestBaseMetaDataAccessors(t *testing.T) {
+	meta := &BaseMetaData{}
+
+	meta.SetIsCommand(true)
+	meta.SetMainCommand("bb")
+	meta.SetSkipDone(true)
+	meta.SetExtra("result", "ok")
+
+	if !meta.IsCommandMarked() {
+		t.Fatal("expected IsCommandMarked to return true")
+	}
+	if got := meta.GetMainCommand(); got != "bb" {
+		t.Fatalf("GetMainCommand() = %q, want %q", got, "bb")
+	}
+	if !meta.ShouldSkipDone() {
+		t.Fatal("expected ShouldSkipDone to return true")
+	}
+	if got, ok := meta.GetExtra("result"); !ok || got != "ok" {
+		t.Fatalf("GetExtra() = (%q, %v), want (%q, true)", got, ok, "ok")
 	}
 }
 

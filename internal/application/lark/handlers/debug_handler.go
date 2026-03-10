@@ -257,7 +257,7 @@ func handleDebugGetID(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 
 	err = larkmsg.ReplyCardText(ctx, getIDText+*data.Event.Message.ParentId, *data.Event.Message.MessageId, "_getID", false)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err))
 		return err
 	}
 	return nil
@@ -280,7 +280,7 @@ func handleDebugGetGroupID(ctx context.Context, data *larkim.P2MessageReceiveV1,
 	if chatID != nil {
 		err := larkmsg.ReplyCardText(ctx, getGroupIDText+*chatID, *data.Event.Message.MessageId, "_getGroupID", false)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+			logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err))
 			return err
 		}
 	}
@@ -401,7 +401,7 @@ func handleDebugTrace(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 	traceIDStr := "TraceIDs:\n" + strings.Join(traceIDs, "\n")
 	err = larkmsg.ReplyCardText(ctx, traceIDStr, *data.Event.Message.MessageId, "_trace", replyInThread)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+		logs.L().Ctx(ctx).Error("ReplyMessage", zap.Error(err))
 		return err
 	}
 	return nil
@@ -477,30 +477,21 @@ func handleDebugRepeat(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 		if msg.Sender.Id == nil {
 			return errors.New("Parent message is not sent by bot")
 		}
-		repeatReq := larkim.NewCreateMessageReqBuilder().
-			Body(
-				larkim.NewCreateMessageReqBodyBuilder().
-					MsgType(*msg.MsgType).
-					Content(
-						*msg.Body.Content,
-					).
-					ReceiveId(*msg.ChatId).
-					Build(),
-			).
-			ReceiveIdType(larkim.ReceiveIdTypeChatId).
-			Build()
-		resp, err := lark_dal.Client().Im.V1.Message.Create(ctx, repeatReq)
+		_, err = larkmsg.CreateMsgRawContentType(
+			ctx,
+			*msg.ChatId,
+			*msg.MsgType,
+			*msg.Body.Content,
+			*msg.MessageId,
+			"_debug_repeat",
+		)
 		if err != nil {
-			return err
-		}
-		if !resp.Success() {
-			if strings.Contains(resp.Error(), "invalid image_key") {
-				logs.L().Ctx(ctx).Error("repeatMessage", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
+			if strings.Contains(err.Error(), "invalid image_key") {
+				logs.L().Ctx(ctx).Error("repeatMessage", zap.Error(err))
 				return nil
 			}
-			return errors.New(resp.Error())
+			return err
 		}
-		go larkmsg.RecordMessage2Opensearch(ctx, resp)
 	}
 	return nil
 }

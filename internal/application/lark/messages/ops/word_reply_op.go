@@ -2,23 +2,19 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"gorm.io/gorm"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/go_utils/reflecting"
-	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -57,14 +53,9 @@ func (r *WordReplyMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	defer span.RecordError(err)
+	defer recordSpanError(span, &err)
 
-	if command.LarkRootCommand.IsCommand(ctx, larkmsg.PreGetTextMsg(ctx, event).GetText()) {
-		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" Not Mentioned")
-	}
-
-	return
+	return skipIfCommand(ctx, r.Name(), event)
 }
 
 // Run  Repeat
@@ -76,10 +67,9 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 	defer span.End()
-	defer func() { span.RecordError(err) }()
-	defer span.RecordError(err)
+	defer recordSpanError(span, &err)
 
-	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
+	msg := messageText(ctx, event)
 	var replyItem *xmodel.ReplyNType
 	// 检查定制化逻辑, Key为GuildID, 拿到GUI了dID下的所有SubStr配置
 	ins := query.Q.QuoteReplyMsgCustom
@@ -113,34 +103,11 @@ func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageR
 		replyItem = utils.SampleSlice(replyList)
 		_, subSpan := otel.T().Start(ctx, reflecting.GetCurrentFunc())
 		defer subSpan.End()
-		if replyItem.ReplyType == xmodel.ReplyTypeText {
-			_, err := larkmsg.ReplyMsgText(ctx, replyItem.Reply, *event.Event.Message.MessageId, "_wordReply", false)
-			if err != nil {
-				logs.L().Ctx(ctx).Error("ReplyMessage error", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
-				return err
-			}
-		} else if replyItem.ReplyType == xmodel.ReplyTypeImg {
-			var msgType, content string
-			if strings.HasPrefix(replyItem.Reply, "img") {
-				msgType = larkim.MsgTypeImage
-				content, _ = sonic.MarshalString(map[string]string{
-					"image_key": replyItem.Reply,
-				})
-			} else {
-				msgType = larkim.MsgTypeSticker
-				content, _ = sonic.MarshalString(map[string]string{
-					"file_key": replyItem.Reply,
-				})
-			}
-			_, err := larkmsg.ReplyMsgRawContentType(ctx, *event.Event.Message.MessageId, msgType, content, "_wordReply", false)
-			if err != nil {
-				logs.L().Ctx(ctx).Error("ReplyMessage error", zap.Error(err), zap.String("TraceID", span.SpanContext().TraceID().String()))
-				return err
-			}
-		} else {
-			return errors.New("unknown reply type")
+		err := replyTypedMessage(ctx, *event.Event.Message.MessageId, replyItem, "_wordReply")
+		if err != nil {
+			logs.L().Ctx(ctx).Error("ReplyMessage error", zap.Error(err))
+			return err
 		}
-
 	}
 	return nil
 }
