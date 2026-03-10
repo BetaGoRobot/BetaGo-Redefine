@@ -361,9 +361,7 @@ func (s *SmartRateLimiter) setCooldownActive(ctx context.Context, chatID string,
 
 // GetChatStats 获取会话统计
 func (m *Metrics) GetChatStats(chatID string) *ChatMetrics {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return m.getChatStats(ctx, chatID)
+	return m.getChatStats(context.Background(), chatID)
 }
 
 // GetAllChatStats 获取所有会话统计
