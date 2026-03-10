@@ -57,7 +57,7 @@ func EnsureManageAllowed(ctx context.Context, actorUserID string) error {
 		}
 	}
 
-	return errors.New("only bootstrap admin or users with permission.manage@global / config.write@global can manage permissions")
+	return errors.New("only bootstrap admin or users with permission.manage@global / config.write@global can manage permissions, current actor: " + actorUserID)
 }
 
 func CurrentBootstrapAdminOpenID() string {
