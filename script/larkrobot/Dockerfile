@@ -23,7 +23,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 RUN mkdir -p /tmp/jieba_dict && \
-    cp -r /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
+    cp -r $GOPATH/pkg/mod/github.com/yanyiwu/gojieba@v1.4.6/deps/cppjieba/dict /tmp/jieba_dict
 
 COPY . .
 
