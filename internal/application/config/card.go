@@ -5,6 +5,17 @@ import (
 	"strconv"
 )
 
+type configLookupCandidate struct {
+	scope        ConfigScope
+	chatID       string
+	userID       string
+	displayScope string
+}
+
+type ConfigCardViewOptions struct {
+	BypassCache bool
+}
+
 // ==========================================
 // 配置卡片数据结构
 // ==========================================
@@ -55,11 +66,11 @@ type FeatureItem struct {
 type FeatureAction string
 
 const (
-	FeatureActionBlockChat     FeatureAction = "block_chat"
-	FeatureActionUnblockChat   FeatureAction = "unblock_chat"
-	FeatureActionBlockUser     FeatureAction = "block_user"
-	FeatureActionUnblockUser   FeatureAction = "unblock_user"
-	FeatureActionBlockChatUser FeatureAction = "block_chat_user"
+	FeatureActionBlockChat       FeatureAction = "block_chat"
+	FeatureActionUnblockChat     FeatureAction = "unblock_chat"
+	FeatureActionBlockUser       FeatureAction = "block_user"
+	FeatureActionUnblockUser     FeatureAction = "unblock_user"
+	FeatureActionBlockChatUser   FeatureAction = "block_chat_user"
 	FeatureActionUnblockChatUser FeatureAction = "unblock_chat_user"
 )
 
@@ -85,7 +96,8 @@ type FeatureActionResponse struct {
 type ConfigAction string
 
 const (
-	ConfigActionSet ConfigAction = "set"
+	ConfigActionSet    ConfigAction = "set"
+	ConfigActionDelete ConfigAction = "delete"
 )
 
 // ConfigActionRequest 配置操作请求
@@ -109,68 +121,132 @@ type ConfigActionResponse struct {
 // ==========================================
 
 // GetConfigCardData 获取配置卡片数据
-func GetConfigCardData(ctx context.Context, chatID, userID string) (*ConfigCardData, error) {
+func GetConfigCardData(ctx context.Context, viewScope, chatID, userID string) (*ConfigCardData, error) {
+	return GetConfigCardDataWithOptions(ctx, viewScope, chatID, userID, ConfigCardViewOptions{})
+}
+
+func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, userID string, options ConfigCardViewOptions) (*ConfigCardData, error) {
 	mgr := GetManager()
 	allKeys := GetAllConfigKeys()
+	viewScope = normalizeConfigScope(viewScope)
 
 	items := make([]ConfigItem, 0, len(allKeys))
 	for _, key := range allKeys {
 		item := ConfigItem{
 			Key:         string(key),
 			Description: GetConfigDescription(key),
+			ValueType:   configValueTypeForKey(key),
 			IsEditable:  true,
 			ChatID:      chatID,
 			UserID:      userID,
 		}
-
-		// 检查各优先级的配置
-		found := false
-		scopes := []struct {
-			scope ConfigScope
-			cid   string
-			uid   string
-			name  string
-		}{
-			{ScopeUser, chatID, userID, "user"},
-			{ScopeUser, "", userID, "user"},
-			{ScopeChat, chatID, "", "chat"},
-			{ScopeGlobal, "", "", "global"},
-		}
-
-		for _, s := range scopes {
-			if val, ok := mgr.getConfig(ctx, s.scope, s.cid, s.uid, key); ok {
-				item.Value = val
-				item.Scope = s.name
-				found = true
-				break
-			}
-		}
-
-		// 使用默认值
-		if !found {
-			switch key {
-			case KeyIntentRecognitionEnabled:
-				item.Value = strconv.FormatBool(mgr.GetBool(ctx, key, chatID, userID))
-				item.ValueType = "bool"
-			default:
-				item.Value = strconv.Itoa(mgr.GetInt(ctx, key, chatID, userID))
-				item.ValueType = "int"
-			}
-			item.Scope = "default"
-		} else {
-			// 设置值类型
-			switch key {
-			case KeyIntentRecognitionEnabled:
-				item.ValueType = "bool"
-			default:
-				item.ValueType = "int"
-			}
-		}
+		item.Value, item.Scope = resolveConfigDisplayValue(
+			viewScope,
+			key,
+			chatID,
+			userID,
+			func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
+				return mgr.getConfigWithOptions(ctx, candidate.scope, candidate.chatID, candidate.userID, key, ConfigReadOptions{
+					BypassCache: options.BypassCache,
+				})
+			},
+			func(key ConfigKey) string {
+				return configDefaultDisplayValue(mgr, key)
+			},
+		)
 
 		items = append(items, item)
 	}
 
 	return &ConfigCardData{Configs: items}, nil
+}
+
+func resolveConfigDisplayValue(
+	viewScope string,
+	key ConfigKey,
+	chatID, userID string,
+	lookup func(candidate configLookupCandidate, key ConfigKey) (string, bool),
+	fallback func(key ConfigKey) string,
+) (string, string) {
+	for _, candidate := range configLookupChain(viewScope, chatID, userID) {
+		if val, ok := lookup(candidate, key); ok {
+			return val, candidate.displayScope
+		}
+	}
+	return fallback(key), "default"
+}
+
+func configLookupChain(viewScope, chatID, userID string) []configLookupCandidate {
+	candidates := make([]configLookupCandidate, 0, 4)
+
+	switch normalizeConfigScope(viewScope) {
+	case "global":
+		candidates = append(candidates, configLookupCandidate{
+			scope:        ScopeGlobal,
+			displayScope: "global",
+		})
+	case "chat":
+		if chatID != "" {
+			candidates = append(candidates, configLookupCandidate{
+				scope:        ScopeChat,
+				chatID:       chatID,
+				displayScope: "chat",
+			})
+		}
+		candidates = append(candidates, configLookupCandidate{
+			scope:        ScopeGlobal,
+			displayScope: "global",
+		})
+	case "user":
+		if chatID != "" && userID != "" {
+			candidates = append(candidates, configLookupCandidate{
+				scope:        ScopeUser,
+				chatID:       chatID,
+				userID:       userID,
+				displayScope: "user",
+			})
+		}
+		if userID != "" {
+			candidates = append(candidates, configLookupCandidate{
+				scope:        ScopeUser,
+				userID:       userID,
+				displayScope: "user",
+			})
+		}
+		if chatID != "" {
+			candidates = append(candidates, configLookupCandidate{
+				scope:        ScopeChat,
+				chatID:       chatID,
+				displayScope: "chat",
+			})
+		}
+		candidates = append(candidates, configLookupCandidate{
+			scope:        ScopeGlobal,
+			displayScope: "global",
+		})
+	default:
+		return configLookupChain("chat", chatID, userID)
+	}
+
+	return candidates
+}
+
+func configValueTypeForKey(key ConfigKey) string {
+	switch key {
+	case KeyIntentRecognitionEnabled:
+		return "bool"
+	default:
+		return "int"
+	}
+}
+
+func configDefaultDisplayValue(mgr *Manager, key ConfigKey) string {
+	switch configValueTypeForKey(key) {
+	case "bool":
+		return strconv.FormatBool(mgr.getBoolFromToml(key))
+	default:
+		return strconv.Itoa(mgr.getIntFromToml(key))
+	}
 }
 
 // GetFeatureCardData 获取功能卡片数据
@@ -252,7 +328,7 @@ func HandleFeatureAction(ctx context.Context, req *FeatureActionRequest) (*Featu
 func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigActionResponse, error) {
 	mgr := GetManager()
 
-	if req.Action != ConfigActionSet {
+	if req.Action != ConfigActionSet && req.Action != ConfigActionDelete {
 		return &ConfigActionResponse{
 			Success: false,
 			Message: "未知操作: " + string(req.Action),
@@ -277,11 +353,16 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 
 	// 解析 scope
 	var scope ConfigScope
+	chatID := req.ChatID
+	userID := req.UserID
 	switch req.Scope {
 	case "global":
 		scope = ScopeGlobal
+		chatID = ""
+		userID = ""
 	case "chat":
 		scope = ScopeChat
+		userID = ""
 	case "user":
 		scope = ScopeUser
 	default:
@@ -294,6 +375,20 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 	configKey := ConfigKey(req.Key)
 	var err error
 
+	if req.Action == ConfigActionDelete {
+		err = mgr.DeleteConfig(ctx, configKey, scope, chatID, userID)
+		if err != nil {
+			return &ConfigActionResponse{
+				Success: false,
+				Message: "删除失败: " + err.Error(),
+			}, err
+		}
+		return &ConfigActionResponse{
+			Success: true,
+			Message: "已恢复默认值",
+		}, nil
+	}
+
 	switch configKey {
 	case KeyIntentRecognitionEnabled:
 		boolVal, boolErr := strconv.ParseBool(req.Value)
@@ -303,7 +398,7 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 				Message: "值必须是 true/false",
 			}, nil
 		}
-		err = mgr.SetBool(ctx, configKey, scope, req.ChatID, req.UserID, boolVal)
+		err = mgr.SetBool(ctx, configKey, scope, chatID, userID, boolVal)
 	default:
 		intVal, intErr := strconv.Atoi(req.Value)
 		if intErr != nil {
@@ -318,7 +413,7 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 				Message: "值必须在 0-100 之间",
 			}, nil
 		}
-		err = mgr.SetInt(ctx, configKey, scope, req.ChatID, req.UserID, intVal)
+		err = mgr.SetInt(ctx, configKey, scope, chatID, userID, intVal)
 	}
 
 	if err != nil {
@@ -332,32 +427,4 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 		Success: true,
 		Message: "配置已更新",
 	}, nil
-}
-
-// ==========================================
-// 便捷的卡片回调 value 生成
-// ==========================================
-
-// BuildFeatureActionValue 构建功能操作的 value
-func BuildFeatureActionValue(action FeatureAction, feature, chatID, userID string) map[string]any {
-	return map[string]any{
-		"type":    "feature_action",
-		"action":  string(action),
-		"feature": feature,
-		"chat_id": chatID,
-		"user_id": userID,
-	}
-}
-
-// BuildConfigActionValue 构建配置操作的 value
-func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, userID string) map[string]any {
-	return map[string]any{
-		"type":    "config_action",
-		"action":  string(action),
-		"key":     key,
-		"value":   value,
-		"scope":   scope,
-		"chat_id": chatID,
-		"user_id": userID,
-	}
 }

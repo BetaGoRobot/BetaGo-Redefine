@@ -243,6 +243,23 @@ func (m *Metrics) saveChatMetrics(ctx context.Context, chatID string, cm *ChatMe
 	return m.rdb.Set(ctx, key, data, 24*time.Hour).Err()
 }
 
+func (m *Metrics) getChatStats(ctx context.Context, chatID string) *ChatMetrics {
+	key := metricsKeyPrefix + chatID
+	data, err := m.rdb.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+
+	var cm ChatMetrics
+	if err := json.Unmarshal(data, &cm); err != nil {
+		return nil
+	}
+	return &cm
+}
+
 // recordCheck 记录一次频控检查
 func (s *SmartRateLimiter) recordCheck(ctx context.Context, chatID string, triggerType string, allowed bool, reason string) {
 	cm, err := s.metrics.getOrCreateChatMetrics(ctx, chatID)
@@ -319,21 +336,7 @@ func (s *SmartRateLimiter) setCooldownActive(ctx context.Context, chatID string,
 func (m *Metrics) GetChatStats(chatID string) *ChatMetrics {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	key := metricsKeyPrefix + chatID
-	data, err := m.rdb.Get(ctx, key).Bytes()
-	if err == redis.Nil {
-		return nil
-	}
-	if err != nil {
-		return nil
-	}
-
-	var cm ChatMetrics
-	if err := json.Unmarshal(data, &cm); err != nil {
-		return nil
-	}
-	return &cm
+	return m.getChatStats(ctx, chatID)
 }
 
 // GetAllChatStats 获取所有会话统计
@@ -543,6 +546,9 @@ func (s *SmartRateLimiter) getCooldown(ctx context.Context, chatID string) (time
 
 	untilUnix, _ := strconv.ParseInt(untilStr, 10, 64)
 	level, _ := strconv.Atoi(levelStr)
+	if untilUnix <= 0 {
+		return time.Time{}, level, nil
+	}
 
 	return time.Unix(untilUnix, 0), level, nil
 }
@@ -565,6 +571,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 	if now.Before(cooldownUntil) {
 		remaining := cooldownUntil.Sub(now).Seconds()
 		reason = fmt.Sprintf("冷却中，剩余 %.0f 秒", remaining)
+		s.setCooldownActive(ctx, chatID, true)
 		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
 		return false, reason
 	}
@@ -604,6 +611,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 		cooldownDuration := time.Duration(s.config.CooldownBaseSeconds*math.Pow(2, float64(newLevel-1))) * time.Second
 		cooldownDuration = minDuration(cooldownDuration, time.Duration(s.config.MaxCooldownSeconds)*time.Second)
 		_ = s.setCooldown(ctx, chatID, now.Add(cooldownDuration), newLevel)
+		s.setCooldownActive(ctx, chatID, true)
 
 		reason = fmt.Sprintf("1小时内已发送 %.0f 条 (上限 %d)，冷却 %.0f 秒", messages1h, max1h, cooldownDuration.Seconds())
 		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
@@ -619,6 +627,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 		cooldownDuration := time.Duration(s.config.CooldownBaseSeconds*math.Pow(2, float64(newLevel-1))) * time.Second
 		cooldownDuration = minDuration(cooldownDuration, time.Duration(s.config.MaxCooldownSeconds)*time.Second)
 		_ = s.setCooldown(ctx, chatID, now.Add(cooldownDuration), newLevel)
+		s.setCooldownActive(ctx, chatID, true)
 
 		reason = fmt.Sprintf("24小时内已发送 %.0f 条 (上限 %d)，冷却 %.0f 秒", messages24h, max24h, cooldownDuration.Seconds())
 		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
@@ -633,6 +642,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 		cooldownDuration := time.Duration(s.config.CooldownBaseSeconds*s.config.BurstPenaltyFactor*math.Pow(2, float64(newLevel-1))) * time.Second
 		cooldownDuration = minDuration(cooldownDuration, time.Duration(s.config.MaxCooldownSeconds)*time.Second)
 		_ = s.setCooldown(ctx, chatID, now.Add(cooldownDuration), newLevel)
+		s.setCooldownActive(ctx, chatID, true)
 
 		reason = fmt.Sprintf("检测到发送爆发 (最近 %.0f 秒已发送 %d 条)，冷却 %.0f 秒", s.config.BurstWindowSeconds, int(burstCount), cooldownDuration.Seconds())
 		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
@@ -643,6 +653,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 	if cooldownLevel > 0 {
 		_ = s.setCooldown(ctx, chatID, time.Time{}, max(cooldownLevel-1, 0))
 	}
+	s.setCooldownActive(ctx, chatID, false)
 
 	s.recordCheck(ctx, chatID, string(triggerType), true, "允许发送")
 	return true, "允许发送"
@@ -699,17 +710,11 @@ func (s *SmartRateLimiter) Record(ctx context.Context, chatID string, triggerTyp
 
 // GetStats 获取统计信息
 func (s *SmartRateLimiter) GetStats(ctx context.Context, chatID string) *ChatStats {
-	now := time.Now()
-	stats, _ := s.getOrCreateChatStats(ctx, chatID)
-	hourly, _ := s.getHourlyActivity(ctx, chatID)
-	recentSends, _ := s.getRecentSends(ctx, chatID)
-
-	s.updateDerivedStats(stats, hourly, recentSends, now)
-
-	// 附加最近发送记录（返回用，不存储）
-	statsCopy := *stats
-	statsCopy.RecentSends = recentSends
-	return &statsCopy
+	snapshot := s.GetDetailSnapshot(ctx, chatID)
+	if snapshot == nil {
+		return &ChatStats{ChatID: chatID}
+	}
+	return snapshot.Stats
 }
 
 func (s *SmartRateLimiter) updateDerivedStats(stats *ChatStats, hourly [24]HourlyStats, recentSends []SendRecord, now time.Time) {
@@ -875,4 +880,11 @@ func GetMetrics() *Metrics {
 func SetConfig(config *Config) {
 	Get()
 	globalLimiter.config = config
+}
+
+func (s *SmartRateLimiter) CurrentConfig() *Config {
+	if s == nil {
+		return DefaultConfig()
+	}
+	return cloneConfig(s.config)
 }

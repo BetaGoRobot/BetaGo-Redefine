@@ -21,12 +21,12 @@ type CardBaseVars struct {
 }
 
 type RefreshObj struct {
-	Type    string `json:"type"`
+	Action  string `json:"action"`
 	Command string `json:"command"`
 }
 
 type WithDrawObj struct {
-	Type string `json:"type"`
+	Action string `json:"action"`
 }
 
 type ToneData struct {
