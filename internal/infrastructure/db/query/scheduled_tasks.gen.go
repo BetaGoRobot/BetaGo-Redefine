@@ -29,8 +29,6 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 	_scheduledTask.Name = field.NewString(tableName, "name")
 	_scheduledTask.Type = field.NewString(tableName, "type")
 	_scheduledTask.ChatID = field.NewString(tableName, "chat_id")
-	_scheduledTask.AppID = field.NewString(tableName, "app_id")
-	_scheduledTask.BotOpenID = field.NewString(tableName, "bot_open_id")
 	_scheduledTask.CreatorID = field.NewString(tableName, "creator_id")
 	_scheduledTask.ToolName = field.NewString(tableName, "tool_name")
 	_scheduledTask.ToolArgs = field.NewString(tableName, "tool_args")
@@ -47,6 +45,8 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 	_scheduledTask.RunCount = field.NewInt64(tableName, "run_count")
 	_scheduledTask.CreatedAt = field.NewTime(tableName, "created_at")
 	_scheduledTask.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_scheduledTask.AppID = field.NewString(tableName, "app_id")
+	_scheduledTask.BotOpenID = field.NewString(tableName, "bot_open_id")
 
 	_scheduledTask.fillFieldMap()
 
@@ -61,8 +61,6 @@ type scheduledTask struct {
 	Name          field.String
 	Type          field.String // 调度类型: once, cron
 	ChatID        field.String
-	AppID         field.String
-	BotOpenID     field.String
 	CreatorID     field.String
 	ToolName      field.String // 要执行的工具名称
 	ToolArgs      field.String // 工具参数 JSON
@@ -79,6 +77,8 @@ type scheduledTask struct {
 	RunCount      field.Int64
 	CreatedAt     field.Time
 	UpdatedAt     field.Time
+	AppID         field.String // 创建该调度任务的飞书应用 AppID
+	BotOpenID     field.String // 创建该调度任务的机器人 OpenID
 
 	fieldMap map[string]field.Expr
 }
@@ -99,8 +99,6 @@ func (s *scheduledTask) updateTableName(table string) *scheduledTask {
 	s.Name = field.NewString(table, "name")
 	s.Type = field.NewString(table, "type")
 	s.ChatID = field.NewString(table, "chat_id")
-	s.AppID = field.NewString(table, "app_id")
-	s.BotOpenID = field.NewString(table, "bot_open_id")
 	s.CreatorID = field.NewString(table, "creator_id")
 	s.ToolName = field.NewString(table, "tool_name")
 	s.ToolArgs = field.NewString(table, "tool_args")
@@ -117,6 +115,8 @@ func (s *scheduledTask) updateTableName(table string) *scheduledTask {
 	s.RunCount = field.NewInt64(table, "run_count")
 	s.CreatedAt = field.NewTime(table, "created_at")
 	s.UpdatedAt = field.NewTime(table, "updated_at")
+	s.AppID = field.NewString(table, "app_id")
+	s.BotOpenID = field.NewString(table, "bot_open_id")
 
 	s.fillFieldMap()
 
@@ -150,8 +150,6 @@ func (s *scheduledTask) fillFieldMap() {
 	s.fieldMap["name"] = s.Name
 	s.fieldMap["type"] = s.Type
 	s.fieldMap["chat_id"] = s.ChatID
-	s.fieldMap["app_id"] = s.AppID
-	s.fieldMap["bot_open_id"] = s.BotOpenID
 	s.fieldMap["creator_id"] = s.CreatorID
 	s.fieldMap["tool_name"] = s.ToolName
 	s.fieldMap["tool_args"] = s.ToolArgs
@@ -168,6 +166,8 @@ func (s *scheduledTask) fillFieldMap() {
 	s.fieldMap["run_count"] = s.RunCount
 	s.fieldMap["created_at"] = s.CreatedAt
 	s.fieldMap["updated_at"] = s.UpdatedAt
+	s.fieldMap["app_id"] = s.AppID
+	s.fieldMap["bot_open_id"] = s.BotOpenID
 }
 
 func (s scheduledTask) clone(db *gorm.DB) scheduledTask {

@@ -22,8 +22,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const onceTaskLeaseDuration = 2 * time.Minute
-const onceTaskRetryDelay = time.Minute
+const (
+	onceTaskLeaseDuration = 2 * time.Minute
+	onceTaskRetryDelay    = time.Minute
+)
 
 var (
 	globalService TaskService = noopService{reason: "schedule service not initialized"}

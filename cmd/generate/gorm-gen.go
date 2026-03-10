@@ -53,6 +53,11 @@ func main() {
 				gen.FieldType("due_at", "*time.Time"),
 				gen.FieldType("completed_at", "*time.Time"),
 			))
+		case "scheduled_tasks":
+			tables = append(tables, g.GenerateModel(tableName,
+				gen.FieldType("run_at", "*time.Time"),
+				gen.FieldType("last_run_at", "*time.Time"),
+			))
 		default:
 			tables = append(tables, g.GenerateModel(tableName))
 		}

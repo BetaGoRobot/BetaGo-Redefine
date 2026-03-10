@@ -16,8 +16,6 @@ const TableNameTodoItem = "todo_items"
 type TodoItem struct {
 	ID          string         `gorm:"column:id;primaryKey" json:"id"`
 	ChatID      string         `gorm:"column:chat_id;not null" json:"chat_id"`
-	AppID       string         `gorm:"column:app_id;not null;default:''" json:"app_id"`
-	BotOpenID   string         `gorm:"column:bot_open_id;not null;default:''" json:"bot_open_id"`
 	CreatorID   string         `gorm:"column:creator_id;not null" json:"creator_id"`
 	CreatorName string         `gorm:"column:creator_name" json:"creator_name"`
 	AssigneeID  string         `gorm:"column:assignee_id" json:"assignee_id"`
@@ -30,6 +28,8 @@ type TodoItem struct {
 	Tags        pq.StringArray `gorm:"column:tags;type:text[]" json:"tags"`
 	CreatedAt   time.Time      `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt   time.Time      `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	AppID       string         `gorm:"column:app_id;not null;comment:创建该待办的飞书应用 AppID" json:"app_id"`           // 创建该待办的飞书应用 AppID
+	BotOpenID   string         `gorm:"column:bot_open_id;not null;comment:创建该待办的机器人 OpenID" json:"bot_open_id"` // 创建该待办的机器人 OpenID
 }
 
 // TableName TodoItem's table name

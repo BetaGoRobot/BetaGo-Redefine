@@ -45,17 +45,21 @@ type resumeScheduleArgs struct {
 	ID string `json:"id"`
 }
 
-type createScheduleHandler struct{}
-type listSchedulesHandler struct{}
-type deleteScheduleHandler struct{}
-type pauseScheduleHandler struct{}
-type resumeScheduleHandler struct{}
+type (
+	createScheduleHandler struct{}
+	listSchedulesHandler  struct{}
+	deleteScheduleHandler struct{}
+	pauseScheduleHandler  struct{}
+	resumeScheduleHandler struct{}
+)
 
-var CreateSchedule createScheduleHandler
-var ListSchedules listSchedulesHandler
-var DeleteSchedule deleteScheduleHandler
-var PauseSchedule pauseScheduleHandler
-var ResumeSchedule resumeScheduleHandler
+var (
+	CreateSchedule createScheduleHandler
+	ListSchedules  listSchedulesHandler
+	DeleteSchedule deleteScheduleHandler
+	PauseSchedule  pauseScheduleHandler
+	ResumeSchedule resumeScheduleHandler
+)
 
 func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	xcommand.RegisterTool(ins, CreateSchedule)

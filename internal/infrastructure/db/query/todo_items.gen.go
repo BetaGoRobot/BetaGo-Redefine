@@ -27,8 +27,6 @@ func newTodoItem(db *gorm.DB, opts ...gen.DOOption) todoItem {
 	_todoItem.ALL = field.NewAsterisk(tableName)
 	_todoItem.ID = field.NewString(tableName, "id")
 	_todoItem.ChatID = field.NewString(tableName, "chat_id")
-	_todoItem.AppID = field.NewString(tableName, "app_id")
-	_todoItem.BotOpenID = field.NewString(tableName, "bot_open_id")
 	_todoItem.CreatorID = field.NewString(tableName, "creator_id")
 	_todoItem.CreatorName = field.NewString(tableName, "creator_name")
 	_todoItem.AssigneeID = field.NewString(tableName, "assignee_id")
@@ -41,6 +39,8 @@ func newTodoItem(db *gorm.DB, opts ...gen.DOOption) todoItem {
 	_todoItem.Tags = field.NewField(tableName, "tags")
 	_todoItem.CreatedAt = field.NewTime(tableName, "created_at")
 	_todoItem.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_todoItem.AppID = field.NewString(tableName, "app_id")
+	_todoItem.BotOpenID = field.NewString(tableName, "bot_open_id")
 
 	_todoItem.fillFieldMap()
 
@@ -53,8 +53,6 @@ type todoItem struct {
 	ALL         field.Asterisk
 	ID          field.String
 	ChatID      field.String
-	AppID       field.String
-	BotOpenID   field.String
 	CreatorID   field.String
 	CreatorName field.String
 	AssigneeID  field.String
@@ -67,6 +65,8 @@ type todoItem struct {
 	Tags        field.Field
 	CreatedAt   field.Time
 	UpdatedAt   field.Time
+	AppID       field.String // 创建该待办的飞书应用 AppID
+	BotOpenID   field.String // 创建该待办的机器人 OpenID
 
 	fieldMap map[string]field.Expr
 }
@@ -85,8 +85,6 @@ func (t *todoItem) updateTableName(table string) *todoItem {
 	t.ALL = field.NewAsterisk(table)
 	t.ID = field.NewString(table, "id")
 	t.ChatID = field.NewString(table, "chat_id")
-	t.AppID = field.NewString(table, "app_id")
-	t.BotOpenID = field.NewString(table, "bot_open_id")
 	t.CreatorID = field.NewString(table, "creator_id")
 	t.CreatorName = field.NewString(table, "creator_name")
 	t.AssigneeID = field.NewString(table, "assignee_id")
@@ -99,6 +97,8 @@ func (t *todoItem) updateTableName(table string) *todoItem {
 	t.Tags = field.NewField(table, "tags")
 	t.CreatedAt = field.NewTime(table, "created_at")
 	t.UpdatedAt = field.NewTime(table, "updated_at")
+	t.AppID = field.NewString(table, "app_id")
+	t.BotOpenID = field.NewString(table, "bot_open_id")
 
 	t.fillFieldMap()
 
@@ -126,8 +126,6 @@ func (t *todoItem) fillFieldMap() {
 	t.fieldMap = make(map[string]field.Expr, 16)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["chat_id"] = t.ChatID
-	t.fieldMap["app_id"] = t.AppID
-	t.fieldMap["bot_open_id"] = t.BotOpenID
 	t.fieldMap["creator_id"] = t.CreatorID
 	t.fieldMap["creator_name"] = t.CreatorName
 	t.fieldMap["assignee_id"] = t.AssigneeID
@@ -140,6 +138,8 @@ func (t *todoItem) fillFieldMap() {
 	t.fieldMap["tags"] = t.Tags
 	t.fieldMap["created_at"] = t.CreatedAt
 	t.fieldMap["updated_at"] = t.UpdatedAt
+	t.fieldMap["app_id"] = t.AppID
+	t.fieldMap["bot_open_id"] = t.BotOpenID
 }
 
 func (t todoItem) clone(db *gorm.DB) todoItem {

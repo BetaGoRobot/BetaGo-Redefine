@@ -49,6 +49,7 @@ var (
 	StickerMapping        *stickerMapping
 	TemplateVersion       *templateVersion
 	TodoItem              *todoItem
+	TodoReminder          *todoReminder
 )
 
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
@@ -85,6 +86,7 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	StickerMapping = &Q.StickerMapping
 	TemplateVersion = &Q.TemplateVersion
 	TodoItem = &Q.TodoItem
+	TodoReminder = &Q.TodoReminder
 }
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
@@ -122,6 +124,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		StickerMapping:        newStickerMapping(db, opts...),
 		TemplateVersion:       newTemplateVersion(db, opts...),
 		TodoItem:              newTodoItem(db, opts...),
+		TodoReminder:          newTodoReminder(db, opts...),
 	}
 }
 
@@ -160,6 +163,7 @@ type Query struct {
 	StickerMapping        stickerMapping
 	TemplateVersion       templateVersion
 	TodoItem              todoItem
+	TodoReminder          todoReminder
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -199,6 +203,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		StickerMapping:        q.StickerMapping.clone(db),
 		TemplateVersion:       q.TemplateVersion.clone(db),
 		TodoItem:              q.TodoItem.clone(db),
+		TodoReminder:          q.TodoReminder.clone(db),
 	}
 }
 
@@ -245,6 +250,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		StickerMapping:        q.StickerMapping.replaceDB(db),
 		TemplateVersion:       q.TemplateVersion.replaceDB(db),
 		TodoItem:              q.TodoItem.replaceDB(db),
+		TodoReminder:          q.TodoReminder.replaceDB(db),
 	}
 }
 
@@ -281,6 +287,7 @@ type queryCtx struct {
 	StickerMapping        IStickerMappingDo
 	TemplateVersion       ITemplateVersionDo
 	TodoItem              ITodoItemDo
+	TodoReminder          ITodoReminderDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
@@ -317,6 +324,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		StickerMapping:        q.StickerMapping.WithContext(ctx),
 		TemplateVersion:       q.TemplateVersion.WithContext(ctx),
 		TodoItem:              q.TodoItem.WithContext(ctx),
+		TodoReminder:          q.TodoReminder.WithContext(ctx),
 	}
 }
 
