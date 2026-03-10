@@ -44,20 +44,21 @@ func Upsert(ctx context.Context, grant Grant) error {
 	}
 	fields := permissionGrantFieldSet(q)
 
-	existing, err := applyExactGrantFilter(q.PermissionGrant.WithContext(ctx).Unscoped(), fields, normalized).Take()
+	res, err := applyExactGrantFilter(q.PermissionGrant.WithContext(ctx).Unscoped(), fields, normalized).Find()
+
 	switch {
-	case err == nil:
+	case len(res) > 0 && err == nil:
 		updates := map[string]any{
 			"remark":     normalized.Remark,
 			"updated_at": time.Now(),
 			"deleted_at": nil,
 		}
 		_, err = q.PermissionGrant.WithContext(ctx).Unscoped().
-			Where(fields.ID.Eq(existing.ID)).
+			Where(fields.ID.Eq(res[0].ID)).
 			Updates(updates)
 		otel.RecordError(span, err)
 		return err
-	case errors.Is(err, gorm.ErrRecordNotFound):
+	case len(res) == 0 || errors.Is(err, gorm.ErrRecordNotFound):
 		err = q.PermissionGrant.WithContext(ctx).Create(toPermissionGrantModel(normalized))
 		otel.RecordError(span, err)
 		return err
