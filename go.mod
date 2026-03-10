@@ -37,7 +37,7 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/tmc/langchaingo v0.1.14
 	github.com/volcengine/volcengine-go-sdk v1.2.16
-	github.com/yanyiwu/gojieba v1.4.6
+	github.com/yanyiwu/gojieba v1.4.7
 	go.opentelemetry.io/contrib/bridges/otelzap v0.16.0
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.17.0
