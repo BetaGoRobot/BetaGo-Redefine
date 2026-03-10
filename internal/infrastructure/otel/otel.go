@@ -2,10 +2,12 @@ package otel
 
 import (
 	"context"
+	"errors"
 	stdlog "log"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -66,7 +68,9 @@ func RecordError(span trace.Span, err error) {
 		return
 	}
 	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	if !errors.Is(err, xerror.ErrStageSkip) {
+		span.SetStatus(codes.Error, err.Error())
+	}
 }
 
 func RecordErrorPtr(span trace.Span, err *error) {
