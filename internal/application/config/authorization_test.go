@@ -1,0 +1,101 @@
+package config
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
+)
+
+func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
+	oldChecker := permissionGrantExists
+	defer func() { permissionGrantExists = oldChecker }()
+
+	var calledWith permissioninfra.GrantFilter
+	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
+		calledWith = filter
+		return true, nil
+	}
+
+	if err := ensureGlobalConfigMutationAllowed(context.Background(), "ou_actor", ""); err != nil {
+		t.Fatalf("ensureGlobalConfigMutationAllowed() error = %v", err)
+	}
+	if calledWith.SubjectID != "ou_actor" {
+		t.Fatalf("expected checker to use actor user id, got %q", calledWith.SubjectID)
+	}
+	if calledWith.PermissionPoint != permissionPointConfigWrite {
+		t.Fatalf("expected permission point %q, got %q", permissionPointConfigWrite, calledWith.PermissionPoint)
+	}
+	if calledWith.Scope != string(ScopeGlobal) {
+		t.Fatalf("expected global scope, got %q", calledWith.Scope)
+	}
+	if calledWith.SubjectType != permissioninfra.SubjectTypeUser {
+		t.Fatalf("expected subject type %q, got %q", permissioninfra.SubjectTypeUser, calledWith.SubjectType)
+	}
+	if calledWith.ResourceChatID != "" || calledWith.ResourceUserID != "" {
+		t.Fatalf("expected empty resource ids for global scope, got chat=%q user=%q", calledWith.ResourceChatID, calledWith.ResourceUserID)
+	}
+}
+
+func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestUserID(t *testing.T) {
+	oldChecker := permissionGrantExists
+	defer func() { permissionGrantExists = oldChecker }()
+
+	calledWith := ""
+	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
+		calledWith = filter.SubjectID
+		return true, nil
+	}
+
+	if err := ensureGlobalConfigMutationAllowed(context.Background(), "", "ou_fallback"); err != nil {
+		t.Fatalf("ensureGlobalConfigMutationAllowed() error = %v", err)
+	}
+	if calledWith != "ou_fallback" {
+		t.Fatalf("expected checker to use fallback user id, got %q", calledWith)
+	}
+}
+
+func TestEnsureGlobalConfigMutationAllowedRejectsMissingPermissionGrant(t *testing.T) {
+	oldChecker := permissionGrantExists
+	defer func() { permissionGrantExists = oldChecker }()
+
+	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
+		return false, nil
+	}
+
+	err := ensureGlobalConfigMutationAllowed(context.Background(), "ou_actor", "")
+	if err == nil {
+		t.Fatalf("expected permission error")
+	}
+	if err.Error() != "only users with permission point config.write@global can modify global config" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureGlobalConfigMutationAllowedPropagatesLookupError(t *testing.T) {
+	oldChecker := permissionGrantExists
+	defer func() { permissionGrantExists = oldChecker }()
+
+	permissionGrantExists = func(ctx context.Context, filter permissioninfra.GrantFilter) (bool, error) {
+		return false, errors.New("lookup failed")
+	}
+
+	err := ensureGlobalConfigMutationAllowed(context.Background(), "ou_actor", "")
+	if err == nil {
+		t.Fatalf("expected lookup error")
+	}
+	if err.Error() != "lookup failed" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureGlobalConfigMutationAllowedRejectsMissingActorIdentity(t *testing.T) {
+	err := ensureGlobalConfigMutationAllowed(context.Background(), " ", " ")
+	if err == nil {
+		t.Fatalf("expected identity error")
+	}
+	if err.Error() != "global config modification requires operator identity" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

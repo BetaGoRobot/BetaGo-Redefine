@@ -102,12 +102,13 @@ const (
 
 // ConfigActionRequest 配置操作请求
 type ConfigActionRequest struct {
-	Action ConfigAction `json:"action"`
-	Key    string       `json:"key"`
-	Value  string       `json:"value"`
-	Scope  string       `json:"scope"`
-	ChatID string       `json:"chat_id"`
-	UserID string       `json:"user_id"`
+	Action      ConfigAction `json:"action"`
+	Key         string       `json:"key"`
+	Value       string       `json:"value"`
+	Scope       string       `json:"scope"`
+	ChatID      string       `json:"chat_id"`
+	UserID      string       `json:"user_id"`
+	ActorUserID string       `json:"actor_user_id"`
 }
 
 // ConfigActionResponse 配置操作响应
@@ -357,6 +358,12 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 	userID := req.UserID
 	switch req.Scope {
 	case "global":
+		if err := ensureGlobalConfigMutationAllowed(ctx, req.ActorUserID, req.UserID); err != nil {
+			return &ConfigActionResponse{
+				Success: false,
+				Message: err.Error(),
+			}, err
+		}
 		scope = ScopeGlobal
 		chatID = ""
 		userID = ""

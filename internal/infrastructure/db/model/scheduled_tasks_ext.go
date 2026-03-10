@@ -19,7 +19,7 @@ const (
 	ScheduleTaskDefaultTimezone = "Asia/Shanghai"
 )
 
-func NewScheduledTask(name, taskType, chatID, creatorID, toolName, toolArgs, timezone string) *ScheduledTask {
+func NewScheduledTask(name, taskType, chatID, creatorID, toolName, toolArgs, timezone, appID, botOpenID string) *ScheduledTask {
 	now := time.Now()
 	if timezone == "" {
 		timezone = ScheduleTaskDefaultTimezone
@@ -29,6 +29,8 @@ func NewScheduledTask(name, taskType, chatID, creatorID, toolName, toolArgs, tim
 		Name:      name,
 		Type:      taskType,
 		ChatID:    chatID,
+		AppID:     appID,
+		BotOpenID: botOpenID,
 		CreatorID: creatorID,
 		ToolName:  toolName,
 		ToolArgs:  toolArgs,
@@ -83,6 +85,8 @@ func (t *ScheduledTask) ValidateBasic() error {
 		return fmt.Errorf("task name is required")
 	case t.ChatID == "":
 		return fmt.Errorf("chat_id is required")
+	case t.AppID == "" && t.BotOpenID == "":
+		return fmt.Errorf("at least one of app_id or bot_open_id is required")
 	case t.CreatorID == "":
 		return fmt.Errorf("creator_id is required")
 	case t.ToolName == "":

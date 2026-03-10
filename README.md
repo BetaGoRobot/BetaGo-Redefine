@@ -110,6 +110,7 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
 
 - `todo_items`：Todo 能力
 - `dynamic_configs`、`function_enablings`：配置和功能开关
+- `permission_grants`：权限点授权，当前用于约束 `config.write@global`
 - `interaction_stats`：互动统计
 - `react_image_meterials`、`sticker_mappings`、`lark_imgs`：图片/贴纸素材能力
 - `private_modes`、`msg_trace_logs`、`template_versions`：隐私模式、链路追踪、卡片模板增强
@@ -121,12 +122,28 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
 - `003_upgrade_scheduled_tasks_to_unified_schedule.sql`
 - `004_cleanup_legacy_todo_tables.sql`
 - `005_drop_legacy_cron_cmd_tasks.sql`
+- `006_add_permission_grants.sql`
+- `007_add_bot_identity_to_tasks.sql`
 
 如果数据库 schema 发生变化，可以使用下面的命令重新生成 GORM model/query：
 
 ```bash
 go run ./cmd/generate
 ```
+
+如果你要把历史库收敛到“当前运行时代码实际使用的 PG 表”，可以直接使用仓库内脚本迁移到新 schema：
+
+```bash
+DSN='postgres://user:pass@host:5432/dbname?sslmode=disable' \
+NEW_SCHEMA=betago_clean \
+./script/migrate_to_new_schema.sh
+```
+
+相关脚本：
+
+- `script/migrate_to_new_schema.sh`：识别候选活跃表、建新 schema、复制数据、修正序列、校验行数
+- `script/sql/copy_active_tables.sql`：按显式列名复制活跃表
+- `script/sql/validate_active_tables.sql`：校验旧/新 schema 的行数与 `prompt_template_args` 种子数据
 
 ### 4. 本地运行
 
@@ -233,6 +250,7 @@ GitHub Actions 已配置以下工作流：
 ## 进一步阅读
 
 - [`docs/todo_system_design.md`](./docs/todo_system_design.md)
+- [`docs/permission_scope_constraints.md`](./docs/permission_scope_constraints.md)
 - [`internal/application/lark/cardaction/README.md`](./internal/application/lark/cardaction/README.md)
 - [`internal/application/lark/ratelimit/README.md`](./internal/application/lark/ratelimit/README.md)
 

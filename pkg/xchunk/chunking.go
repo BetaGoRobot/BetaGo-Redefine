@@ -36,11 +36,11 @@ const (
 	MAX_CHUNK_SIZE = 50
 )
 
-const (
+var (
 	// redisSessionKeyPrefix is the prefix for the session buffer hash
-	redisSessionKeyPrefix = "chat:session:"
+	redisSessionKeyPrefix = "chat:session:" + config.Get().LarkConfig.AppID + ":"
 	// redisActiveSessionsKey is the key for the sorted set indexing active sessions
-	redisActiveSessionsKey = "active_sessions"
+	redisActiveSessionsKey = "active_sessions:" + config.Get().LarkConfig.AppID
 )
 
 // SessionBuffer 代表在Redis中存储的会话缓冲区

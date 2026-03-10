@@ -27,6 +27,8 @@ func newTodoItem(db *gorm.DB, opts ...gen.DOOption) todoItem {
 	_todoItem.ALL = field.NewAsterisk(tableName)
 	_todoItem.ID = field.NewString(tableName, "id")
 	_todoItem.ChatID = field.NewString(tableName, "chat_id")
+	_todoItem.AppID = field.NewString(tableName, "app_id")
+	_todoItem.BotOpenID = field.NewString(tableName, "bot_open_id")
 	_todoItem.CreatorID = field.NewString(tableName, "creator_id")
 	_todoItem.CreatorName = field.NewString(tableName, "creator_name")
 	_todoItem.AssigneeID = field.NewString(tableName, "assignee_id")
@@ -51,6 +53,8 @@ type todoItem struct {
 	ALL         field.Asterisk
 	ID          field.String
 	ChatID      field.String
+	AppID       field.String
+	BotOpenID   field.String
 	CreatorID   field.String
 	CreatorName field.String
 	AssigneeID  field.String
@@ -81,6 +85,8 @@ func (t *todoItem) updateTableName(table string) *todoItem {
 	t.ALL = field.NewAsterisk(table)
 	t.ID = field.NewString(table, "id")
 	t.ChatID = field.NewString(table, "chat_id")
+	t.AppID = field.NewString(table, "app_id")
+	t.BotOpenID = field.NewString(table, "bot_open_id")
 	t.CreatorID = field.NewString(table, "creator_id")
 	t.CreatorName = field.NewString(table, "creator_name")
 	t.AssigneeID = field.NewString(table, "assignee_id")
@@ -117,9 +123,11 @@ func (t *todoItem) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (t *todoItem) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 14)
+	t.fieldMap = make(map[string]field.Expr, 16)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["chat_id"] = t.ChatID
+	t.fieldMap["app_id"] = t.AppID
+	t.fieldMap["bot_open_id"] = t.BotOpenID
 	t.fieldMap["creator_id"] = t.CreatorID
 	t.fieldMap["creator_name"] = t.CreatorName
 	t.fieldMap["assignee_id"] = t.AssigneeID

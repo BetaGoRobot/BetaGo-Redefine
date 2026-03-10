@@ -29,6 +29,8 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 	_scheduledTask.Name = field.NewString(tableName, "name")
 	_scheduledTask.Type = field.NewString(tableName, "type")
 	_scheduledTask.ChatID = field.NewString(tableName, "chat_id")
+	_scheduledTask.AppID = field.NewString(tableName, "app_id")
+	_scheduledTask.BotOpenID = field.NewString(tableName, "bot_open_id")
 	_scheduledTask.CreatorID = field.NewString(tableName, "creator_id")
 	_scheduledTask.ToolName = field.NewString(tableName, "tool_name")
 	_scheduledTask.ToolArgs = field.NewString(tableName, "tool_args")
@@ -59,6 +61,8 @@ type scheduledTask struct {
 	Name          field.String
 	Type          field.String // 调度类型: once, cron
 	ChatID        field.String
+	AppID         field.String
+	BotOpenID     field.String
 	CreatorID     field.String
 	ToolName      field.String // 要执行的工具名称
 	ToolArgs      field.String // 工具参数 JSON
@@ -95,6 +99,8 @@ func (s *scheduledTask) updateTableName(table string) *scheduledTask {
 	s.Name = field.NewString(table, "name")
 	s.Type = field.NewString(table, "type")
 	s.ChatID = field.NewString(table, "chat_id")
+	s.AppID = field.NewString(table, "app_id")
+	s.BotOpenID = field.NewString(table, "bot_open_id")
 	s.CreatorID = field.NewString(table, "creator_id")
 	s.ToolName = field.NewString(table, "tool_name")
 	s.ToolArgs = field.NewString(table, "tool_args")
@@ -139,11 +145,13 @@ func (s *scheduledTask) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (s *scheduledTask) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 20)
+	s.fieldMap = make(map[string]field.Expr, 22)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["name"] = s.Name
 	s.fieldMap["type"] = s.Type
 	s.fieldMap["chat_id"] = s.ChatID
+	s.fieldMap["app_id"] = s.AppID
+	s.fieldMap["bot_open_id"] = s.BotOpenID
 	s.fieldMap["creator_id"] = s.CreatorID
 	s.fieldMap["tool_name"] = s.ToolName
 	s.fieldMap["tool_args"] = s.ToolArgs

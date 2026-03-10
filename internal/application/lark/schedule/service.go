@@ -3,12 +3,14 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	scheduleinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schedule"
@@ -28,6 +30,8 @@ var (
 	warnOnce      sync.Once
 )
 
+var errScheduleServiceUnavailable = errors.New("schedule service unavailable")
+
 type TaskService interface {
 	Available() bool
 	AvailableTools() []string
@@ -45,6 +49,7 @@ type TaskService interface {
 type Service struct {
 	repo     *scheduleinfra.Repository
 	executor *ToolExecutor
+	identity botidentity.Identity
 }
 
 type noopService struct {
@@ -85,9 +90,15 @@ func Init(db *gorm.DB, schedulableTools *toolkit.Impl[larkim.P2MessageReceiveV1]
 		setNoopService("schedule tool registry unavailable")
 		return
 	}
+	identity := botidentity.Current()
+	if err := identity.Validate(); err != nil {
+		setNoopService(err.Error())
+		return
+	}
 	globalService = &Service{
-		repo:     scheduleinfra.NewRepository(db),
-		executor: NewToolExecutor(schedulableTools),
+		repo:     scheduleinfra.NewRepository(db, identity),
+		executor: NewToolExecutor(schedulableTools, identity),
+		identity: identity,
 	}
 }
 
@@ -104,12 +115,12 @@ func setNoopService(reason string) {
 	})
 }
 
-func NewService(repo *scheduleinfra.Repository, executor *ToolExecutor) *Service {
-	return &Service{repo: repo, executor: executor}
+func NewService(repo *scheduleinfra.Repository, executor *ToolExecutor, identity botidentity.Identity) *Service {
+	return &Service{repo: repo, executor: executor, identity: identity}
 }
 
 func (s *Service) Available() bool {
-	return s != nil && s.repo != nil && s.executor != nil
+	return s != nil && s.repo != nil && s.executor != nil && s.identity.Valid()
 }
 
 func (s *Service) AvailableTools() []string {
@@ -120,13 +131,16 @@ func (s *Service) AvailableTools() []string {
 }
 
 func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*model.ScheduledTask, error) {
+	if !s.Available() {
+		return nil, errScheduleServiceUnavailable
+	}
 	taskType := strings.ToLower(strings.TrimSpace(req.Type))
 	toolName, toolArgs, err := s.resolveAction(req)
 	if err != nil {
 		return nil, err
 	}
 
-	task := model.NewScheduledTask(req.Name, taskType, req.ChatID, req.CreatorID, toolName, toolArgs, strings.TrimSpace(req.Timezone))
+	task := model.NewScheduledTask(req.Name, taskType, req.ChatID, req.CreatorID, toolName, toolArgs, strings.TrimSpace(req.Timezone), s.identity.AppID, s.identity.BotOpenID)
 	task.RunAt = req.RunAt
 	task.CronExpr = strings.TrimSpace(req.CronExpr)
 	task.NotifyOnError = req.NotifyOnError
@@ -159,6 +173,9 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 }
 
 func (s *Service) ListTasks(ctx context.Context, req *ListTasksRequest) ([]*model.ScheduledTask, error) {
+	if !s.Available() {
+		return nil, errScheduleServiceUnavailable
+	}
 	if req.Limit <= 0 {
 		req.Limit = 50
 	}
@@ -166,10 +183,16 @@ func (s *Service) ListTasks(ctx context.Context, req *ListTasksRequest) ([]*mode
 }
 
 func (s *Service) DeleteTask(ctx context.Context, id string) error {
+	if !s.Available() {
+		return errScheduleServiceUnavailable
+	}
 	return s.repo.DeleteTask(ctx, id)
 }
 
 func (s *Service) PauseTask(ctx context.Context, id string) error {
+	if !s.Available() {
+		return errScheduleServiceUnavailable
+	}
 	task, err := s.repo.GetTaskByID(ctx, id)
 	if err != nil {
 		return err
@@ -181,6 +204,9 @@ func (s *Service) PauseTask(ctx context.Context, id string) error {
 }
 
 func (s *Service) ResumeTask(ctx context.Context, id string) (*model.ScheduledTask, error) {
+	if !s.Available() {
+		return nil, errScheduleServiceUnavailable
+	}
 	task, err := s.repo.GetTaskByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -203,6 +229,9 @@ func (s *Service) ResumeTask(ctx context.Context, id string) (*model.ScheduledTa
 }
 
 func (s *Service) GetDueTasks(ctx context.Context, limit int) ([]*model.ScheduledTask, error) {
+	if !s.Available() {
+		return nil, errScheduleServiceUnavailable
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -210,6 +239,12 @@ func (s *Service) GetDueTasks(ctx context.Context, limit int) ([]*model.Schedule
 }
 
 func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledTask, now time.Time) (bool, error) {
+	if !s.Available() {
+		return false, errScheduleServiceUnavailable
+	}
+	if err := s.identity.EnsureMatch(task.AppID, task.BotOpenID); err != nil {
+		return false, err
+	}
 	updates := map[string]any{}
 	if task.IsOnce() {
 		leaseUntil := now.Add(onceTaskLeaseDuration)
@@ -232,12 +267,21 @@ func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledT
 }
 
 func (s *Service) ExecuteTask(ctx context.Context, task *model.ScheduledTask) (string, error) {
+	if !s.Available() {
+		return "", errScheduleServiceUnavailable
+	}
 	return s.executor.Execute(ctx, task)
 }
 
 func (s *Service) FinalizeTaskExecution(ctx context.Context, task *model.ScheduledTask, resultText string, execErr error, finishedAt time.Time) error {
+	if !s.Available() {
+		return errScheduleServiceUnavailable
+	}
 	if task == nil {
 		return fmt.Errorf("task is nil")
+	}
+	if err := s.identity.EnsureMatch(task.AppID, task.BotOpenID); err != nil {
+		return err
 	}
 
 	updates := map[string]any{

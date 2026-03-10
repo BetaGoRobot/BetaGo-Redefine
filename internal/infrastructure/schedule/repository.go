@@ -5,17 +5,31 @@ import (
 	"errors"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"gorm.io/gorm"
 )
 
 type Repository struct {
-	q *query.Query
+	q        *query.Query
+	identity botidentity.Identity
 }
 
-func NewRepository(db *gorm.DB) *Repository {
-	return &Repository{q: query.Use(db)}
+func NewRepository(db *gorm.DB, identity botidentity.Identity) *Repository {
+	return &Repository{q: query.Use(db), identity: identity}
+}
+
+func (r *Repository) scopedScheduledTask(ctx context.Context) query.IScheduledTaskDo {
+	ins := r.q.ScheduledTask
+	do := ins.WithContext(ctx)
+	if r.identity.AppID != "" {
+		do = do.Where(ins.AppID.Eq(r.identity.AppID))
+	}
+	if r.identity.BotOpenID != "" {
+		do = do.Where(ins.BotOpenID.Eq(r.identity.BotOpenID))
+	}
+	return do
 }
 
 func (r *Repository) CreateTask(ctx context.Context, task *model.ScheduledTask) error {
@@ -24,7 +38,7 @@ func (r *Repository) CreateTask(ctx context.Context, task *model.ScheduledTask) 
 
 func (r *Repository) GetTaskByID(ctx context.Context, id string) (*model.ScheduledTask, error) {
 	ins := r.q.ScheduledTask
-	tasks, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Limit(1).Find()
+	tasks, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Limit(1).Find()
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +50,7 @@ func (r *Repository) GetTaskByID(ctx context.Context, id string) (*model.Schedul
 
 func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit, offset int) ([]*model.ScheduledTask, error) {
 	ins := r.q.ScheduledTask
-	return ins.WithContext(ctx).
+	return r.scopedScheduledTask(ctx).
 		Where(ins.ChatID.Eq(chatID)).
 		Order(ins.CreatedAt.Desc()).
 		Limit(limit).
@@ -46,7 +60,7 @@ func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit
 
 func (r *Repository) ListDueTasks(ctx context.Context, now time.Time, limit int) ([]*model.ScheduledTask, error) {
 	ins := r.q.ScheduledTask
-	return ins.WithContext(ctx).
+	return r.scopedScheduledTask(ctx).
 		Where(ins.Status.Eq(model.ScheduleTaskStatusEnabled)).
 		Where(ins.NextRunAt.Lte(now)).
 		Order(ins.NextRunAt.Asc()).
@@ -63,7 +77,7 @@ func (r *Repository) ClaimTaskRun(ctx context.Context, id string, now time.Time,
 	updates["updated_at"] = now
 
 	ins := r.q.ScheduledTask
-	result, err := ins.WithContext(ctx).
+	result, err := r.scopedScheduledTask(ctx).
 		Where(ins.ID.Eq(id)).
 		Where(ins.Status.Eq(model.ScheduleTaskStatusEnabled)).
 		Where(ins.NextRunAt.Lte(now)).
@@ -73,7 +87,7 @@ func (r *Repository) ClaimTaskRun(ctx context.Context, id string, now time.Time,
 
 func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	ins := r.q.ScheduledTask
-	_, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Delete()
+	_, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Delete()
 	return err
 }
 
@@ -97,6 +111,6 @@ func (r *Repository) UpdateTaskFields(ctx context.Context, id string, updates ma
 	updates["updated_at"] = time.Now()
 
 	ins := r.q.ScheduledTask
-	_, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Updates(updates)
+	_, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Updates(updates)
 	return err
 }

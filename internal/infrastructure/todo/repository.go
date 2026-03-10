@@ -3,6 +3,7 @@ package todo
 import (
 	"context"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	domaintodo "github.com/BetaGoRobot/BetaGo-Redefine/internal/domain/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/lib/pq"
@@ -15,9 +16,9 @@ type Repository struct {
 }
 
 // NewRepository 创建仓储
-func NewRepository(db *gorm.DB) *Repository {
+func NewRepository(db *gorm.DB, identity botidentity.Identity) *Repository {
 	return &Repository{
-		q: NewQuerier(db),
+		q: NewQuerier(db, identity),
 	}
 }
 
@@ -75,6 +76,8 @@ func toDBTodo(t *domaintodo.Todo) *model.TodoItem {
 	item := &model.TodoItem{
 		ID:          t.ID,
 		ChatID:      t.ChatID,
+		AppID:       t.AppID,
+		BotOpenID:   t.BotOpenID,
 		CreatorID:   t.CreatorID,
 		CreatorName: t.CreatorName,
 		AssigneeID:  t.AssigneeID,
@@ -95,6 +98,8 @@ func toDomainTodo(item *model.TodoItem) *domaintodo.Todo {
 	t := &domaintodo.Todo{
 		ID:          item.ID,
 		ChatID:      item.ChatID,
+		AppID:       item.AppID,
+		BotOpenID:   item.BotOpenID,
 		CreatorID:   item.CreatorID,
 		CreatorName: item.CreatorName,
 		AssigneeID:  item.AssigneeID,

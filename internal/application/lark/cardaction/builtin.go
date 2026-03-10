@@ -113,6 +113,7 @@ func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.Card
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
+	req.ActorUserID = actionCtx.UserID()
 
 	resp, err := appconfig.HandleConfigAction(ctx, req)
 	if err != nil {

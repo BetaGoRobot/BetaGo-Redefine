@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/todo"
@@ -33,8 +34,13 @@ func Init(db *gorm.DB) {
 		setNoopService("todo db unavailable")
 		return
 	}
-	repo := todo.NewRepository(db)
-	globalService = NewService(repo)
+	identity := botidentity.Current()
+	if err := identity.Validate(); err != nil {
+		setNoopService(err.Error())
+		return
+	}
+	repo := todo.NewRepository(db, identity)
+	globalService = NewService(repo, identity)
 }
 
 // GetService 获取全局服务实例

@@ -173,12 +173,13 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	defer func() { span.RecordError(err) }()
 
 	req := &config.ConfigActionRequest{
-		Action: config.ConfigActionSet,
-		Key:    arg.Key,
-		Value:  arg.Value,
-		Scope:  arg.Scope,
-		ChatID: currentChatID(data, metaData),
-		UserID: currentUserID(data, metaData),
+		Action:      config.ConfigActionSet,
+		Key:         arg.Key,
+		Value:       arg.Value,
+		Scope:       arg.Scope,
+		ChatID:      currentChatID(data, metaData),
+		UserID:      currentUserID(data, metaData),
+		ActorUserID: currentUserID(data, metaData),
 	}
 	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {
@@ -243,11 +244,12 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	defer func() { span.RecordError(err) }()
 
 	req := &config.ConfigActionRequest{
-		Action: config.ConfigActionDelete,
-		Key:    arg.Key,
-		Scope:  arg.Scope,
-		ChatID: currentChatID(data, metaData),
-		UserID: currentUserID(data, metaData),
+		Action:      config.ConfigActionDelete,
+		Key:         arg.Key,
+		Scope:       arg.Scope,
+		ChatID:      currentChatID(data, metaData),
+		UserID:      currentUserID(data, metaData),
+		ActorUserID: currentUserID(data, metaData),
 	}
 	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {

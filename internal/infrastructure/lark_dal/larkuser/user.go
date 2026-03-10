@@ -36,7 +36,7 @@ func GetUserInfoCache(ctx context.Context, chatID, userID string) (user *larkcon
 	res, err := cache.GetOrExecute(ctx, userID, func() (*larkcontact.User, error) {
 		return GetUserInfo(ctx, userID)
 	})
-	logs.L().Ctx(ctx).Info("GetUserInfoCache", zap.Any("user", res))
+	logs.L().Ctx(ctx).Debug("GetUserInfoCache", zap.Any("user", res))
 	// userInfo失败了，走群聊试试
 	groupMember, err := GetUserMemberFromChat(ctx, chatID, userID)
 	if err != nil {
@@ -62,7 +62,7 @@ func GetUserMemberFromChat(ctx context.Context, chatID, openID string) (member *
 
 	memberMap, err := GetUserMapFromChatIDCache(ctx, chatID)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("GetUserMapFromChatIDCache error", zap.Error(err))
+		logs.L().Ctx(ctx).Error("GetUserMapFromChatIDCache error", zap.String("chatID", chatID), zap.Error(err))
 		return
 	}
 	return memberMap[openID], err

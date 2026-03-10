@@ -16,6 +16,8 @@ const TableNameTodoItem = "todo_items"
 type TodoItem struct {
 	ID          string         `gorm:"column:id;primaryKey" json:"id"`
 	ChatID      string         `gorm:"column:chat_id;not null" json:"chat_id"`
+	AppID       string         `gorm:"column:app_id;not null;default:''" json:"app_id"`
+	BotOpenID   string         `gorm:"column:bot_open_id;not null;default:''" json:"bot_open_id"`
 	CreatorID   string         `gorm:"column:creator_id;not null" json:"creator_id"`
 	CreatorName string         `gorm:"column:creator_name" json:"creator_name"`
 	AssigneeID  string         `gorm:"column:assignee_id" json:"assignee_id"`

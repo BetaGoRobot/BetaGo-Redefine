@@ -38,7 +38,7 @@ func TestValidateToolArgs(t *testing.T) {
 func TestComputeResumeRunForPastOnceTask(t *testing.T) {
 	now := time.Date(2026, 3, 9, 10, 0, 0, 0, time.UTC)
 	runAt := now.Add(-10 * time.Minute)
-	task := model.NewScheduledTask("test", model.ScheduleTaskTypeOnce, "chat", "user", "send_message", `{"content":"hello"}`, model.ScheduleTaskDefaultTimezone)
+	task := model.NewScheduledTask("test", model.ScheduleTaskTypeOnce, "chat", "user", "send_message", `{"content":"hello"}`, model.ScheduleTaskDefaultTimezone, "app-test", "bot-test")
 	task.RunAt = &runAt
 	task.Status = model.ScheduleTaskStatusPaused
 

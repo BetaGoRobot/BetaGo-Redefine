@@ -4,17 +4,19 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 type ToolExecutor struct {
-	tools *toolkit.Impl[larkim.P2MessageReceiveV1]
+	tools    *toolkit.Impl[larkim.P2MessageReceiveV1]
+	identity botidentity.Identity
 }
 
-func NewToolExecutor(tools *toolkit.Impl[larkim.P2MessageReceiveV1]) *ToolExecutor {
-	return &ToolExecutor{tools: tools}
+func NewToolExecutor(tools *toolkit.Impl[larkim.P2MessageReceiveV1], identity botidentity.Identity) *ToolExecutor {
+	return &ToolExecutor{tools: tools, identity: identity}
 }
 
 func (e *ToolExecutor) AvailableTools() []string {
@@ -42,6 +44,9 @@ func (e *ToolExecutor) Execute(ctx context.Context, task *model.ScheduledTask) (
 	}
 	if e == nil || e.tools == nil {
 		return "", fmt.Errorf("scheduled task executor not initialized")
+	}
+	if err := e.identity.EnsureMatch(task.AppID, task.BotOpenID); err != nil {
+		return "", err
 	}
 	unit, ok := e.tools.Get(task.ToolName)
 	if !ok {

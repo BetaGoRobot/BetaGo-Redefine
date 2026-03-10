@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/domain/todo"
 	todorepo "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -62,18 +63,20 @@ func (s noopService) Available() bool {
 
 // Service 待办事项应用服务
 type Service struct {
-	repo *todorepo.Repository
+	repo     *todorepo.Repository
+	identity botidentity.Identity
 }
 
 // NewService 创建服务
-func NewService(repo *todorepo.Repository) *Service {
+func NewService(repo *todorepo.Repository, identity botidentity.Identity) *Service {
 	return &Service{
-		repo: repo,
+		repo:     repo,
+		identity: identity,
 	}
 }
 
 func (s *Service) Available() bool {
-	return s != nil && s.repo != nil
+	return s != nil && s.repo != nil && s.identity.Valid()
 }
 
 // CreateTodoRequest 创建待办请求
@@ -91,12 +94,15 @@ type CreateTodoRequest struct {
 
 // CreateTodo 创建待办事项
 func (s *Service) CreateTodo(ctx context.Context, req *CreateTodoRequest) (*todo.Todo, error) {
+	if !s.Available() {
+		return nil, errServiceUnavailable
+	}
 	priority := todo.TodoPriorityMedium
 	if req.Priority != "" {
 		priority = todo.TodoPriority(strings.ToLower(req.Priority))
 	}
 
-	t := todo.NewTodo(req.ChatID, req.CreatorID, req.CreatorName, req.Title, req.Description, priority)
+	t := todo.NewTodo(req.ChatID, req.CreatorID, req.CreatorName, req.Title, req.Description, priority, s.identity.AppID, s.identity.BotOpenID)
 	if req.DueAt != nil {
 		t.SetDueDate(*req.DueAt)
 	}
@@ -131,6 +137,9 @@ type UpdateTodoRequest struct {
 
 // UpdateTodo 更新待办事项
 func (s *Service) UpdateTodo(ctx context.Context, req *UpdateTodoRequest) (*todo.Todo, error) {
+	if !s.Available() {
+		return nil, errServiceUnavailable
+	}
 	t, err := s.repo.GetTodoByID(ctx, req.ID)
 	if err != nil {
 		return nil, err
@@ -182,6 +191,9 @@ func (s *Service) UpdateTodo(ctx context.Context, req *UpdateTodoRequest) (*todo
 
 // GetTodo 获取待办事项
 func (s *Service) GetTodo(ctx context.Context, id string) (*todo.Todo, error) {
+	if !s.Available() {
+		return nil, errServiceUnavailable
+	}
 	return s.repo.GetTodoByID(ctx, id)
 }
 
@@ -195,6 +207,9 @@ type ListTodosRequest struct {
 
 // ListTodos 获取待办列表
 func (s *Service) ListTodos(ctx context.Context, req *ListTodosRequest) ([]*todo.Todo, error) {
+	if !s.Available() {
+		return nil, errServiceUnavailable
+	}
 	var status *todo.TodoStatus
 	if req.Status != nil {
 		s := todo.TodoStatus(*req.Status)
@@ -208,6 +223,9 @@ func (s *Service) ListTodos(ctx context.Context, req *ListTodosRequest) ([]*todo
 
 // DeleteTodo 删除待办事项
 func (s *Service) DeleteTodo(ctx context.Context, id string) error {
+	if !s.Available() {
+		return errServiceUnavailable
+	}
 	return s.repo.DeleteTodo(ctx, id)
 }
 

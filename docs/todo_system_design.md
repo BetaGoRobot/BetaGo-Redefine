@@ -73,6 +73,7 @@
 - `script/migrations/003_upgrade_scheduled_tasks_to_unified_schedule.sql`
 - `script/migrations/004_cleanup_legacy_todo_tables.sql`
 - `script/migrations/005_drop_legacy_cron_cmd_tasks.sql`
+- `script/migrations/007_add_bot_identity_to_tasks.sql`
 
 说明：
 
@@ -80,3 +81,4 @@
 - 已有旧库会通过 `003` 补齐 `scheduled_tasks` 的统一字段
 - `004` 会清理已废弃的旧表
 - `005` 会删除已废弃的 `cron_cmd_tasks` 表
+- `007` 会为 `todo_items` 和 `scheduled_tasks` 增加 `app_id` / `bot_open_id`，用于多机器人隔离

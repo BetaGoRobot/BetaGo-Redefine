@@ -28,7 +28,9 @@ const (
 // Todo 待办事项领域模型
 type Todo struct {
 	ID          string       `json:"id"`
-	ChatID      string       `json:"chat_id"`      // 所在群组/单聊ID
+	ChatID      string       `json:"chat_id"` // 所在群组/单聊ID
+	AppID       string       `json:"app_id"`
+	BotOpenID   string       `json:"bot_open_id"`
 	CreatorID   string       `json:"creator_id"`   // 创建者ID
 	CreatorName string       `json:"creator_name"` // 创建者名称
 	AssigneeID  string       `json:"assignee_id"`  // 负责人ID（可选）
@@ -44,11 +46,13 @@ type Todo struct {
 }
 
 // NewTodo 创建新的待办事项
-func NewTodo(chatID, creatorID, creatorName, title, description string, priority TodoPriority) *Todo {
+func NewTodo(chatID, creatorID, creatorName, title, description string, priority TodoPriority, appID, botOpenID string) *Todo {
 	now := time.Now()
 	return &Todo{
 		ID:          generateID(),
 		ChatID:      chatID,
+		AppID:       appID,
+		BotOpenID:   botOpenID,
 		CreatorID:   creatorID,
 		CreatorName: creatorName,
 		Title:       title,
