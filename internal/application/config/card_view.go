@@ -58,7 +58,7 @@ func BuildFeatureCard(ctx context.Context, chatID, userID string) (larkmsg.RawCa
 }
 
 func buildConfigItemBlock(item ConfigItem) map[string]any {
-	content := fmt.Sprintf("**%s**  `%s`\n%s\n当前值: `**%s**`  来源: `**%s**`",
+	content := fmt.Sprintf("**%s**  `%s`\n%s\n当前值:  `%s`  [来源:  `%s`]",
 		item.Key,
 		item.ValueType,
 		item.Description,
