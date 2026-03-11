@@ -38,6 +38,11 @@ func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, openID strin
 	return newRawCard(ctx, "配置面板", elements, larkmsg.StandardCardFooterOptions{
 		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildConfigViewValueWithState(view)),
 		LastModifierOpenID: options.LastModifierOpenID,
+		ActionHistory: larkmsg.CardActionHistoryOptions{
+			Enabled:        true,
+			OpenMessageID:  options.MessageID,
+			PendingRecords: options.PendingHistory,
+		},
 	}), nil
 }
 
@@ -71,6 +76,11 @@ func BuildFeatureCardWithOptions(ctx context.Context, chatID, openID string, opt
 	return newRawCard(ctx, "功能开关", elements, larkmsg.StandardCardFooterOptions{
 		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildFeatureViewValueWithState(view)),
 		LastModifierOpenID: options.LastModifierOpenID,
+		ActionHistory: larkmsg.CardActionHistoryOptions{
+			Enabled:        true,
+			OpenMessageID:  options.MessageID,
+			PendingRecords: options.PendingHistory,
+		},
 	}), nil
 }
 

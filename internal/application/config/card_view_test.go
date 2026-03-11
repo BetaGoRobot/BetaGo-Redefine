@@ -169,6 +169,38 @@ func TestBuildConfigScopeRowContainsViewActionPayload(t *testing.T) {
 	}
 }
 
+func TestBuildConfigCardAddsOperationHistoryPanel(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card, err := BuildConfigCardWithOptions(context.Background(), "chat", "chat-1", "user-1", ConfigCardViewOptions{})
+	if err != nil {
+		t.Fatalf("BuildConfigCardWithOptions() error = %v", err)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) || !strings.Contains(jsonStr, `操作记录`) {
+		t.Fatalf("expected operation history panel in config card: %s", jsonStr)
+	}
+}
+
+func TestBuildFeatureCardAddsOperationHistoryPanel(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card, err := BuildFeatureCardWithOptions(context.Background(), "chat-1", "user-1", FeatureCardViewOptions{})
+	if err != nil {
+		t.Fatalf("BuildFeatureCardWithOptions() error = %v", err)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) || !strings.Contains(jsonStr, `操作记录`) {
+		t.Fatalf("expected operation history panel in feature card: %s", jsonStr)
+	}
+}
+
 func TestBuildConfigCustomValueFormContainsInputAndSubmit(t *testing.T) {
 	element := buildConfigCustomValueForm(ConfigItem{
 		Key:       string(KeyReactionDefaultRate),

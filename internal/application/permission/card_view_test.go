@@ -15,7 +15,7 @@ func TestBuildTargetUserFormUsesFilledPrimarySubmit(t *testing.T) {
 		t.Fatalf("Marshal() error = %v", err)
 	}
 	jsonStr := string(raw)
-	if !strings.Contains(jsonStr, `"tag":"select_person"`) || !strings.Contains(jsonStr, `"element_id":"permission_target_picker"`) {
+	if !strings.Contains(jsonStr, `"tag":"select_person"`) || !strings.Contains(jsonStr, `"element_id":"perm_target_picker"`) {
 		t.Fatalf("expected target user picker in permission card: %s", jsonStr)
 	}
 	if !strings.Contains(jsonStr, `"content":"当前目标"`) || !strings.Contains(jsonStr, `"tag":"person"`) || !strings.Contains(jsonStr, `"user_id":"ou_target"`) {

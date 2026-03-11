@@ -155,6 +155,9 @@ func TestBuildStatsRawCardUsesSchemaV2Structure(t *testing.T) {
 	if !strings.Contains(jsonStr, `"content":"刷新"`) || !strings.Contains(jsonStr, `"action":"ratelimit.view"`) {
 		t.Fatalf("expected refresh footer action in json: %s", jsonStr)
 	}
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) || !strings.Contains(jsonStr, `操作记录`) {
+		t.Fatalf("expected operation history panel in json: %s", jsonStr)
+	}
 	if !strings.Contains(jsonStr, `"text_size":"heading-1"`) {
 		t.Fatalf("expected emphasized overview text in json: %s", jsonStr)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
@@ -49,6 +50,8 @@ type TaskCardViewState struct {
 	ToolName           string
 	CreatorOpenID      string
 	LastModifierOpenID string
+	MessageID          string
+	PendingHistory     []larkmsg.CardActionHistoryRecord
 	Limit              int
 }
 
@@ -198,6 +201,7 @@ func normalizeTaskCardView(view TaskCardViewState) TaskCardViewState {
 	view.ToolName = strings.TrimSpace(view.ToolName)
 	view.CreatorOpenID = strings.TrimSpace(view.CreatorOpenID)
 	view.LastModifierOpenID = strings.TrimSpace(view.LastModifierOpenID)
+	view.MessageID = strings.TrimSpace(view.MessageID)
 
 	if view.Limit <= 0 {
 		if view.Mode == TaskCardViewModeList {

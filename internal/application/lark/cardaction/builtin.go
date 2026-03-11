@@ -11,6 +11,7 @@ import (
 	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
@@ -117,6 +118,8 @@ func handleFeatureAction(ctx context.Context, actionCtx *Context) (*callback.Car
 	}
 	card, cardErr := appconfig.BuildFeatureCardWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), appconfig.FeatureCardViewOptions{
 		LastModifierOpenID: actionCtx.OpenID(),
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
@@ -139,6 +142,8 @@ func handleFeatureView(ctx context.Context, actionCtx *Context) (*callback.CardA
 	}
 	card, err := appconfig.BuildFeatureCardWithOptions(ctx, chatID, openID, appconfig.FeatureCardViewOptions{
 		LastModifierOpenID: req.LastModifierOpenID,
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -160,6 +165,8 @@ func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.Card
 	card, cardErr := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
 		BypassCache:        true,
 		LastModifierOpenID: actionCtx.OpenID(),
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
@@ -175,6 +182,8 @@ func handleConfigView(ctx context.Context, actionCtx *Context) (*callback.CardAc
 	card, err := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
 		BypassCache:        true,
 		LastModifierOpenID: req.LastModifierOpenID,
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -195,6 +204,8 @@ func handlePermissionAction(ctx context.Context, actionCtx *Context) (*callback.
 	}
 	card, cardErr := apppermission.BuildPermissionCardJSONWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID, apppermission.PermissionCardViewOptions{
 		LastModifierOpenID: actionCtx.OpenID(),
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
@@ -209,6 +220,8 @@ func handlePermissionView(ctx context.Context, actionCtx *Context) (*callback.Ca
 	}
 	card, err := apppermission.BuildPermissionCardJSONWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID, apppermission.PermissionCardViewOptions{
 		LastModifierOpenID: req.LastModifierOpenID,
+		MessageID:          actionCtx.MessageID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
 	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -228,7 +241,10 @@ func handleRateLimitView(ctx context.Context, actionCtx *Context) (*callback.Car
 	if chatID == "" && actionCtx.MetaData != nil {
 		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
 	}
-	card, err := appratelimit.BuildStatsCardJSON(ctx, chatID)
+	card, err := appratelimit.BuildStatsCardJSONWithOptions(ctx, chatID, appratelimit.StatsCardOptions{
+		MessageID:      actionCtx.MessageID(),
+		PendingHistory: []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
+	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
@@ -245,6 +261,8 @@ func handleScheduleView(ctx context.Context, actionCtx *Context) (*callback.Card
 	if chatID == "" && actionCtx.MetaData != nil {
 		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
 	}
+	req.View.MessageID = actionCtx.MessageID()
+	req.View.PendingHistory = []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)}
 	card, err := scheduleapp.BuildTaskCardPayloadForView(ctx, chatID, req.View, true)
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -289,6 +307,8 @@ func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.Ca
 	}
 
 	req.View.LastModifierOpenID = actorOpenID
+	req.View.MessageID = actionCtx.MessageID()
+	req.View.PendingHistory = []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)}
 	card, cardErr := scheduleapp.BuildTaskCardPayloadForView(ctx, chatID, req.View, req.Action == scheduleapp.TaskActionDelete)
 	if cardErr != nil {
 		return InfoToast(message), nil

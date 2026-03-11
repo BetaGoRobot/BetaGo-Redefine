@@ -634,3 +634,48 @@
 ### 验证
 
 - `GOCACHE=/tmp/gocache go test ./internal/infrastructure/lark_dal/larkmsg ./internal/application/permission ./internal/application/lark/schedule ./internal/application/lark/cardaction ./internal/application/config`
+
+## 2026-03-11 · Milestone Q · 手工管理卡统一补操作记录折叠块
+
+### 方案
+
+- 给手工 schema v2 管理卡统一增加一个通用 `collapsible_panel`，用于展示当前卡片消息维度下的操作历史。
+- 历史数据继续复用已有的 OpenSearch 卡片操作审计索引，不再引入新的 DB 表或第二套审计链路。
+- 卡片回调重建时显式透传当前 `open_message_id`，并把“本次正在处理的回调动作”先以内存记录合并进面板，避免 OpenSearch 异步写入尚未完成时用户看不到刚点下去的那次操作。
+
+### 修改
+
+- `internal/infrastructure/lark_dal/larkmsg/*`
+  - 新增 / 补全 `CardActionHistoryOptions`、`CardActionHistoryRecord`、`CardActionHistoryPanel(...)`
+  - `StandardCardFooterOptions` 增加 `ActionHistory`
+  - footer 在按钮区上方统一插入操作记录折叠块
+  - `collapsible_panel` helper 修正为符合 Feishu Card JSON 2.0 的合法结构
+  - 历史项渲染统一为：动作 + 参与人 + 时间
+- `internal/infrastructure/lark_dal/larkmsg/record.go`
+  - 卡片操作审计补齐 `open_message_id`、`open_chat_id`、`action_name`
+- `internal/application/config/*`
+  - `config / feature` 卡片 footer 接入统一操作记录
+  - view options 增加 `MessageID / PendingHistory`
+- `internal/application/permission/*`
+  - 权限卡 footer 接入统一操作记录
+  - 权限卡内部读取 bot identity / subject list 增加测试可替换 hook
+- `internal/application/lark/schedule/*`
+  - schedule 管理卡 footer 接入统一操作记录
+  - view state 增加 `MessageID / PendingHistory`
+- `internal/application/lark/ratelimit/*`
+  - ratelimit 手工卡接入统一操作记录
+- `internal/application/lark/cardaction/builtin.go`
+  - config / feature / permission / schedule / ratelimit 回调重建时统一透传：
+    - `MessageID`
+    - `PendingHistory: []CardActionHistoryRecord{NewCardActionHistoryRecord(actionCtx.Event)}`
+
+### 决策
+
+- 操作记录按“当前卡片消息”聚合，而不是按 chat / user / resource 聚合；这样语义最直观，也不会把不同卡片实例的操作串在一起。
+- 不等待 OpenSearch 写入完成再回包，而是把当前回调动作先以内存 `PendingHistory` 合并显示；用户看到的是即时结果，后续持久化仍走原异步审计路径。
+- 折叠块默认收起，避免压缩正文可视区域；无消息 ID 时显示占位提示，而不是静默隐藏。
+- `collapsible_panel` 结构按 Feishu 官方 JSON 2.0 文档修正，避免继续发送旧式非法 `header / border` 结构。
+
+### 验证
+
+- `GOCACHE=/tmp/gocache go test ./internal/infrastructure/lark_dal/larkmsg ./internal/application/config ./internal/application/permission ./internal/application/lark/schedule ./internal/application/lark/ratelimit ./internal/application/lark/cardaction`

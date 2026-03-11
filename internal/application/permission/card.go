@@ -6,10 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
 )
+
+var permissionListBySubject = permissioninfra.ListBySubject
 
 type ActionResponse struct {
 	Success bool
@@ -22,6 +23,8 @@ func BuildPermissionCardJSON(ctx context.Context, chatID, actorOpenID, targetOpe
 
 type PermissionCardViewOptions struct {
 	LastModifierOpenID string
+	MessageID          string
+	PendingHistory     []larkmsg.CardActionHistoryRecord
 }
 
 func BuildPermissionCardJSONWithOptions(ctx context.Context, chatID, actorOpenID, targetOpenID string, options PermissionCardViewOptions) (map[string]any, error) {
@@ -34,8 +37,8 @@ func BuildPermissionCardJSONWithOptions(ctx context.Context, chatID, actorOpenID
 		targetOpenID = actorOpenID
 	}
 
-	identity := botidentity.Current()
-	grants, err := permissioninfra.ListBySubject(ctx, permissioninfra.ListFilter{
+	identity := currentBotIdentity()
+	grants, err := permissionListBySubject(ctx, permissioninfra.ListFilter{
 		SubjectType: permissioninfra.SubjectTypeUser,
 		SubjectID:   targetOpenID,
 		AppID:       identity.AppID,
@@ -83,6 +86,11 @@ func BuildPermissionCardJSONWithOptions(ctx context.Context, chatID, actorOpenID
 	card := larkmsg.NewStandardPanelCard(ctx, "权限面板", elements, larkmsg.StandardCardFooterOptions{
 		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildPermissionViewValueWithOptions(targetOpenID, options.LastModifierOpenID)),
 		LastModifierOpenID: options.LastModifierOpenID,
+		ActionHistory: larkmsg.CardActionHistoryOptions{
+			Enabled:        true,
+			OpenMessageID:  options.MessageID,
+			PendingRecords: options.PendingHistory,
+		},
 	})
 	return map[string]any(card), nil
 }
@@ -101,7 +109,7 @@ func HandleAction(ctx context.Context, req *ActionRequest) (*ActionResponse, err
 		return &ActionResponse{Success: false, Message: "permission action is incomplete"}, fmt.Errorf("permission action is incomplete")
 	}
 
-	identity := botidentity.Current()
+	identity := currentBotIdentity()
 	switch req.Action {
 	case ActionGrant:
 		def, ok := permissioninfra.LookupPointDefinition(req.PermissionPoint)
@@ -171,7 +179,7 @@ func buildTargetUserForm(actorOpenID, targetOpenID string, options PermissionCar
 				Type:          "default",
 				InitialOption: targetOpenID,
 				Payload:       larkmsg.StringMapToAnyMap(BuildPermissionTargetPickerValue(options.LastModifierOpenID)),
-				ElementID:     "permission_target_picker",
+				ElementID:     "perm_target_picker",
 			}),
 			larkmsg.ButtonRow("none",
 				larkmsg.Button("查看自己", larkmsg.ButtonOptions{

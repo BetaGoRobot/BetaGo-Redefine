@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"strconv"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 )
 
 type configLookupCandidate struct {
@@ -15,10 +17,14 @@ type configLookupCandidate struct {
 type ConfigCardViewOptions struct {
 	BypassCache        bool
 	LastModifierOpenID string
+	MessageID          string
+	PendingHistory     []larkmsg.CardActionHistoryRecord
 }
 
 type FeatureCardViewOptions struct {
 	LastModifierOpenID string
+	MessageID          string
+	PendingHistory     []larkmsg.CardActionHistoryRecord
 }
 
 // ==========================================

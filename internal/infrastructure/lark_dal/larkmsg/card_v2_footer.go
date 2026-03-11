@@ -17,11 +17,17 @@ type StandardCardFooterOptions struct {
 	RefreshPayload     map[string]any
 	RefreshText        string
 	LastModifierOpenID string
+	ActionHistory      CardActionHistoryOptions
 }
 
 func AppendStandardCardFooter(ctx context.Context, elements []any, opts ...StandardCardFooterOptions) []any {
+	options := standardCardFooterOptions(opts)
 	result := append([]any{}, elements...)
-	result = append(result, Divider(), StandardCardFooter(ctx, opts...))
+	if options.ActionHistory.Enabled {
+		history := CardActionHistoryPanel(ctx, options.ActionHistory)
+		result = append(result, Divider(), history)
+	}
+	result = append(result, Divider(), StandardCardFooter(ctx, options))
 	return result
 }
 

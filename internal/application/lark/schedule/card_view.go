@@ -31,10 +31,14 @@ func BuildTaskListCard(ctx context.Context, title string, tasks []*model.Schedul
 		}
 		elements = larkmsg.AppendSectionsWithDividers(elements, taskSections...)
 	}
-
 	return larkmsg.NewStandardPanelCard(ctx, title, elements, larkmsg.StandardCardFooterOptions{
 		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildTaskViewValue(view)),
 		LastModifierOpenID: view.LastModifierOpenID,
+		ActionHistory: larkmsg.CardActionHistoryOptions{
+			Enabled:        true,
+			OpenMessageID:  view.MessageID,
+			PendingRecords: view.PendingHistory,
+		},
 	})
 }
 
@@ -256,7 +260,7 @@ func buildTaskCreatorPicker(view TaskCardViewState) map[string]any {
 		Width:       "default",
 		Type:        "default",
 		Payload:     larkmsg.StringMapToAnyMap(BuildTaskCreatorPickerValue(view)),
-		ElementID:   "schedule_creator_filter",
+		ElementID:   "sched_creator_pick",
 	})
 }
 

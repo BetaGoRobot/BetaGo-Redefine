@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
 func useWorkspaceConfigPath(t *testing.T) {
@@ -151,6 +153,31 @@ func TestAppendStandardCardFooterAddsLastModifierPerson(t *testing.T) {
 	}
 }
 
+func TestAppendStandardCardFooterAddsActionHistoryPanel(t *testing.T) {
+	elements := AppendStandardCardFooter(context.Background(), []any{Markdown("hello")}, StandardCardFooterOptions{
+		ActionHistory: CardActionHistoryOptions{
+			Enabled: true,
+			PendingRecords: []CardActionHistoryRecord{{
+				ActionName:     "schedule.pause",
+				ActionValue:    map[string]any{"id": "task-1"},
+				OpenID:         "ou_actor",
+				CreateTimeUnix: 1741680000000000,
+			}},
+		},
+	})
+	raw, err := json.Marshal(elements)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) {
+		t.Fatalf("expected collapsible action history panel: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `暂停 Schedule`) || !strings.Contains(jsonStr, `"user_id":"ou_actor"`) {
+		t.Fatalf("expected action history content in panel: %s", jsonStr)
+	}
+}
+
 func TestSelectPersonBuildsCallbackPicker(t *testing.T) {
 	element := SelectPerson(SelectPersonOptions{
 		Placeholder:   "选择用户",
@@ -177,6 +204,76 @@ func TestSelectPersonBuildsCallbackPicker(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"value":"ou_other"`) {
 		t.Fatalf("expected options in json: %s", jsonStr)
+	}
+}
+
+func TestSelectPersonNormalizesElementID(t *testing.T) {
+	element := SelectPerson(SelectPersonOptions{
+		ElementID: "permission_target_picker",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"element_id":"permission_target_pi"`) {
+		t.Fatalf("expected normalized element id in json: %s", jsonStr)
+	}
+}
+
+func TestCollapsiblePanelBuildsSchemaV2Container(t *testing.T) {
+	element := CollapsiblePanel(
+		"操作记录",
+		[]any{HintMarkdown("暂无操作记录。")},
+		CollapsiblePanelOptions{
+			ElementID:       "card_action_log",
+			Expanded:        false,
+			Padding:         "8px",
+			VerticalSpacing: "6px",
+		},
+	)
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) {
+		t.Fatalf("expected collapsible_panel tag in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"expanded":false`) || !strings.Contains(jsonStr, `"element_id":"card_action_log"`) {
+		t.Fatalf("expected collapsible options in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"padding":"8px"`) || !strings.Contains(jsonStr, `"vertical_spacing":"6px"`) {
+		t.Fatalf("expected layout options in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"icon_position":"follow_text"`) {
+		t.Fatalf("expected standard collapsible header config in json: %s", jsonStr)
+	}
+}
+
+func TestBuildCardActionHistoryBlockUsesPlaceholderWithoutMessageID(t *testing.T) {
+	block := CardActionHistoryPanel(context.Background(), CardActionHistoryOptions{})
+	raw, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) {
+		t.Fatalf("expected collapsible_panel in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `首次发送后可在此查看操作记录`) {
+		t.Fatalf("expected placeholder hint in json: %s", jsonStr)
+	}
+}
+
+func TestFormatCardActionLabelUsesReadableChineseText(t *testing.T) {
+	label, detail := describeCardAction(cardaction.ActionPermissionGrant, map[string]any{
+		cardaction.PermissionPointField: "permission.manage",
+		cardaction.ScopeField:           "global",
+		cardaction.TargetUserIDField:    "ou_target",
+	})
+	if label != "授予权限" || !strings.Contains(detail, "permission.manage@global") {
+		t.Fatalf("expected readable permission label, got %q / %q", label, detail)
 	}
 }
 
@@ -229,5 +326,20 @@ func TestAppendSectionsWithDividersSkipsEmptySections(t *testing.T) {
 	jsonStr := string(raw)
 	if strings.Count(jsonStr, `"tag":"hr"`) != 1 {
 		t.Fatalf("expected one divider between non-empty sections: %s", jsonStr)
+	}
+}
+
+func TestAppendCardActionHistoryAddsPlaceholderWhenMessageUnknown(t *testing.T) {
+	elements := AppendCardActionHistory(context.Background(), []any{Markdown("hello")}, CardActionHistoryOptions{})
+	raw, err := json.Marshal(elements)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) {
+		t.Fatalf("expected collapsible action history panel: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `首次发送后可在此查看操作记录`) {
+		t.Fatalf("expected placeholder history note: %s", jsonStr)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
+	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 
@@ -204,21 +206,40 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
+	if cardAction == nil || cardAction.Event == nil || cardAction.Event.Context == nil || cardAction.Event.Operator == nil {
+		return
+	}
 
 	chatID := cardAction.Event.Context.OpenChatID
+	openMessageID := strings.TrimSpace(cardAction.Event.Context.OpenMessageID)
 	openID := cardAction.Event.Operator.OpenID
 	userInfo, err := larkuser.GetUserInfoCache(ctx, cardAction.Event.Context.OpenChatID, openID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("GetUserInfo error", zap.Error(err))
 		return
 	}
+	actionName, actionTag, selectedOption := cardActionMetadata(cardAction)
+	createTime := ""
+	if cardAction.EventV2Base != nil && cardAction.EventV2Base.Header != nil {
+		createTime = utils.EpoMicro2DateStr(cardAction.EventV2Base.Header.CreateTime)
+	}
+	actionValue := map[string]any(nil)
+	if cardAction.Event.Action != nil {
+		actionValue = cardAction.Event.Action.Value
+	}
 	idxData := &xmodel.CardActionIndex{
 		CardActionTriggerEvent: cardAction,
 		ChatName:               larkchat.GetChatName(ctx, chatID),
-		CreateTime:             utils.EpoMicro2DateStr(cardAction.EventV2Base.Header.CreateTime),
+		CreateTime:             createTime,
+		CreateTimeUnix:         parseCardActionCreateTime(cardAction),
 		OpenID:                 openID,
 		UserName:               utils.AddrOrNil(userInfo.Name),
-		ActionValue:            cardAction.Event.Action.Value,
+		OpenMessageID:          openMessageID,
+		OpenChatID:             chatID,
+		ActionName:             actionName,
+		ActionTag:              actionTag,
+		SelectedOption:         selectedOption,
+		ActionValue:            actionValue,
 	}
 	err = opensearch.InsertData(ctx,
 		config.Get().OpensearchConfig.LarkCardActionIndex,
@@ -229,6 +250,30 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
 		return
 	}
+}
+
+func cardActionMetadata(cardAction *callback.CardActionTriggerEvent) (actionName, actionTag, selectedOption string) {
+	if cardAction == nil || cardAction.Event == nil || cardAction.Event.Action == nil {
+		return "", "", ""
+	}
+
+	actionTag = strings.TrimSpace(cardAction.Event.Action.Tag)
+	selectedOption = strings.TrimSpace(cardAction.Event.Action.Option)
+	if parsed, err := cardactionproto.Parse(cardAction); err == nil {
+		actionName = strings.TrimSpace(parsed.Name)
+		if actionTag == "" {
+			actionTag = strings.TrimSpace(parsed.Tag)
+		}
+		if selectedOption == "" {
+			selectedOption = strings.TrimSpace(parsed.Option)
+		}
+		return actionName, actionTag, selectedOption
+	}
+
+	if value, ok := cardAction.Event.Action.Value[cardactionproto.ActionField].(string); ok {
+		actionName = strings.TrimSpace(value)
+	}
+	return actionName, actionTag, selectedOption
 }
 
 func cardActionDocID(cardAction *callback.CardActionTriggerEvent) string {
@@ -275,4 +320,12 @@ func cardActionDocID(cardAction *callback.CardActionTriggerEvent) string {
 		createTime,
 		hex.EncodeToString(sum[:]),
 	)
+}
+
+func parseCardActionCreateTime(cardAction *callback.CardActionTriggerEvent) int64 {
+	if cardAction == nil || cardAction.EventV2Base == nil || cardAction.EventV2Base.Header == nil {
+		return 0
+	}
+	value, _ := strconv.ParseInt(strings.TrimSpace(cardAction.EventV2Base.Header.CreateTime), 10, 64)
+	return value
 }

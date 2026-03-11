@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 type CardV2Options struct {
@@ -172,7 +173,9 @@ func Person(openID string, opts PersonOptions) map[string]any {
 		person["margin"] = opts.Margin
 	}
 	if opts.ElementID != "" {
-		person["element_id"] = opts.ElementID
+		if elementID := normalizeElementID(opts.ElementID); elementID != "" {
+			person["element_id"] = elementID
+		}
 	}
 	return person
 }
@@ -221,9 +224,38 @@ func SelectPerson(opts SelectPersonOptions) map[string]any {
 		element["margin"] = opts.Margin
 	}
 	if opts.ElementID != "" {
-		element["element_id"] = opts.ElementID
+		if elementID := normalizeElementID(opts.ElementID); elementID != "" {
+			element["element_id"] = elementID
+		}
 	}
 	return element
+}
+
+func normalizeElementID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	buf := make([]rune, 0, len(raw))
+	for _, r := range raw {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '_':
+			buf = append(buf, r)
+		default:
+			buf = append(buf, '_')
+		}
+	}
+	if len(buf) == 0 {
+		return ""
+	}
+	if !unicode.IsLetter(buf[0]) {
+		buf = append([]rune{'e'}, buf...)
+	}
+	if len(buf) > 20 {
+		buf = buf[:20]
+	}
+	return string(buf)
 }
 
 func HintMarkdown(content string) map[string]any {

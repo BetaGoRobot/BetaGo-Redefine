@@ -31,11 +31,17 @@ type MessageIndex struct {
 
 type CardActionIndex struct {
 	*callback.CardActionTriggerEvent
-	ChatName    string         `json:"chat_name"`
-	CreateTime  string         `json:"create_time"`
-	OpenID      string         `json:"user_id"`
-	UserName    string         `json:"user_name"`
-	ActionValue map[string]any `json:"action_value"`
+	ChatName       string         `json:"chat_name"`
+	CreateTime     string         `json:"create_time"`
+	CreateTimeUnix int64          `json:"create_time_unix,omitempty"`
+	OpenID         string         `json:"user_id"`
+	UserName       string         `json:"user_name"`
+	OpenMessageID  string         `json:"open_message_id"`
+	OpenChatID     string         `json:"open_chat_id"`
+	ActionName     string         `json:"action_name"`
+	ActionTag      string         `json:"action_tag"`
+	SelectedOption string         `json:"selected_option"`
+	ActionValue    map[string]any `json:"action_value"`
 }
 
 type MessageChunkLogV3 struct {

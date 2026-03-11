@@ -38,8 +38,17 @@ type StatsCardRecentSend struct {
 }
 
 func BuildStatsCardJSON(ctx context.Context, chatID string) (map[string]any, error) {
+	return BuildStatsCardJSONWithOptions(ctx, chatID, StatsCardOptions{})
+}
+
+type StatsCardOptions struct {
+	MessageID      string
+	PendingHistory []larkmsg.CardActionHistoryRecord
+}
+
+func BuildStatsCardJSONWithOptions(ctx context.Context, chatID string, opts StatsCardOptions) (map[string]any, error) {
 	data := BuildStatsCardData(ctx, chatID)
-	card := buildStatsRawCard(ctx, data)
+	card := buildStatsRawCardWithOptions(ctx, data, opts)
 	return map[string]any(card), nil
 }
 
@@ -165,6 +174,10 @@ func buildStatsCardData(snapshot *StatsSnapshot) *StatsCardData {
 }
 
 func buildStatsRawCard(ctx context.Context, data *StatsCardData) larkmsg.RawCard {
+	return buildStatsRawCardWithOptions(ctx, data, StatsCardOptions{})
+}
+
+func buildStatsRawCardWithOptions(ctx context.Context, data *StatsCardData, opts StatsCardOptions) larkmsg.RawCard {
 	elements := []any{
 		buildStatsOverviewBlock(data),
 	}
@@ -189,6 +202,11 @@ func buildStatsRawCard(ctx context.Context, data *StatsCardData) larkmsg.RawCard
 
 	return larkmsg.NewStandardPanelCard(ctx, "频控详情", elements, larkmsg.StandardCardFooterOptions{
 		RefreshPayload: larkmsg.StringMapToAnyMap(BuildStatsViewValue(data.ChatID)),
+		ActionHistory: larkmsg.CardActionHistoryOptions{
+			Enabled:        true,
+			OpenMessageID:  opts.MessageID,
+			PendingRecords: opts.PendingHistory,
+		},
 	})
 }
 

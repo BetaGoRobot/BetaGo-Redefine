@@ -74,6 +74,9 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 	if !strings.Contains(jsonStr, `"content":"刷新"`) || !strings.Contains(jsonStr, cardactionproto.ActionScheduleView) {
 		t.Fatalf("expected schedule refresh action in card json: %s", jsonStr)
 	}
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) || !strings.Contains(jsonStr, `首次发送后可在此查看操作记录`) {
+		t.Fatalf("expected shared action history panel in card json: %s", jsonStr)
+	}
 	if !strings.Contains(jsonStr, cardactionproto.ActionSchedulePause) ||
 		!strings.Contains(jsonStr, cardactionproto.ActionScheduleResume) ||
 		!strings.Contains(jsonStr, cardactionproto.ActionScheduleDelete) {
@@ -85,10 +88,13 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 	if !strings.Contains(jsonStr, "创建者") || !strings.Contains(jsonStr, "ou_creator") {
 		t.Fatalf("expected creator info and filter row in card json: %s", jsonStr)
 	}
-	if !strings.Contains(jsonStr, `"tag":"select_person"`) || !strings.Contains(jsonStr, `"element_id":"schedule_creator_filter"`) {
+	if !strings.Contains(jsonStr, `"tag":"select_person"`) || !strings.Contains(jsonStr, `"element_id":"sched_creator_pick"`) {
 		t.Fatalf("expected select_person creator picker in card json: %s", jsonStr)
 	}
 	if strings.Contains(jsonStr, `"options":[`) {
 		t.Fatalf("expected creator picker to default to current chat members, not static options: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) || !strings.Contains(jsonStr, `操作记录`) {
+		t.Fatalf("expected operation history panel in schedule card: %s", jsonStr)
 	}
 }
