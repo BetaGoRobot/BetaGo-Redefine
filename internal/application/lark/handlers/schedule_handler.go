@@ -24,12 +24,13 @@ type ScheduleManageArgs struct {
 }
 
 type ScheduleQueryArgs struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Type     string `json:"type"`
-	ToolName string `json:"tool_name"`
-	Limit    int    `json:"limit"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Type          string `json:"type"`
+	ToolName      string `json:"tool_name"`
+	CreatorOpenID string `json:"creator_open_id"`
+	Limit         int    `json:"limit"`
 }
 
 type ScheduleCreateArgs struct {
@@ -89,12 +90,13 @@ func (scheduleQueryHandler) ParseCLI(args []string) (ScheduleQueryArgs, error) {
 	argMap, _ := parseArgs(args...)
 	limit, _ := strconv.Atoi(argMap["limit"])
 	return ScheduleQueryArgs{
-		ID:       argMap["id"],
-		Name:     argMap["name"],
-		Status:   argMap["status"],
-		Type:     argMap["type"],
-		ToolName: argMap["tool_name"],
-		Limit:    limit,
+		ID:            argMap["id"],
+		Name:          argMap["name"],
+		Status:        argMap["status"],
+		Type:          argMap["type"],
+		ToolName:      argMap["tool_name"],
+		CreatorOpenID: firstNonEmpty(argMap["creator_open_id"], argMap["open_id"]),
+		Limit:         limit,
 	}, nil
 }
 
@@ -279,10 +281,11 @@ func (scheduleQueryHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	}
 
 	view := scheduleapp.NewTaskQueryCardView("", scheduleapp.TaskQuery{
-		Name:     arg.Name,
-		Status:   arg.Status,
-		Type:     arg.Type,
-		ToolName: arg.ToolName,
+		Name:          arg.Name,
+		Status:        arg.Status,
+		Type:          arg.Type,
+		ToolName:      arg.ToolName,
+		CreatorOpenID: arg.CreatorOpenID,
 	}, arg.Limit)
 	tasks, err := scheduleapp.GetService().ListTasks(ctx, &scheduleapp.ListTasksRequest{
 		ChatID: chatID,
@@ -304,7 +307,7 @@ func (scheduleDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if _, err := scheduleapp.GetTaskForChat(ctx, chatID, arg.ID); err != nil {
 		return err
 	}
-	if err := scheduleapp.GetService().DeleteTask(ctx, arg.ID); err != nil {
+	if err := scheduleapp.GetService().DeleteTask(ctx, arg.ID, currentOpenID(data, metaData)); err != nil {
 		return err
 	}
 	return sendScheduleTaskViewCard(ctx, data, metaData, scheduleapp.NewTaskQueryCardView(arg.ID, scheduleapp.TaskQuery{}, 1), nil, "_scheduleDelete")
@@ -320,7 +323,7 @@ func (schedulePauseHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	if _, err := scheduleapp.GetTaskForChat(ctx, chatID, arg.ID); err != nil {
 		return err
 	}
-	if err := scheduleapp.GetService().PauseTask(ctx, arg.ID); err != nil {
+	if err := scheduleapp.GetService().PauseTask(ctx, arg.ID, currentOpenID(data, metaData)); err != nil {
 		return err
 	}
 	task, err := scheduleapp.GetTaskForChat(ctx, chatID, arg.ID)
@@ -340,7 +343,7 @@ func (scheduleResumeHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if _, err := scheduleapp.GetTaskForChat(ctx, chatID, arg.ID); err != nil {
 		return err
 	}
-	task, err := scheduleapp.GetService().ResumeTask(ctx, arg.ID)
+	task, err := scheduleapp.GetService().ResumeTask(ctx, arg.ID, currentOpenID(data, metaData))
 	if err != nil {
 		return err
 	}
@@ -435,6 +438,9 @@ func parseRequiredScheduleID(args []string, action string) (string, error) {
 }
 
 func sendScheduleTaskViewCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, view scheduleapp.TaskCardViewState, tasks []*model.ScheduledTask, suffix string) error {
+	if view.LastModifierOpenID == "" {
+		view.LastModifierOpenID = currentOpenID(data, metaData)
+	}
 	card := scheduleapp.BuildTaskListCard(ctx, view.Title(), tasks, view)
 	content, err := card.JSON()
 	if err != nil {

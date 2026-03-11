@@ -44,9 +44,9 @@ type TaskService interface {
 	CreateTask(ctx context.Context, req *CreateTaskRequest) (*model.ScheduledTask, error)
 	GetTask(ctx context.Context, id string) (*model.ScheduledTask, error)
 	ListTasks(ctx context.Context, req *ListTasksRequest) ([]*model.ScheduledTask, error)
-	DeleteTask(ctx context.Context, id string) error
-	PauseTask(ctx context.Context, id string) error
-	ResumeTask(ctx context.Context, id string) (*model.ScheduledTask, error)
+	DeleteTask(ctx context.Context, id, actorOpenID string) error
+	PauseTask(ctx context.Context, id, actorOpenID string) error
+	ResumeTask(ctx context.Context, id, actorOpenID string) (*model.ScheduledTask, error)
 	GetDueTasks(ctx context.Context, limit int) ([]*model.ScheduledTask, error)
 	ClaimTaskExecution(ctx context.Context, task *model.ScheduledTask, now time.Time) (bool, error)
 	ExecuteTask(ctx context.Context, task *model.ScheduledTask) (string, error)
@@ -240,29 +240,45 @@ func (s *Service) GetTask(ctx context.Context, id string) (*model.ScheduledTask,
 	return s.repo.GetTaskByID(ctx, id)
 }
 
-func (s *Service) DeleteTask(ctx context.Context, id string) error {
+func (s *Service) DeleteTask(ctx context.Context, id, actorOpenID string) error {
 	ctx, span := otel.StartNamed(ctx, "schedule.delete")
 	defer span.End()
 	var err error
 	defer otel.RecordErrorPtr(span, &err)
-	span.SetAttributes(attribute.String("schedule.task_id", id))
-	if !s.Available() {
-		return errScheduleServiceUnavailable
-	}
-	return s.repo.DeleteTask(ctx, id)
-}
-
-func (s *Service) PauseTask(ctx context.Context, id string) error {
-	ctx, span := otel.StartNamed(ctx, "schedule.pause")
-	defer span.End()
-	var err error
-	defer otel.RecordErrorPtr(span, &err)
-	span.SetAttributes(attribute.String("schedule.task_id", id))
+	span.SetAttributes(
+		attribute.String("schedule.task_id", id),
+		attribute.String("schedule.actor_open_id", otel.PreviewString(strings.TrimSpace(actorOpenID), 128)),
+	)
 	if !s.Available() {
 		return errScheduleServiceUnavailable
 	}
 	task, err := s.repo.GetTaskByID(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := EnsureTaskMutationAllowed(ctx, actorOpenID, task); err != nil {
+		return err
+	}
+	return s.repo.DeleteTask(ctx, id)
+}
+
+func (s *Service) PauseTask(ctx context.Context, id, actorOpenID string) error {
+	ctx, span := otel.StartNamed(ctx, "schedule.pause")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(
+		attribute.String("schedule.task_id", id),
+		attribute.String("schedule.actor_open_id", otel.PreviewString(strings.TrimSpace(actorOpenID), 128)),
+	)
+	if !s.Available() {
+		return errScheduleServiceUnavailable
+	}
+	task, err := s.repo.GetTaskByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := EnsureTaskMutationAllowed(ctx, actorOpenID, task); err != nil {
 		return err
 	}
 	if task.Status != model.ScheduleTaskStatusEnabled {
@@ -271,17 +287,23 @@ func (s *Service) PauseTask(ctx context.Context, id string) error {
 	return s.repo.PauseTask(ctx, id)
 }
 
-func (s *Service) ResumeTask(ctx context.Context, id string) (*model.ScheduledTask, error) {
+func (s *Service) ResumeTask(ctx context.Context, id, actorOpenID string) (*model.ScheduledTask, error) {
 	ctx, span := otel.StartNamed(ctx, "schedule.resume")
 	defer span.End()
 	var err error
 	defer otel.RecordErrorPtr(span, &err)
-	span.SetAttributes(attribute.String("schedule.task_id", id))
+	span.SetAttributes(
+		attribute.String("schedule.task_id", id),
+		attribute.String("schedule.actor_open_id", otel.PreviewString(strings.TrimSpace(actorOpenID), 128)),
+	)
 	if !s.Available() {
 		return nil, errScheduleServiceUnavailable
 	}
 	task, err := s.repo.GetTaskByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := EnsureTaskMutationAllowed(ctx, actorOpenID, task); err != nil {
 		return nil, err
 	}
 	if task.Status != model.ScheduleTaskStatusPaused {
@@ -500,15 +522,15 @@ func (n noopService) ListTasks(context.Context, *ListTasksRequest) ([]*model.Sch
 	return nil, fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
 
-func (n noopService) DeleteTask(context.Context, string) error {
+func (n noopService) DeleteTask(context.Context, string, string) error {
 	return fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
 
-func (n noopService) PauseTask(context.Context, string) error {
+func (n noopService) PauseTask(context.Context, string, string) error {
 	return fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
 
-func (n noopService) ResumeTask(context.Context, string) (*model.ScheduledTask, error) {
+func (n noopService) ResumeTask(context.Context, string, string) (*model.ScheduledTask, error) {
 	return nil, fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
 

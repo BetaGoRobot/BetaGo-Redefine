@@ -13,7 +13,12 @@ type configLookupCandidate struct {
 }
 
 type ConfigCardViewOptions struct {
-	BypassCache bool
+	BypassCache        bool
+	LastModifierOpenID string
+}
+
+type FeatureCardViewOptions struct {
+	LastModifierOpenID string
 }
 
 // ==========================================
@@ -76,10 +81,11 @@ const (
 
 // FeatureActionRequest 功能操作请求（从卡片回调中解析）
 type FeatureActionRequest struct {
-	Action  FeatureAction `json:"action"`
-	Feature string        `json:"feature"`
-	ChatID  string        `json:"chat_id"`
-	OpenID  string        `json:"user_id"`
+	Action             FeatureAction `json:"action"`
+	Feature            string        `json:"feature"`
+	ChatID             string        `json:"chat_id"`
+	OpenID             string        `json:"user_id"`
+	LastModifierOpenID string        `json:"last_modifier_open_id,omitempty"`
 }
 
 // FeatureActionResponse 功能操作响应
@@ -102,13 +108,14 @@ const (
 
 // ConfigActionRequest 配置操作请求
 type ConfigActionRequest struct {
-	Action      ConfigAction `json:"action"`
-	Key         string       `json:"key"`
-	Value       string       `json:"value"`
-	Scope       string       `json:"scope"`
-	ChatID      string       `json:"chat_id"`
-	OpenID      string       `json:"user_id"`
-	ActorOpenID string       `json:"actor_user_id"`
+	Action             ConfigAction `json:"action"`
+	Key                string       `json:"key"`
+	Value              string       `json:"value"`
+	Scope              string       `json:"scope"`
+	ChatID             string       `json:"chat_id"`
+	OpenID             string       `json:"user_id"`
+	ActorOpenID        string       `json:"actor_user_id"`
+	LastModifierOpenID string       `json:"last_modifier_open_id,omitempty"`
 }
 
 // ConfigActionResponse 配置操作响应

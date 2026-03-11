@@ -28,6 +28,16 @@ func TestScheduleManageParseCLI(t *testing.T) {
 	}
 }
 
+func TestScheduleQueryParseCLIUsesCreatorOpenIDAlias(t *testing.T) {
+	arg, err := ScheduleQuery.ParseCLI([]string{"--status=paused", "--open_id=ou_creator"})
+	if err != nil {
+		t.Fatalf("ParseCLI() error = %v", err)
+	}
+	if arg.Status != "paused" || arg.CreatorOpenID != "ou_creator" {
+		t.Fatalf("unexpected args: %+v", arg)
+	}
+}
+
 func TestSchedulePauseParseCLI(t *testing.T) {
 	arg, err := SchedulePause.ParseCLI([]string{"--id=task-1"})
 	if err != nil {

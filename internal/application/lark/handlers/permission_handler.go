@@ -58,17 +58,19 @@ func (permissionManageHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	actorUserID := currentOpenID(data, metaData)
-	if actorUserID == "" {
+	actorOpenID := currentOpenID(data, metaData)
+	if actorOpenID == "" {
 		return errors.New("operator user_id is required")
 	}
 
-	targetUserID := arg.OpenID
-	if targetUserID == "" {
-		targetUserID = actorUserID
+	targetOpenID := arg.OpenID
+	if targetOpenID == "" {
+		targetOpenID = actorOpenID
 	}
 
-	cardData, err := apppermission.BuildPermissionCardJSON(ctx, currentChatID(data, metaData), actorUserID, targetUserID)
+	cardData, err := apppermission.BuildPermissionCardJSONWithOptions(ctx, currentChatID(data, metaData), actorOpenID, targetOpenID, apppermission.PermissionCardViewOptions{
+		LastModifierOpenID: actorOpenID,
+	})
 	if err != nil {
 		return err
 	}

@@ -115,7 +115,9 @@ func handleFeatureAction(ctx context.Context, actionCtx *Context) (*callback.Car
 	if err != nil {
 		return ErrorToast(resp.Message), nil
 	}
-	card, cardErr := appconfig.BuildFeatureCard(ctx, actionCtx.ChatID(), actionCtx.OpenID())
+	card, cardErr := appconfig.BuildFeatureCardWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), appconfig.FeatureCardViewOptions{
+		LastModifierOpenID: actionCtx.OpenID(),
+	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
 	}
@@ -135,7 +137,9 @@ func handleFeatureView(ctx context.Context, actionCtx *Context) (*callback.CardA
 	if openID == "" {
 		openID = strings.TrimSpace(actionCtx.OpenID())
 	}
-	card, err := appconfig.BuildFeatureCard(ctx, chatID, openID)
+	card, err := appconfig.BuildFeatureCardWithOptions(ctx, chatID, openID, appconfig.FeatureCardViewOptions{
+		LastModifierOpenID: req.LastModifierOpenID,
+	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
@@ -154,7 +158,8 @@ func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.Card
 		return ErrorToast(resp.Message), nil
 	}
 	card, cardErr := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
-		BypassCache: true,
+		BypassCache:        true,
+		LastModifierOpenID: actionCtx.OpenID(),
 	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
@@ -168,7 +173,8 @@ func handleConfigView(ctx context.Context, actionCtx *Context) (*callback.CardAc
 		return ErrorToast(err.Error()), nil
 	}
 	card, err := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
-		BypassCache: true,
+		BypassCache:        true,
+		LastModifierOpenID: req.LastModifierOpenID,
 	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -187,7 +193,9 @@ func handlePermissionAction(ctx context.Context, actionCtx *Context) (*callback.
 	if err != nil {
 		return ErrorToast(resp.Message), nil
 	}
-	card, cardErr := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID)
+	card, cardErr := apppermission.BuildPermissionCardJSONWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID, apppermission.PermissionCardViewOptions{
+		LastModifierOpenID: actionCtx.OpenID(),
+	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
 	}
@@ -199,7 +207,9 @@ func handlePermissionView(ctx context.Context, actionCtx *Context) (*callback.Ca
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	card, err := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID)
+	card, err := apppermission.BuildPermissionCardJSONWithOptions(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID, apppermission.PermissionCardViewOptions{
+		LastModifierOpenID: req.LastModifierOpenID,
+	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
@@ -257,19 +267,20 @@ func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.Ca
 	}
 
 	var message string
+	actorOpenID := strings.TrimSpace(actionCtx.OpenID())
 	switch req.Action {
 	case scheduleapp.TaskActionPause:
-		if err := scheduleapp.GetService().PauseTask(ctx, req.ID); err != nil {
+		if err := scheduleapp.GetService().PauseTask(ctx, req.ID, actorOpenID); err != nil {
 			return ErrorToast(err.Error()), nil
 		}
 		message = fmt.Sprintf("⏸️ Schedule 已暂停：`%s`", req.ID)
 	case scheduleapp.TaskActionResume:
-		if _, err := scheduleapp.GetService().ResumeTask(ctx, req.ID); err != nil {
+		if _, err := scheduleapp.GetService().ResumeTask(ctx, req.ID, actorOpenID); err != nil {
 			return ErrorToast(err.Error()), nil
 		}
 		message = fmt.Sprintf("▶️ Schedule 已恢复：`%s`", req.ID)
 	case scheduleapp.TaskActionDelete:
-		if err := scheduleapp.GetService().DeleteTask(ctx, req.ID); err != nil {
+		if err := scheduleapp.GetService().DeleteTask(ctx, req.ID, actorOpenID); err != nil {
 			return ErrorToast(err.Error()), nil
 		}
 		message = fmt.Sprintf("🗑️ Schedule 已删除：`%s`", req.ID)
@@ -277,6 +288,7 @@ func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.Ca
 		return ErrorToast(fmt.Sprintf("unsupported schedule action: %s", req.Action)), nil
 	}
 
+	req.View.LastModifierOpenID = actorOpenID
 	card, cardErr := scheduleapp.BuildTaskCardPayloadForView(ctx, chatID, req.View, req.Action == scheduleapp.TaskActionDelete)
 	if cardErr != nil {
 		return InfoToast(message), nil

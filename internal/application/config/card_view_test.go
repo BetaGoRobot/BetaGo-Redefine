@@ -117,7 +117,9 @@ func TestBuildConfigActionRowContainsStandardActionPayload(t *testing.T) {
 		ValueType: "bool",
 		ChatID:    "chat-1",
 		OpenID:    "user-1",
-	}, "chat")
+	}, ConfigViewState{
+		Scope: "chat",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -137,7 +139,10 @@ func TestBuildFeatureActionRowContainsStandardActionPayload(t *testing.T) {
 		BlockedAtChat:     false,
 		BlockedAtUser:     true,
 		BlockedAtChatUser: false,
-	}, "chat-1", "user-1")
+	}, FeatureViewState{
+		ChatID: "chat-1",
+		OpenID: "user-1",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -149,7 +154,11 @@ func TestBuildFeatureActionRowContainsStandardActionPayload(t *testing.T) {
 }
 
 func TestBuildConfigScopeRowContainsViewActionPayload(t *testing.T) {
-	element := buildConfigScopeRow("chat", "chat-1", "user-1")
+	element := buildConfigScopeRow(ConfigViewState{
+		Scope:  "chat",
+		ChatID: "chat-1",
+		OpenID: "user-1",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -167,7 +176,9 @@ func TestBuildConfigCustomValueFormContainsInputAndSubmit(t *testing.T) {
 		ValueType: "int",
 		ChatID:    "chat-1",
 		OpenID:    "user-1",
-	}, "chat")
+	}, ConfigViewState{
+		Scope: "chat",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -222,7 +233,9 @@ func TestBuildConfigItemSectionPlacesControlsOnRight(t *testing.T) {
 		Scope:       "chat",
 		ChatID:      "chat-1",
 		OpenID:      "user-1",
-	}, "chat")
+	}, ConfigViewState{
+		Scope: "chat",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -246,7 +259,9 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 		ValueType: "int",
 		ChatID:    "chat-1",
 		OpenID:    "user-1",
-	}, "chat")
+	}, ConfigViewState{
+		Scope: "chat",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -262,7 +277,11 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 
 func TestNewRawCardUsesSchemaV2Structure(t *testing.T) {
 	useWorkspaceConfigPath(t)
-	card := newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")}, larkmsg.StandardCardFooterOptions{
+	card := newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow(ConfigViewState{
+		Scope:  "chat",
+		ChatID: "chat-1",
+		OpenID: "user-1",
+	})}, larkmsg.StandardCardFooterOptions{
 		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue("chat", "chat-1", "user-1")),
 	})
 	raw, err := json.Marshal(card)
@@ -296,7 +315,10 @@ func TestBuildFeatureActionRowUsesFilledPrimaryForUnblock(t *testing.T) {
 		BlockedAtChat:     false,
 		BlockedAtUser:     true,
 		BlockedAtChatUser: false,
-	}, "chat-1", "user-1")
+	}, FeatureViewState{
+		ChatID: "chat-1",
+		OpenID: "user-1",
+	})
 	raw, err := json.Marshal(element)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)

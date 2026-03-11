@@ -17,27 +17,28 @@ func BuildTaskListCard(ctx context.Context, title string, tasks []*model.Schedul
 	}
 
 	elements := []any{}
+	filterControls := buildTaskFilterControls(tasks, view)
+	if len(filterControls) > 0 {
+		elements = append(elements, filterControls...)
+	}
 	if len(tasks) == 0 {
 		elements = append(elements, larkmsg.Markdown("暂无匹配的 schedule ⏲️"))
 	} else {
 		elements = append(elements, larkmsg.HintMarkdown(fmt.Sprintf("共 %d 项；可继续按 ID 精确查询后再做暂停、恢复或删除。", len(tasks))))
 		taskSections := make([][]any, 0, len(tasks))
 		for _, task := range tasks {
-			section := []any{buildTaskSection(ctx, task)}
-			if actionRow := buildTaskActionRow(task, view); actionRow != nil {
-				section = append(section, actionRow)
-			}
-			taskSections = append(taskSections, section)
+			taskSections = append(taskSections, []any{buildTaskSection(ctx, task, view)})
 		}
 		elements = larkmsg.AppendSectionsWithDividers(elements, taskSections...)
 	}
 
 	return larkmsg.NewStandardPanelCard(ctx, title, elements, larkmsg.StandardCardFooterOptions{
-		RefreshPayload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(view)),
+		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildTaskViewValue(view)),
+		LastModifierOpenID: view.LastModifierOpenID,
 	})
 }
 
-func buildTaskSection(ctx context.Context, task *model.ScheduledTask) map[string]any {
+func buildTaskSection(ctx context.Context, task *model.ScheduledTask, view TaskCardViewState) map[string]any {
 	if task == nil {
 		return larkmsg.Markdown("空 schedule")
 	}
@@ -47,46 +48,64 @@ func buildTaskSection(ctx context.Context, task *model.ScheduledTask) map[string
 		loc = utils.UTC8Loc()
 	}
 
-	lines := []string{
+	leftLines := []string{
 		fmt.Sprintf("**%s**", task.Name),
 		fmt.Sprintf("ID: `%s`", task.ID),
-		fmt.Sprintf("状态: `%s`  模式: `%s`", task.Status, task.Type),
-		fmt.Sprintf("动作: `%s`", task.ToolName),
-		fmt.Sprintf("时区: `%s`", task.Timezone),
-	}
-	if task.SourceMessageID != "" {
-		lines = append(lines, fmt.Sprintf("来源消息: `%s`", task.SourceMessageID))
-	}
-	if task.IsOnce() && task.RunAt != nil {
-		lines = append(lines, fmt.Sprintf("执行时间: `%s`", task.RunAt.In(loc).Format(timeLayout)))
+		fmt.Sprintf("创建者: `%s`", shortScheduleID(task.CreatorID)),
+		fmt.Sprintf("工具: `%s`  时区: `%s`", task.ToolName, task.Timezone),
 	}
 	if task.IsCron() {
-		lines = append(lines,
-			fmt.Sprintf("Cron: `%s`", task.CronExpr),
-			fmt.Sprintf("下次执行: `%s`", task.NextRunAt.In(loc).Format(timeLayout)),
-		)
+		leftLines = append(leftLines, fmt.Sprintf("Cron: `%s`", task.CronExpr))
+	}
+	if task.SourceMessageID != "" {
+		leftLines = append(leftLines, fmt.Sprintf("来源: `%s`", previewTaskResult(task.SourceMessageID, 24)))
+	}
+
+	rightLines := []string{
+		fmt.Sprintf("状态: `%s`  模式: `%s`", task.Status, task.Type),
+	}
+	if task.IsOnce() && task.RunAt != nil {
+		rightLines = append(rightLines, fmt.Sprintf("执行: `%s`", task.RunAt.In(loc).Format(timeLayout)))
+	} else if task.IsCron() {
+		rightLines = append(rightLines, fmt.Sprintf("下次: `%s`", task.NextRunAt.In(loc).Format(timeLayout)))
 	}
 	if task.LastRunAt != nil {
-		lines = append(lines, fmt.Sprintf("上次执行: `%s`", task.LastRunAt.In(loc).Format(timeLayout)))
+		rightLines = append(rightLines, fmt.Sprintf("上次: `%s`", task.LastRunAt.In(loc).Format(timeLayout)))
 	}
 	if task.LastError != "" {
-		lines = append(lines, fmt.Sprintf("最近错误: `%s`", task.LastError))
+		rightLines = append(rightLines, fmt.Sprintf("最近错误: `%s`", previewTaskResult(task.LastError, 72)))
 	}
 	if task.LastResult != "" {
 		if resultLine := buildTaskResultLine(ctx, task.LastResult); resultLine != "" {
-			lines = append(lines, resultLine)
+			rightLines = append(rightLines, resultLine)
 		}
 	}
 
-	return larkmsg.Markdown(strings.Join(lines, "\n"))
-}
-
-func buildTaskActionRow(task *model.ScheduledTask, view TaskCardViewState) map[string]any {
-	buttons := buildTaskActionButtons(task, view)
-	if len(buttons) == 0 {
-		return nil
+	rightElements := []any{larkmsg.Markdown(strings.Join(rightLines, "\n"))}
+	if buttons := buildTaskActionButtons(task, view); len(buttons) > 0 {
+		rightElements = append(rightElements, larkmsg.ButtonRow("flow", buttons...))
 	}
-	return larkmsg.ButtonRow("flow", buttons...)
+
+	return larkmsg.SplitColumns(
+		[]any{larkmsg.Markdown(strings.Join(leftLines, "\n"))},
+		rightElements,
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:          3,
+				VerticalAlign:   "top",
+				VerticalSpacing: "4px",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:          2,
+				VerticalAlign:   "top",
+				VerticalSpacing: "6px",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "12px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
 }
 
 func buildTaskActionButtons(task *model.ScheduledTask, view TaskCardViewState) []map[string]any {
@@ -122,3 +141,145 @@ func buildTaskActionButton(label, buttonType string, action TaskAction, taskID s
 }
 
 const timeLayout = "2006-01-02 15:04:05"
+
+func buildTaskFilterControls(tasks []*model.ScheduledTask, view TaskCardViewState) []any {
+	view = normalizeTaskCardView(view)
+
+	elements := make([]any, 0, 2)
+	if statusRow := buildTaskStatusFilterRow(view); statusRow != nil {
+		elements = append(elements, statusRow)
+	}
+	if creatorRow := buildTaskCreatorFilterRow(tasks, view); creatorRow != nil {
+		elements = append(elements, creatorRow)
+	}
+	return elements
+}
+
+func buildTaskStatusFilterRow(view TaskCardViewState) map[string]any {
+	options := []struct {
+		Label  string
+		Status string
+	}{
+		{Label: "全部", Status: ""},
+		{Label: "启用", Status: model.ScheduleTaskStatusEnabled},
+		{Label: "暂停", Status: model.ScheduleTaskStatusPaused},
+		{Label: "完成", Status: model.ScheduleTaskStatusCompleted},
+	}
+	buttons := make([]map[string]any, 0, len(options))
+	for _, option := range options {
+		nextView := withTaskFilterSelection(view, option.Status, view.CreatorOpenID)
+		buttonType := "default"
+		if strings.TrimSpace(view.Status) == option.Status || (option.Status == "" && strings.TrimSpace(view.Status) == "") {
+			buttonType = "primary_filled"
+		}
+		buttons = append(buttons, buildTaskFilterButton(option.Label, buttonType, nextView))
+	}
+	return buildTaskFilterRow("状态", buttons)
+}
+
+func buildTaskCreatorFilterRow(tasks []*model.ScheduledTask, view TaskCardViewState) map[string]any {
+	_ = tasks
+	allButtonType := "default"
+	if strings.TrimSpace(view.CreatorOpenID) == "" {
+		allButtonType = "primary_filled"
+	}
+	clearButton := buildTaskFilterButton("全部", allButtonType, withTaskFilterSelection(view, view.Status, ""))
+	return larkmsg.SplitColumns(
+		[]any{larkmsg.Markdown("**创建者**")},
+		[]any{
+			larkmsg.ColumnSet([]any{
+				larkmsg.Column([]any{buildTaskCreatorPicker(view)}, larkmsg.ColumnOptions{
+					Width:         "auto",
+					VerticalAlign: "top",
+				}),
+				larkmsg.Column([]any{clearButton}, larkmsg.ColumnOptions{
+					Width:         "auto",
+					VerticalAlign: "top",
+				}),
+			}, larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "8px",
+				FlexMode:          "none",
+			}),
+		},
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:        1,
+				VerticalAlign: "top",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:        5,
+				VerticalAlign: "top",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "12px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
+}
+
+func buildTaskFilterRow(label string, buttons []map[string]any) map[string]any {
+	if len(buttons) == 0 {
+		return nil
+	}
+	return larkmsg.SplitColumns(
+		[]any{larkmsg.Markdown("**" + label + "**")},
+		[]any{larkmsg.ButtonRow("flow", buttons...)},
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:        1,
+				VerticalAlign: "top",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:        5,
+				VerticalAlign: "top",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "12px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
+}
+
+func buildTaskFilterButton(label, buttonType string, view TaskCardViewState) map[string]any {
+	return larkmsg.Button(label, larkmsg.ButtonOptions{
+		Type:    buttonType,
+		Payload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(view)),
+	})
+}
+
+func buildTaskCreatorPicker(view TaskCardViewState) map[string]any {
+	view = normalizeTaskCardView(view)
+	return larkmsg.SelectPerson(larkmsg.SelectPersonOptions{
+		Placeholder: "选择创建者筛选",
+		Width:       "default",
+		Type:        "default",
+		Payload:     larkmsg.StringMapToAnyMap(BuildTaskCreatorPickerValue(view)),
+		ElementID:   "schedule_creator_filter",
+	})
+}
+
+func withTaskFilterSelection(view TaskCardViewState, status, creatorOpenID string) TaskCardViewState {
+	view = normalizeTaskCardView(view)
+	view.ID = ""
+	view.Status = strings.TrimSpace(status)
+	view.CreatorOpenID = strings.TrimSpace(creatorOpenID)
+	if view.Name != "" || view.Status != "" || view.TaskType != "" || view.ToolName != "" || view.CreatorOpenID != "" {
+		view.Mode = TaskCardViewModeQuery
+	} else {
+		view.Mode = TaskCardViewModeList
+	}
+	return normalizeTaskCardView(view)
+}
+
+func shortScheduleID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "-"
+	}
+	if len(id) <= 10 {
+		return id
+	}
+	return id[:10]
+}

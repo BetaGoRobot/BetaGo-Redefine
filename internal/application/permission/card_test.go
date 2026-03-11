@@ -11,7 +11,7 @@ import (
 func TestBuildScopeControlDoesNotNestFormInColumn(t *testing.T) {
 	grant := permissioninfra.Grant{Remark: "bootstrap grant"}
 
-	element := buildScopeControl("permission.manage", "global", "ou_target", grant, true)
+	element := buildScopeControl("permission.manage", "global", "ou_target", grant, true, PermissionCardViewOptions{})
 	if tag, ok := element["tag"].(string); !ok || tag != "column_set" {
 		t.Fatalf("expected scope control to be a column_set, got %#v", element["tag"])
 	}

@@ -7,7 +7,32 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
+const (
+	configLastModifierField  = "config_last_modifier_open_id"
+	featureLastModifierField = "feature_last_modifier_open_id"
+)
+
+type ConfigViewState struct {
+	Scope              string
+	ChatID             string
+	OpenID             string
+	LastModifierOpenID string
+}
+
+type FeatureViewState struct {
+	ChatID             string
+	OpenID             string
+	LastModifierOpenID string
+}
+
 func BuildFeatureActionValue(action FeatureAction, feature, chatID, openID string) map[string]string {
+	return BuildFeatureActionValueWithState(action, feature, FeatureViewState{
+		ChatID: chatID,
+		OpenID: openID,
+	})
+}
+
+func BuildFeatureActionValueWithState(action FeatureAction, feature string, state FeatureViewState) map[string]string {
 	name, ok := featureActionName(action)
 	if !ok {
 		return nil
@@ -15,20 +40,37 @@ func BuildFeatureActionValue(action FeatureAction, feature, chatID, openID strin
 
 	return cardaction.New(name).
 		WithValue(cardaction.FeatureField, feature).
-		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, openID).
+		WithValue(cardaction.ChatIDField, state.ChatID).
+		WithValue(cardaction.UserIDField, state.OpenID).
+		WithValue(featureLastModifierField, state.LastModifierOpenID).
 		Payload()
 }
 
 func BuildFeatureViewValue(chatID, openID string) map[string]string {
+	return BuildFeatureViewValueWithState(FeatureViewState{
+		ChatID: chatID,
+		OpenID: openID,
+	})
+}
+
+func BuildFeatureViewValueWithState(state FeatureViewState) map[string]string {
 	return cardaction.New(cardaction.ActionFeatureView).
-		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, openID).
+		WithValue(cardaction.ChatIDField, state.ChatID).
+		WithValue(cardaction.UserIDField, state.OpenID).
+		WithValue(featureLastModifierField, state.LastModifierOpenID).
 		Payload()
 }
 
 func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, openID string) map[string]string {
-	builder, ok := newConfigActionBuilder(action, key, scope, chatID, openID)
+	return BuildConfigActionValueWithState(action, key, value, ConfigViewState{
+		Scope:  scope,
+		ChatID: chatID,
+		OpenID: openID,
+	})
+}
+
+func BuildConfigActionValueWithState(action ConfigAction, key, value string, state ConfigViewState) map[string]string {
+	builder, ok := newConfigActionBuilder(action, key, state)
 	if !ok {
 		return nil
 	}
@@ -39,7 +81,15 @@ func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, open
 }
 
 func BuildConfigFormActionValue(key, scope, chatID, openID, formField string) map[string]string {
-	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, openID)
+	return BuildConfigFormActionValueWithState(key, ConfigViewState{
+		Scope:  scope,
+		ChatID: chatID,
+		OpenID: openID,
+	}, formField)
+}
+
+func BuildConfigFormActionValueWithState(key string, state ConfigViewState, formField string) map[string]string {
+	builder, ok := newConfigActionBuilder(ConfigActionSet, key, state)
 	if !ok {
 		return nil
 	}
@@ -48,14 +98,18 @@ func BuildConfigFormActionValue(key, scope, chatID, openID, formField string) ma
 }
 
 func BuildConfigInputActionValue(key, scope, chatID, openID string) map[string]string {
-	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, openID)
+	builder, ok := newConfigActionBuilder(ConfigActionSet, key, ConfigViewState{
+		Scope:  scope,
+		ChatID: chatID,
+		OpenID: openID,
+	})
 	if !ok {
 		return nil
 	}
 	return builder.Payload()
 }
 
-func newConfigActionBuilder(action ConfigAction, key, scope, chatID, openID string) (*cardaction.Builder, bool) {
+func newConfigActionBuilder(action ConfigAction, key string, state ConfigViewState) (*cardaction.Builder, bool) {
 	var actionName string
 	switch action {
 	case ConfigActionSet:
@@ -68,17 +122,27 @@ func newConfigActionBuilder(action ConfigAction, key, scope, chatID, openID stri
 
 	builder := cardaction.New(actionName).
 		WithValue(cardaction.KeyField, key).
-		WithValue(cardaction.ScopeField, scope).
-		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, openID)
+		WithValue(cardaction.ScopeField, state.Scope).
+		WithValue(cardaction.ChatIDField, state.ChatID).
+		WithValue(cardaction.UserIDField, state.OpenID).
+		WithValue(configLastModifierField, state.LastModifierOpenID)
 	return builder, true
 }
 
 func BuildConfigViewValue(scope, chatID, openID string) map[string]string {
+	return BuildConfigViewValueWithState(ConfigViewState{
+		Scope:  scope,
+		ChatID: chatID,
+		OpenID: openID,
+	})
+}
+
+func BuildConfigViewValueWithState(state ConfigViewState) map[string]string {
 	return cardaction.New(cardaction.ActionConfigViewScope).
-		WithValue(cardaction.ScopeField, scope).
-		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, openID).
+		WithValue(cardaction.ScopeField, state.Scope).
+		WithValue(cardaction.ChatIDField, state.ChatID).
+		WithValue(cardaction.UserIDField, state.OpenID).
+		WithValue(configLastModifierField, state.LastModifierOpenID).
 		Payload()
 }
 
@@ -97,10 +161,11 @@ func ParseFeatureActionRequest(parsed *cardaction.Parsed) (*FeatureActionRequest
 	openID, _ := parsed.String(cardaction.UserIDField)
 
 	return &FeatureActionRequest{
-		Action:  action,
-		Feature: feature,
-		ChatID:  chatID,
-		OpenID:  openID,
+		Action:             action,
+		Feature:            feature,
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: readConfigActionValue(parsed, featureLastModifierField),
 	}, nil
 }
 
@@ -141,12 +206,13 @@ func ParseConfigActionRequest(parsed *cardaction.Parsed) (*ConfigActionRequest, 
 	}
 
 	return &ConfigActionRequest{
-		Action: action,
-		Key:    key,
-		Value:  value,
-		Scope:  scope,
-		ChatID: chatID,
-		OpenID: openID,
+		Action:             action,
+		Key:                key,
+		Value:              value,
+		Scope:              scope,
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: readConfigActionValue(parsed, configLastModifierField),
 	}, nil
 }
 
@@ -167,14 +233,16 @@ func resolveConfigFormValue(parsed *cardaction.Parsed, formField string) (string
 }
 
 type ConfigViewRequest struct {
-	Scope  string `json:"scope"`
-	ChatID string `json:"chat_id"`
-	OpenID string `json:"user_id"`
+	Scope              string `json:"scope"`
+	ChatID             string `json:"chat_id"`
+	OpenID             string `json:"user_id"`
+	LastModifierOpenID string `json:"last_modifier_open_id,omitempty"`
 }
 
 type FeatureViewRequest struct {
-	ChatID string `json:"chat_id"`
-	OpenID string `json:"user_id"`
+	ChatID             string `json:"chat_id"`
+	OpenID             string `json:"user_id"`
+	LastModifierOpenID string `json:"last_modifier_open_id,omitempty"`
 }
 
 func ParseConfigViewRequest(parsed *cardaction.Parsed) (*ConfigViewRequest, error) {
@@ -188,9 +256,10 @@ func ParseConfigViewRequest(parsed *cardaction.Parsed) (*ConfigViewRequest, erro
 	chatID, _ := parsed.String(cardaction.ChatIDField)
 	openID, _ := parsed.String(cardaction.UserIDField)
 	return &ConfigViewRequest{
-		Scope:  scope,
-		ChatID: chatID,
-		OpenID: openID,
+		Scope:              scope,
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: readConfigActionValue(parsed, configLastModifierField),
 	}, nil
 }
 
@@ -204,9 +273,23 @@ func ParseFeatureViewRequest(parsed *cardaction.Parsed) (*FeatureViewRequest, er
 	chatID, _ := parsed.String(cardaction.ChatIDField)
 	openID, _ := parsed.String(cardaction.UserIDField)
 	return &FeatureViewRequest{
-		ChatID: chatID,
-		OpenID: openID,
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: readConfigActionValue(parsed, featureLastModifierField),
 	}, nil
+}
+
+func readConfigActionValue(parsed *cardaction.Parsed, key string) string {
+	if parsed == nil {
+		return ""
+	}
+	if value, ok := parsed.FormString(key); ok {
+		return strings.TrimSpace(value)
+	}
+	if value, ok := parsed.String(key); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 func featureActionName(action FeatureAction) (string, bool) {

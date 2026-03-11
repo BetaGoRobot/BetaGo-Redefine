@@ -9,7 +9,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
-	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
 type ActionResponse struct {
@@ -18,6 +17,14 @@ type ActionResponse struct {
 }
 
 func BuildPermissionCardJSON(ctx context.Context, chatID, actorOpenID, targetOpenID string) (map[string]any, error) {
+	return BuildPermissionCardJSONWithOptions(ctx, chatID, actorOpenID, targetOpenID, PermissionCardViewOptions{})
+}
+
+type PermissionCardViewOptions struct {
+	LastModifierOpenID string
+}
+
+func BuildPermissionCardJSONWithOptions(ctx context.Context, chatID, actorOpenID, targetOpenID string, options PermissionCardViewOptions) (map[string]any, error) {
 	if err := EnsureManageAllowed(ctx, actorOpenID); err != nil {
 		return nil, err
 	}
@@ -53,11 +60,11 @@ func BuildPermissionCardJSON(ctx context.Context, chatID, actorOpenID, targetOpe
 	if bootstrapAdmin := CurrentBootstrapAdminOpenID(); bootstrapAdmin != "" {
 		elements = append(elements, larkmsg.HintMarkdown(fmt.Sprintf("bootstrap admin: `%s`", shortID(bootstrapAdmin))))
 	}
-	elements = append(elements, buildTargetUserForm(actorOpenID, targetOpenID))
+	elements = append(elements, buildTargetUserForm(actorOpenID, targetOpenID, options))
 	elements = append(elements, larkmsg.Divider())
 	pointSections := make([][]any, 0, len(registered))
 	for _, point := range registered {
-		pointSections = append(pointSections, []any{buildPointSection(point, targetOpenID, indexed, covered)})
+		pointSections = append(pointSections, []any{buildPointSection(point, targetOpenID, indexed, covered, options)})
 	}
 	elements = larkmsg.AppendSectionsWithDividers(elements, pointSections...)
 
@@ -74,7 +81,8 @@ func BuildPermissionCardJSON(ctx context.Context, chatID, actorOpenID, targetOpe
 
 	elements = append(elements, larkmsg.HintMarkdown("点击按钮会直接授权或回收；bootstrap admin 仅来自 config.toml，不会自动写入数据库。"))
 	card := larkmsg.NewStandardPanelCard(ctx, "权限面板", elements, larkmsg.StandardCardFooterOptions{
-		RefreshPayload: larkmsg.StringMapToAnyMap(BuildPermissionViewValue(targetOpenID)),
+		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildPermissionViewValueWithOptions(targetOpenID, options.LastModifierOpenID)),
+		LastModifierOpenID: options.LastModifierOpenID,
 	})
 	return map[string]any(card), nil
 }
@@ -123,58 +131,74 @@ func HandleAction(ctx context.Context, req *ActionRequest) (*ActionResponse, err
 	}
 }
 
-func buildTargetUserForm(actorOpenID, targetOpenID string) map[string]any {
-	return map[string]any{
-		"tag":                "form",
-		"name":               "permission_target_form",
-		"vertical_spacing":   "8px",
-		"horizontal_spacing": "8px",
-		"elements": []any{
-			larkmsg.SplitColumns(
-				[]any{
-					larkmsg.Markdown("**查看目标用户**\n输入 OpenID 后刷新卡片"),
-				},
-				[]any{
-					map[string]any{
-						"tag":           "input",
-						"name":          cardactionproto.TargetUserIDField,
-						"width":         "fill",
-						"placeholder":   map[string]any{"tag": "plain_text", "content": "输入目标用户 OpenID"},
-						"default_value": targetOpenID,
-					},
-					larkmsg.ButtonRow("none",
-						larkmsg.Button("查看用户", larkmsg.ButtonOptions{
-							Type:           "primary_filled",
-							Name:           "btn_permission_view",
-							FormActionType: "submit",
-							Payload:        larkmsg.StringMapToAnyMap(BuildPermissionViewValue(targetOpenID)),
-						}),
-						larkmsg.Button("查看自己", larkmsg.ButtonOptions{
-							Type:    "default",
-							Payload: larkmsg.StringMapToAnyMap(BuildPermissionViewValue(actorOpenID)),
-						}),
-					),
-				},
-				larkmsg.SplitColumnsOptions{
-					Left: larkmsg.ColumnOptions{
-						Weight:        2,
-						VerticalAlign: "top",
-					},
-					Right: larkmsg.ColumnOptions{
-						Weight:        3,
-						VerticalAlign: "top",
-					},
-					Row: larkmsg.ColumnSetOptions{
-						HorizontalSpacing: "12px",
-						FlexMode:          "stretch",
-					},
-				},
+func buildTargetUserForm(actorOpenID, targetOpenID string, options PermissionCardViewOptions) map[string]any {
+	showAvatar := true
+	showName := true
+	return larkmsg.SplitColumns(
+		[]any{
+			larkmsg.Markdown("**查看目标用户**\n使用选人器切换目标用户；候选默认取当前会话成员"),
+			larkmsg.ColumnSet([]any{
+				larkmsg.Column([]any{
+					larkmsg.TextDiv("当前目标", larkmsg.CardTextOptions{
+						Size:  "notation",
+						Color: "grey",
+						Align: "left",
+					}),
+				}, larkmsg.ColumnOptions{
+					Width:         "auto",
+					VerticalAlign: "center",
+				}),
+				larkmsg.Column([]any{
+					larkmsg.Person(targetOpenID, larkmsg.PersonOptions{
+						Size:       "small",
+						ShowAvatar: &showAvatar,
+						ShowName:   &showName,
+						Style:      "capsule",
+						Margin:     "0",
+					}),
+				}, larkmsg.ColumnOptions{
+					Width:         "auto",
+					VerticalAlign: "center",
+				}),
+			}, larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "6px",
+			}),
+		},
+		[]any{
+			larkmsg.SelectPerson(larkmsg.SelectPersonOptions{
+				Placeholder:   "选择目标用户",
+				Width:         "fill",
+				Type:          "default",
+				InitialOption: targetOpenID,
+				Payload:       larkmsg.StringMapToAnyMap(BuildPermissionTargetPickerValue(options.LastModifierOpenID)),
+				ElementID:     "permission_target_picker",
+			}),
+			larkmsg.ButtonRow("none",
+				larkmsg.Button("查看自己", larkmsg.ButtonOptions{
+					Type:    "default",
+					Payload: larkmsg.StringMapToAnyMap(BuildPermissionViewValueWithOptions(actorOpenID, options.LastModifierOpenID)),
+				}),
 			),
 		},
-	}
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:        2,
+				VerticalAlign: "top",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:          3,
+				VerticalAlign:   "top",
+				VerticalSpacing: "8px",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "12px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
 }
 
-func buildPointSection(def permissioninfra.PointDefinition, targetOpenID string, indexed map[string]permissioninfra.Grant, covered map[string]struct{}) map[string]any {
+func buildPointSection(def permissioninfra.PointDefinition, targetOpenID string, indexed map[string]permissioninfra.Grant, covered map[string]struct{}, options PermissionCardViewOptions) map[string]any {
 	scopeBlocks := make([]any, 0, len(def.SupportedScopes))
 	for _, scope := range def.SupportedScopes {
 		key := grantKey(def.Point, scope, "", "")
@@ -182,7 +206,7 @@ func buildPointSection(def permissioninfra.PointDefinition, targetOpenID string,
 		if granted {
 			covered[key] = struct{}{}
 		}
-		scopeBlocks = append(scopeBlocks, buildScopeControl(def.Point, scope, targetOpenID, grant, granted))
+		scopeBlocks = append(scopeBlocks, buildScopeControl(def.Point, scope, targetOpenID, grant, granted, options))
 	}
 
 	return larkmsg.SplitColumns(
@@ -207,7 +231,7 @@ func buildPointSection(def permissioninfra.PointDefinition, targetOpenID string,
 	)
 }
 
-func buildScopeControl(point, scope, targetOpenID string, grant permissioninfra.Grant, granted bool) map[string]any {
+func buildScopeControl(point, scope, targetOpenID string, grant permissioninfra.Grant, granted bool, options PermissionCardViewOptions) map[string]any {
 	statusText := fmt.Sprintf("scope: `%s`\n状态: `%s`", scope, ternary(granted, "granted", "not granted"))
 	if granted && grant.Remark != "" {
 		statusText += fmt.Sprintf("\n备注: %s", grant.Remark)
@@ -215,12 +239,12 @@ func buildScopeControl(point, scope, targetOpenID string, grant permissioninfra.
 
 	button := larkmsg.Button("授予", larkmsg.ButtonOptions{
 		Type:    "primary_filled",
-		Payload: larkmsg.StringMapToAnyMap(BuildPermissionGrantValue(point, scope, targetOpenID, deref(grant.ResourceChatID), deref(grant.ResourceUserID))),
+		Payload: larkmsg.StringMapToAnyMap(BuildPermissionGrantValueWithOptions(point, scope, targetOpenID, deref(grant.ResourceChatID), deref(grant.ResourceUserID), options.LastModifierOpenID)),
 	})
 	if granted {
 		button = larkmsg.Button("回收", larkmsg.ButtonOptions{
 			Type:    "danger",
-			Payload: larkmsg.StringMapToAnyMap(BuildPermissionRevokeValue(point, scope, targetOpenID, deref(grant.ResourceChatID), deref(grant.ResourceUserID))),
+			Payload: larkmsg.StringMapToAnyMap(BuildPermissionRevokeValueWithOptions(point, scope, targetOpenID, deref(grant.ResourceChatID), deref(grant.ResourceUserID), options.LastModifierOpenID)),
 		})
 	}
 

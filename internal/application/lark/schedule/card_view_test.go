@@ -26,6 +26,7 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 		{
 			ID:              "task-1",
 			Name:            "早报提醒",
+			CreatorID:       "ou_creator_1",
 			Status:          model.ScheduleTaskStatusEnabled,
 			Type:            model.ScheduleTaskTypeCron,
 			ToolName:        "send_message",
@@ -34,12 +35,13 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 			SourceMessageID: "om_source",
 		},
 		{
-			ID:       "task-2",
-			Name:     "晚间复盘",
-			Status:   model.ScheduleTaskStatusPaused,
-			Type:     model.ScheduleTaskTypeOnce,
-			ToolName: "search_history",
-			Timezone: model.ScheduleTaskDefaultTimezone,
+			ID:        "task-2",
+			Name:      "晚间复盘",
+			CreatorID: "ou_creator_2",
+			Status:    model.ScheduleTaskStatusPaused,
+			Type:      model.ScheduleTaskTypeOnce,
+			ToolName:  "search_history",
+			Timezone:  model.ScheduleTaskDefaultTimezone,
 		},
 	}, NewTaskQueryCardView("", TaskQuery{Name: "提醒"}, 20))
 
@@ -57,8 +59,14 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 	if !strings.Contains(jsonStr, `早报提醒`) {
 		t.Fatalf("expected task name in card json: %s", jsonStr)
 	}
-	if !strings.Contains(jsonStr, "来源消息: `om_source`") {
+	if !strings.Contains(jsonStr, "来源: `om_source`") {
 		t.Fatalf("expected source message in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"weight":3`) || !strings.Contains(jsonStr, `"weight":2`) {
+		t.Fatalf("expected compact split column layout in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"horizontal_spacing":"12px"`) || !strings.Contains(jsonStr, `"flex_mode":"stretch"`) {
+		t.Fatalf("expected compact row options in card json: %s", jsonStr)
 	}
 	if !strings.Contains(jsonStr, `"content":"撤回"`) || !strings.Contains(jsonStr, `更新于 `) {
 		t.Fatalf("expected footer actions in card json: %s", jsonStr)
@@ -73,5 +81,14 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"content":"恢复"`) || !strings.Contains(jsonStr, `"type":"primary_filled"`) {
 		t.Fatalf("expected filled primary style for resume action: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, "创建者") || !strings.Contains(jsonStr, "ou_creator") {
+		t.Fatalf("expected creator info and filter row in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"tag":"select_person"`) || !strings.Contains(jsonStr, `"element_id":"schedule_creator_filter"`) {
+		t.Fatalf("expected select_person creator picker in card json: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"options":[`) {
+		t.Fatalf("expected creator picker to default to current chat members, not static options: %s", jsonStr)
 	}
 }

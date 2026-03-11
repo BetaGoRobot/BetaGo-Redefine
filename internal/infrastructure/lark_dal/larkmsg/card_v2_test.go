@@ -134,6 +134,52 @@ func TestAppendStandardCardFooterAddsRefreshWhenPayloadProvided(t *testing.T) {
 	}
 }
 
+func TestAppendStandardCardFooterAddsLastModifierPerson(t *testing.T) {
+	elements := AppendStandardCardFooter(context.Background(), []any{Markdown("hello")}, StandardCardFooterOptions{
+		LastModifierOpenID: "ou_modifier",
+	})
+	raw, err := json.Marshal(elements)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"content":"最后修改"`) {
+		t.Fatalf("expected last modifier label in footer: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"tag":"person"`) || !strings.Contains(jsonStr, `"user_id":"ou_modifier"`) {
+		t.Fatalf("expected person component in footer: %s", jsonStr)
+	}
+}
+
+func TestSelectPersonBuildsCallbackPicker(t *testing.T) {
+	element := SelectPerson(SelectPersonOptions{
+		Placeholder:   "选择用户",
+		Width:         "fill",
+		Type:          "default",
+		InitialOption: "ou_selected",
+		Payload:       map[string]any{"action": "schedule.view"},
+		Options:       []string{"ou_selected", "ou_other"},
+		ElementID:     "creator_picker",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"select_person"`) {
+		t.Fatalf("expected select_person tag in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"initial_option":"ou_selected"`) {
+		t.Fatalf("expected initial option in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"action":"schedule.view"`) {
+		t.Fatalf("expected callback payload in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"value":"ou_other"`) {
+		t.Fatalf("expected options in json: %s", jsonStr)
+	}
+}
+
 func TestStringMapToAnyMapCopiesStringPairs(t *testing.T) {
 	got := StringMapToAnyMap(map[string]string{
 		"action": "config.view_scope",

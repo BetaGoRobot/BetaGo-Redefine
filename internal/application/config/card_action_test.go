@@ -16,6 +16,17 @@ func TestBuildFeatureActionValueUsesStandardAction(t *testing.T) {
 	}
 }
 
+func TestBuildFeatureActionValueCarriesLastModifier(t *testing.T) {
+	payload := BuildFeatureActionValueWithState(FeatureActionBlockChat, "debug", FeatureViewState{
+		ChatID:             "chat-1",
+		OpenID:             "user-1",
+		LastModifierOpenID: "ou_modifier",
+	})
+	if payload[featureLastModifierField] != "ou_modifier" {
+		t.Fatalf("expected last modifier in payload, got %+v", payload)
+	}
+}
+
 func TestBuildConfigActionValueUsesStandardAction(t *testing.T) {
 	payload := BuildConfigActionValue(ConfigActionSet, "k", "1", "chat", "chat-1", "user-1")
 	if payload[cardaction.ActionField] != cardaction.ActionConfigSet {
@@ -148,15 +159,16 @@ func TestParseConfigViewRequest(t *testing.T) {
 	req, err := ParseConfigViewRequest(&cardaction.Parsed{
 		Name: cardaction.ActionConfigViewScope,
 		Value: map[string]any{
-			cardaction.ScopeField:  "user",
-			cardaction.ChatIDField: "chat-1",
-			cardaction.UserIDField: "user-1",
+			cardaction.ScopeField:   "user",
+			cardaction.ChatIDField:  "chat-1",
+			cardaction.UserIDField:  "user-1",
+			configLastModifierField: "ou_modifier",
 		},
 	})
 	if err != nil {
 		t.Fatalf("ParseConfigViewRequest() error = %v", err)
 	}
-	if req.Scope != "user" || req.ChatID != "chat-1" || req.OpenID != "user-1" {
+	if req.Scope != "user" || req.ChatID != "chat-1" || req.OpenID != "user-1" || req.LastModifierOpenID != "ou_modifier" {
 		t.Fatalf("unexpected req: %+v", req)
 	}
 }
@@ -175,14 +187,15 @@ func TestParseFeatureViewRequest(t *testing.T) {
 	req, err := ParseFeatureViewRequest(&cardaction.Parsed{
 		Name: cardaction.ActionFeatureView,
 		Value: map[string]any{
-			cardaction.ChatIDField: "chat-1",
-			cardaction.UserIDField: "user-1",
+			cardaction.ChatIDField:   "chat-1",
+			cardaction.UserIDField:   "user-1",
+			featureLastModifierField: "ou_modifier",
 		},
 	})
 	if err != nil {
 		t.Fatalf("ParseFeatureViewRequest() error = %v", err)
 	}
-	if req.ChatID != "chat-1" || req.OpenID != "user-1" {
+	if req.ChatID != "chat-1" || req.OpenID != "user-1" || req.LastModifierOpenID != "ou_modifier" {
 		t.Fatalf("unexpected req: %+v", req)
 	}
 }

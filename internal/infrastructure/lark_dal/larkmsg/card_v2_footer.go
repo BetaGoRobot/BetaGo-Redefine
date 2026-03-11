@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -13,8 +14,9 @@ import (
 )
 
 type StandardCardFooterOptions struct {
-	RefreshPayload map[string]any
-	RefreshText    string
+	RefreshPayload     map[string]any
+	RefreshText        string
+	LastModifierOpenID string
 }
 
 func AppendStandardCardFooter(ctx context.Context, elements []any, opts ...StandardCardFooterOptions) []any {
@@ -52,14 +54,11 @@ func StandardCardFooter(ctx context.Context, opts ...StandardCardFooterOptions) 
 	}
 
 	columns := make([]any, 0, len(buttons)+1)
-	columns = append(columns, Column([]any{TextDiv(cardUpdatedAtText(), CardTextOptions{
-		Size:  "notation",
-		Color: "grey",
-		Align: "left",
-	})}, ColumnOptions{
-		Width:         "weighted",
-		Weight:        1,
-		VerticalAlign: "top",
+	columns = append(columns, Column(cardFooterMeta(options), ColumnOptions{
+		Width:           "weighted",
+		Weight:          1,
+		VerticalAlign:   "top",
+		VerticalSpacing: "4px",
 	}))
 	for _, button := range buttons {
 		columns = append(columns, Column([]any{button}, ColumnOptions{
@@ -87,8 +86,53 @@ func (opts StandardCardFooterOptions) refreshText() string {
 	return "刷新"
 }
 
+func cardFooterMeta(opts StandardCardFooterOptions) []any {
+	meta := []any{
+		TextDiv(cardUpdatedAtText(), CardTextOptions{
+			Size:  "notation",
+			Color: "grey",
+			Align: "left",
+		}),
+	}
+	if modifier := cardLastModifierElement(opts.LastModifierOpenID); modifier != nil {
+		meta = append(meta, modifier)
+	}
+	return meta
+}
+
+func cardLastModifierElement(openID string) map[string]any {
+	openID = strings.TrimSpace(openID)
+	if openID == "" {
+		return nil
+	}
+	showAvatar := true
+	showName := true
+	return ColumnSet([]any{
+		Column([]any{TextDiv("最后修改", CardTextOptions{
+			Size:  "notation",
+			Color: "grey",
+			Align: "left",
+		})}, ColumnOptions{
+			Width:         "auto",
+			VerticalAlign: "center",
+		}),
+		Column([]any{Person(openID, PersonOptions{
+			Size:       "extra_small",
+			ShowAvatar: &showAvatar,
+			ShowName:   &showName,
+			Style:      "capsule",
+			Margin:     "0",
+		})}, ColumnOptions{
+			Width:         "auto",
+			VerticalAlign: "center",
+		}),
+	}, ColumnSetOptions{
+		HorizontalSpacing: "4px",
+	})
+}
+
 func cardUpdatedAtText() string {
-	return "更新于 " + time.Now().In(utils.UTC8Loc()).Format("01-02 15:04:05")
+	return "更新于 " + time.Now().In(utils.UTC8Loc()).Format(time.DateTime)
 }
 
 func cardTraceID(ctx context.Context) string {

@@ -51,6 +51,28 @@ type ButtonOptions struct {
 	URL            string
 }
 
+type PersonOptions struct {
+	Size       string
+	ShowAvatar *bool
+	ShowName   *bool
+	Style      string
+	Margin     string
+	ElementID  string
+}
+
+type SelectPersonOptions struct {
+	Placeholder   string
+	Width         string
+	Type          string
+	InitialOption string
+	Payload       map[string]any
+	Options       []string
+	Disabled      *bool
+	Required      *bool
+	Margin        string
+	ElementID     string
+}
+
 func StandardPanelCardV2Options() CardV2Options {
 	return CardV2Options{
 		HeaderTemplate:  "wathet",
@@ -127,6 +149,81 @@ func Markdown(content string) map[string]any {
 		"tag":     "markdown",
 		"content": content,
 	}
+}
+
+func Person(openID string, opts PersonOptions) map[string]any {
+	person := map[string]any{
+		"tag":     "person",
+		"user_id": strings.TrimSpace(openID),
+	}
+	if opts.Size != "" {
+		person["size"] = opts.Size
+	}
+	if opts.ShowAvatar != nil {
+		person["show_avatar"] = *opts.ShowAvatar
+	}
+	if opts.ShowName != nil {
+		person["show_name"] = *opts.ShowName
+	}
+	if opts.Style != "" {
+		person["style"] = opts.Style
+	}
+	if opts.Margin != "" {
+		person["margin"] = opts.Margin
+	}
+	if opts.ElementID != "" {
+		person["element_id"] = opts.ElementID
+	}
+	return person
+}
+
+func SelectPerson(opts SelectPersonOptions) map[string]any {
+	element := map[string]any{
+		"tag": "select_person",
+	}
+	if opts.Placeholder != "" {
+		element["placeholder"] = PlainText(opts.Placeholder)
+	}
+	if opts.Width != "" {
+		element["width"] = opts.Width
+	}
+	if opts.Type != "" {
+		element["type"] = opts.Type
+	}
+	if initialOption := strings.TrimSpace(opts.InitialOption); initialOption != "" {
+		element["initial_option"] = initialOption
+	}
+	if behaviors := CallbackBehaviors(opts.Payload); len(behaviors) > 0 {
+		element["behaviors"] = behaviors
+	}
+	if len(opts.Options) > 0 {
+		options := make([]map[string]any, 0, len(opts.Options))
+		for _, option := range opts.Options {
+			option = strings.TrimSpace(option)
+			if option == "" {
+				continue
+			}
+			options = append(options, map[string]any{
+				"value": option,
+			})
+		}
+		if len(options) > 0 {
+			element["options"] = options
+		}
+	}
+	if opts.Disabled != nil {
+		element["disabled"] = *opts.Disabled
+	}
+	if opts.Required != nil {
+		element["required"] = *opts.Required
+	}
+	if opts.Margin != "" {
+		element["margin"] = opts.Margin
+	}
+	if opts.ElementID != "" {
+		element["element_id"] = opts.ElementID
+	}
+	return element
 }
 
 func HintMarkdown(content string) map[string]any {

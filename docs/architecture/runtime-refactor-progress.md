@@ -473,3 +473,164 @@
 ### 验证
 
 - `go test ./internal/infrastructure/miniodal ./internal/application/config ./internal/application/lark/schedule ./internal/runtime`
+
+## 2026-03-11 · Milestone M · Schedule 管理卡紧凑化
+
+### 方案
+
+- 把单个 schedule 条目的信息从“长 markdown + 独立动作行”改成左右双栏布局，减少单项高度。
+- 左栏承载名称、ID、工具、时区、来源消息；右栏承载状态、执行时间、结果与动作按钮，优先利用横向空间。
+- 保留 footer、刷新、撤回、Trace 语义不变，只压缩 task item 正文结构。
+
+### 修改
+
+- `internal/application/lark/schedule/card_view.go`
+  - 单任务 section 改为 `SplitColumns(...)`
+  - 动作按钮并入右栏，不再单独占一整行
+  - 错误与来源消息做适度 preview，减少长文本撑高卡片
+- `internal/application/lark/schedule/card_view_test.go`
+  - 补充双栏权重与紧凑布局断言
+- `internal/application/lark/schedule/card_action_test.go`
+  - 查询过滤测试改为适配双栏后的嵌套 markdown 结构
+
+### 决策
+
+- 不动整体卡片壳层、footer 和 schema v2 风格，只对 task item 内部排版做紧凑化。
+- task ID 继续完整展示，来源消息和错误信息允许 preview；前者主要用于来源识别，后者主要用于快速扫读。
+
+### 验证
+
+- `go test ./internal/application/lark/schedule ./internal/application/lark/cardaction ./internal/application/lark/handlers ./internal/application/lark/command`
+
+## 2026-03-11 · Milestone N · Schedule 管理卡补充筛选与变更授权
+
+### 方案
+
+- 在 schedule 管理卡顶部补充轻量筛选控件，先支持 `状态` 与 `创建者 OpenID` 两个维度。
+- 用户筛选不走“自由搜索用户”，而是直接根据当前任务集合里的创建者生成列表，避免再引入一层不稳定的人员检索交互。
+- 对 pause / resume / delete 这类写操作补做真正的操作者授权校验，不能再只靠 `chat_id` 归属判断。
+
+### 修改
+
+- `internal/application/lark/schedule/card_view.go`
+  - 顶部新增状态筛选按钮组
+  - 顶部新增创建者筛选按钮组
+  - 任务条目正文补充创建者信息
+- `internal/application/lark/schedule/card_action.go`
+  - view/action payload 增加 `schedule_view_creator_open_id`
+  - card view state / query 同步支持创建者过滤
+- `internal/application/lark/schedule/func_call_tools.go`
+  - `TaskQuery` / `query_schedule` 支持 `creator_open_id`
+  - `FilterTasks(...)` 增加按创建者过滤
+  - pause / resume / delete 工具调用改为透传操作者 OpenID
+- `internal/application/lark/handlers/schedule_handler.go`
+  - `/schedule query` CLI 支持 `--creator_open_id`
+  - 兼容 `--open_id` 作为同义参数
+  - pause / resume / delete handler 改为透传操作者 OpenID
+- `internal/application/lark/cardaction/builtin.go`
+  - schedule 卡片回调改为使用 `actionCtx.OpenID()` 做变更授权
+- `internal/application/lark/schedule/authorization.go`
+  - 新增 `EnsureTaskMutationAllowed(...)`
+  - 规则：创建者可操作；具备全局管理权限的用户可 override
+
+### 决策
+
+- 卡片里的“用户过滤”当前采用任务内创建者列表，而不是动态搜索用户；这样实现稳定、交互成本低，也不依赖额外的人员搜索接口。
+- 变更授权下沉到 `schedule.Service`，而不是只在 card handler / command handler 上做 UI 层判断，避免后续再出现旁路写入口。
+- 当前管理员 override 先复用现有全局管理权限语义；后续如果 schedule 需要更细的权限点，再单独拆 `schedule.manage`。
+
+### 验证
+
+- `go test ./internal/application/lark/schedule ./internal/application/lark/handlers ./internal/application/lark/cardaction`
+- `go test ./internal/infrastructure/miniodal ./internal/infrastructure/lark_dal/larkmsg ./internal/application/config ./internal/application/permission ./internal/application/lark/schedule ./internal/application/lark/ratelimit ./internal/application/lark/cardaction ./internal/application/lark/handlers ./internal/application/lark/command ./internal/runtime`
+
+## 2026-03-11 · Milestone O · 协作管理卡补最后修改人与人员组件基线
+
+### 方案
+
+- 对允许多人协作修改的手工 schema v2 管理卡，统一在 footer 展示：
+  - 卡片更新时间
+  - 最后一次业务变更操作者
+- “最后修改人”优先使用飞书 JSON 2.0 的 `person` 组件，而不是继续显示裸 OpenID，降低识别成本。
+- refresh / view 只回放当前 view state，不覆盖已有“最后修改人”；真正的写操作（如 config set/delete、feature toggle、permission grant/revoke、schedule pause/resume/delete）才更新该元数据。
+- 这一步只覆盖手工卡：
+  - `config`
+  - `feature`
+  - `permission`
+  - `schedule`
+- 模板卡暂不动，避免与既有 `refresh_obj` / 模板变量体系混线。
+
+### 修改
+
+- `internal/infrastructure/lark_dal/larkmsg/*`
+  - 新增 `Person(...)` helper，封装飞书 JSON 2.0 `person` 组件
+  - `StandardCardFooterOptions` 增加 `LastModifierOpenID`
+  - footer 左侧新增“最后修改”元数据行
+  - 补充 footer 测试，覆盖 `person` 组件渲染
+- `internal/application/config/*`
+  - config / feature 的 view/action payload 增加 `last_modifier_open_id`
+  - 初次发卡与写操作回调都透传最后修改人
+  - refresh / view 回调复用 payload 中已有的最后修改人
+- `internal/application/permission/*`
+  - permission view/action payload 增加 `last_modifier_open_id`
+  - 目标用户切换表单、授权/回收动作统一保留该元数据
+- `internal/application/lark/schedule/*`
+  - schedule view/action payload 增加 `schedule_last_modifier_open_id`
+  - 首次发卡、工具发卡与写操作回调统一维护最后修改人
+- `internal/application/lark/cardaction/builtin.go`
+  - config / feature / permission / schedule 卡片回调统一在 mutation 后写入当前操作者 OpenID
+
+### 决策
+
+- “最后修改人”定义为**最后一次业务变更操作者**，而不是最后一次 refresh 点击人；否则只刷新卡片也会污染协作语义。
+- 飞书官方文档已确认 JSON 2.0 存在：
+  - `person`
+  - `person_list`
+  - `single_select_user_picker`
+  - `multi_select_user_picker`
+- 本轮先把 `person` 用在稳定的只读展示位（footer）；后续如果还要增强用户筛选，优先继续走“卡片内显式筛选选项”而不是引入选人器 / 搜索式交互，避免把筛选协议和权限边界做复杂。
+- 手工卡默认仍保持 `update_multi=true`，即多人共享同一张卡片实例；这一轮补的是“共享修改可追踪性”，不是改协作模型。
+
+### 验证
+
+- `GOCACHE=/tmp/gocache go test ./internal/infrastructure/lark_dal/larkmsg ./internal/application/config ./internal/application/permission ./internal/application/lark/schedule ./internal/application/lark/cardaction`
+
+## 2026-03-11 · Milestone P · 卡片选人统一切到 Feishu user picker
+
+### 方案
+
+- 回看所有手工管理卡后，真正存在“需要选人”的卡片面只有两类：
+  - `schedule`：按创建者筛选
+  - `permission`：切换目标用户
+- 这两类统一改用飞书 JSON 2.0 `select_person`，不再继续维护：
+  - 手输 OpenID
+  - 静态用户按钮列表
+- picker 候选默认使用“当前会话成员”：
+  - 不传 `options`
+  - 由飞书前端回退到当前卡片所在会话成员集合
+
+### 修改
+
+- `internal/infrastructure/lark_dal/larkmsg/card_v2.go`
+  - 新增 `SelectPerson(...)` helper
+- `internal/application/lark/schedule/*`
+  - 创建者筛选 row 改为 `select_person + 全部`
+  - picker 回调继续复用 `schedule.view`
+  - 通过 `action.option` 解析用户选择结果
+  - 不再向 picker 注入静态 creator options，默认回退到本群聊成员
+- `internal/application/permission/*`
+  - 目标用户切换从 OpenID 输入框改为 `select_person`
+  - 保留 `查看自己` 快捷按钮
+  - picker 回调继续复用 `permission.view`
+  - 通过 `action.option` 解析目标用户 OpenID
+  - 目标用户区域补充 `当前目标` 的 `person` 展示，并给 picker 注入 `initial_option`
+
+### 决策
+
+- “默认本群聊内成员”通过不传 `options` 实现，而不是服务端先拉成员列表再塞回卡片；这样协议更简单，也避免额外成员查询依赖。
+- 这一步只覆盖真正的“选人”交互，不给原本没有目标用户切换语义的卡片强行加 picker。
+- 当前仍保留显式“全部/查看自己”按钮，用于清空筛选或快速回到 self 视角。
+
+### 验证
+
+- `GOCACHE=/tmp/gocache go test ./internal/infrastructure/lark_dal/larkmsg ./internal/application/permission ./internal/application/lark/schedule ./internal/application/lark/cardaction ./internal/application/config`

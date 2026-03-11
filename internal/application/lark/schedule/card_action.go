@@ -17,8 +17,13 @@ const (
 	taskCardViewStatusField   = "schedule_view_status"
 	taskCardViewTaskTypeField = "schedule_view_task_type"
 	taskCardViewToolNameField = "schedule_view_tool_name"
+	taskCardViewCreatorField  = "schedule_view_creator_open_id"
 	taskCardViewLimitField    = "schedule_view_limit"
+	taskCardLastModifierField = "schedule_last_modifier_open_id"
+	taskCardViewSelectField   = "schedule_view_select_field"
 )
+
+const taskCardViewSelectCreator = "creator_open_id"
 
 type TaskAction string
 
@@ -36,13 +41,15 @@ const (
 )
 
 type TaskCardViewState struct {
-	Mode     TaskCardViewMode
-	ID       string
-	Name     string
-	Status   string
-	TaskType string
-	ToolName string
-	Limit    int
+	Mode               TaskCardViewMode
+	ID                 string
+	Name               string
+	Status             string
+	TaskType           string
+	ToolName           string
+	CreatorOpenID      string
+	LastModifierOpenID string
+	Limit              int
 }
 
 type TaskActionRequest struct {
@@ -64,13 +71,14 @@ func NewTaskListCardView(limit int) TaskCardViewState {
 
 func NewTaskQueryCardView(id string, query TaskQuery, limit int) TaskCardViewState {
 	return normalizeTaskCardView(TaskCardViewState{
-		Mode:     TaskCardViewModeQuery,
-		ID:       id,
-		Name:     query.Name,
-		Status:   query.Status,
-		TaskType: query.Type,
-		ToolName: query.ToolName,
-		Limit:    limit,
+		Mode:          TaskCardViewModeQuery,
+		ID:            id,
+		Name:          query.Name,
+		Status:        query.Status,
+		TaskType:      query.Type,
+		ToolName:      query.ToolName,
+		CreatorOpenID: query.CreatorOpenID,
+		Limit:         limit,
 	})
 }
 
@@ -83,8 +91,16 @@ func BuildTaskViewValue(view TaskCardViewState) map[string]string {
 		WithValue(taskCardViewStatusField, view.Status).
 		WithValue(taskCardViewTaskTypeField, view.TaskType).
 		WithValue(taskCardViewToolNameField, view.ToolName).
+		WithValue(taskCardViewCreatorField, view.CreatorOpenID).
+		WithValue(taskCardLastModifierField, view.LastModifierOpenID).
 		WithValue(taskCardViewLimitField, strconv.Itoa(view.Limit)).
 		Payload()
+}
+
+func BuildTaskCreatorPickerValue(view TaskCardViewState) map[string]string {
+	payload := BuildTaskViewValue(withTaskFilterSelection(view, view.Status, view.CreatorOpenID))
+	payload[taskCardViewSelectField] = taskCardViewSelectCreator
+	return payload
 }
 
 func BuildTaskActionValue(action TaskAction, taskID string, view TaskCardViewState) map[string]string {
@@ -102,6 +118,8 @@ func BuildTaskActionValue(action TaskAction, taskID string, view TaskCardViewSta
 		WithValue(taskCardViewStatusField, view.Status).
 		WithValue(taskCardViewTaskTypeField, view.TaskType).
 		WithValue(taskCardViewToolNameField, view.ToolName).
+		WithValue(taskCardViewCreatorField, view.CreatorOpenID).
+		WithValue(taskCardLastModifierField, view.LastModifierOpenID).
 		WithValue(taskCardViewLimitField, strconv.Itoa(view.Limit)).
 		Payload()
 }
@@ -159,10 +177,11 @@ func (view TaskCardViewState) Title() string {
 func (view TaskCardViewState) Query() TaskQuery {
 	view = normalizeTaskCardView(view)
 	return TaskQuery{
-		Name:     view.Name,
-		Status:   view.Status,
-		Type:     view.TaskType,
-		ToolName: view.ToolName,
+		Name:          view.Name,
+		Status:        view.Status,
+		Type:          view.TaskType,
+		ToolName:      view.ToolName,
+		CreatorOpenID: view.CreatorOpenID,
 	}
 }
 
@@ -177,6 +196,8 @@ func normalizeTaskCardView(view TaskCardViewState) TaskCardViewState {
 	view.Status = strings.TrimSpace(view.Status)
 	view.TaskType = strings.TrimSpace(view.TaskType)
 	view.ToolName = strings.TrimSpace(view.ToolName)
+	view.CreatorOpenID = strings.TrimSpace(view.CreatorOpenID)
+	view.LastModifierOpenID = strings.TrimSpace(view.LastModifierOpenID)
 
 	if view.Limit <= 0 {
 		if view.Mode == TaskCardViewModeList {
@@ -190,15 +211,33 @@ func normalizeTaskCardView(view TaskCardViewState) TaskCardViewState {
 
 func parseTaskCardViewState(parsed *cardactionproto.Parsed) TaskCardViewState {
 	limit, _ := strconv.Atoi(readScheduleActionValue(parsed, taskCardViewLimitField))
+	creatorOpenID := readScheduleActionValue(parsed, taskCardViewCreatorField)
+	if shouldApplyTaskCreatorPicker(parsed) {
+		if selected := strings.TrimSpace(parsed.Option); selected != "" {
+			creatorOpenID = selected
+		}
+	}
 	return normalizeTaskCardView(TaskCardViewState{
-		Mode:     TaskCardViewMode(readScheduleActionValue(parsed, taskCardViewModeField)),
-		ID:       readScheduleActionValue(parsed, taskCardViewIDField),
-		Name:     readScheduleActionValue(parsed, taskCardViewNameField),
-		Status:   readScheduleActionValue(parsed, taskCardViewStatusField),
-		TaskType: readScheduleActionValue(parsed, taskCardViewTaskTypeField),
-		ToolName: readScheduleActionValue(parsed, taskCardViewToolNameField),
-		Limit:    limit,
+		Mode:               TaskCardViewMode(readScheduleActionValue(parsed, taskCardViewModeField)),
+		ID:                 readScheduleActionValue(parsed, taskCardViewIDField),
+		Name:               readScheduleActionValue(parsed, taskCardViewNameField),
+		Status:             readScheduleActionValue(parsed, taskCardViewStatusField),
+		TaskType:           readScheduleActionValue(parsed, taskCardViewTaskTypeField),
+		ToolName:           readScheduleActionValue(parsed, taskCardViewToolNameField),
+		CreatorOpenID:      creatorOpenID,
+		LastModifierOpenID: readScheduleActionValue(parsed, taskCardLastModifierField),
+		Limit:              limit,
 	})
+}
+
+func shouldApplyTaskCreatorPicker(parsed *cardactionproto.Parsed) bool {
+	if parsed == nil {
+		return false
+	}
+	if strings.TrimSpace(parsed.Tag) != "select_person" {
+		return false
+	}
+	return readScheduleActionValue(parsed, taskCardViewSelectField) == taskCardViewSelectCreator
 }
 
 func loadTasksForView(ctx context.Context, chatID string, view TaskCardViewState, allowMissingID bool) ([]*model.ScheduledTask, error) {

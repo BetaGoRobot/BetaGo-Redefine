@@ -18,26 +18,42 @@ func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, openID strin
 	if err != nil {
 		return nil, err
 	}
+	view := ConfigViewState{
+		Scope:              scope,
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: options.LastModifierOpenID,
+	}
 
 	elements := make([]any, 0, len(cardData.Configs)*4+3)
 	elements = append(elements, markdownBlock(fmt.Sprintf("当前查看/写入作用域: `%s`  当前上下文: chat=`%s` user=`%s`", scope, shortID(chatID), shortID(openID))))
-	elements = append(elements, buildConfigScopeRow(scope, chatID, openID))
+	elements = append(elements, buildConfigScopeRow(view))
 	configSections := make([][]any, 0, len(cardData.Configs))
 	for _, item := range cardData.Configs {
-		configSections = append(configSections, []any{buildConfigItemSection(item, scope)})
+		configSections = append(configSections, []any{buildConfigItemSection(item, view)})
 	}
 	elements = larkmsg.AppendSectionsWithDividers(elements, configSections...)
 
 	elements = append(elements, hintBlock(fmt.Sprintf("Chat=%s User=%s", shortID(chatID), shortID(openID))))
 	return newRawCard(ctx, "配置面板", elements, larkmsg.StandardCardFooterOptions{
-		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue(scope, chatID, openID)),
+		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildConfigViewValueWithState(view)),
+		LastModifierOpenID: options.LastModifierOpenID,
 	}), nil
 }
 
 func BuildFeatureCard(ctx context.Context, chatID, openID string) (larkmsg.RawCard, error) {
+	return BuildFeatureCardWithOptions(ctx, chatID, openID, FeatureCardViewOptions{})
+}
+
+func BuildFeatureCardWithOptions(ctx context.Context, chatID, openID string, options FeatureCardViewOptions) (larkmsg.RawCard, error) {
 	cardData, err := GetFeatureCardData(ctx, chatID, openID)
 	if err != nil {
 		return nil, err
+	}
+	view := FeatureViewState{
+		ChatID:             chatID,
+		OpenID:             openID,
+		LastModifierOpenID: options.LastModifierOpenID,
 	}
 
 	elements := make([]any, 0, len(cardData.Features)*3+2)
@@ -46,14 +62,15 @@ func BuildFeatureCard(ctx context.Context, chatID, openID string) (larkmsg.RawCa
 	for _, item := range cardData.Features {
 		featureSections = append(featureSections, []any{
 			buildFeatureItemBlock(item),
-			buildFeatureActionRow(item, chatID, openID),
+			buildFeatureActionRow(item, view),
 		})
 	}
 	elements = larkmsg.AppendSectionsWithDividers(elements, featureSections...)
 
 	elements = append(elements, hintBlock("点击按钮直接调整屏蔽状态"))
 	return newRawCard(ctx, "功能开关", elements, larkmsg.StandardCardFooterOptions{
-		RefreshPayload: larkmsg.StringMapToAnyMap(BuildFeatureViewValue(chatID, openID)),
+		RefreshPayload:     larkmsg.StringMapToAnyMap(BuildFeatureViewValueWithState(view)),
+		LastModifierOpenID: options.LastModifierOpenID,
 	}), nil
 }
 
@@ -68,27 +85,27 @@ func buildConfigItemBlock(item ConfigItem) map[string]any {
 	return markdownBlock(content)
 }
 
-func buildConfigItemSection(item ConfigItem, scope string) map[string]any {
+func buildConfigItemSection(item ConfigItem, view ConfigViewState) map[string]any {
 	if item.ValueType == "int" {
-		return buildConfigCustomValueForm(item, scope)
+		return buildConfigCustomValueForm(item, view)
 	} else {
-		return buildConfigColumns(buildConfigItemBlock(item), []any{buildConfigActionRow(item, scope)})
+		return buildConfigColumns(buildConfigItemBlock(item), []any{buildConfigActionRow(item, view)})
 	}
 }
 
-func buildConfigActionRow(item ConfigItem, scope string) map[string]any {
+func buildConfigActionRow(item ConfigItem, view ConfigViewState) map[string]any {
 	buttons := make([]map[string]any, 0, 2)
 	if item.ValueType == "bool" {
 		buttons = append(buttons,
-			buildButton("启用", "primary_filled", BuildConfigActionValue(ConfigActionSet, item.Key, "true", scope, item.ChatID, item.OpenID)),
-			buildButton("停用", "danger", BuildConfigActionValue(ConfigActionSet, item.Key, "false", scope, item.ChatID, item.OpenID)),
+			buildButton("启用", "primary_filled", BuildConfigActionValueWithState(ConfigActionSet, item.Key, "true", withConfigItemView(view, item))),
+			buildButton("停用", "danger", BuildConfigActionValueWithState(ConfigActionSet, item.Key, "false", withConfigItemView(view, item))),
 		)
 	}
-	buttons = append(buttons, buildButton("默认", "laser", BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.OpenID)))
+	buttons = append(buttons, buildButton("默认", "laser", BuildConfigActionValueWithState(ConfigActionDelete, item.Key, "", withConfigItemView(view, item))))
 	return buttonRow("flow", buttons...)
 }
 
-func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
+func buildConfigCustomValueForm(item ConfigItem, view ConfigViewState) map[string]any {
 	formName := "form_" + sanitizeComponentName(item.Key)
 	formField := configFormFieldName(item.Key)
 	submitName := "btn_submit_" + sanitizeComponentName(item.Key)
@@ -119,7 +136,7 @@ func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
 							"提交",
 							"primary_filled",
 							"submit",
-							BuildConfigFormActionValue(item.Key, scope, item.ChatID, item.OpenID, formField),
+							BuildConfigFormActionValueWithState(item.Key, withConfigItemView(view, item), formField),
 						),
 						buildFormButton(
 							resetName,
@@ -134,7 +151,7 @@ func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
 							"laser",
 							"",
 							"",
-							BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.OpenID),
+							BuildConfigActionValueWithState(ConfigActionDelete, item.Key, "", withConfigItemView(view, item)),
 						),
 					),
 				},
@@ -164,7 +181,7 @@ func buildConfigColumns(infoBlock map[string]any, controls []any) map[string]any
 	)
 }
 
-func buildConfigScopeRow(selectedScope, chatID, openID string) map[string]any {
+func buildConfigScopeRow(view ConfigViewState) map[string]any {
 	scopeOptions := []struct {
 		Label string
 		Scope string
@@ -176,10 +193,12 @@ func buildConfigScopeRow(selectedScope, chatID, openID string) map[string]any {
 	buttons := make([]map[string]any, 0, len(scopeOptions))
 	for _, item := range scopeOptions {
 		buttonType := "default"
-		if item.Scope == selectedScope {
+		if item.Scope == view.Scope {
 			buttonType = "primary_filled"
 		}
-		buttons = append(buttons, buildButton(item.Label, buttonType, BuildConfigViewValue(item.Scope, chatID, openID)))
+		nextView := view
+		nextView.Scope = item.Scope
+		buttons = append(buttons, buildButton(item.Label, buttonType, BuildConfigViewValueWithState(nextView)))
 	}
 	return buttonRow("flow", buttons...)
 }
@@ -204,16 +223,16 @@ func buildFeatureItemBlock(item FeatureItem) map[string]any {
 	return markdownBlock(content)
 }
 
-func buildFeatureActionRow(item FeatureItem, chatID, openID string) map[string]any {
+func buildFeatureActionRow(item FeatureItem, view FeatureViewState) map[string]any {
 	return buttonRow(
 		"flow",
-		buildFeatureToggleButton("群", item.BlockedAtChat, item.Name, chatID, openID, FeatureActionBlockChat, FeatureActionUnblockChat),
-		buildFeatureToggleButton("用户", item.BlockedAtUser, item.Name, chatID, openID, FeatureActionBlockUser, FeatureActionUnblockUser),
-		buildFeatureToggleButton("群内用户", item.BlockedAtChatUser, item.Name, chatID, openID, FeatureActionBlockChatUser, FeatureActionUnblockChatUser),
+		buildFeatureToggleButton("群", item.BlockedAtChat, item.Name, view, FeatureActionBlockChat, FeatureActionUnblockChat),
+		buildFeatureToggleButton("用户", item.BlockedAtUser, item.Name, view, FeatureActionBlockUser, FeatureActionUnblockUser),
+		buildFeatureToggleButton("群内用户", item.BlockedAtChatUser, item.Name, view, FeatureActionBlockChatUser, FeatureActionUnblockChatUser),
 	)
 }
 
-func buildFeatureToggleButton(label string, blocked bool, feature, chatID, openID string, blockAction, unblockAction FeatureAction) map[string]any {
+func buildFeatureToggleButton(label string, blocked bool, feature string, view FeatureViewState, blockAction, unblockAction FeatureAction) map[string]any {
 	action := blockAction
 	buttonLabel := "屏蔽" + label
 	buttonType := "danger"
@@ -223,7 +242,7 @@ func buildFeatureToggleButton(label string, blocked bool, feature, chatID, openI
 		buttonType = "primary_filled"
 	}
 
-	return buildButton(buttonLabel, buttonType, BuildFeatureActionValue(action, feature, chatID, openID))
+	return buildButton(buttonLabel, buttonType, BuildFeatureActionValueWithState(action, feature, view))
 }
 
 func buildButton(text, buttonType string, payload map[string]string) map[string]any {
@@ -262,6 +281,12 @@ func markdownBlock(content string) map[string]any {
 
 func hintBlock(content string) map[string]any {
 	return larkmsg.HintMarkdown(content)
+}
+
+func withConfigItemView(view ConfigViewState, item ConfigItem) ConfigViewState {
+	view.ChatID = item.ChatID
+	view.OpenID = item.OpenID
+	return view
 }
 
 func plainText(content string) map[string]any {

@@ -10,7 +10,11 @@ import (
 )
 
 func TestBuildConfigCardJSONDelegatesToSchemaV2Card(t *testing.T) {
-	card := map[string]any(newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")}, larkmsg.StandardCardFooterOptions{
+	card := map[string]any(newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow(ConfigViewState{
+		Scope:  "chat",
+		ChatID: "chat-1",
+		OpenID: "user-1",
+	})}, larkmsg.StandardCardFooterOptions{
 		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue("chat", "chat-1", "user-1")),
 	}))
 	raw, err := json.Marshal(card)

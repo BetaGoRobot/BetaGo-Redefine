@@ -63,3 +63,34 @@ func TestBuildPermissionViewValueUsesStandardAction(t *testing.T) {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
+
+func TestBuildPermissionTargetPickerValueUsesStandardAction(t *testing.T) {
+	payload := BuildPermissionTargetPickerValue("ou_modifier")
+	if payload[cardactionproto.ActionField] != cardactionproto.ActionPermissionView {
+		t.Fatalf("unexpected action field: %q", payload[cardactionproto.ActionField])
+	}
+	if payload[permissionViewSelectField] != permissionViewSelectTargetUser {
+		t.Fatalf("unexpected picker payload: %+v", payload)
+	}
+	if payload[permissionLastModifierField] != "ou_modifier" {
+		t.Fatalf("unexpected last modifier: %+v", payload)
+	}
+}
+
+func TestParseViewRequestUsesSelectPersonOption(t *testing.T) {
+	req, err := ParseViewRequest(&cardactionproto.Parsed{
+		Name:   cardactionproto.ActionPermissionView,
+		Tag:    "select_person",
+		Option: "ou_picker_target",
+		Value: map[string]any{
+			permissionViewSelectField:         permissionViewSelectTargetUser,
+			cardactionproto.TargetUserIDField: "ou_old_target",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseViewRequest() error = %v", err)
+	}
+	if req.TargetOpenID != "ou_picker_target" {
+		t.Fatalf("unexpected target user id: %q", req.TargetOpenID)
+	}
+}

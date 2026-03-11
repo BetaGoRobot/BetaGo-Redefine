@@ -37,19 +37,21 @@ type listSchedulesArgs struct {
 }
 
 type TaskQuery struct {
-	Name     string
-	Status   string
-	Type     string
-	ToolName string
+	Name          string
+	Status        string
+	Type          string
+	ToolName      string
+	CreatorOpenID string
 }
 
 type queryScheduleArgs struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Type     string `json:"type"`
-	ToolName string `json:"tool_name"`
-	Limit    int    `json:"limit"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Type          string `json:"type"`
+	ToolName      string `json:"tool_name"`
+	CreatorOpenID string `json:"creator_open_id"`
+	Limit         int    `json:"limit"`
 }
 
 type deleteScheduleArgs struct {
@@ -205,6 +207,7 @@ func (listSchedulesHandler) ToolSpec() xcommand.ToolSpec {
 
 func (listSchedulesHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listSchedulesArgs) error {
 	view := NewTaskListCardView(args.Limit)
+	view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
 		ChatID: metaData.ChatID,
 		Limit:  view.Limit,
@@ -240,6 +243,7 @@ func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("status", &tools.Prop{Type: "string", Desc: "按状态过滤：enabled、paused、completed、disabled"}).
 			AddProp("type", &tools.Prop{Type: "string", Desc: "按类型过滤：once 或 cron"}).
 			AddProp("tool_name", &tools.Prop{Type: "string", Desc: "按执行工具名过滤，例如 send_message"}).
+			AddProp("creator_open_id", &tools.Prop{Type: "string", Desc: "按创建者 OpenID 过滤"}).
 			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制；未传时默认 100"}),
 	)
 }
@@ -247,6 +251,7 @@ func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
 func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args queryScheduleArgs) error {
 	if scheduleID := strings.TrimSpace(args.ID); scheduleID != "" {
 		view := NewTaskQueryCardView(scheduleID, TaskQuery{}, args.Limit)
+		view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
 		task, err := GetService().GetTask(ctx, scheduleID)
 		if err != nil {
 			return err
@@ -263,11 +268,13 @@ func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	}
 
 	view := NewTaskQueryCardView("", TaskQuery{
-		Name:     args.Name,
-		Status:   args.Status,
-		Type:     args.Type,
-		ToolName: args.ToolName,
+		Name:          args.Name,
+		Status:        args.Status,
+		Type:          args.Type,
+		ToolName:      args.ToolName,
+		CreatorOpenID: args.CreatorOpenID,
 	}, args.Limit)
+	view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
 		ChatID: metaData.ChatID,
 		Limit:  view.Limit,
@@ -310,7 +317,7 @@ func (deleteScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
 		return err
 	}
-	if err := GetService().DeleteTask(ctx, args.ID); err != nil {
+	if err := GetService().DeleteTask(ctx, args.ID, metaData.OpenID); err != nil {
 		return err
 	}
 	metaData.SetExtra(scheduleToolResultKey, fmt.Sprintf("✅ Schedule 已删除！ID: `%s`", args.ID))
@@ -339,7 +346,7 @@ func (pauseScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
 		return err
 	}
-	if err := GetService().PauseTask(ctx, args.ID); err != nil {
+	if err := GetService().PauseTask(ctx, args.ID, metaData.OpenID); err != nil {
 		return err
 	}
 	metaData.SetExtra(scheduleToolResultKey, fmt.Sprintf("⏸️ Schedule 已暂停！ID: `%s`", args.ID))
@@ -368,7 +375,7 @@ func (resumeScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
 		return err
 	}
-	task, err := GetService().ResumeTask(ctx, args.ID)
+	task, err := GetService().ResumeTask(ctx, args.ID, metaData.OpenID)
 	if err != nil {
 		return err
 	}
@@ -424,6 +431,7 @@ func FilterTasks(tasks []*model.ScheduledTask, query TaskQuery) []*model.Schedul
 	statusQuery := strings.ToLower(strings.TrimSpace(query.Status))
 	typeQuery := strings.ToLower(strings.TrimSpace(query.Type))
 	toolNameQuery := strings.ToLower(strings.TrimSpace(query.ToolName))
+	creatorOpenIDQuery := strings.TrimSpace(query.CreatorOpenID)
 
 	filtered := make([]*model.ScheduledTask, 0, len(tasks))
 	for _, task := range tasks {
@@ -440,6 +448,9 @@ func FilterTasks(tasks []*model.ScheduledTask, query TaskQuery) []*model.Schedul
 			continue
 		}
 		if toolNameQuery != "" && strings.ToLower(task.ToolName) != toolNameQuery {
+			continue
+		}
+		if creatorOpenIDQuery != "" && strings.TrimSpace(task.CreatorID) != creatorOpenIDQuery {
 			continue
 		}
 		filtered = append(filtered, task)

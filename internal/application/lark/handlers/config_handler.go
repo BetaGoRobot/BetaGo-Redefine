@@ -156,7 +156,8 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	chatID := currentChatID(data, metaData)
 	openID := currentOpenID(data, metaData)
 	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, arg.Scope, chatID, openID, config.ConfigCardViewOptions{
-		BypassCache: true,
+		BypassCache:        true,
+		LastModifierOpenID: openID,
 	})
 	if err != nil {
 		return err
@@ -290,7 +291,9 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 
 	chatID := currentChatID(data, metaData)
 	openID := currentOpenID(data, metaData)
-	rawCard, err := config.BuildFeatureCard(ctx, chatID, openID)
+	rawCard, err := config.BuildFeatureCardWithOptions(ctx, chatID, openID, config.FeatureCardViewOptions{
+		LastModifierOpenID: openID,
+	})
 	if err != nil {
 		return err
 	}
