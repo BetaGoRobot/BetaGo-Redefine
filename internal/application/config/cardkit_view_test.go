@@ -1,13 +1,18 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 )
 
 func TestBuildConfigCardJSONDelegatesToSchemaV2Card(t *testing.T) {
-	card := map[string]any(newRawCard("配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")}))
+	card := map[string]any(newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")}, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue("chat", "chat-1", "user-1")),
+	}))
 	raw, err := json.Marshal(card)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)

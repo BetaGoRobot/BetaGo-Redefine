@@ -3,7 +3,7 @@ package tools
 type (
 	FCMeta[T any] struct {
 		ChatID string
-		UserID string
+		OpenID string
 		Data   *T
 	}
 )

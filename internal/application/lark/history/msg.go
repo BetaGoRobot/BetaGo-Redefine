@@ -6,7 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcontent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -151,7 +152,7 @@ func (h *Helper) resolvedIndex() string {
 	if strings.TrimSpace(h.index) != "" {
 		return h.index
 	}
-	return config.Get().OpensearchConfig.LarkMsgIndex
+	return appconfig.GetLarkMsgIndex(h.Context, "", "")
 }
 
 func (h *Helper) traceSize() int64 {
@@ -329,14 +330,14 @@ func (o OpensearchMsgLogList) ToLines() (msgList []string) {
 
 type OpensearchMsgLog struct {
 	CreateTime  string            `json:"create_time"`
-	UserID      string            `json:"user_id"`
+	OpenID      string            `json:"user_id"`
 	UserName    string            `json:"user_name"`
 	MsgList     []string          `json:"msg_list"`
 	MentionList []*larkim.Mention `json:"mention_list"`
 }
 
 func (o *OpensearchMsgLog) ToLine() (msgList string) {
-	return fmt.Sprintf("[%s](%s) <%s>: %s", o.CreateTime, o.UserID, o.UserName, strings.Join(o.MsgList, ";"))
+	return fmt.Sprintf("[%s](%s) <%s>: %s", o.CreateTime, o.OpenID, o.UserName, strings.Join(o.MsgList, ";"))
 }
 
 func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList []*OpensearchMsgLog) {
@@ -365,9 +366,10 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 			switch msgItem.Tag {
 			case "at", "text":
 				if len(mentions) > 0 {
+					currentBot := botidentity.Current()
 					for _, mention := range mentions {
 						if mention.Key != nil {
-							if mention.Id != nil && *mention.Id == config.Get().LarkConfig.BotOpenID {
+							if mention.Id != nil && currentBot.BotOpenID != "" && *mention.Id == currentBot.BotOpenID {
 								*mention.Name = "你"
 							}
 							msgItem.Content = strings.ReplaceAll(msgItem.Content, *mention.Key, fmt.Sprintf("@%s", *mention.Name))
@@ -387,7 +389,7 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 		}
 		l := &OpensearchMsgLog{
 			CreateTime:  res.CreateTime,
-			UserID:      res.UserID,
+			OpenID:      res.OpenID,
 			UserName:    res.UserName,
 			MsgList:     tmpList,
 			MentionList: mentions,

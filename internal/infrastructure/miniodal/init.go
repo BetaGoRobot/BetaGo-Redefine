@@ -1,6 +1,7 @@
 package miniodal
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -129,4 +130,19 @@ func externalCli() *minio.Client {
 
 func expireDuration() time.Duration {
 	return defaultBackend.ExpireTime()
+}
+
+func EnsureBucket(ctx context.Context, bucketName string) error {
+	client := internalCli()
+	if client == nil {
+		return ErrUnavailable()
+	}
+	found, err := client.BucketExists(ctx, bucketName)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	return client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
 }

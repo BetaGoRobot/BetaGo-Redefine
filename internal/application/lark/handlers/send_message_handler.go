@@ -70,6 +70,15 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		targetChatID = arg.ChatID
 	}
 
+	if !h.allowTargetChatOverride {
+		if msgID := currentMessageID(data); msgID != "" {
+			if _, err := larkmsg.ReplyMsgText(ctx, arg.Content, msgID, "_sendMessage", false); err == nil {
+				metaData.SetExtra("send_message_result", "消息发送成功")
+				return nil
+			}
+		}
+	}
+
 	if err := larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(arg.Content).Build(), "", targetChatID); err != nil {
 		return err
 	}

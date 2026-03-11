@@ -8,7 +8,7 @@ import (
 type configLookupCandidate struct {
 	scope        ConfigScope
 	chatID       string
-	userID       string
+	openID       string
 	displayScope string
 }
 
@@ -34,7 +34,7 @@ type ConfigItem struct {
 	Scope       string `json:"scope"`       // "global" | "chat" | "user" | "default"
 	IsEditable  bool   `json:"is_editable"` // 是否可编辑
 	ChatID      string `json:"chat_id,omitempty"`
-	UserID      string `json:"user_id,omitempty"`
+	OpenID      string `json:"user_id,omitempty"`
 }
 
 // ==========================================
@@ -79,7 +79,7 @@ type FeatureActionRequest struct {
 	Action  FeatureAction `json:"action"`
 	Feature string        `json:"feature"`
 	ChatID  string        `json:"chat_id"`
-	UserID  string        `json:"user_id"`
+	OpenID  string        `json:"user_id"`
 }
 
 // FeatureActionResponse 功能操作响应
@@ -107,8 +107,8 @@ type ConfigActionRequest struct {
 	Value       string       `json:"value"`
 	Scope       string       `json:"scope"`
 	ChatID      string       `json:"chat_id"`
-	UserID      string       `json:"user_id"`
-	ActorUserID string       `json:"actor_user_id"`
+	OpenID      string       `json:"user_id"`
+	ActorOpenID string       `json:"actor_user_id"`
 }
 
 // ConfigActionResponse 配置操作响应
@@ -122,11 +122,11 @@ type ConfigActionResponse struct {
 // ==========================================
 
 // GetConfigCardData 获取配置卡片数据
-func GetConfigCardData(ctx context.Context, viewScope, chatID, userID string) (*ConfigCardData, error) {
-	return GetConfigCardDataWithOptions(ctx, viewScope, chatID, userID, ConfigCardViewOptions{})
+func GetConfigCardData(ctx context.Context, viewScope, chatID, openID string) (*ConfigCardData, error) {
+	return GetConfigCardDataWithOptions(ctx, viewScope, chatID, openID, ConfigCardViewOptions{})
 }
 
-func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, userID string, options ConfigCardViewOptions) (*ConfigCardData, error) {
+func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, openID string, options ConfigCardViewOptions) (*ConfigCardData, error) {
 	mgr := GetManager()
 	allKeys := GetAllConfigKeys()
 	viewScope = normalizeConfigScope(viewScope)
@@ -139,15 +139,15 @@ func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, userID
 			ValueType:   configValueTypeForKey(key),
 			IsEditable:  true,
 			ChatID:      chatID,
-			UserID:      userID,
+			OpenID:      openID,
 		}
 		item.Value, item.Scope = resolveConfigDisplayValue(
 			viewScope,
 			key,
 			chatID,
-			userID,
+			openID,
 			func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
-				return mgr.getConfigWithOptions(ctx, candidate.scope, candidate.chatID, candidate.userID, key, ConfigReadOptions{
+				return mgr.getConfigWithOptions(ctx, candidate.scope, candidate.chatID, candidate.openID, key, ConfigReadOptions{
 					BypassCache: options.BypassCache,
 				})
 			},
@@ -165,11 +165,11 @@ func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, userID
 func resolveConfigDisplayValue(
 	viewScope string,
 	key ConfigKey,
-	chatID, userID string,
+	chatID, openID string,
 	lookup func(candidate configLookupCandidate, key ConfigKey) (string, bool),
 	fallback func(key ConfigKey) string,
 ) (string, string) {
-	for _, candidate := range configLookupChain(viewScope, chatID, userID) {
+	for _, candidate := range configLookupChain(viewScope, chatID, openID) {
 		if val, ok := lookup(candidate, key); ok {
 			return val, candidate.displayScope
 		}
@@ -177,7 +177,7 @@ func resolveConfigDisplayValue(
 	return fallback(key), "default"
 }
 
-func configLookupChain(viewScope, chatID, userID string) []configLookupCandidate {
+func configLookupChain(viewScope, chatID, openID string) []configLookupCandidate {
 	candidates := make([]configLookupCandidate, 0, 4)
 
 	switch normalizeConfigScope(viewScope) {
@@ -199,18 +199,18 @@ func configLookupChain(viewScope, chatID, userID string) []configLookupCandidate
 			displayScope: "global",
 		})
 	case "user":
-		if chatID != "" && userID != "" {
+		if chatID != "" && openID != "" {
 			candidates = append(candidates, configLookupCandidate{
 				scope:        ScopeUser,
 				chatID:       chatID,
-				userID:       userID,
+				openID:       openID,
 				displayScope: "user",
 			})
 		}
-		if userID != "" {
+		if openID != "" {
 			candidates = append(candidates, configLookupCandidate{
 				scope:        ScopeUser,
-				userID:       userID,
+				openID:       openID,
 				displayScope: "user",
 			})
 		}
@@ -226,7 +226,7 @@ func configLookupChain(viewScope, chatID, userID string) []configLookupCandidate
 			displayScope: "global",
 		})
 	default:
-		return configLookupChain("chat", chatID, userID)
+		return configLookupChain("chat", chatID, openID)
 	}
 
 	return candidates
@@ -251,7 +251,7 @@ func configDefaultDisplayValue(mgr *Manager, key ConfigKey) string {
 }
 
 // GetFeatureCardData 获取功能卡片数据
-func GetFeatureCardData(ctx context.Context, chatID, userID string) (*FeatureCardData, error) {
+func GetFeatureCardData(ctx context.Context, chatID, openID string) (*FeatureCardData, error) {
 	mgr := GetManager()
 	allFeatures := GetAllFeatures()
 
@@ -261,13 +261,13 @@ func GetFeatureCardData(ctx context.Context, chatID, userID string) (*FeatureCar
 			Name:        f.Name,
 			Description: f.Description,
 			Category:    f.Category,
-			IsEnabled:   mgr.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID),
+			IsEnabled:   mgr.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, openID),
 		}
 
 		// 检查各级别屏蔽状态
 		item.BlockedAtChat = mgr.isFeatureBlockedAtScope(ctx, ScopeChat, chatID, "", f.Name)
-		item.BlockedAtUser = mgr.isFeatureBlockedAtScope(ctx, ScopeUser, "", userID, f.Name)
-		item.BlockedAtChatUser = mgr.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, userID, f.Name)
+		item.BlockedAtUser = mgr.isFeatureBlockedAtScope(ctx, ScopeUser, "", openID, f.Name)
+		item.BlockedAtChatUser = mgr.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, openID, f.Name)
 
 		items = append(items, item)
 	}
@@ -294,16 +294,16 @@ func HandleFeatureAction(ctx context.Context, req *FeatureActionRequest) (*Featu
 		err = mgr.UnblockFeature(ctx, req.Feature, ScopeChat, req.ChatID, "")
 		msg = "已在当前群取消屏蔽该功能"
 	case FeatureActionBlockUser:
-		err = mgr.BlockFeature(ctx, req.Feature, ScopeUser, "", req.UserID, "")
+		err = mgr.BlockFeature(ctx, req.Feature, ScopeUser, "", req.OpenID, "")
 		msg = "已对该用户屏蔽该功能"
 	case FeatureActionUnblockUser:
-		err = mgr.UnblockFeature(ctx, req.Feature, ScopeUser, "", req.UserID)
+		err = mgr.UnblockFeature(ctx, req.Feature, ScopeUser, "", req.OpenID)
 		msg = "已对该用户取消屏蔽该功能"
 	case FeatureActionBlockChatUser:
-		err = mgr.BlockFeature(ctx, req.Feature, ScopeUser, req.ChatID, req.UserID, "")
+		err = mgr.BlockFeature(ctx, req.Feature, ScopeUser, req.ChatID, req.OpenID, "")
 		msg = "已在当前群对该用户屏蔽该功能"
 	case FeatureActionUnblockChatUser:
-		err = mgr.UnblockFeature(ctx, req.Feature, ScopeUser, req.ChatID, req.UserID)
+		err = mgr.UnblockFeature(ctx, req.Feature, ScopeUser, req.ChatID, req.OpenID)
 		msg = "已在当前群对该用户取消屏蔽该功能"
 	default:
 		return &FeatureActionResponse{
@@ -355,10 +355,10 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 	// 解析 scope
 	var scope ConfigScope
 	chatID := req.ChatID
-	userID := req.UserID
+	openID := req.OpenID
 	switch req.Scope {
 	case "global":
-		if err := ensureGlobalConfigMutationAllowed(ctx, req.ActorUserID, req.UserID); err != nil {
+		if err := ensureGlobalConfigMutationAllowed(ctx, req.ActorOpenID, req.OpenID); err != nil {
 			return &ConfigActionResponse{
 				Success: false,
 				Message: err.Error(),
@@ -366,10 +366,10 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 		}
 		scope = ScopeGlobal
 		chatID = ""
-		userID = ""
+		openID = ""
 	case "chat":
 		scope = ScopeChat
-		userID = ""
+		openID = ""
 	case "user":
 		scope = ScopeUser
 	default:
@@ -383,7 +383,7 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 	var err error
 
 	if req.Action == ConfigActionDelete {
-		err = mgr.DeleteConfig(ctx, configKey, scope, chatID, userID)
+		err = mgr.DeleteConfig(ctx, configKey, scope, chatID, openID)
 		if err != nil {
 			return &ConfigActionResponse{
 				Success: false,
@@ -405,7 +405,7 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 				Message: "值必须是 true/false",
 			}, nil
 		}
-		err = mgr.SetBool(ctx, configKey, scope, chatID, userID, boolVal)
+		err = mgr.SetBool(ctx, configKey, scope, chatID, openID, boolVal)
 	default:
 		intVal, intErr := strconv.Atoi(req.Value)
 		if intErr != nil {
@@ -420,7 +420,7 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 				Message: "值必须在 0-100 之间",
 			}, nil
 		}
-		err = mgr.SetInt(ctx, configKey, scope, chatID, userID, intVal)
+		err = mgr.SetInt(ctx, configKey, scope, chatID, openID, intVal)
 	}
 
 	if err != nil {

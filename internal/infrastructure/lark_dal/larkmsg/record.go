@@ -87,7 +87,7 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),
 			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
 			Message:         embedded,
-			UserID:          "你",
+			OpenID:          "你",
 			UserName:        "你",
 			TokenUsage:      usage,
 		},
@@ -175,7 +175,7 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),
 			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
 			Message:         embedded,
-			UserID:          "你",
+			OpenID:          "你",
 			UserName:        "你",
 			TokenUsage:      usage,
 		},
@@ -206,8 +206,8 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 	defer span.End()
 
 	chatID := cardAction.Event.Context.OpenChatID
-	userID := cardAction.Event.Operator.OpenID
-	userInfo, err := larkuser.GetUserInfoCache(ctx, cardAction.Event.Context.OpenChatID, userID)
+	openID := cardAction.Event.Operator.OpenID
+	userInfo, err := larkuser.GetUserInfoCache(ctx, cardAction.Event.Context.OpenChatID, openID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("GetUserInfo error", zap.Error(err))
 		return
@@ -216,7 +216,7 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 		CardActionTriggerEvent: cardAction,
 		ChatName:               larkchat.GetChatName(ctx, chatID),
 		CreateTime:             utils.EpoMicro2DateStr(cardAction.EventV2Base.Header.CreateTime),
-		UserID:                 userID,
+		OpenID:                 openID,
 		UserName:               utils.AddrOrNil(userInfo.Name),
 		ActionValue:            cardAction.Event.Action.Value,
 	}

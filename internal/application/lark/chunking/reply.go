@@ -31,7 +31,7 @@ func (m *LarkMessageRespReply) TimeStamp() (res int64) {
 	return t
 }
 
-func (m *LarkMessageRespReply) BuildLine() (line string) {
+func (m *LarkMessageRespReply) BuildLine() (line string, ok bool) {
 	return buildLineCommon(
 		context.Background(),
 		m.Data.Body.Content,

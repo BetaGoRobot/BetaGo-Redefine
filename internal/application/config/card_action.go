@@ -7,7 +7,7 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
-func BuildFeatureActionValue(action FeatureAction, feature, chatID, userID string) map[string]string {
+func BuildFeatureActionValue(action FeatureAction, feature, chatID, openID string) map[string]string {
 	name, ok := featureActionName(action)
 	if !ok {
 		return nil
@@ -16,12 +16,19 @@ func BuildFeatureActionValue(action FeatureAction, feature, chatID, userID strin
 	return cardaction.New(name).
 		WithValue(cardaction.FeatureField, feature).
 		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, userID).
+		WithValue(cardaction.UserIDField, openID).
 		Payload()
 }
 
-func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, userID string) map[string]string {
-	builder, ok := newConfigActionBuilder(action, key, scope, chatID, userID)
+func BuildFeatureViewValue(chatID, openID string) map[string]string {
+	return cardaction.New(cardaction.ActionFeatureView).
+		WithValue(cardaction.ChatIDField, chatID).
+		WithValue(cardaction.UserIDField, openID).
+		Payload()
+}
+
+func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, openID string) map[string]string {
+	builder, ok := newConfigActionBuilder(action, key, scope, chatID, openID)
 	if !ok {
 		return nil
 	}
@@ -31,8 +38,8 @@ func BuildConfigActionValue(action ConfigAction, key, value, scope, chatID, user
 	return builder.Payload()
 }
 
-func BuildConfigFormActionValue(key, scope, chatID, userID, formField string) map[string]string {
-	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, userID)
+func BuildConfigFormActionValue(key, scope, chatID, openID, formField string) map[string]string {
+	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, openID)
 	if !ok {
 		return nil
 	}
@@ -40,15 +47,15 @@ func BuildConfigFormActionValue(key, scope, chatID, userID, formField string) ma
 	return builder.Payload()
 }
 
-func BuildConfigInputActionValue(key, scope, chatID, userID string) map[string]string {
-	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, userID)
+func BuildConfigInputActionValue(key, scope, chatID, openID string) map[string]string {
+	builder, ok := newConfigActionBuilder(ConfigActionSet, key, scope, chatID, openID)
 	if !ok {
 		return nil
 	}
 	return builder.Payload()
 }
 
-func newConfigActionBuilder(action ConfigAction, key, scope, chatID, userID string) (*cardaction.Builder, bool) {
+func newConfigActionBuilder(action ConfigAction, key, scope, chatID, openID string) (*cardaction.Builder, bool) {
 	var actionName string
 	switch action {
 	case ConfigActionSet:
@@ -63,15 +70,15 @@ func newConfigActionBuilder(action ConfigAction, key, scope, chatID, userID stri
 		WithValue(cardaction.KeyField, key).
 		WithValue(cardaction.ScopeField, scope).
 		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, userID)
+		WithValue(cardaction.UserIDField, openID)
 	return builder, true
 }
 
-func BuildConfigViewValue(scope, chatID, userID string) map[string]string {
+func BuildConfigViewValue(scope, chatID, openID string) map[string]string {
 	return cardaction.New(cardaction.ActionConfigViewScope).
 		WithValue(cardaction.ScopeField, scope).
 		WithValue(cardaction.ChatIDField, chatID).
-		WithValue(cardaction.UserIDField, userID).
+		WithValue(cardaction.UserIDField, openID).
 		Payload()
 }
 
@@ -87,13 +94,13 @@ func ParseFeatureActionRequest(parsed *cardaction.Parsed) (*FeatureActionRequest
 	}
 
 	chatID, _ := parsed.String(cardaction.ChatIDField)
-	userID, _ := parsed.String(cardaction.UserIDField)
+	openID, _ := parsed.String(cardaction.UserIDField)
 
 	return &FeatureActionRequest{
 		Action:  action,
 		Feature: feature,
 		ChatID:  chatID,
-		UserID:  userID,
+		OpenID:  openID,
 	}, nil
 }
 
@@ -111,7 +118,7 @@ func ParseConfigActionRequest(parsed *cardaction.Parsed) (*ConfigActionRequest, 
 		return nil, err
 	}
 	chatID, _ := parsed.String(cardaction.ChatIDField)
-	userID, _ := parsed.String(cardaction.UserIDField)
+	openID, _ := parsed.String(cardaction.UserIDField)
 	action := ConfigActionSet
 	value := ""
 	if parsed.Name == cardaction.ActionConfigDelete {
@@ -139,7 +146,7 @@ func ParseConfigActionRequest(parsed *cardaction.Parsed) (*ConfigActionRequest, 
 		Value:  value,
 		Scope:  scope,
 		ChatID: chatID,
-		UserID: userID,
+		OpenID: openID,
 	}, nil
 }
 
@@ -162,7 +169,12 @@ func resolveConfigFormValue(parsed *cardaction.Parsed, formField string) (string
 type ConfigViewRequest struct {
 	Scope  string `json:"scope"`
 	ChatID string `json:"chat_id"`
-	UserID string `json:"user_id"`
+	OpenID string `json:"user_id"`
+}
+
+type FeatureViewRequest struct {
+	ChatID string `json:"chat_id"`
+	OpenID string `json:"user_id"`
 }
 
 func ParseConfigViewRequest(parsed *cardaction.Parsed) (*ConfigViewRequest, error) {
@@ -174,11 +186,26 @@ func ParseConfigViewRequest(parsed *cardaction.Parsed) (*ConfigViewRequest, erro
 		return nil, err
 	}
 	chatID, _ := parsed.String(cardaction.ChatIDField)
-	userID, _ := parsed.String(cardaction.UserIDField)
+	openID, _ := parsed.String(cardaction.UserIDField)
 	return &ConfigViewRequest{
 		Scope:  scope,
 		ChatID: chatID,
-		UserID: userID,
+		OpenID: openID,
+	}, nil
+}
+
+func ParseFeatureViewRequest(parsed *cardaction.Parsed) (*FeatureViewRequest, error) {
+	if parsed == nil {
+		return nil, fmt.Errorf("feature view action is nil")
+	}
+	if parsed.Name != cardaction.ActionFeatureView {
+		return nil, fmt.Errorf("unsupported feature view action: %s", parsed.Name)
+	}
+	chatID, _ := parsed.String(cardaction.ChatIDField)
+	openID, _ := parsed.String(cardaction.UserIDField)
+	return &FeatureViewRequest{
+		ChatID: chatID,
+		OpenID: openID,
 	}, nil
 }
 

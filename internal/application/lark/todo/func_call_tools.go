@@ -160,7 +160,7 @@ func (createTodoHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createTodoArgs) error {
-	userInfo, err := larkuser.GetUserInfoCache(ctx, metaData.ChatID, metaData.UserID)
+	userInfo, err := larkuser.GetUserInfoCache(ctx, metaData.ChatID, metaData.OpenID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Get user info failed", zap.Error(err))
 	}
@@ -180,7 +180,7 @@ func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	tags := splitTags(args.Tags)
 	req := &CreateTodoRequest{
 		ChatID:      metaData.ChatID,
-		CreatorID:   metaData.UserID,
+		CreatorID:   metaData.OpenID,
 		CreatorName: userName,
 		Title:       args.Title,
 		Description: args.Description,

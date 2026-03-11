@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -180,7 +180,8 @@ func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID
 	defer span.End()
 
 	card := GetCardMusicByPage(ctx, musicID, page)
-	err := larkmsg.ReplyCard(ctx, card, msgID, "_music"+musicID, utils.GetIfInthread(ctx, metaData, config.Get().NeteaseMusicConfig.MusicCardInThread))
+	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
+	err := larkmsg.ReplyCard(ctx, card, msgID, "_music"+musicID, utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
 		return
 	}
@@ -210,7 +211,8 @@ func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID
 	if err != nil {
 		return
 	}
-	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_album", utils.GetIfInthread(ctx, metaData, config.Get().NeteaseMusicConfig.MusicCardInThread))
+	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
+	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_album", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
 		return
 	}
@@ -243,18 +245,20 @@ func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musi
 		AddVariable("title", songDetail.Name).
 		AddVariable("sub_title", songDetail.Ar[0].Name).
 		AddVariable("imgkey", imgKey)
-	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_music", utils.GetIfInthread(ctx, metaData, config.Get().NeteaseMusicConfig.MusicCardInThread))
+	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
+	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_music", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
 		return
 	}
 }
 
 func HandleWithDraw(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
-	userID := cardAction.Event.Operator.OpenID
+	openID := cardAction.Event.Operator.OpenID
 	msgID := cardAction.Event.Context.OpenMessageID
-	if config.Get().LarkConfig.WithDrawReplace { // 伪撤回
+	accessor := appconfig.NewAccessor(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
+	if accessor.WithDrawReplace() { // 伪撤回
 		cardContent := larkcard.NewCardBuildHelper().
-			SetContent(fmt.Sprintf("这条消息被%s撤回啦！", larkmsg.AtUserString(userID))).Build(ctx)
+			SetContent(fmt.Sprintf("这条消息被%s撤回啦！", larkmsg.AtUserString(openID))).Build(ctx)
 		err := larkmsg.PatchCard(ctx, cardContent, msgID)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("Failed to patch card", zap.Error(err))

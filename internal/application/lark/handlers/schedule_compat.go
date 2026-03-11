@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -13,7 +14,7 @@ import (
 )
 
 func currentChatID(data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) string {
-	if data != nil && data.Event.Message.ChatId != nil {
+	if data != nil && data.Event != nil && data.Event.Message != nil && data.Event.Message.ChatId != nil {
 		return *data.Event.Message.ChatId
 	}
 	if metaData != nil {
@@ -22,23 +23,18 @@ func currentChatID(data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaD
 	return ""
 }
 
-func currentUserID(data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) string {
-	if data != nil {
-		if data.Event.Sender.SenderId.OpenId != nil {
-			return *data.Event.Sender.SenderId.OpenId
-		}
-		if data.Event.Sender.SenderId.UserId != nil {
-			return *data.Event.Sender.SenderId.UserId
-		}
+func currentOpenID(data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) string {
+	if openID := botidentity.MessageSenderOpenID(data); openID != "" {
+		return openID
 	}
 	if metaData != nil {
-		return metaData.UserID
+		return metaData.OpenID
 	}
 	return ""
 }
 
 func currentMessageID(data *larkim.P2MessageReceiveV1) string {
-	if data != nil && data.Event.Message.MessageId != nil {
+	if data != nil && data.Event != nil && data.Event.Message != nil && data.Event.Message.MessageId != nil {
 		return *data.Event.Message.MessageId
 	}
 	return ""
@@ -47,8 +43,9 @@ func currentMessageID(data *larkim.P2MessageReceiveV1) string {
 func sendCompatibleText(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, text, suffix string, replyInThread bool) error {
 	msgID := currentMessageID(data)
 	if msgID != "" {
-		_, err := larkmsg.ReplyMsgText(ctx, text, msgID, suffix, replyInThread)
-		return err
+		if _, err := larkmsg.ReplyMsgText(ctx, text, msgID, suffix, replyInThread); err == nil {
+			return nil
+		}
 	}
 
 	chatID := currentChatID(data, metaData)
@@ -65,7 +62,9 @@ func sendCompatibleCard(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 		if metaData != nil && metaData.Refresh {
 			return larkmsg.PatchCard(ctx, cardContent, msgID)
 		}
-		return larkmsg.ReplyCard(ctx, cardContent, msgID, suffix, replyInThread)
+		if err := larkmsg.ReplyCard(ctx, cardContent, msgID, suffix, replyInThread); err == nil {
+			return nil
+		}
 	}
 
 	chatID := currentChatID(data, metaData)
@@ -81,7 +80,9 @@ func sendCompatibleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1,
 		if metaData != nil && metaData.Refresh {
 			return larkmsg.PatchRawCard(ctx, msgID, content)
 		}
-		return larkmsg.ReplyRawCard(ctx, msgID, content, suffix, replyInThread)
+		if err := larkmsg.ReplyRawCard(ctx, msgID, content, suffix, replyInThread); err == nil {
+			return nil
+		}
 	}
 
 	chatID := currentChatID(data, metaData)
@@ -98,7 +99,9 @@ func sendCompatibleCardJSON(ctx context.Context, data *larkim.P2MessageReceiveV1
 		if metaData != nil && metaData.Refresh {
 			return larkmsg.PatchCardJSON(ctx, msgID, cardData)
 		}
-		return larkmsg.ReplyCardJSON(ctx, msgID, cardData, suffix, replyInThread)
+		if err := larkmsg.ReplyCardJSON(ctx, msgID, cardData, suffix, replyInThread); err == nil {
+			return nil
+		}
 	}
 
 	chatID := currentChatID(data, metaData)

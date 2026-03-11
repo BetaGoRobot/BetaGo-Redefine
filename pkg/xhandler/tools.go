@@ -6,18 +6,18 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 )
 
-func NewBaseMetaDataWithChatIDUID(ctx context.Context, chatID, userID string) *BaseMetaData {
+func NewBaseMetaDataWithChatIDOpenID(ctx context.Context, chatID, openID string) *BaseMetaData {
 	chat, err := larkchat.GetChatInfoCache(ctx, chatID)
 	if err != nil {
 		return &BaseMetaData{
 			ChatID: chatID,
-			UserID: userID,
+			OpenID: openID,
 		}
 	}
 	isP2P := *chat.ChatMode == "p2p"
 	return &BaseMetaData{
 		ChatID: chatID,
-		UserID: userID,
+		OpenID: openID,
 
 		IsP2P: isP2P,
 	}

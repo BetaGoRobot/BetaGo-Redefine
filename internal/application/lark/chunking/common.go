@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcontent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -33,7 +33,8 @@ func buildLineCommon(
 	senderID *string,
 	chatID *string,
 	timestamp int64,
-) (line string) {
+) (line string, ok bool) {
+	currentBot := botidentity.Current()
 	tmpList := make([]string, 0)
 	for msgItem := range larkcontent.
 		GetContentItemsSeq(
@@ -53,7 +54,7 @@ func buildLineCommon(
 			if len(mentions) > 0 {
 				for _, mention := range mentions {
 					if mention.Key != nil {
-						if mention.Id != nil && *mention.Id == config.Get().LarkConfig.BotOpenID {
+						if mention.Id != nil && currentBot.BotOpenID != "" && *mention.Id == currentBot.BotOpenID {
 							*mention.Name = "你"
 						}
 						msgItem.Content = strings.ReplaceAll(msgItem.Content, *mention.Key, fmt.Sprintf("@%s", *mention.Name))
@@ -68,8 +69,12 @@ func buildLineCommon(
 			}
 		}
 	}
+	if len(tmpList) == 0 {
+		// TODO: 对于卡片类型这种解析不了的，返回卡片标识。
+		return "", false
+	}
 	userName := ""
-	if *senderID == config.Get().LarkConfig.AppID {
+	if currentBot.AppID != "" && *senderID == currentBot.AppID {
 		userName = "机器人"
 	} else {
 		userInfo, err := larkuser.GetUserInfoCache(ctx, *chatID, *senderID)
@@ -84,5 +89,5 @@ func buildLineCommon(
 	}
 
 	createTime := time.UnixMilli(timestamp).In(utils.UTC8Loc()).Format(time.DateTime)
-	return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *senderID, userName, strings.Join(tmpList, ";"))
+	return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *senderID, userName, strings.Join(tmpList, ";")), true
 }

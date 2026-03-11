@@ -94,13 +94,17 @@ func (m *StandardMsg) MsgID() string {
 	return m.MsgID_
 }
 
-func BuildStdMsg(msg GenericMsg) StandardMsg {
-	return StandardMsg{
+func BuildStdMsg(msg GenericMsg) (StandardMsg, bool) {
+	res := StandardMsg{
 		GroupID_:   msg.GroupID(),
 		MsgID_:     msg.MsgID(),
 		TimeStamp_: msg.TimeStamp(),
-		BuildLine_: msg.BuildLine(),
 	}
+	if line, ok := msg.BuildLine(); ok {
+		res.BuildLine_ = line
+		return res, true
+	}
+	return res, false
 }
 
 func dedupeMessagesByMsgID(messages []StandardMsg) []StandardMsg {
@@ -158,7 +162,7 @@ type GenericMsg interface {
 	GroupID() string
 	MsgID() string
 	TimeStamp() int64
-	BuildLine() string
+	BuildLine() (string, bool)
 }
 
 type (
@@ -259,7 +263,9 @@ func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err err
 		trace.WithAttributes(attribute.String("group.id", groupID)),
 	)
 	val, err := m.redisClient.Get(sessionCtx, sessionKey).Result()
-	otel.RecordError(sessionSpan, err)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		otel.RecordError(sessionSpan, err)
+	}
 	sessionSpan.End()
 	if err != nil && err != redis.Nil {
 		logs.L().Ctx(ctx).Error("Failed to get session from Redis", zap.String("groupID", groupID), zap.Error(err), zap.String("val", val))
@@ -286,7 +292,12 @@ func (m *Management) SubmitMessage(ctx context.Context, msg GenericMsg) (err err
 		return nil
 	}
 	// 2. 附加新消息并更新时间戳
-	buffer.Messages = dedupeMessagesByMsgID(append(buffer.Messages, BuildStdMsg(msg)))
+	stdMsg, ok := BuildStdMsg(msg)
+	if !ok {
+		logs.L().Ctx(ctx).Warn("got invalid msg to submit, skip...")
+		return nil
+	}
+	buffer.Messages = dedupeMessagesByMsgID(append(buffer.Messages, stdMsg))
 	buffer.LastActiveTs = newTimestamp
 
 	// 3. 检查缓冲区大小是否超过限制

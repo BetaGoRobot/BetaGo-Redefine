@@ -10,7 +10,7 @@ func TestMetaInitPrefersOpenID(t *testing.T) {
 	chatID := "oc_chat"
 	chatType := "group"
 	openID := "ou_open"
-	userID := "cli_user"
+	legacyUserID := "cli_user"
 
 	meta := metaInit(&larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
@@ -21,21 +21,21 @@ func TestMetaInitPrefersOpenID(t *testing.T) {
 			Sender: &larkim.EventSender{
 				SenderId: &larkim.UserId{
 					OpenId: &openID,
-					UserId: &userID,
+					UserId: &legacyUserID,
 				},
 			},
 		},
 	})
 
-	if meta.UserID != openID {
-		t.Fatalf("metaInit() user id = %q, want open id %q", meta.UserID, openID)
+	if meta.OpenID != openID {
+		t.Fatalf("metaInit() open id = %q, want %q", meta.OpenID, openID)
 	}
 }
 
-func TestMetaInitFallsBackToUserID(t *testing.T) {
+func TestMetaInitReturnsEmptyWithoutOpenID(t *testing.T) {
 	chatID := "oc_chat"
 	chatType := "group"
-	userID := "cli_user"
+	legacyUserID := "cli_user"
 
 	meta := metaInit(&larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
@@ -45,13 +45,13 @@ func TestMetaInitFallsBackToUserID(t *testing.T) {
 			},
 			Sender: &larkim.EventSender{
 				SenderId: &larkim.UserId{
-					UserId: &userID,
+					UserId: &legacyUserID,
 				},
 			},
 		},
 	})
 
-	if meta.UserID != userID {
-		t.Fatalf("metaInit() user id = %q, want fallback user id %q", meta.UserID, userID)
+	if meta.OpenID != "" {
+		t.Fatalf("metaInit() open id = %q, want empty string when only legacy user id %q exists", meta.OpenID, legacyUserID)
 	}
 }

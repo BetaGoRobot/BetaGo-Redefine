@@ -18,7 +18,7 @@ type MessageIndex struct {
 	CreateTime           string          `json:"create_time"`
 	CreateTimeV2         string          `json:"create_time_v2"`
 	Message              []float32       `json:"message"`
-	UserID               string          `json:"user_id"`
+	OpenID               string          `json:"user_id"`
 	UserName             string          `json:"user_name"`
 	RawMessage           string          `json:"raw_message"`
 	RawMessageJieba      string          `json:"raw_message_jieba"`
@@ -33,7 +33,7 @@ type CardActionIndex struct {
 	*callback.CardActionTriggerEvent
 	ChatName    string         `json:"chat_name"`
 	CreateTime  string         `json:"create_time"`
-	UserID      string         `json:"user_id"`
+	OpenID      string         `json:"user_id"`
 	UserName    string         `json:"user_name"`
 	ActionValue map[string]any `json:"action_value"`
 }
@@ -50,7 +50,7 @@ type MessageChunkLogV3 struct {
 	ConversationEmbedding []float32 `json:"conversation_embedding"`
 
 	MsgList     []string `json:"msg_list"`
-	UserIDs     []string `json:"user_ids,omitempty"`
+	OpenIDs     []string `json:"user_ids,omitempty"`
 	GroupID     string   `json:"group_id"`
 	Timestamp   string   `json:"timestamp"`
 	TimestampV2 *string  `json:"timestamp_v2"`
@@ -74,7 +74,7 @@ type Participant struct {
 }
 
 type User struct {
-	UserID string `json:"user_id"`
+	OpenID string `json:"user_id"`
 	Name   string `json:"name"`
 }
 

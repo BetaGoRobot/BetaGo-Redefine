@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
@@ -37,23 +38,18 @@ func messageChatID(event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData
 	return ""
 }
 
-func messageUserID(event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) string {
-	if event != nil && event.Event != nil && event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
-		if event.Event.Sender.SenderId.OpenId != nil {
-			return *event.Event.Sender.SenderId.OpenId
-		}
-		if event.Event.Sender.SenderId.UserId != nil {
-			return *event.Event.Sender.SenderId.UserId
-		}
+func messageOpenID(event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) string {
+	if openID := botidentity.MessageSenderOpenID(event); openID != "" {
+		return openID
 	}
 	if meta != nil {
-		return meta.UserID
+		return meta.OpenID
 	}
 	return ""
 }
 
 func messageConfigAccessor(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) *appconfig.Accessor {
-	return appconfig.NewAccessor(ctx, messageChatID(event, meta), messageUserID(event, meta))
+	return appconfig.NewAccessor(ctx, messageChatID(event, meta), messageOpenID(event, meta))
 }
 
 func isCommandMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) bool {

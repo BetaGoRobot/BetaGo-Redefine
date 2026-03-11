@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
@@ -425,8 +426,9 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 		if err != nil {
 			return err
 		}
+		currentBot := botidentity.Current()
 		for _, msg := range resp.Data.Items {
-			if *msg.Sender.Id == config.Get().LarkConfig.AppID {
+			if currentBot.AppID != "" && *msg.Sender.Id == currentBot.AppID {
 				resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*msg.MessageId).Build())
 				if err != nil {
 					return err
@@ -443,7 +445,8 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 			res = "没有圈选消息，不能撤回"
 			return errors.New("No parent message found")
 		}
-		if msg.Sender.Id == nil || *msg.Sender.Id != config.Get().LarkConfig.BotOpenID {
+		currentBot := botidentity.Current()
+		if msg.Sender.Id == nil || currentBot.BotOpenID == "" || *msg.Sender.Id != currentBot.BotOpenID {
 			res = "消息不是机器人发出的，不能撤回"
 			return errors.New("Parent message is not sent by bot")
 		}
@@ -519,7 +522,7 @@ func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 	}
 
 	dataSeq, err := ark_dal.
-		New(*data.Event.Message.ChatId, currentUserID(data, metaData), &data).
+		New(*data.Event.Message.ChatId, currentOpenID(data, metaData), &data).
 		Do(ctx, "", inputPrompt, urls...)
 	if err != nil {
 		return err
@@ -542,7 +545,7 @@ func handleDebugConversation(ctx context.Context, data *larkim.P2MessageReceiveV
 		return err
 	}
 
-	resp, err := opensearch.SearchData(ctx, config.Get().OpensearchConfig.LarkMsgIndex,
+	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, currentChatID(data, metaData), currentOpenID(data, metaData)),
 		map[string]any{
 			"query": map[string]any{
 				"bool": map[string]any{
@@ -591,7 +594,7 @@ func handleDebugConversation(ctx context.Context, data *larkim.P2MessageReceiveV
 			}
 			return &larktpl.MsgLine{
 				Time:    msg.CreateTime,
-				User:    &larktpl.User{UserID: msg.UserID},
+				User:    &larktpl.User{UserID: msg.OpenID},
 				Content: strings.Join(msgTrunc, " "),
 			}
 		})
@@ -603,7 +606,7 @@ func handleDebugConversation(ctx context.Context, data *larkim.P2MessageReceiveV
 
 			Intent: xchunk.Translate(chunkLog.Intent),
 			Participants: Dedup(
-				commonutils.TransSlice(msgList, func(m *xmodel.MessageIndex) *larktpl.User { return &larktpl.User{UserID: m.UserID} }),
+				commonutils.TransSlice(msgList, func(m *xmodel.MessageIndex) *larktpl.User { return &larktpl.User{UserID: m.OpenID} }),
 				func(u *larktpl.User) string { return u.UserID },
 			),
 
@@ -682,7 +685,7 @@ func Dedup[T, K comparable](slice []T, keyFunc func(T) K) []T {
 // 	if s.Time != "" {
 // 		argsSlice = append(argsSlice, "--t="+s.Time)
 // 	}
-// 	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, meta.ChatID, meta.UserID)
+// 	metaData := xhandler.NewBaseMetaDataWithChatIDOpenID(ctx, meta.ChatID, meta.OpenID)
 // 	if err := handleDebugRevert(ctx, meta.LarkData, metaData, argsSlice...); err != nil {
 // 		return nil, err
 // 	}

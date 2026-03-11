@@ -45,12 +45,12 @@ type FeatureInfo struct {
 }
 
 // FeatureCheckFunc 功能检查函数类型
-type FeatureCheckFunc func(ctx context.Context, featureID string, defaultEnabled bool, chatID, userID string) bool
+type FeatureCheckFunc func(ctx context.Context, featureID string, defaultEnabled bool, chatID, openID string) bool
 
-// MetaDataWithUser 可以获取 chatID 和 userID 的 meta 接口
-type MetaDataWithUser interface {
+// MetaDataWithOpenID 可以获取 chatID 和 openID 的 meta 接口
+type MetaDataWithOpenID interface {
 	GetChatID() string
-	GetUserID() string
+	GetOpenID() string
 }
 
 type (
@@ -59,7 +59,7 @@ type (
 		mu sync.RWMutex
 
 		ChatID      string
-		UserID      string
+		OpenID      string
 		IsP2P       bool
 		Refresh     bool
 		IsCommand   bool
@@ -131,14 +131,14 @@ func (m *BaseMetaData) ShouldSkipDone() bool {
 	return m.SkipDone
 }
 
-// GetChatID 实现 MetaDataWithUser 接口
+// GetChatID 实现 MetaDataWithOpenID 接口
 func (m *BaseMetaData) GetChatID() string {
 	return m.ChatID
 }
 
-// GetUserID 实现 MetaDataWithUser 接口
-func (m *BaseMetaData) GetUserID() string {
-	return m.UserID
+// GetOpenID 实现 MetaDataWithOpenID 接口
+func (m *BaseMetaData) GetOpenID() string {
+	return m.OpenID
 }
 
 type (
@@ -258,6 +258,10 @@ func (p *Processor[T, K]) WithData(event *T) *Processor[T, K] {
 
 func (p *Processor[T, K]) Data() *T {
 	return p.data
+}
+
+func (p *Processor[T, K]) MetaData() *K {
+	return p.metaData
 }
 
 func (p *Processor[T, K]) Clean() *Processor[T, K] {
@@ -380,12 +384,12 @@ func (p *Processor[T, K]) RunParallelStages() error {
 			var err error
 			if opWithFeature, ok := any(w.fetcher).(interface{ FeatureInfo() *FeatureInfo }); ok {
 				if fi := opWithFeature.FeatureInfo(); fi != nil && p.featureChecker != nil {
-					var chatID, userID string
-					if metaWithUser, ok := any(p.metaData).(MetaDataWithUser); ok {
-						chatID = metaWithUser.GetChatID()
-						userID = metaWithUser.GetUserID()
+					var chatID, openID string
+					if metaWithOpenID, ok := any(p.metaData).(MetaDataWithOpenID); ok {
+						chatID = metaWithOpenID.GetChatID()
+						openID = metaWithOpenID.GetOpenID()
 					}
-					if !p.featureChecker(p, fi.ID, fi.Default, chatID, userID) {
+					if !p.featureChecker(p, fi.ID, fi.Default, chatID, openID) {
 						w.err = errors.Wrap(xerror.ErrStageSkip, fetcherName+" feature blocked")
 						return
 					}
@@ -459,12 +463,12 @@ func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, 
 
 	// 自动检查功能开关
 	if fi := op.FeatureInfo(); fi != nil && p.featureChecker != nil {
-		var chatID, userID string
-		if metaWithUser, ok := any(p.metaData).(MetaDataWithUser); ok {
-			chatID = metaWithUser.GetChatID()
-			userID = metaWithUser.GetUserID()
+		var chatID, openID string
+		if metaWithOpenID, ok := any(p.metaData).(MetaDataWithOpenID); ok {
+			chatID = metaWithOpenID.GetChatID()
+			openID = metaWithOpenID.GetOpenID()
 		}
-		if !p.featureChecker(ctx, fi.ID, fi.Default, chatID, userID) {
+		if !p.featureChecker(ctx, fi.ID, fi.Default, chatID, openID) {
 			return errors.Wrap(xerror.ErrStageSkip, op.Name()+" feature blocked")
 		}
 	}

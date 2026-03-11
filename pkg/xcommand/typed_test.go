@@ -183,7 +183,7 @@ func (toolTestHandler) Handle(ctx context.Context, data *toolTestMeta, metaData 
 	if metaData.ChatID != "chat-id" {
 		return errors.New("unexpected chat id")
 	}
-	if metaData.UserID != "user-id" {
+	if metaData.OpenID != "user-id" {
 		return errors.New("unexpected user id")
 	}
 	if data.ID != "payload-id" {
@@ -209,7 +209,7 @@ func TestBindTool(t *testing.T) {
 
 	value, err := handler(context.Background(), `{"name":"bob"}`, arktools.FCMeta[toolTestMeta]{
 		ChatID: "chat-id",
-		UserID: "user-id",
+		OpenID: "user-id",
 		Data:   &toolTestMeta{ID: "payload-id"},
 	}).Get()
 	if err != nil {
@@ -217,6 +217,40 @@ func TestBindTool(t *testing.T) {
 	}
 	if value != "bob" {
 		t.Fatalf("unexpected tool result: %s", value)
+	}
+}
+
+func TestExecuteUsesDefaultSubCommand(t *testing.T) {
+	root := NewRootCommand[string](nil)
+	meta := &xhandler.BaseMetaData{}
+	called := false
+
+	root.AddSubCommand(
+		NewCommand[string]("schedule", nil).
+			SetDefaultSubCommand("manage").
+			AddSubCommand(NewCommand[string]("manage", func(ctx context.Context, data string, metaData *xhandler.BaseMetaData, args ...string) error {
+				called = true
+				if data != "payload" {
+					t.Fatalf("unexpected data: %s", data)
+				}
+				if len(args) != 0 {
+					t.Fatalf("unexpected args: %+v", args)
+				}
+				metaData.SetExtra("ok", "1")
+				return nil
+			})),
+	)
+	root.BuildChain()
+
+	if err := root.Execute(context.Background(), "payload", meta, []string{"schedule"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected default sub command to be called")
+	}
+	value, ok := meta.GetExtra("ok")
+	if !ok || value != "1" {
+		t.Fatalf("unexpected meta: %v %v", value, ok)
 	}
 }
 

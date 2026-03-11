@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/bytedance/gg/gptr"
@@ -106,7 +106,7 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 	}
 
 	req := &responses.ResponsesRequest{
-		Model: config.Get().ArkConfig.LiteModel,
+		Model: appconfig.NewAccessor(ctx, "", "").IntentLiteModel(),
 		Input: input,
 		Store: gptr.Of(true),
 		Text: &responses.ResponsesText{

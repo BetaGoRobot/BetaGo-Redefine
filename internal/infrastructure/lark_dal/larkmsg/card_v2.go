@@ -1,6 +1,10 @@
 package larkmsg
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"strings"
+)
 
 type CardV2Options struct {
 	HeaderTemplate  string
@@ -32,12 +36,31 @@ type ColumnSetOptions struct {
 	Margin            string
 }
 
+type SplitColumnsOptions struct {
+	Left  ColumnOptions
+	Right ColumnOptions
+	Row   ColumnSetOptions
+}
+
 type ButtonOptions struct {
 	Type           string
 	Size           string
 	Name           string
 	FormActionType string
 	Payload        map[string]any
+	URL            string
+}
+
+func StandardPanelCardV2Options() CardV2Options {
+	return CardV2Options{
+		HeaderTemplate:  "wathet",
+		VerticalSpacing: "8px",
+		Padding:         "12px",
+	}
+}
+
+func NewStandardPanelCard(ctx context.Context, title string, elements []any, footerOptions ...StandardCardFooterOptions) RawCard {
+	return NewCardV2(title, AppendStandardCardFooter(ctx, elements, footerOptions...), StandardPanelCardV2Options())
 }
 
 func NewCardV2(title string, elements []any, opts CardV2Options) RawCard {
@@ -184,6 +207,8 @@ func Button(text string, opts ButtonOptions) map[string]any {
 	}
 	if behaviors := CallbackBehaviors(opts.Payload); len(behaviors) > 0 {
 		button["behaviors"] = behaviors
+	} else if behaviors := OpenURLBehaviors(opts.URL); len(behaviors) > 0 {
+		button["behaviors"] = behaviors
 	}
 	return button
 }
@@ -196,6 +221,19 @@ func CallbackBehaviors(payload map[string]any) []any {
 		map[string]any{
 			"type":  "callback",
 			"value": payload,
+		},
+	}
+}
+
+func OpenURLBehaviors(rawURL string) []any {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	return []any{
+		map[string]any{
+			"type":        "open_url",
+			"default_url": rawURL,
 		},
 	}
 }
@@ -213,4 +251,47 @@ func ButtonRow(flexMode string, buttons ...map[string]any) map[string]any {
 		HorizontalSpacing: "8px",
 		FlexMode:          flexMode,
 	})
+}
+
+func StringMapToAnyMap(values map[string]string) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
+func SplitColumns(left, right []any, opts SplitColumnsOptions) map[string]any {
+	leftOpts := normalizeSplitColumnOptions(opts.Left)
+	rightOpts := normalizeSplitColumnOptions(opts.Right)
+	return ColumnSet([]any{
+		Column(left, leftOpts),
+		Column(right, rightOpts),
+	}, opts.Row)
+}
+
+func AppendSectionsWithDividers(dst []any, sections ...[]any) []any {
+	result := append([]any{}, dst...)
+	appended := false
+	for _, section := range sections {
+		if len(section) == 0 {
+			continue
+		}
+		if appended {
+			result = append(result, Divider())
+		}
+		result = append(result, section...)
+		appended = true
+	}
+	return result
+}
+
+func normalizeSplitColumnOptions(opts ColumnOptions) ColumnOptions {
+	if opts.Width == "" && opts.Weight > 0 {
+		opts.Width = "weighted"
+	}
+	return opts
 }

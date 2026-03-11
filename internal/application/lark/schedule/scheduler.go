@@ -182,7 +182,7 @@ func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) 
 	}
 
 	if err != nil && task.NotifyOnError {
-		s.notify(ctx, task.ChatID, task.ID, fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error()))
+		s.notify(ctx, task, fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error()))
 		return
 	}
 	if err == nil && task.NotifyResult && result != "" {
@@ -194,7 +194,15 @@ func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) 
 	}
 }
 
-func (s *Scheduler) notify(ctx context.Context, chatID, taskID, content string) {
+func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, content string) {
+	chatID := ""
+	taskID := ""
+	sourceMessageID := ""
+	if task != nil {
+		chatID = task.ChatID
+		taskID = task.ID
+		sourceMessageID = task.SourceMessageID
+	}
 	if chatID == "" || content == "" {
 		return
 	}
@@ -209,6 +217,11 @@ func (s *Scheduler) notify(ctx context.Context, chatID, taskID, content string) 
 		attribute.String("schedule.content.preview", otel.PreviewString(content, 128)),
 	)
 	notifyID := fmt.Sprintf("schedule-notify-%s-%d", taskID, time.Now().UnixNano())
+	if sourceMessageID != "" {
+		if _, err = larkmsg.ReplyMsgText(ctx, content, sourceMessageID, "_scheduleNotify", false); err == nil {
+			return
+		}
+	}
 	err = larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), notifyID, chatID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Send scheduled task notification failed",

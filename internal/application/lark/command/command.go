@@ -59,6 +59,7 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 			newCmd("config", larkCommandNilFunc).
 				AddDescription("配置管理").
 				AddExamples("/help config", "/config list", "/config set --key=intent_recognition_enabled --value=true").
+				SetDefaultSubCommand("list").
 				AddSubCommand(
 					newTypedCmd("list", handlers.ConfigList),
 				).
@@ -73,6 +74,7 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 			newCmd("feature", larkCommandNilFunc).
 				AddDescription("功能开关管理").
 				AddExamples("/feature list", "/feature block --feature=chat").
+				SetDefaultSubCommand("list").
 				AddSubCommand(
 					newTypedCmd("list", handlers.FeatureList),
 				).
@@ -147,6 +149,7 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 			newCmd("ratelimit", larkCommandNilFunc).
 				AddDescription("频控管理").
 				AddExamples("/ratelimit stats", "/ratelimit list").
+				SetDefaultSubCommand("stats").
 				AddSubCommand(
 					newTypedCmd("stats", handlers.RateLimitStats),
 				).
@@ -156,5 +159,32 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 		).
 		AddSubCommand(
 			newTypedCmd("permission", handlers.PermissionManage),
+		).
+		AddSubCommand(
+			newCmd("schedule", larkCommandNilFunc).
+				AddDescription("schedule 管理").
+				AddExamples("/schedule manage", "/schedule create --name=午休提醒 --type=once --run_at=2026-03-11T13:00:00+08:00 --message=记得午休", "/schedule list", "/schedule query --name=提醒", "/schedule pause --id=task_id", "/schedule resume --id=task_id", "/schedule delete --id=task_id").
+				SetDefaultSubCommand("manage").
+				AddSubCommand(
+					newTypedCmd("create", handlers.ScheduleCreate),
+				).
+				AddSubCommand(
+					newTypedCmd("manage", handlers.ScheduleManage),
+				).
+				AddSubCommand(
+					newTypedCmd("list", handlers.ScheduleList),
+				).
+				AddSubCommand(
+					newTypedCmd("query", handlers.ScheduleQuery),
+				).
+				AddSubCommand(
+					newTypedCmd("pause", handlers.SchedulePause),
+				).
+				AddSubCommand(
+					newTypedCmd("resume", handlers.ScheduleResume),
+				).
+				AddSubCommand(
+					newTypedCmd("delete", handlers.ScheduleDelete),
+				),
 		)
 }

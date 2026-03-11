@@ -12,12 +12,12 @@ const permissionPointConfigWrite = permissioninfra.PermissionPointConfigWrite
 
 var permissionGrantExists = permissioninfra.Exists
 
-func ensureGlobalConfigMutationAllowed(ctx context.Context, actorUserID, fallbackUserID string) error {
-	actorUserID = strings.TrimSpace(actorUserID)
-	if actorUserID == "" {
-		actorUserID = strings.TrimSpace(fallbackUserID)
+func ensureGlobalConfigMutationAllowed(ctx context.Context, actorOpenID, fallbackOpenID string) error {
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	if actorOpenID == "" {
+		actorOpenID = strings.TrimSpace(fallbackOpenID)
 	}
-	if actorUserID == "" {
+	if actorOpenID == "" {
 		return errors.New("global config modification requires operator identity")
 	}
 
@@ -27,7 +27,7 @@ func ensureGlobalConfigMutationAllowed(ctx context.Context, actorUserID, fallbac
 	}
 	ok, err := permissionGrantExists(ctx, permissioninfra.GrantFilter{
 		SubjectType:     permissioninfra.SubjectTypeUser,
-		SubjectID:       actorUserID,
+		SubjectID:       actorOpenID,
 		PermissionPoint: permissionPointConfigWrite,
 		Scope:           string(ScopeGlobal),
 		AppID:           identity.AppID,

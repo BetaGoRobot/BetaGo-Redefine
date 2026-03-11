@@ -1,10 +1,23 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 )
+
+func useWorkspaceConfigPath(t *testing.T) {
+	t.Helper()
+	configPath, err := filepath.Abs("../../../.dev/config.toml")
+	if err != nil {
+		t.Fatalf("resolve config path: %v", err)
+	}
+	t.Setenv("BETAGO_CONFIG_PATH", configPath)
+}
 
 func TestResolveConfigDisplayValueForGlobalScope(t *testing.T) {
 	value, source := resolveConfigDisplayValue(
@@ -34,7 +47,7 @@ func TestResolveConfigDisplayValueForChatScopeIgnoresUserOverride(t *testing.T) 
 		"user-1",
 		func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
 			switch {
-			case candidate.scope == ScopeUser && candidate.chatID == "chat-1" && candidate.userID == "user-1":
+			case candidate.scope == ScopeUser && candidate.chatID == "chat-1" && candidate.openID == "user-1":
 				return "91", true
 			case candidate.scope == ScopeChat && candidate.chatID == "chat-1":
 				return "42", true
@@ -60,9 +73,9 @@ func TestResolveConfigDisplayValueForUserScopePrefersChatUser(t *testing.T) {
 		"user-1",
 		func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
 			switch {
-			case candidate.scope == ScopeUser && candidate.chatID == "chat-1" && candidate.userID == "user-1":
+			case candidate.scope == ScopeUser && candidate.chatID == "chat-1" && candidate.openID == "user-1":
 				return "73", true
-			case candidate.scope == ScopeUser && candidate.userID == "user-1":
+			case candidate.scope == ScopeUser && candidate.openID == "user-1":
 				return "61", true
 			case candidate.scope == ScopeChat && candidate.chatID == "chat-1":
 				return "42", true
@@ -103,7 +116,7 @@ func TestBuildConfigActionRowContainsStandardActionPayload(t *testing.T) {
 		Value:     "true",
 		ValueType: "bool",
 		ChatID:    "chat-1",
-		UserID:    "user-1",
+		OpenID:    "user-1",
 	}, "chat")
 	raw, err := json.Marshal(element)
 	if err != nil {
@@ -153,7 +166,7 @@ func TestBuildConfigCustomValueFormContainsInputAndSubmit(t *testing.T) {
 		Value:     "30",
 		ValueType: "int",
 		ChatID:    "chat-1",
-		UserID:    "user-1",
+		OpenID:    "user-1",
 	}, "chat")
 	raw, err := json.Marshal(element)
 	if err != nil {
@@ -208,7 +221,7 @@ func TestBuildConfigItemSectionPlacesControlsOnRight(t *testing.T) {
 		ValueType:   "int",
 		Scope:       "chat",
 		ChatID:      "chat-1",
-		UserID:      "user-1",
+		OpenID:      "user-1",
 	}, "chat")
 	raw, err := json.Marshal(element)
 	if err != nil {
@@ -232,7 +245,7 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 		Value:     "30",
 		ValueType: "int",
 		ChatID:    "chat-1",
-		UserID:    "user-1",
+		OpenID:    "user-1",
 	}, "chat")
 	raw, err := json.Marshal(element)
 	if err != nil {
@@ -248,7 +261,10 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 }
 
 func TestNewRawCardUsesSchemaV2Structure(t *testing.T) {
-	card := newRawCard("配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")})
+	useWorkspaceConfigPath(t)
+	card := newRawCard(context.Background(), "配置面板", []any{buildConfigScopeRow("chat", "chat-1", "user-1")}, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue("chat", "chat-1", "user-1")),
+	})
 	raw, err := json.Marshal(card)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -260,7 +276,33 @@ func TestNewRawCardUsesSchemaV2Structure(t *testing.T) {
 	if !strings.Contains(jsonStr, `"body":{`) || !strings.Contains(jsonStr, `"elements":[`) {
 		t.Fatalf("expected body elements in card json: %s", jsonStr)
 	}
+	if !strings.Contains(jsonStr, `"template":"wathet"`) || !strings.Contains(jsonStr, `"padding":"12px"`) {
+		t.Fatalf("expected unified panel style in card json: %s", jsonStr)
+	}
 	if strings.Contains(jsonStr, `"tag":"action"`) {
 		t.Fatalf("did not expect deprecated action tag in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"撤回"`) || !strings.Contains(jsonStr, `更新于 `) {
+		t.Fatalf("expected default footer actions in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"刷新"`) || !strings.Contains(jsonStr, `"action":"config.view_scope"`) {
+		t.Fatalf("expected refresh footer action in card json: %s", jsonStr)
+	}
+}
+
+func TestBuildFeatureActionRowUsesFilledPrimaryForUnblock(t *testing.T) {
+	element := buildFeatureActionRow(FeatureItem{
+		Name:              "chat",
+		BlockedAtChat:     false,
+		BlockedAtUser:     true,
+		BlockedAtChatUser: false,
+	}, "chat-1", "user-1")
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"content":"取消用户"`) || !strings.Contains(jsonStr, `"type":"primary_filled"`) {
+		t.Fatalf("expected filled primary style for unblock action: %s", jsonStr)
 	}
 }

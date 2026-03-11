@@ -60,7 +60,7 @@ func BindTool[TMeta, TArgs any](handler ToolArgHandler[TMeta, TArgs]) arktools.H
 
 		metaData := &xhandler.BaseMetaData{
 			ChatID: meta.ChatID,
-			UserID: meta.UserID,
+			OpenID: meta.OpenID,
 		}
 		if err := handler.Handle(ctx, meta.Data, metaData, parsed); err != nil {
 			return gresult.Err[string](err)

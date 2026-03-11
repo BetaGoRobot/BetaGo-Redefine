@@ -1,11 +1,22 @@
 package ratelimit
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func useWorkspaceConfigPath(t *testing.T) {
+	t.Helper()
+	configPath, err := filepath.Abs("../../../../.dev/config.toml")
+	if err != nil {
+		t.Fatalf("resolve config path: %v", err)
+	}
+	t.Setenv("BETAGO_CONFIG_PATH", configPath)
+}
 
 func TestBuildStatsCardDataWithCooldownAndDiagnostics(t *testing.T) {
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.Local)
@@ -91,7 +102,8 @@ func TestBuildStatsCardDataUsesConfigDrivenVolumePolicy(t *testing.T) {
 }
 
 func TestBuildStatsRawCardUsesSchemaV2Structure(t *testing.T) {
-	card := buildStatsRawCard(&StatsCardData{
+	useWorkspaceConfigPath(t)
+	card := buildStatsRawCard(context.Background(), &StatsCardData{
 		ChatID:         "oc_test_chat_123456",
 		Status:         "正常",
 		StatusDetail:   "当前未处于冷却状态",
@@ -125,6 +137,9 @@ func TestBuildStatsRawCardUsesSchemaV2Structure(t *testing.T) {
 	if !strings.Contains(jsonStr, `"schema":"2.0"`) {
 		t.Fatalf("expected schema v2 card json: %s", jsonStr)
 	}
+	if !strings.Contains(jsonStr, `"template":"wathet"`) || !strings.Contains(jsonStr, `"padding":"12px"`) {
+		t.Fatalf("expected unified panel style in json: %s", jsonStr)
+	}
 	if !strings.Contains(jsonStr, `"content":"频控详情"`) {
 		t.Fatalf("expected card title in json: %s", jsonStr)
 	}
@@ -133,6 +148,12 @@ func TestBuildStatsRawCardUsesSchemaV2Structure(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"content":"最近发送"`) {
 		t.Fatalf("expected recent sends section in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"撤回"`) || !strings.Contains(jsonStr, `更新于 `) {
+		t.Fatalf("expected footer actions in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"刷新"`) || !strings.Contains(jsonStr, `"action":"ratelimit.view"`) {
+		t.Fatalf("expected refresh footer action in json: %s", jsonStr)
 	}
 	if !strings.Contains(jsonStr, `"text_size":"heading-1"`) {
 		t.Fatalf("expected emphasized overview text in json: %s", jsonStr)
@@ -143,7 +164,7 @@ func TestBuildStatsRawCardUsesSchemaV2Structure(t *testing.T) {
 }
 
 func TestBuildStatsRawCardStaysWithinElementLimit(t *testing.T) {
-	card := buildStatsRawCard(&StatsCardData{
+	card := buildStatsRawCard(context.Background(), &StatsCardData{
 		ChatID:         "oc_test_chat_123456",
 		Status:         "冷却中",
 		StatusDetail:   "剩余 45 秒",
@@ -218,4 +239,11 @@ func findMetricByLabel(metrics []StatsCardMetric, label string) *StatsCardMetric
 		}
 	}
 	return nil
+}
+
+func TestBuildStatsViewValueUsesStandardAction(t *testing.T) {
+	payload := BuildStatsViewValue("chat-1")
+	if payload["action"] != "ratelimit.view" || payload["chat_id"] != "chat-1" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
 }

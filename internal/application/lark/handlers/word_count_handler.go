@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
@@ -336,7 +336,7 @@ func getChunks(ctx context.Context, chatID string, st, et time.Time, size int, s
 	if err != nil {
 		return
 	}
-	resp, err := opensearch.SearchDataStr(ctx, config.Get().OpensearchConfig.LarkChunkIndex, data)
+	resp, err := opensearch.SearchDataStr(ctx, appconfig.GetLarkChunkIndex(ctx, chatID, ""), data)
 	if err != nil {
 		return
 	}
@@ -352,9 +352,9 @@ func getChunks(ctx context.Context, chatID string, st, et time.Time, size int, s
 		chunkData.Tones = strings.Join(commonutils.TransSlice(chunkData.ChunkLog.SentimentAndTone.Tones, func(s string) string { return larkmsg.TagText(GetToneStyle(s)) }), "")
 		chunkData.ChunkLog.SentimentAndTone = nil
 
-		chunkData.UserIDs4Lark = commonutils.TransSlice(chunkLog.InteractionAnalysis.Participants, func(p *xmodel.Participant) *larktpl.UserUnit { return &larktpl.UserUnit{ID: p.UserID} })
+		chunkData.UserIDs4Lark = commonutils.TransSlice(chunkLog.InteractionAnalysis.Participants, func(p *xmodel.Participant) *larktpl.UserUnit { return &larktpl.UserUnit{ID: p.OpenID} })
 		chunkData.UserIDs4Lark = utils.Dedup(chunkData.UserIDs4Lark)
-		chunkData.ChunkLog.UserIDs = nil
+		chunkData.ChunkLog.OpenIDs = nil
 
 		chunkData.UnresolvedQuestions = strings.Join(commonutils.TransSlice(chunkLog.InteractionAnalysis.UnresolvedQuestions, func(q string) string { return larkmsg.TagText(q, "red") }), "")
 		return chunkData
@@ -364,7 +364,7 @@ func getChunks(ctx context.Context, chatID string, st, et time.Time, size int, s
 func genHotRate(ctx context.Context, helper *trendInternalHelper, top int) (userList []*larktpl.UserListItem, err error) {
 	// 统计用户发送的消息数量
 	trendMap := make(map[string]*larktpl.UserListItem)
-	msgTrend, err := helper.TrendRate(ctx, config.Get().OpensearchConfig.LarkMsgIndex, "user_id", uint64(top))
+	msgTrend, err := helper.TrendRate(ctx, appconfig.GetLarkMsgIndex(ctx, helper.chatID, ""), "user_id", uint64(top))
 	for _, bucket := range msgTrend.Dimension.Buckets {
 		trendMap[bucket.Key] = &larktpl.UserListItem{Number: -1, User: []*larktpl.UserUnit{{ID: bucket.Key}}, MsgCnt: bucket.DocCount}
 	}
@@ -465,7 +465,7 @@ func genWordCount(ctx context.Context, chatID string, st, et time.Time) (wc Word
 	}
 	logs.L().Ctx(ctx).Info("wordCloudTagsAgg query", zap.String("query", string(rawQuery)))
 	// 统计一下词频
-	resp, err := opensearch.SearchData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, query)
+	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, chatID, ""), query)
 	if err != nil {
 		return
 	}

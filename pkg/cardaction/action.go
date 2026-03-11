@@ -32,6 +32,7 @@ const (
 	ActionCardWithdraw           = "card.withdraw"
 	ActionCommandRefresh         = "command.refresh"
 	ActionCommandSubmitTimeRange = "command.submit_time_range"
+	ActionFeatureView            = "feature.view"
 	ActionFeatureBlockChat       = "feature.block_chat"
 	ActionFeatureUnblockChat     = "feature.unblock_chat"
 	ActionFeatureBlockUser       = "feature.block_user"
@@ -44,6 +45,11 @@ const (
 	ActionPermissionGrant        = "permission.grant"
 	ActionPermissionRevoke       = "permission.revoke"
 	ActionPermissionView         = "permission.view"
+	ActionRateLimitView          = "ratelimit.view"
+	ActionScheduleView           = "schedule.view"
+	ActionSchedulePause          = "schedule.pause"
+	ActionScheduleResume         = "schedule.resume"
+	ActionScheduleDelete         = "schedule.delete"
 )
 
 var (

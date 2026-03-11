@@ -1,10 +1,21 @@
 package larkmsg
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func useWorkspaceConfigPath(t *testing.T) {
+	t.Helper()
+	configPath, err := filepath.Abs("../../../../.dev/config.toml")
+	if err != nil {
+		t.Fatalf("resolve config path: %v", err)
+	}
+	t.Setenv("BETAGO_CONFIG_PATH", configPath)
+}
 
 func TestNewCardV2UsesSchemaV2Defaults(t *testing.T) {
 	card := NewCardV2("测试卡片", []any{Markdown("hello")}, CardV2Options{})
@@ -22,6 +33,22 @@ func TestNewCardV2UsesSchemaV2Defaults(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"template":"blue"`) {
 		t.Fatalf("expected blue header template by default: %s", jsonStr)
+	}
+}
+
+func TestNewStandardPanelCardUsesSharedPanelOptions(t *testing.T) {
+	card := NewStandardPanelCard(context.Background(), "测试卡片", []any{Markdown("hello")})
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"template":"wathet"`) {
+		t.Fatalf("expected wathet header template: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"padding":"12px"`) {
+		t.Fatalf("expected standard panel padding: %s", jsonStr)
 	}
 }
 
@@ -44,5 +71,117 @@ func TestButtonCarriesCallbackPayload(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"action":"config.submit"`) {
 		t.Fatalf("expected callback payload in json: %s", jsonStr)
+	}
+}
+
+func TestButtonCarriesOpenURLBehavior(t *testing.T) {
+	button := Button("Trace", ButtonOptions{
+		URL: "https://example.com/trace",
+	})
+	raw, err := json.Marshal(button)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"type":"open_url"`) {
+		t.Fatalf("expected open_url behavior in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"default_url":"https://example.com/trace"`) {
+		t.Fatalf("expected default_url in json: %s", jsonStr)
+	}
+}
+
+func TestAppendStandardCardFooterAddsWithdrawAndTrace(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	elements := AppendStandardCardFooter(context.Background(), []any{Markdown("hello")})
+	raw, err := json.Marshal(elements)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"content":"撤回"`) {
+		t.Fatalf("expected withdraw action in footer: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `更新于 `) {
+		t.Fatalf("expected updated timestamp in footer: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"action":"card.withdraw"`) {
+		t.Fatalf("expected withdraw callback payload in footer: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"type":"danger_filled"`) {
+		t.Fatalf("expected withdraw button to use danger_filled: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"horizontal_align"`) {
+		t.Fatalf("did not expect footer to emit horizontal_align: %s", jsonStr)
+	}
+}
+
+func TestAppendStandardCardFooterAddsRefreshWhenPayloadProvided(t *testing.T) {
+	elements := AppendStandardCardFooter(context.Background(), []any{Markdown("hello")}, StandardCardFooterOptions{
+		RefreshPayload: map[string]any{"action": "schedule.view"},
+	})
+	raw, err := json.Marshal(elements)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"content":"刷新"`) {
+		t.Fatalf("expected refresh action in footer: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"action":"schedule.view"`) {
+		t.Fatalf("expected refresh payload in footer: %s", jsonStr)
+	}
+}
+
+func TestStringMapToAnyMapCopiesStringPairs(t *testing.T) {
+	got := StringMapToAnyMap(map[string]string{
+		"action": "config.view_scope",
+		"scope":  "chat",
+	})
+	if got["action"] != "config.view_scope" || got["scope"] != "chat" {
+		t.Fatalf("unexpected payload: %+v", got)
+	}
+}
+
+func TestSplitColumnsBuildsTwoColumnLayout(t *testing.T) {
+	row := SplitColumns(
+		[]any{Markdown("left")},
+		[]any{Markdown("right")},
+		SplitColumnsOptions{
+			Left:  ColumnOptions{Weight: 3, VerticalAlign: "top"},
+			Right: ColumnOptions{Weight: 2, VerticalAlign: "top"},
+			Row:   ColumnSetOptions{HorizontalSpacing: "16px", FlexMode: "stretch"},
+		},
+	)
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"weight":3`) || !strings.Contains(jsonStr, `"weight":2`) {
+		t.Fatalf("expected column weights in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"width":"weighted"`) {
+		t.Fatalf("expected weighted widths in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"horizontal_spacing":"16px"`) || !strings.Contains(jsonStr, `"flex_mode":"stretch"`) {
+		t.Fatalf("expected row options in json: %s", jsonStr)
+	}
+}
+
+func TestAppendSectionsWithDividersSkipsEmptySections(t *testing.T) {
+	got := AppendSectionsWithDividers([]any{Markdown("head")},
+		[]any{Markdown("first")},
+		nil,
+		[]any{Markdown("second")},
+	)
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Count(jsonStr, `"tag":"hr"`) != 1 {
+		t.Fatalf("expected one divider between non-empty sections: %s", jsonStr)
 	}
 }

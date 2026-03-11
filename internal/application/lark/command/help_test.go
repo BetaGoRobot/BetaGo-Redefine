@@ -74,6 +74,27 @@ func TestBuildHelpTextDebugGroup(t *testing.T) {
 	}
 }
 
+func TestBuildHelpTextScheduleGroup(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	text := buildHelpText(root, "schedule")
+	if !strings.Contains(text, "/schedule [create, delete, list, manage, pause, query, resume]") {
+		t.Fatalf("expected schedule usage, got: %s", text)
+	}
+	if !strings.Contains(text, "/schedule manage: 打开 schedule 管理面板") {
+		t.Fatalf("expected schedule manage description, got: %s", text)
+	}
+	if !strings.Contains(text, "/schedule create: 创建 schedule，并回显结果卡片") {
+		t.Fatalf("expected schedule create description, got: %s", text)
+	}
+	if !strings.Contains(text, "/schedule pause: 暂停指定 schedule，并回显结果卡片") {
+		t.Fatalf("expected schedule pause description, got: %s", text)
+	}
+	if !strings.Contains(text, "/schedule manage") || !strings.Contains(text, "/schedule create --name=午休提醒") || !strings.Contains(text, "/schedule delete --id=task_id") {
+		t.Fatalf("expected schedule examples, got: %s", text)
+	}
+}
+
 func TestBuildHelpView(t *testing.T) {
 	root := NewLarkRootCommand()
 

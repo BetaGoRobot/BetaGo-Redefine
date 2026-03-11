@@ -35,15 +35,21 @@ type KV[K comparable, V any] struct {
 // CreateMsgTextRaw 需要自行BuildText
 func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err error) {
 	_, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("msgID").String(msgID))
 	span.SetAttributes(otel.PreviewAttrs("content", content, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	// TODO: Add id saving
 	if msgID == "" {
 		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
 	}
-	_, err = CreateMsgRawContentType(ctx, chatID, larkim.MsgTypeText, content, msgID, "_create")
+	span.SetAttributes(attribute.Key("msgID").String(msgID))
+	resp, err := CreateMsgRawContentType(ctx, chatID, larkim.MsgTypeText, content, msgID, "_create")
+	if err != nil {
+		return
+	}
+	if !resp.Success() {
+		return errors.New(resp.CodeError.Error())
+	}
+	go utils.AddTrace2DB(ctx, *resp.Data.MessageId)
 	return err
 }
 

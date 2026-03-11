@@ -12,28 +12,29 @@ const TableNameScheduledTask = "scheduled_tasks"
 
 // ScheduledTask mapped from table <scheduled_tasks>
 type ScheduledTask struct {
-	ID            string     `gorm:"column:id;primaryKey" json:"id"`
-	Name          string     `gorm:"column:name;not null" json:"name"`
-	Type          string     `gorm:"column:type;not null;comment:调度类型: once, cron" json:"type"` // 调度类型: once, cron
-	ChatID        string     `gorm:"column:chat_id;not null" json:"chat_id"`
-	CreatorID     string     `gorm:"column:creator_id;not null" json:"creator_id"`
-	ToolName      string     `gorm:"column:tool_name;not null;comment:要执行的工具名称" json:"tool_name"`             // 要执行的工具名称
-	ToolArgs      string     `gorm:"column:tool_args;not null;default:{};comment:工具参数 JSON" json:"tool_args"` // 工具参数 JSON
-	RunAt         *time.Time `gorm:"column:run_at;comment:单次 schedule 的执行时间" json:"run_at"`                   // 单次 schedule 的执行时间
-	CronExpr      string     `gorm:"column:cron_expr;comment:cron schedule 的标准 5 段表达式" json:"cron_expr"`      // cron schedule 的标准 5 段表达式
-	Timezone      string     `gorm:"column:timezone;not null;default:Asia/Shanghai" json:"timezone"`
-	Status        string     `gorm:"column:status;not null;default:enabled;comment:任务状态: enabled, paused, completed, disabled" json:"status"` // 任务状态: enabled, paused, completed, disabled
-	NotifyOnError bool       `gorm:"column:notify_on_error;not null" json:"notify_on_error"`
-	NotifyResult  bool       `gorm:"column:notify_result;not null" json:"notify_result"`
-	LastRunAt     *time.Time `gorm:"column:last_run_at" json:"last_run_at"`
-	NextRunAt     time.Time  `gorm:"column:next_run_at;not null" json:"next_run_at"`
-	LastError     string     `gorm:"column:last_error" json:"last_error"`
-	LastResult    string     `gorm:"column:last_result" json:"last_result"`
-	RunCount      int64      `gorm:"column:run_count;not null" json:"run_count"`
-	CreatedAt     time.Time  `gorm:"column:created_at;not null;default:now()" json:"created_at"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
-	AppID         string     `gorm:"column:app_id;not null;comment:创建该调度任务的飞书应用 AppID" json:"app_id"`           // 创建该调度任务的飞书应用 AppID
-	BotOpenID     string     `gorm:"column:bot_open_id;not null;comment:创建该调度任务的机器人 OpenID" json:"bot_open_id"` // 创建该调度任务的机器人 OpenID
+	ID              string     `gorm:"column:id;primaryKey" json:"id"`
+	Name            string     `gorm:"column:name;not null" json:"name"`
+	Type            string     `gorm:"column:type;not null;comment:调度类型: once, cron" json:"type"` // 调度类型: once, cron
+	ChatID          string     `gorm:"column:chat_id;not null" json:"chat_id"`
+	CreatorID       string     `gorm:"column:creator_id;not null" json:"creator_id"`
+	ToolName        string     `gorm:"column:tool_name;not null;comment:要执行的工具名称" json:"tool_name"`             // 要执行的工具名称
+	ToolArgs        string     `gorm:"column:tool_args;not null;default:{};comment:工具参数 JSON" json:"tool_args"` // 工具参数 JSON
+	RunAt           *time.Time `gorm:"column:run_at;comment:单次 schedule 的执行时间" json:"run_at"`                   // 单次 schedule 的执行时间
+	CronExpr        string     `gorm:"column:cron_expr;comment:cron schedule 的标准 5 段表达式" json:"cron_expr"`      // cron schedule 的标准 5 段表达式
+	Timezone        string     `gorm:"column:timezone;not null;default:Asia/Shanghai" json:"timezone"`
+	Status          string     `gorm:"column:status;not null;default:enabled;comment:任务状态: enabled, paused, completed, disabled" json:"status"` // 任务状态: enabled, paused, completed, disabled
+	NotifyOnError   bool       `gorm:"column:notify_on_error;not null" json:"notify_on_error"`
+	NotifyResult    bool       `gorm:"column:notify_result;not null" json:"notify_result"`
+	LastRunAt       *time.Time `gorm:"column:last_run_at" json:"last_run_at"`
+	NextRunAt       time.Time  `gorm:"column:next_run_at;not null" json:"next_run_at"`
+	LastError       string     `gorm:"column:last_error" json:"last_error"`
+	LastResult      string     `gorm:"column:last_result" json:"last_result"`
+	RunCount        int64      `gorm:"column:run_count;not null" json:"run_count"`
+	CreatedAt       time.Time  `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	UpdatedAt       time.Time  `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	AppID           string     `gorm:"column:app_id;not null;comment:创建该调度任务的飞书应用 AppID" json:"app_id"`                     // 创建该调度任务的飞书应用 AppID
+	BotOpenID       string     `gorm:"column:bot_open_id;not null;comment:创建该调度任务的机器人 OpenID" json:"bot_open_id"`           // 创建该调度任务的机器人 OpenID
+	SourceMessageID string     `gorm:"column:source_message_id;not null;comment:创建/触发该任务的来源消息 ID" json:"source_message_id"` // 创建/触发该任务的来源消息 ID
 }
 
 // TableName ScheduledTask's table name

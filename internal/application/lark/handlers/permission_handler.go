@@ -15,7 +15,7 @@ import (
 )
 
 type PermissionManageArgs struct {
-	UserID string `json:"user_id"`
+	OpenID string `json:"user_id"`
 }
 
 type permissionManageHandler struct{}
@@ -25,7 +25,7 @@ var PermissionManage permissionManageHandler
 func (permissionManageHandler) ParseCLI(args []string) (PermissionManageArgs, error) {
 	argMap, _ := parseArgs(args...)
 	return PermissionManageArgs{
-		UserID: argMap["user_id"],
+		OpenID: argMap["user_id"],
 	}, nil
 }
 
@@ -58,12 +58,12 @@ func (permissionManageHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	actorUserID := currentUserID(data, metaData)
+	actorUserID := currentOpenID(data, metaData)
 	if actorUserID == "" {
 		return errors.New("operator user_id is required")
 	}
 
-	targetUserID := arg.UserID
+	targetUserID := arg.OpenID
 	if targetUserID == "" {
 		targetUserID = actorUserID
 	}

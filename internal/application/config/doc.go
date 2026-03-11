@@ -24,8 +24,8 @@
 //	mgr := config.GetManager()
 //
 //	// 读取配置
-//	rate := mgr.GetInt(ctx, config.KeyReactionDefaultRate, chatID, userID)
-//	enabled := mgr.GetBool(ctx, config.KeyIntentRecognitionEnabled, chatID, userID)
+//	rate := mgr.GetInt(ctx, config.KeyReactionDefaultRate, chatID, openID)
+//	enabled := mgr.GetBool(ctx, config.KeyIntentRecognitionEnabled, chatID, openID)
 //
 //	// 设置配置
 //	err := mgr.SetInt(ctx, config.KeyReactionDefaultRate, config.ScopeChat, chatID, "", 50)
@@ -37,7 +37,7 @@
 // ## 使用 Accessor（推荐）
 //
 //	// 创建访问器（绑定上下文和用户/聊天ID）
-//	accessor := config.NewAccessor(ctx, chatID, userID)
+//	accessor := config.NewAccessor(ctx, chatID, openID)
 //
 //	// 或从 meta data 创建
 //	accessor := config.NewAccessorFromMeta(ctx, metaData)
@@ -53,8 +53,8 @@
 //
 // ## 使用全局便捷函数
 //
-//	rate := config.GetReactionDefaultRate(ctx, chatID, userID)
-//	enabled := config.IsIntentRecognitionEnabled(ctx, chatID, userID)
+//	rate := config.GetReactionDefaultRate(ctx, chatID, openID)
+//	enabled := config.IsIntentRecognitionEnabled(ctx, chatID, openID)
 //
 // # 飞书命令
 //
@@ -82,6 +82,15 @@
 //
 // ## 开关配置
 //   - intent_recognition_enabled: 是否启用意图识别
+//   - music_card_in_thread: 音乐卡片是否在线程内回复
+//   - with_draw_replace: 是否使用伪撤回替代真实撤回
+//
+// ## 字符串配置
+//   - chat_reasoning_model: 聊天推理模型
+//   - chat_normal_model: 普通聊天模型
+//   - intent_lite_model: 意图识别模型
+//   - lark_msg_index: 消息索引名
+//   - lark_chunk_index: chunk 索引名
 //
 // # 数据库存储
 //

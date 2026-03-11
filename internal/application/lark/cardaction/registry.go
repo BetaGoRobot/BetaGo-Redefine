@@ -107,7 +107,7 @@ func (c *Context) ChatID() string {
 	return c.Event.Event.Context.OpenChatID
 }
 
-func (c *Context) UserID() string {
+func (c *Context) OpenID() string {
 	if c == nil || c.Event == nil || c.Event.Event == nil || c.Event.Event.Operator == nil {
 		return ""
 	}

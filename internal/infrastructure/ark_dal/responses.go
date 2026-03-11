@@ -96,10 +96,10 @@ type ModelStreamRespReasoningResult struct {
 	Reply2Show       *ReplyUnit
 }
 
-func New[T any](chatID, userID string, data *T) *ResponsesImpl[T] {
+func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 	return &ResponsesImpl[T]{
 		meta: tools.FCMeta[T]{
-			ChatID: chatID, UserID: userID, Data: data,
+			ChatID: chatID, OpenID: openID, Data: data,
 		},
 		handlers:        make(map[string]tools.HandlerFunc[T]),
 		tools:           make([]*responses.ResponsesTool, 0),

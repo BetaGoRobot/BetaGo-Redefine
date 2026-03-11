@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -96,6 +96,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	accessor := appconfig.NewAccessor(ctx, currentChatID(event, nil), currentOpenID(event, nil))
 
 	var (
 		res   iter.Seq[*ark_dal.ModelStreamRespReasoning]
@@ -129,7 +130,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 		}
 	}
 	if chatType == MODEL_TYPE_REASON {
-		res, err = GenerateChatSeq(ctx, event, config.Get().ArkConfig.ReasoningModel, size, files, args...)
+		res, err = GenerateChatSeq(ctx, event, accessor.ChatReasoningModel(), size, files, args...)
 		if err != nil {
 			return
 		}
@@ -138,7 +139,7 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 			return
 		}
 	} else {
-		res, err = GenerateChatSeq(ctx, event, config.Get().ArkConfig.NormalModel, size, files, args...)
+		res, err = GenerateChatSeq(ctx, event, accessor.ChatNormalModel(), size, files, args...)
 		if err != nil {
 			return err
 		}
@@ -186,6 +187,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	}
 
 	chatID := *event.Event.Message.ChatId
+	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
 	messageList, err := history.New(ctx).
 		Query(osquery.Bool().Must(osquery.Term("chat_id", chatID))).
 		Source("raw_message", "mentions", "create_time", "user_id", "chat_id", "user_name", "message_type").
@@ -235,15 +237,15 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 			doc.Metadata = map[string]any{}
 		}
 		createTime, _ := doc.Metadata["create_time"].(string)
-		userID, _ := doc.Metadata["user_id"].(string)
+		openID, _ := doc.Metadata["user_id"].(string)
 		userName, _ := doc.Metadata["user_name"].(string)
-		return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, userID, userName, doc.PageContent)
+		return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, openID, userName, doc.PageContent)
 	})
 	fullTpl.Topics = make([]string, 0)
 	for _, doc := range docs {
 		msgID, ok := doc.Metadata["msg_id"]
 		if ok {
-			resp, err := opensearch.SearchData(ctx, config.Get().OpensearchConfig.LarkChunkIndex, osquery.
+			resp, err := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 				Search().Sort("timestamp_v2", osquery.OrderDesc).
 				Query(osquery.Bool().Must(osquery.Term("msg_ids", msgID))).
 				Size(1),
@@ -266,7 +268,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	}
 
 	iter, err := ark_dal.
-		New(chatID, currentUserID(event, nil), event).
+		New(chatID, currentOpenID(event, nil), event).
 		WithTools(larktools()).
 		Do(ctx, b.String(), strings.Join(fullTpl.UserInput, "\n"), files...)
 
@@ -276,8 +278,8 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 
 		mentionMap := make(map[string]string)
 		for _, item := range messageList {
-			mentionMap[item.UserName] = larkmsg.AtUser(item.UserID, item.UserName)
-			mentionMap[item.UserID] = larkmsg.AtUser(item.UserID, item.UserName)
+			mentionMap[item.UserName] = larkmsg.AtUser(item.OpenID, item.UserName)
+			mentionMap[item.OpenID] = larkmsg.AtUser(item.OpenID, item.UserName)
 			for _, mention := range item.MentionList {
 				mentionMap[*mention.Name] = larkmsg.AtUser(*mention.Id, *mention.Name)
 				mentionMap[*mention.Id] = larkmsg.AtUser(*mention.Id, *mention.Name)

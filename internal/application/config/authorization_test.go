@@ -23,7 +23,7 @@ func useTestBotIdentity(t *testing.T) {
 	})
 }
 
-func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
+func TestEnsureGlobalConfigMutationAllowedUsesActorOpenID(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
 	useTestBotIdentity(t)
@@ -38,7 +38,7 @@ func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
 		t.Fatalf("ensureGlobalConfigMutationAllowed() error = %v", err)
 	}
 	if calledWith.SubjectID != "ou_actor" {
-		t.Fatalf("expected checker to use actor user id, got %q", calledWith.SubjectID)
+		t.Fatalf("expected checker to use actor open id, got %q", calledWith.SubjectID)
 	}
 	if calledWith.PermissionPoint != permissionPointConfigWrite {
 		t.Fatalf("expected permission point %q, got %q", permissionPointConfigWrite, calledWith.PermissionPoint)
@@ -57,7 +57,7 @@ func TestEnsureGlobalConfigMutationAllowedUsesActorUserID(t *testing.T) {
 	}
 }
 
-func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestUserID(t *testing.T) {
+func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestOpenID(t *testing.T) {
 	oldChecker := permissionGrantExists
 	defer func() { permissionGrantExists = oldChecker }()
 	useTestBotIdentity(t)
@@ -72,7 +72,7 @@ func TestEnsureGlobalConfigMutationAllowedFallsBackToRequestUserID(t *testing.T)
 		t.Fatalf("ensureGlobalConfigMutationAllowed() error = %v", err)
 	}
 	if calledWith != "ou_fallback" {
-		t.Fatalf("expected checker to use fallback user id, got %q", calledWith)
+		t.Fatalf("expected checker to use fallback open id, got %q", calledWith)
 	}
 }
 

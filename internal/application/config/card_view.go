@@ -3,58 +3,58 @@ package config
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 )
 
-func BuildConfigCard(ctx context.Context, scope, chatID, userID string) (larkmsg.RawCard, error) {
-	return BuildConfigCardWithOptions(ctx, scope, chatID, userID, ConfigCardViewOptions{})
+func BuildConfigCard(ctx context.Context, scope, chatID, openID string) (larkmsg.RawCard, error) {
+	return BuildConfigCardWithOptions(ctx, scope, chatID, openID, ConfigCardViewOptions{})
 }
 
-func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, userID string, options ConfigCardViewOptions) (larkmsg.RawCard, error) {
+func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, openID string, options ConfigCardViewOptions) (larkmsg.RawCard, error) {
 	scope = normalizeConfigScope(scope)
-	cardData, err := GetConfigCardDataWithOptions(ctx, scope, chatID, userID, options)
+	cardData, err := GetConfigCardDataWithOptions(ctx, scope, chatID, openID, options)
 	if err != nil {
 		return nil, err
 	}
 
 	elements := make([]any, 0, len(cardData.Configs)*4+3)
-	elements = append(elements, markdownBlock(fmt.Sprintf("当前查看/写入作用域: `%s`  当前上下文: chat=`%s` user=`%s`", scope, shortID(chatID), shortID(userID))))
-	elements = append(elements, buildConfigScopeRow(scope, chatID, userID))
-
-	for idx, item := range cardData.Configs {
-		elements = append(elements, buildConfigItemSection(item, scope))
-		if idx < len(cardData.Configs)-1 {
-			elements = append(elements, divider())
-		}
+	elements = append(elements, markdownBlock(fmt.Sprintf("当前查看/写入作用域: `%s`  当前上下文: chat=`%s` user=`%s`", scope, shortID(chatID), shortID(openID))))
+	elements = append(elements, buildConfigScopeRow(scope, chatID, openID))
+	configSections := make([][]any, 0, len(cardData.Configs))
+	for _, item := range cardData.Configs {
+		configSections = append(configSections, []any{buildConfigItemSection(item, scope)})
 	}
+	elements = larkmsg.AppendSectionsWithDividers(elements, configSections...)
 
-	elements = append(elements, hintBlock(fmt.Sprintf("Chat=%s User=%s", shortID(chatID), shortID(userID))))
-	return newRawCard("配置面板", elements), nil
+	elements = append(elements, hintBlock(fmt.Sprintf("Chat=%s User=%s", shortID(chatID), shortID(openID))))
+	return newRawCard(ctx, "配置面板", elements, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildConfigViewValue(scope, chatID, openID)),
+	}), nil
 }
 
-func BuildFeatureCard(ctx context.Context, chatID, userID string) (larkmsg.RawCard, error) {
-	cardData, err := GetFeatureCardData(ctx, chatID, userID)
+func BuildFeatureCard(ctx context.Context, chatID, openID string) (larkmsg.RawCard, error) {
+	cardData, err := GetFeatureCardData(ctx, chatID, openID)
 	if err != nil {
 		return nil, err
 	}
 
 	elements := make([]any, 0, len(cardData.Features)*3+2)
-	elements = append(elements, markdownBlock(fmt.Sprintf("当前上下文: chat=`%s` user=`%s`", shortID(chatID), shortID(userID))))
-
-	for idx, item := range cardData.Features {
-		elements = append(elements, buildFeatureItemBlock(item))
-		elements = append(elements, buildFeatureActionRow(item, chatID, userID))
-		if idx < len(cardData.Features)-1 {
-			elements = append(elements, divider())
-		}
+	elements = append(elements, markdownBlock(fmt.Sprintf("当前上下文: chat=`%s` user=`%s`", shortID(chatID), shortID(openID))))
+	featureSections := make([][]any, 0, len(cardData.Features))
+	for _, item := range cardData.Features {
+		featureSections = append(featureSections, []any{
+			buildFeatureItemBlock(item),
+			buildFeatureActionRow(item, chatID, openID),
+		})
 	}
+	elements = larkmsg.AppendSectionsWithDividers(elements, featureSections...)
 
 	elements = append(elements, hintBlock("点击按钮直接调整屏蔽状态"))
-	return newRawCard("功能开关", elements), nil
+	return newRawCard(ctx, "功能开关", elements, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildFeatureViewValue(chatID, openID)),
+	}), nil
 }
 
 func buildConfigItemBlock(item ConfigItem) map[string]any {
@@ -80,11 +80,11 @@ func buildConfigActionRow(item ConfigItem, scope string) map[string]any {
 	buttons := make([]map[string]any, 0, 2)
 	if item.ValueType == "bool" {
 		buttons = append(buttons,
-			buildButton("启用", "primary", BuildConfigActionValue(ConfigActionSet, item.Key, "true", scope, item.ChatID, item.UserID)),
-			buildButton("停用", "danger", BuildConfigActionValue(ConfigActionSet, item.Key, "false", scope, item.ChatID, item.UserID)),
+			buildButton("启用", "primary_filled", BuildConfigActionValue(ConfigActionSet, item.Key, "true", scope, item.ChatID, item.OpenID)),
+			buildButton("停用", "danger", BuildConfigActionValue(ConfigActionSet, item.Key, "false", scope, item.ChatID, item.OpenID)),
 		)
 	}
-	buttons = append(buttons, buildButton("默认", "laser", BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.UserID)))
+	buttons = append(buttons, buildButton("默认", "laser", BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.OpenID)))
 	return buttonRow("flow", buttons...)
 }
 
@@ -119,7 +119,7 @@ func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
 							"提交",
 							"primary_filled",
 							"submit",
-							BuildConfigFormActionValue(item.Key, scope, item.ChatID, item.UserID, formField),
+							BuildConfigFormActionValue(item.Key, scope, item.ChatID, item.OpenID, formField),
 						),
 						buildFormButton(
 							resetName,
@@ -134,7 +134,7 @@ func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
 							"laser",
 							"",
 							"",
-							BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.UserID),
+							BuildConfigActionValue(ConfigActionDelete, item.Key, "", scope, item.ChatID, item.OpenID),
 						),
 					),
 				},
@@ -144,24 +144,27 @@ func buildConfigCustomValueForm(item ConfigItem, scope string) map[string]any {
 }
 
 func buildConfigColumns(infoBlock map[string]any, controls []any) map[string]any {
-	return larkmsg.ColumnSet([]any{
-		larkmsg.Column([]any{infoBlock}, larkmsg.ColumnOptions{
-			Width:         "weighted",
-			Weight:        3,
-			VerticalAlign: "top",
-		}),
-		larkmsg.Column(controls, larkmsg.ColumnOptions{
-			Width:         "weighted",
-			Weight:        2,
-			VerticalAlign: "top",
-		}),
-	}, larkmsg.ColumnSetOptions{
-		HorizontalSpacing: "16px",
-		FlexMode:          "stretch",
-	})
+	return larkmsg.SplitColumns(
+		[]any{infoBlock},
+		controls,
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:        3,
+				VerticalAlign: "top",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:        2,
+				VerticalAlign: "top",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "16px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
 }
 
-func buildConfigScopeRow(selectedScope, chatID, userID string) map[string]any {
+func buildConfigScopeRow(selectedScope, chatID, openID string) map[string]any {
 	scopeOptions := []struct {
 		Label string
 		Scope string
@@ -174,9 +177,9 @@ func buildConfigScopeRow(selectedScope, chatID, userID string) map[string]any {
 	for _, item := range scopeOptions {
 		buttonType := "default"
 		if item.Scope == selectedScope {
-			buttonType = "primary"
+			buttonType = "primary_filled"
 		}
-		buttons = append(buttons, buildButton(item.Label, buttonType, BuildConfigViewValue(item.Scope, chatID, userID)))
+		buttons = append(buttons, buildButton(item.Label, buttonType, BuildConfigViewValue(item.Scope, chatID, openID)))
 	}
 	return buttonRow("flow", buttons...)
 }
@@ -201,26 +204,26 @@ func buildFeatureItemBlock(item FeatureItem) map[string]any {
 	return markdownBlock(content)
 }
 
-func buildFeatureActionRow(item FeatureItem, chatID, userID string) map[string]any {
+func buildFeatureActionRow(item FeatureItem, chatID, openID string) map[string]any {
 	return buttonRow(
 		"flow",
-		buildFeatureToggleButton("群", item.BlockedAtChat, item.Name, chatID, userID, FeatureActionBlockChat, FeatureActionUnblockChat),
-		buildFeatureToggleButton("用户", item.BlockedAtUser, item.Name, chatID, userID, FeatureActionBlockUser, FeatureActionUnblockUser),
-		buildFeatureToggleButton("群内用户", item.BlockedAtChatUser, item.Name, chatID, userID, FeatureActionBlockChatUser, FeatureActionUnblockChatUser),
+		buildFeatureToggleButton("群", item.BlockedAtChat, item.Name, chatID, openID, FeatureActionBlockChat, FeatureActionUnblockChat),
+		buildFeatureToggleButton("用户", item.BlockedAtUser, item.Name, chatID, openID, FeatureActionBlockUser, FeatureActionUnblockUser),
+		buildFeatureToggleButton("群内用户", item.BlockedAtChatUser, item.Name, chatID, openID, FeatureActionBlockChatUser, FeatureActionUnblockChatUser),
 	)
 }
 
-func buildFeatureToggleButton(label string, blocked bool, feature, chatID, userID string, blockAction, unblockAction FeatureAction) map[string]any {
+func buildFeatureToggleButton(label string, blocked bool, feature, chatID, openID string, blockAction, unblockAction FeatureAction) map[string]any {
 	action := blockAction
 	buttonLabel := "屏蔽" + label
 	buttonType := "danger"
 	if blocked {
 		action = unblockAction
 		buttonLabel = "取消" + label
-		buttonType = "primary"
+		buttonType = "primary_filled"
 	}
 
-	return buildButton(buttonLabel, buttonType, BuildFeatureActionValue(action, feature, chatID, userID))
+	return buildButton(buttonLabel, buttonType, BuildFeatureActionValue(action, feature, chatID, openID))
 }
 
 func buildButton(text, buttonType string, payload map[string]string) map[string]any {
@@ -231,7 +234,7 @@ func buildButtonWithSize(text, buttonType, size string, payload map[string]strin
 	return larkmsg.Button(text, larkmsg.ButtonOptions{
 		Type:    buttonType,
 		Size:    size,
-		Payload: toAnyMap(payload),
+		Payload: larkmsg.StringMapToAnyMap(payload),
 	})
 }
 
@@ -245,7 +248,7 @@ func buildFormButtonWithSize(name, text, buttonType, formActionType, size string
 		Size:           size,
 		Name:           name,
 		FormActionType: formActionType,
-		Payload:        toAnyMap(payload),
+		Payload:        larkmsg.StringMapToAnyMap(payload),
 	})
 }
 
@@ -261,35 +264,12 @@ func hintBlock(content string) map[string]any {
 	return larkmsg.HintMarkdown(content)
 }
 
-func divider() map[string]any {
-	return larkmsg.Divider()
-}
-
 func plainText(content string) map[string]any {
 	return larkmsg.PlainText(content)
 }
 
-func callbackBehaviors(payload map[string]string) []any {
-	return larkmsg.CallbackBehaviors(toAnyMap(payload))
-}
-
-func newRawCard(title string, elements []any) larkmsg.RawCard {
-	return larkmsg.NewCardV2(title, elements, larkmsg.CardV2Options{
-		HeaderTemplate:  "blue",
-		VerticalSpacing: "8px",
-	})
-}
-
-func toAnyMap(payload map[string]string) map[string]any {
-	if len(payload) == 0 {
-		return map[string]any{}
-	}
-	keys := slices.Sorted(maps.Keys(payload))
-	values := make(map[string]any, len(keys))
-	for _, key := range keys {
-		values[key] = payload[key]
-	}
-	return values
+func newRawCard(ctx context.Context, title string, elements []any, footerOptions ...larkmsg.StandardCardFooterOptions) larkmsg.RawCard {
+	return larkmsg.NewStandardPanelCard(ctx, title, elements, footerOptions...)
 }
 
 func configFormFieldName(key string) string {

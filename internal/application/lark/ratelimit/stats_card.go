@@ -39,7 +39,7 @@ type StatsCardRecentSend struct {
 
 func BuildStatsCardJSON(ctx context.Context, chatID string) (map[string]any, error) {
 	data := BuildStatsCardData(ctx, chatID)
-	card := buildStatsRawCard(data)
+	card := buildStatsRawCard(ctx, data)
 	return map[string]any(card), nil
 }
 
@@ -164,7 +164,7 @@ func buildStatsCardData(snapshot *StatsSnapshot) *StatsCardData {
 	return data
 }
 
-func buildStatsRawCard(data *StatsCardData) larkmsg.RawCard {
+func buildStatsRawCard(ctx context.Context, data *StatsCardData) larkmsg.RawCard {
 	elements := []any{
 		buildStatsOverviewBlock(data),
 	}
@@ -187,10 +187,8 @@ func buildStatsRawCard(data *StatsCardData) larkmsg.RawCard {
 	elements = append(elements, buildRecentSendElements(data.RecentSendRecords)...)
 	elements = append(elements, statsHintBlock("说明：诊断指标来自 Metrics，核心指标来自频控器统计快照"))
 
-	return larkmsg.NewCardV2("频控详情", elements, larkmsg.CardV2Options{
-		HeaderTemplate:  statsHeaderTemplate(data.OverviewColor),
-		VerticalSpacing: "8px",
-		Padding:         "12px",
+	return larkmsg.NewStandardPanelCard(ctx, "频控详情", elements, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildStatsViewValue(data.ChatID)),
 	})
 }
 
@@ -268,37 +266,40 @@ func statsEmptyColumn() map[string]any {
 
 func buildStatsOverviewBlock(data *StatsCardData) map[string]any {
 	title, detail, color := statsOverviewContent(data)
-	return larkmsg.ColumnSet([]any{
-		larkmsg.Column([]any{
+	return larkmsg.SplitColumns(
+		[]any{
 			statsPlainText(title, "heading-1", color, "left"),
 			statsMarkdownBlock(strings.Join([]string{
 				"<font color='grey'>当前判断</font>",
 				detail,
 			}, "\n")),
-		}, larkmsg.ColumnOptions{
-			Width:           "weighted",
-			Weight:          3,
-			VerticalAlign:   "top",
-			BackgroundStyle: "grey",
-			Padding:         "8px",
-		}),
-		larkmsg.Column([]any{
+		},
+		[]any{
 			statsMarkdownBlock(strings.Join([]string{
 				"<font color='grey'>会话</font>",
 				fmt.Sprintf("**%s**", statsShortID(data.ChatID)),
 				fmt.Sprintf("<font color='grey'>更新时间 %s</font>", statsDisplayValue(data.UpdatedAt)),
 			}, "\n")),
-		}, larkmsg.ColumnOptions{
-			Width:           "weighted",
-			Weight:          2,
-			VerticalAlign:   "top",
-			BackgroundStyle: "grey",
-			Padding:         "8px",
-		}),
-	}, larkmsg.ColumnSetOptions{
-		HorizontalSpacing: "8px",
-		FlexMode:          "stretch",
-	})
+		},
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:          3,
+				VerticalAlign:   "top",
+				BackgroundStyle: "grey",
+				Padding:         "8px",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:          2,
+				VerticalAlign:   "top",
+				BackgroundStyle: "grey",
+				Padding:         "8px",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "8px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
 }
 
 func statsOverviewContent(data *StatsCardData) (title, detail, color string) {
@@ -462,19 +463,6 @@ func recentSendColor(trigger string) string {
 		return "green"
 	default:
 		return "default"
-	}
-}
-
-func statsHeaderTemplate(color string) string {
-	switch safeTextColor(color) {
-	case "red":
-		return "red"
-	case "orange":
-		return "orange"
-	case "green":
-		return "green"
-	default:
-		return "blue"
 	}
 }
 

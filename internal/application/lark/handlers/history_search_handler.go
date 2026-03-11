@@ -18,7 +18,7 @@ type HistorySearchArgs struct {
 	TopK      int    `json:"top_k"`
 	StartTime string `json:"start_time"`
 	EndTime   string `json:"end_time"`
-	UserID    string `json:"user_id"`
+	OpenID    string `json:"user_id"`
 }
 
 type historySearchHandler struct{}
@@ -71,7 +71,7 @@ func (historySearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		history.HybridSearchRequest{
 			QueryText: splitByComma(arg.Keywords),
 			TopK:      arg.TopK,
-			UserID:    arg.UserID,
+			OpenID:    arg.OpenID,
 			ChatID:    metaData.ChatID,
 			StartTime: arg.StartTime,
 			EndTime:   arg.EndTime,

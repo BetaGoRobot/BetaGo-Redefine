@@ -47,6 +47,7 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 	_scheduledTask.UpdatedAt = field.NewTime(tableName, "updated_at")
 	_scheduledTask.AppID = field.NewString(tableName, "app_id")
 	_scheduledTask.BotOpenID = field.NewString(tableName, "bot_open_id")
+	_scheduledTask.SourceMessageID = field.NewString(tableName, "source_message_id")
 
 	_scheduledTask.fillFieldMap()
 
@@ -56,29 +57,30 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 type scheduledTask struct {
 	scheduledTaskDo scheduledTaskDo
 
-	ALL           field.Asterisk
-	ID            field.String
-	Name          field.String
-	Type          field.String // 调度类型: once, cron
-	ChatID        field.String
-	CreatorID     field.String
-	ToolName      field.String // 要执行的工具名称
-	ToolArgs      field.String // 工具参数 JSON
-	RunAt         field.Time   // 单次 schedule 的执行时间
-	CronExpr      field.String // cron schedule 的标准 5 段表达式
-	Timezone      field.String
-	Status        field.String // 任务状态: enabled, paused, completed, disabled
-	NotifyOnError field.Bool
-	NotifyResult  field.Bool
-	LastRunAt     field.Time
-	NextRunAt     field.Time
-	LastError     field.String
-	LastResult    field.String
-	RunCount      field.Int64
-	CreatedAt     field.Time
-	UpdatedAt     field.Time
-	AppID         field.String // 创建该调度任务的飞书应用 AppID
-	BotOpenID     field.String // 创建该调度任务的机器人 OpenID
+	ALL             field.Asterisk
+	ID              field.String
+	Name            field.String
+	Type            field.String // 调度类型: once, cron
+	ChatID          field.String
+	CreatorID       field.String
+	ToolName        field.String // 要执行的工具名称
+	ToolArgs        field.String // 工具参数 JSON
+	RunAt           field.Time   // 单次 schedule 的执行时间
+	CronExpr        field.String // cron schedule 的标准 5 段表达式
+	Timezone        field.String
+	Status          field.String // 任务状态: enabled, paused, completed, disabled
+	NotifyOnError   field.Bool
+	NotifyResult    field.Bool
+	LastRunAt       field.Time
+	NextRunAt       field.Time
+	LastError       field.String
+	LastResult      field.String
+	RunCount        field.Int64
+	CreatedAt       field.Time
+	UpdatedAt       field.Time
+	AppID           field.String // 创建该调度任务的飞书应用 AppID
+	BotOpenID       field.String // 创建该调度任务的机器人 OpenID
+	SourceMessageID field.String // 创建/触发该任务的来源消息 ID
 
 	fieldMap map[string]field.Expr
 }
@@ -117,6 +119,7 @@ func (s *scheduledTask) updateTableName(table string) *scheduledTask {
 	s.UpdatedAt = field.NewTime(table, "updated_at")
 	s.AppID = field.NewString(table, "app_id")
 	s.BotOpenID = field.NewString(table, "bot_open_id")
+	s.SourceMessageID = field.NewString(table, "source_message_id")
 
 	s.fillFieldMap()
 
@@ -145,7 +148,7 @@ func (s *scheduledTask) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (s *scheduledTask) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 22)
+	s.fieldMap = make(map[string]field.Expr, 23)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["name"] = s.Name
 	s.fieldMap["type"] = s.Type
@@ -168,6 +171,7 @@ func (s *scheduledTask) fillFieldMap() {
 	s.fieldMap["updated_at"] = s.UpdatedAt
 	s.fieldMap["app_id"] = s.AppID
 	s.fieldMap["bot_open_id"] = s.BotOpenID
+	s.fieldMap["source_message_id"] = s.SourceMessageID
 }
 
 func (s scheduledTask) clone(db *gorm.DB) scheduledTask {

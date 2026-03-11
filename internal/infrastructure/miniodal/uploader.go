@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/url"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/shorter"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
 
@@ -102,6 +104,44 @@ func TryGetFile(ctx context.Context, bucketName, objName string) (url string, er
 		return u.String(), nil
 	}
 	return "", nil
+}
+
+func PresignGetObject(ctx context.Context, bucketName, objName string, expire time.Duration) (string, error) {
+	client := externalCli()
+	if client == nil {
+		return "", ErrUnavailable()
+	}
+	if expire <= 0 {
+		expire = expireDuration()
+	}
+	found, err := FileExists(ctx, bucketName, objName)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	u, err := client.PresignedGetObject(ctx, bucketName, objName, expire, nil)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+func PresignGetObjectShortURL(ctx context.Context, bucketName, objName string, expire time.Duration) (string, error) {
+	rawURL, err := PresignGetObject(ctx, bucketName, objName, expire)
+	if err != nil || rawURL == "" {
+		return rawURL, err
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL, nil
+	}
+	shortURL := shorter.GenAKAKutt(ctx, parsedURL)
+	if shortURL == nil {
+		return rawURL, nil
+	}
+	return shortURL.String(), nil
 }
 
 func (d *UploaderReader) Do(bucketName, objName string, opts minio.PutObjectOptions) *Res[*UploaderReader] {

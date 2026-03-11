@@ -2,10 +2,14 @@ package cardaction
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
+	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -22,6 +26,7 @@ func RegisterBuiltins() {
 		RegisterAsync(cardactionproto.ActionCardWithdraw, handleCardWithdraw)
 		RegisterAsync(cardactionproto.ActionCommandRefresh, handleCommandRefresh)
 		RegisterAsync(cardactionproto.ActionCommandSubmitTimeRange, handleCommandSubmitTimeRange)
+		RegisterSync(cardactionproto.ActionFeatureView, handleFeatureView)
 		RegisterSync(cardactionproto.ActionFeatureBlockChat, handleFeatureAction)
 		RegisterSync(cardactionproto.ActionFeatureUnblockChat, handleFeatureAction)
 		RegisterSync(cardactionproto.ActionFeatureBlockUser, handleFeatureAction)
@@ -34,6 +39,11 @@ func RegisterBuiltins() {
 		RegisterSync(cardactionproto.ActionPermissionGrant, handlePermissionAction)
 		RegisterSync(cardactionproto.ActionPermissionRevoke, handlePermissionAction)
 		RegisterSync(cardactionproto.ActionPermissionView, handlePermissionView)
+		RegisterSync(cardactionproto.ActionRateLimitView, handleRateLimitView)
+		RegisterSync(cardactionproto.ActionScheduleView, handleScheduleView)
+		RegisterSync(cardactionproto.ActionSchedulePause, handleScheduleAction)
+		RegisterSync(cardactionproto.ActionScheduleResume, handleScheduleAction)
+		RegisterSync(cardactionproto.ActionScheduleDelete, handleScheduleAction)
 	})
 }
 
@@ -105,11 +115,31 @@ func handleFeatureAction(ctx context.Context, actionCtx *Context) (*callback.Car
 	if err != nil {
 		return ErrorToast(resp.Message), nil
 	}
-	card, cardErr := appconfig.BuildFeatureCard(ctx, actionCtx.ChatID(), actionCtx.UserID())
+	card, cardErr := appconfig.BuildFeatureCard(ctx, actionCtx.ChatID(), actionCtx.OpenID())
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
 	}
 	return InfoToastWithCard(resp.Message, card), nil
+}
+
+func handleFeatureView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := appconfig.ParseFeatureViewRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	chatID := strings.TrimSpace(req.ChatID)
+	if chatID == "" {
+		chatID = strings.TrimSpace(actionCtx.ChatID())
+	}
+	openID := strings.TrimSpace(req.OpenID)
+	if openID == "" {
+		openID = strings.TrimSpace(actionCtx.OpenID())
+	}
+	card, err := appconfig.BuildFeatureCard(ctx, chatID, openID)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(map[string]any(card)), nil
 }
 
 func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
@@ -117,13 +147,13 @@ func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.Card
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	req.ActorUserID = actionCtx.UserID()
+	req.ActorOpenID = actionCtx.OpenID()
 
 	resp, err := appconfig.HandleConfigAction(ctx, req)
 	if err != nil {
 		return ErrorToast(resp.Message), nil
 	}
-	card, cardErr := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.UserID, appconfig.ConfigCardViewOptions{
+	card, cardErr := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
 		BypassCache: true,
 	})
 	if cardErr != nil {
@@ -137,7 +167,7 @@ func handleConfigView(ctx context.Context, actionCtx *Context) (*callback.CardAc
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	card, err := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.UserID, appconfig.ConfigCardViewOptions{
+	card, err := appconfig.BuildConfigCardJSONWithOptions(ctx, req.Scope, req.ChatID, req.OpenID, appconfig.ConfigCardViewOptions{
 		BypassCache: true,
 	})
 	if err != nil {
@@ -151,13 +181,13 @@ func handlePermissionAction(ctx context.Context, actionCtx *Context) (*callback.
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	req.ActorUserID = actionCtx.UserID()
+	req.ActorOpenID = actionCtx.OpenID()
 
 	resp, err := apppermission.HandleAction(ctx, req)
 	if err != nil {
 		return ErrorToast(resp.Message), nil
 	}
-	card, cardErr := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.UserID(), req.TargetUserID)
+	card, cardErr := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID)
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
 	}
@@ -169,9 +199,87 @@ func handlePermissionView(ctx context.Context, actionCtx *Context) (*callback.Ca
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	card, err := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.UserID(), req.TargetUserID)
+	card, err := apppermission.BuildPermissionCardJSON(ctx, actionCtx.ChatID(), actionCtx.OpenID(), req.TargetOpenID)
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
 	return RawCardPayloadOnly(card), nil
+}
+
+func handleRateLimitView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := appratelimit.ParseStatsViewRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	chatID := strings.TrimSpace(req.ChatID)
+	if chatID == "" {
+		chatID = strings.TrimSpace(actionCtx.ChatID())
+	}
+	if chatID == "" && actionCtx.MetaData != nil {
+		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
+	}
+	card, err := appratelimit.BuildStatsCardJSON(ctx, chatID)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(card), nil
+}
+
+func handleScheduleView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := scheduleapp.ParseTaskViewRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+
+	chatID := strings.TrimSpace(actionCtx.ChatID())
+	if chatID == "" && actionCtx.MetaData != nil {
+		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
+	}
+	card, err := scheduleapp.BuildTaskCardPayloadForView(ctx, chatID, req.View, true)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(card), nil
+}
+
+func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	req, err := scheduleapp.ParseTaskActionRequest(actionCtx.Action)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+
+	chatID := strings.TrimSpace(actionCtx.ChatID())
+	if chatID == "" && actionCtx.MetaData != nil {
+		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
+	}
+	if _, err := scheduleapp.GetTaskForChat(ctx, chatID, req.ID); err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+
+	var message string
+	switch req.Action {
+	case scheduleapp.TaskActionPause:
+		if err := scheduleapp.GetService().PauseTask(ctx, req.ID); err != nil {
+			return ErrorToast(err.Error()), nil
+		}
+		message = fmt.Sprintf("⏸️ Schedule 已暂停：`%s`", req.ID)
+	case scheduleapp.TaskActionResume:
+		if _, err := scheduleapp.GetService().ResumeTask(ctx, req.ID); err != nil {
+			return ErrorToast(err.Error()), nil
+		}
+		message = fmt.Sprintf("▶️ Schedule 已恢复：`%s`", req.ID)
+	case scheduleapp.TaskActionDelete:
+		if err := scheduleapp.GetService().DeleteTask(ctx, req.ID); err != nil {
+			return ErrorToast(err.Error()), nil
+		}
+		message = fmt.Sprintf("🗑️ Schedule 已删除：`%s`", req.ID)
+	default:
+		return ErrorToast(fmt.Sprintf("unsupported schedule action: %s", req.Action)), nil
+	}
+
+	card, cardErr := scheduleapp.BuildTaskCardPayloadForView(ctx, chatID, req.View, req.Action == scheduleapp.TaskActionDelete)
+	if cardErr != nil {
+		return InfoToast(message), nil
+	}
+	return InfoToastWithRawCardPayload(message, card), nil
 }

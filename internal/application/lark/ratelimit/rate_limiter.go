@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/redis/go-redis/v9"
@@ -158,7 +159,7 @@ func DefaultConfig() *Config {
 }
 
 // ConfigFromRateLimitConfig 从统一配置转换
-func ConfigFromRateLimitConfig(cfg *config.RateLimitConfig) *Config {
+func ConfigFromRateLimitConfig(cfg *infraConfig.RateLimitConfig) *Config {
 	if cfg == nil {
 		return DefaultConfig()
 	}
@@ -887,7 +888,7 @@ var (
 func Get() *SmartRateLimiter {
 	onceLimiter.Do(func() {
 		var cfg *Config
-		if rateLimitCfg := config.Get().RateLimitConfig; rateLimitCfg != nil {
+		if rateLimitCfg := appconfig.CurrentRateLimitConfig(); rateLimitCfg != nil {
 			cfg = ConfigFromRateLimitConfig(rateLimitCfg)
 		}
 		globalLimiter = NewSmartRateLimiter(cfg, nil)

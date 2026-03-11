@@ -12,9 +12,9 @@ func TagText(text string, color string) string {
 type Mention struct {
 	Key string `json:"key"`
 	ID  struct {
-		UserID  string `json:"user_id"`
-		OpenID  string `json:"open_id"`
-		UnionID string `json:"union_id"`
+		LegacyUserID string `json:"user_id"`
+		OpenID       string `json:"open_id"`
+		UnionID      string `json:"union_id"`
 	} `json:"id"`
 	Name      string `json:"name"`
 	TenantKey string `json:"tenant_key"`
@@ -24,7 +24,7 @@ type Mention struct {
 func ReplaceMentionToName(input string, mentions []*Mention) string {
 	if mentions != nil {
 		for _, mention := range mentions {
-			// input = strings.ReplaceAll(input, mention.Key, fmt.Sprintf("<at user_id=\\\"%s\\\">%s</at>", mention.ID.UserID, mention.Name))
+			// input = strings.ReplaceAll(input, mention.Key, fmt.Sprintf("<at user_id=\\\"%s\\\">%s</at>", mention.ID.LegacyUserID, mention.Name))
 			input = strings.ReplaceAll(input, mention.Key, "")
 			if len(input) > 0 && string(input[0]) == "/" {
 				if inputs := strings.Split(input, " "); len(inputs) > 0 {

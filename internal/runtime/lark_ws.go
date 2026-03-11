@@ -90,9 +90,10 @@ func (m *LarkWSModule) Start(ctx context.Context) (err error) {
 		attribute.String("module.name", m.Name()),
 		attribute.Int("startup_probe_ms", 500),
 	)
+	transportCtx := otel.DetachSpan(ctx)
 
 	go func() {
-		if startErr := m.client.Start(ctx); startErr != nil {
+		if startErr := m.client.Start(transportCtx); startErr != nil {
 			select {
 			case m.startErrCh <- startErr:
 			default:

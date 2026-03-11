@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
@@ -130,8 +130,9 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		if err != nil {
 			return err
 		}
+		currentBot := botidentity.Current()
 		for _, msg := range resp.Data.Items {
-			if *msg.Sender.Id != config.Get().LarkConfig.BotOpenID {
+			if currentBot.BotOpenID == "" || *msg.Sender.Id != currentBot.BotOpenID {
 				if imgKey := getImageKey(msg); imgKey != "" {
 					err := createImage(ctx, *msg.MessageId, chatID, imgKey, *msg.MsgType)
 					if err != nil {
@@ -313,7 +314,8 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		parentMsgResp := larkmsg.GetMsgFullByID(ctx, *data.Event.Message.ParentId)
 		if len(parentMsgResp.Data.Items) != 0 {
 			msg := parentMsgResp.Data.Items[0]
-			if *msg.Sender.Id == config.Get().LarkConfig.BotOpenID {
+			currentBot := botidentity.Current()
+			if currentBot.BotOpenID != "" && *msg.Sender.Id == currentBot.BotOpenID {
 				if imgKey := getImageKey(msg); imgKey != "" {
 					err := deleteImageByKey(ctx, chatID, imgKey, normalizeImageType(*msg.MsgType))
 					if err != nil {

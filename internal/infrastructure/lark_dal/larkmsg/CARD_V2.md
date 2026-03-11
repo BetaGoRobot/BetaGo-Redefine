@@ -60,6 +60,8 @@
 交互：
 - `Button`
 - `CallbackBehaviors`
+- `OpenURLBehaviors`
+- `AppendStandardCardFooter`
 
 ## 使用约束
 
@@ -78,6 +80,33 @@
 - 统一走 `ButtonOptions.Payload`
 - 业务侧自己决定 action 协议
 
+5. 手工卡片统一追加标准 footer
+- 统一通过 `AppendStandardCardFooter(ctx, elements)` 在卡片右下角追加：
+  - `撤回`：回调 `card.withdraw`
+  - `Trace`：跳转到当前 trace 链接
+- 如果卡片需要“就地刷新最新值”，通过：
+  - `AppendStandardCardFooter(ctx, elements, StandardCardFooterOptions{RefreshPayload: ...})`
+  - 追加 `刷新` 按钮，并由业务侧自定义 refresh payload / callback handler
+- footer 左侧默认追加一段灰色小号更新时间，如 `更新于 03-11 15:04:05`
+- 这样手工卡片与模板卡片保持一致的可观测/可回收体验，同时把 refresh 协议保持在业务层
+
+6. 手工面板卡统一视觉基线
+- 优先复用 `StandardPanelCardV2Options()`
+  - `template = wathet`
+  - `vertical_spacing = 8px`
+  - `padding = 12px`
+- 如果是标准“面板卡”，优先直接用 `NewStandardPanelCard(...)`
+- 按钮语义建议：
+  - 主确认 / 主恢复动作：`primary_filled`
+  - 危险写操作：`danger`
+  - 次级查看 / 暂停 / 重置：`default`
+  - “恢复默认值”这类特殊动作：`laser`
+
+7. callback payload map 统一转换
+- 如果业务 action builder 返回 `map[string]string`
+- 统一通过 `StringMapToAnyMap(...)` 转为卡片 `Payload`
+- 不要在各业务包里重复维护 `toAnyMap` / `stringMapToAnyMap`
+
 ## 新增卡片 SOP
 
 1. 先定义 snapshot / data / policy
@@ -85,10 +114,12 @@
 3. 优先复用：
 - `Column`
 - `ColumnSet`
+- `SplitColumns`
 - `TextDiv`
 - `Markdown`
 - `Button`
 - `ButtonRow`
+- `AppendSectionsWithDividers`
 4. 如果发现多个卡片还在重复新的结构：
 - 先判断是否真的是通用 primitive
 - 是的话，再下沉到 `larkmsg/card_v2.go`

@@ -37,6 +37,7 @@ type Command[T any] struct {
 	Description   string
 	Examples      []string
 	SubCommands   map[string]*Command[T]
+	DefaultSubCommand string
 	Func          CommandFunc[T]
 	Usage         string
 	SupportArgs   map[string]*CommandArg
@@ -58,6 +59,9 @@ func (c *Command[T]) Execute(ctx context.Context, data T, metaData *xhandler.Bas
 		return c.Func(ctx, data, metaData, args...)
 	}
 	if len(args) == 0 { // 无执行方法且无后续参数
+		if subcommand, ok := c.defaultSubCommand(); ok {
+			return subcommand.Execute(ctx, data, metaData, nil)
+		}
 		return fmt.Errorf("%w: %s", xerror.ErrCommandIncomplete, c.FormatUsage())
 	}
 	if helpArgs, ok := c.redirectHelpArgs(args); ok {
@@ -212,6 +216,9 @@ func (c *Command[T]) Validate(ctx context.Context, data T, args []string) bool {
 		return true
 	}
 	if len(args) == 0 { // 无执行方法且无后续参数
+		if subcommand, ok := c.defaultSubCommand(); ok {
+			return subcommand.Validate(ctx, data, nil)
+		}
 		return false
 	}
 	if subcommand, ok := c.SubCommands[args[0]]; ok {
@@ -228,6 +235,11 @@ func (c *Command[T]) Validate(ctx context.Context, data T, args []string) bool {
 //	@update 2024-07-18 05:30:07
 func (c *Command[T]) AddSubCommand(subCommand *Command[T]) *Command[T] {
 	c.SubCommands[subCommand.Name] = subCommand
+	return c
+}
+
+func (c *Command[T]) SetDefaultSubCommand(name string) *Command[T] {
+	c.DefaultSubCommand = strings.TrimSpace(name)
 	return c
 }
 
@@ -274,6 +286,17 @@ func (c *Command[T]) GetExamples() []string {
 		res = append(res, example)
 	}
 	return res
+}
+
+func (c *Command[T]) defaultSubCommand() (*Command[T], bool) {
+	if c == nil || c.DefaultSubCommand == "" || len(c.SubCommands) == 0 {
+		return nil, false
+	}
+	subcommand, ok := c.SubCommands[c.DefaultSubCommand]
+	if !ok || subcommand == nil {
+		return nil, false
+	}
+	return subcommand, true
 }
 
 // AddArgs 添加一个SubCommand

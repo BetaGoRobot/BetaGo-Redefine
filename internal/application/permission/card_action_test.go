@@ -31,13 +31,14 @@ func TestParseActionRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseActionRequest() error = %v", err)
 	}
-	if req.Action != ActionRevoke || req.PermissionPoint != "config.write" || req.Scope != "global" || req.TargetUserID != "ou_target" {
+	if req.Action != ActionRevoke || req.PermissionPoint != "config.write" || req.Scope != "global" || req.TargetOpenID != "ou_target" {
 		t.Fatalf("unexpected request: %+v", req)
 	}
 }
 
 func TestParseViewRequestPrefersFormValue(t *testing.T) {
 	req, err := ParseViewRequest(&cardactionproto.Parsed{
+		Name: cardactionproto.ActionPermissionView,
 		Value: map[string]any{
 			cardactionproto.TargetUserIDField: "ou_value",
 		},
@@ -48,7 +49,17 @@ func TestParseViewRequestPrefersFormValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseViewRequest() error = %v", err)
 	}
-	if req.TargetUserID != "ou_form" {
-		t.Fatalf("unexpected target user id: %q", req.TargetUserID)
+	if req.TargetOpenID != "ou_form" {
+		t.Fatalf("unexpected target user id: %q", req.TargetOpenID)
+	}
+}
+
+func TestBuildPermissionViewValueUsesStandardAction(t *testing.T) {
+	payload := BuildPermissionViewValue("ou_target")
+	if payload[cardactionproto.ActionField] != cardactionproto.ActionPermissionView {
+		t.Fatalf("unexpected action field: %q", payload[cardactionproto.ActionField])
+	}
+	if payload[cardactionproto.TargetUserIDField] != "ou_target" {
+		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }

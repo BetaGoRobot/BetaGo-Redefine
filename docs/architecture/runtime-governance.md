@@ -3,6 +3,7 @@
 Current implementation design, including Mermaid diagrams for the refactored
 runtime, is documented in `docs/architecture/runtime-refactor-design.md`.
 Next-step refactor roadmap is documented in `docs/architecture/runtime-refactor-plan.md`.
+Execution progress is tracked in `docs/architecture/runtime-refactor-progress.md`.
 
 ## Runtime Topology
 `cmd/larkrobot` 现在通过 `internal/runtime.App` 统一编排启动和关闭：
@@ -62,6 +63,7 @@ Next-step refactor roadmap is documented in `docs/architecture/runtime-refactor-
 | User identity | `OpenID` 优先，缺失时才 fallback |
 | Bot identity | `AppID + BotOpenID` |
 | Dynamic config | 业务运行时只能走 config manager / accessor |
+| Trace boundary | 每个 ingress handler 启动新的根 trace；该入口内 executor / `xhandler` / outbound side effects 继承同一 trace |
 | Background work | 默认通过 bounded executor 提交，不再直接裸 `go func` |
 | Health state | `ready / degraded / failed / disabled / stopped` |
 | Startup failures | critical fail-fast，optional degrade-and-continue |

@@ -8,6 +8,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	permissioninfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/permission"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"go.uber.org/zap"
 )
 
 var (
@@ -22,9 +24,9 @@ var (
 	permissionGrantExists = permissioninfra.Exists
 )
 
-func EnsureManageAllowed(ctx context.Context, actorUserID string) error {
-	actorUserID = strings.TrimSpace(actorUserID)
-	if actorUserID == "" {
+func EnsureManageAllowed(ctx context.Context, actorOpenID string) error {
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	if actorOpenID == "" {
 		return errors.New("permission management requires operator identity")
 	}
 
@@ -33,7 +35,7 @@ func EnsureManageAllowed(ctx context.Context, actorUserID string) error {
 		return err
 	}
 
-	if bootstrapAdmin := currentBootstrapAdminOpen(); bootstrapAdmin != "" && actorUserID == bootstrapAdmin {
+	if bootstrapAdmin := currentBootstrapAdminOpen(); bootstrapAdmin != "" && actorOpenID == bootstrapAdmin {
 		return nil
 	}
 
@@ -43,7 +45,7 @@ func EnsureManageAllowed(ctx context.Context, actorUserID string) error {
 	} {
 		ok, err := permissionGrantExists(ctx, permissioninfra.GrantFilter{
 			SubjectType:     permissioninfra.SubjectTypeUser,
-			SubjectID:       actorUserID,
+			SubjectID:       actorOpenID,
 			PermissionPoint: point,
 			Scope:           permissioninfra.ScopeGlobal,
 			AppID:           identity.AppID,
@@ -57,7 +59,12 @@ func EnsureManageAllowed(ctx context.Context, actorUserID string) error {
 		}
 	}
 
-	return errors.New("only bootstrap admin or users with permission.manage@global / config.write@global can manage permissions, current actor: " + actorUserID)
+	logs.L().Ctx(ctx).Warn("permission manage denied",
+		zap.String("actor_user_id", actorOpenID),
+		zap.String("app_id", identity.AppID),
+		zap.String("bot_open_id", identity.BotOpenID),
+	)
+	return errors.New("only bootstrap admin or users with permission.manage@global / config.write@global can manage permissions")
 }
 
 func CurrentBootstrapAdminOpenID() string {

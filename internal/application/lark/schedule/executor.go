@@ -3,10 +3,12 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/bytedance/gg/gptr"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -55,10 +57,36 @@ func (e *ToolExecutor) Execute(ctx context.Context, task *model.ScheduledTask) (
 
 	result := unit.Function(ctx, task.ToolArgs, toolkit.FCMeta[larkim.P2MessageReceiveV1]{
 		ChatID: task.ChatID,
-		UserID: task.CreatorID,
+		OpenID: task.CreatorID,
+		Data:   buildScheduledTaskEvent(task),
 	})
 	if result.IsErr() {
 		return "", result.Err()
 	}
 	return result.Value(), nil
+}
+
+func buildScheduledTaskEvent(task *model.ScheduledTask) *larkim.P2MessageReceiveV1 {
+	if task == nil {
+		return nil
+	}
+
+	sourceMessageID := strings.TrimSpace(task.SourceMessageID)
+	chatID := strings.TrimSpace(task.ChatID)
+	if sourceMessageID == "" && chatID == "" {
+		return nil
+	}
+
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{},
+		},
+	}
+	if sourceMessageID != "" {
+		event.Event.Message.MessageId = gptr.Of(sourceMessageID)
+	}
+	if chatID != "" {
+		event.Event.Message.ChatId = gptr.Of(chatID)
+	}
+	return event
 }

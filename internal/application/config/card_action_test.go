@@ -57,7 +57,7 @@ func TestParseFeatureActionRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFeatureActionRequest() error = %v", err)
 	}
-	if req.Action != FeatureActionUnblockUser || req.Feature != "music" || req.UserID != "user-1" {
+	if req.Action != FeatureActionUnblockUser || req.Feature != "music" || req.OpenID != "user-1" {
 		t.Fatalf("unexpected req: %+v", req)
 	}
 }
@@ -156,7 +156,33 @@ func TestParseConfigViewRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseConfigViewRequest() error = %v", err)
 	}
-	if req.Scope != "user" || req.ChatID != "chat-1" || req.UserID != "user-1" {
+	if req.Scope != "user" || req.ChatID != "chat-1" || req.OpenID != "user-1" {
+		t.Fatalf("unexpected req: %+v", req)
+	}
+}
+
+func TestBuildFeatureViewValueUsesStandardAction(t *testing.T) {
+	payload := BuildFeatureViewValue("chat-1", "user-1")
+	if payload[cardaction.ActionField] != cardaction.ActionFeatureView {
+		t.Fatalf("expected feature view action, got %q", payload[cardaction.ActionField])
+	}
+	if payload[cardaction.ChatIDField] != "chat-1" || payload[cardaction.UserIDField] != "user-1" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestParseFeatureViewRequest(t *testing.T) {
+	req, err := ParseFeatureViewRequest(&cardaction.Parsed{
+		Name: cardaction.ActionFeatureView,
+		Value: map[string]any{
+			cardaction.ChatIDField: "chat-1",
+			cardaction.UserIDField: "user-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseFeatureViewRequest() error = %v", err)
+	}
+	if req.ChatID != "chat-1" || req.OpenID != "user-1" {
 		t.Fatalf("unexpected req: %+v", req)
 	}
 }

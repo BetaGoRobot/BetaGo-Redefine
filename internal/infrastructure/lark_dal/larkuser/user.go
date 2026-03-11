@@ -16,20 +16,20 @@ import (
 	"go.uber.org/zap"
 )
 
-func userInfoCacheKey(userID string) string {
-	return botidentity.Current().NamespaceKey("lark_user_info", userID)
+func userInfoCacheKey(openID string) string {
+	return botidentity.Current().NamespaceKey("lark_user_info", openID)
 }
 
 func chatMemberCacheKey(chatID string) string {
 	return botidentity.Current().NamespaceKey("lark_chat_members", chatID)
 }
 
-func GetUserInfo(ctx context.Context, userID string) (user *larkcontact.User, err error) {
-	ctx, span := otel.Start(ctx, trace.WithAttributes(attribute.String("user.open_id", otel.PreviewString(userID, 128))))
+func GetUserInfo(ctx context.Context, openID string) (user *larkcontact.User, err error) {
+	ctx, span := otel.Start(ctx, trace.WithAttributes(attribute.String("user.open_id", otel.PreviewString(openID, 128))))
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 	resp, err := lark_dal.Client().Contact.V3.User.Get(ctx, larkcontact.NewGetUserReqBuilder().
-		UserId(userID).
+		UserId(openID).
 		UserIdType("open_id").
 		Build(),
 	)
@@ -43,22 +43,22 @@ func GetUserInfo(ctx context.Context, userID string) (user *larkcontact.User, er
 	return resp.Data.User, nil
 }
 
-func GetUserInfoCache(ctx context.Context, chatID, userID string) (user *larkcontact.User, err error) {
+func GetUserInfoCache(ctx context.Context, chatID, openID string) (user *larkcontact.User, err error) {
 	ctx, span := otel.Start(ctx, trace.WithAttributes(
 		attribute.String("chat.id", chatID),
-		attribute.String("user.open_id", otel.PreviewString(userID, 128)),
+		attribute.String("user.open_id", otel.PreviewString(openID, 128)),
 	))
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	res, err := cache.GetOrExecute(ctx, userInfoCacheKey(userID), func() (*larkcontact.User, error) {
-		return GetUserInfo(ctx, userID)
+	res, err := cache.GetOrExecute(ctx, userInfoCacheKey(openID), func() (*larkcontact.User, error) {
+		return GetUserInfo(ctx, openID)
 	})
 	logs.L().Ctx(ctx).Debug("GetUserInfoCache", zap.Any("user", res))
 	if err == nil && res != nil {
 		return res, nil
 	}
 	// userInfo失败了，走群聊试试
-	groupMember, err := GetUserMemberFromChat(ctx, chatID, userID)
+	groupMember, err := GetUserMemberFromChat(ctx, chatID, openID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("GetUserMemberFromChat", zap.Any("user", groupMember), zap.Error(err))
 		return
@@ -69,7 +69,7 @@ func GetUserInfoCache(ctx context.Context, chatID, userID string) (user *larkcon
 	}
 	res = &larkcontact.User{
 		UserId: groupMember.MemberId,
-		OpenId: &userID,
+		OpenId: &openID,
 		Name:   groupMember.Name,
 	}
 	return res, err

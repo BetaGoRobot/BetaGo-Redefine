@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
@@ -65,15 +66,26 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			return nil
 		}
 
-		userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
-		if err != nil {
-			return err
+		openID := botidentity.MessageSenderOpenID(event)
+		if openID == "" && metaData != nil {
+			openID = metaData.OpenID
 		}
 		userName := ""
-		if userInfo == nil {
-			userName = "NULL"
+		if openID != "" {
+			userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, openID)
+			if err != nil {
+				return err
+			}
+			if userInfo == nil {
+				userName = "NULL"
+			} else {
+				userName = *userInfo.Name
+			}
 		} else {
-			userName = *userInfo.Name
+			userName = "NULL"
+			logs.L().Ctx(ctx).Warn("record message without open_id",
+				zap.String("message_id", utils.AddrOrNil(event.Event.Message.MessageId)),
+			)
 		}
 		msgLog := &xmodel.MessageLog{
 			MessageID:   utils.AddrOrNil(event.Event.Message.MessageId),
@@ -113,8 +125,9 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 
 		isCommand := metaData.IsCommandMarked()
 		mainCommand := metaData.GetMainCommand()
+		accessor := appconfig.NewAccessor(ctx, chatID, openID)
 		err = opensearch.InsertData(
-			ctx, config.Get().OpensearchConfig.LarkMsgIndex, *event.Event.Message.MessageId,
+			ctx, accessor.LarkMsgIndex(), *event.Event.Message.MessageId,
 			&xmodel.MessageIndex{
 				MessageLog:           msgLog,
 				ChatName:             larkchat.GetChatName(ctx, chatID),
@@ -125,7 +138,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				CreateTime:           utils.Epo2DateZoneMil(utils.MustInt(*event.Event.Message.CreateTime), time.UTC, time.DateTime),
 				CreateTimeV2:         utils.Epo2DateZoneMil(utils.MustInt(*event.Event.Message.CreateTime), utils.UTC8Loc(), time.RFC3339),
 				Message:              embedded,
-				UserID:               *event.Event.Sender.SenderId.OpenId,
+				OpenID:               openID,
 				UserName:             userName,
 				TokenUsage:           usage,
 				IsCommand:            isCommand,
@@ -141,7 +154,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				PageContent: content,
 				Metadata: map[string]any{
 					"chat_id":     utils.AddrOrNil(event.Event.Message.ChatId),
-					"user_id":     utils.AddrOrNil(event.Event.Sender.SenderId.OpenId),
+					"user_id":     openID,
 					"msg_id":      utils.AddrOrNil(event.Event.Message.MessageId),
 					"create_time": utils.EpoMil2DateStr(*event.Event.Message.CreateTime),
 					"user_name":   userName,

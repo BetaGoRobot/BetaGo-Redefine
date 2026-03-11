@@ -478,7 +478,7 @@ func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (string, *
 // 	if s.EndTime != "" {
 // 		argsSlice = append(argsSlice, "--et="+s.EndTime)
 // 	}
-// 	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, meta.ChatID, meta.UserID)
+// 	metaData := xhandler.NewBaseMetaDataWithChatIDOpenID(ctx, meta.ChatID, meta.OpenID)
 // 	if err := GoldHandler(ctx, meta.LarkData, metaData, argsSlice...); err != nil {
 // 		return nil, err
 // 	}

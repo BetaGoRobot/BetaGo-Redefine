@@ -42,6 +42,7 @@ type TaskService interface {
 	Available() bool
 	AvailableTools() []string
 	CreateTask(ctx context.Context, req *CreateTaskRequest) (*model.ScheduledTask, error)
+	GetTask(ctx context.Context, id string) (*model.ScheduledTask, error)
 	ListTasks(ctx context.Context, req *ListTasksRequest) ([]*model.ScheduledTask, error)
 	DeleteTask(ctx context.Context, id string) error
 	PauseTask(ctx context.Context, id string) error
@@ -63,18 +64,19 @@ type noopService struct {
 }
 
 type CreateTaskRequest struct {
-	ChatID        string
-	CreatorID     string
-	Name          string
-	Type          string
-	RunAt         *time.Time
-	CronExpr      string
-	Timezone      string
-	Message       string
-	ToolName      string
-	ToolArgs      string
-	NotifyOnError bool
-	NotifyResult  bool
+	ChatID          string
+	CreatorID       string
+	SourceMessageID string
+	Name            string
+	Type            string
+	RunAt           *time.Time
+	CronExpr        string
+	Timezone        string
+	Message         string
+	ToolName        string
+	ToolArgs        string
+	NotifyOnError   bool
+	NotifyResult    bool
 }
 
 type ListTasksRequest struct {
@@ -160,6 +162,7 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 		span.SetAttributes(
 			attribute.String("schedule.type", strings.TrimSpace(req.Type)),
 			attribute.String("schedule.chat_id", strings.TrimSpace(req.ChatID)),
+			attribute.String("schedule.source_message_id", otel.PreviewString(strings.TrimSpace(req.SourceMessageID), 128)),
 			attribute.String("schedule.tool_name", strings.TrimSpace(req.ToolName)),
 			attribute.String("schedule.name.preview", otel.PreviewString(req.Name, 128)),
 		)
@@ -176,6 +179,7 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 	task := model.NewScheduledTask(req.Name, taskType, req.ChatID, req.CreatorID, toolName, toolArgs, strings.TrimSpace(req.Timezone), s.identity.AppID, s.identity.BotOpenID)
 	task.RunAt = req.RunAt
 	task.CronExpr = strings.TrimSpace(req.CronExpr)
+	task.SourceMessageID = strings.TrimSpace(req.SourceMessageID)
 	task.NotifyOnError = req.NotifyOnError
 	task.NotifyResult = req.NotifyResult
 	if task.ToolName == "send_message" {
@@ -222,6 +226,18 @@ func (s *Service) ListTasks(ctx context.Context, req *ListTasksRequest) ([]*mode
 		attribute.Int("schedule.offset", req.Offset),
 	)
 	return s.repo.ListTasksByChatID(ctx, req.ChatID, req.Limit, req.Offset)
+}
+
+func (s *Service) GetTask(ctx context.Context, id string) (*model.ScheduledTask, error) {
+	ctx, span := otel.StartNamed(ctx, "schedule.get")
+	defer span.End()
+	var err error
+	defer otel.RecordErrorPtr(span, &err)
+	span.SetAttributes(attribute.String("schedule.task_id", id))
+	if !s.Available() {
+		return nil, errScheduleServiceUnavailable
+	}
+	return s.repo.GetTaskByID(ctx, id)
 }
 
 func (s *Service) DeleteTask(ctx context.Context, id string) error {
@@ -383,8 +399,9 @@ func (s *Service) FinalizeTaskExecution(ctx context.Context, task *model.Schedul
 		return err
 	}
 
+	persistedResult := persistTaskResult(ctx, task.ID, resultText, finishedAt)
 	updates := map[string]any{
-		"last_result": resultText,
+		"last_result": persistedResult,
 		"last_error":  "",
 	}
 
@@ -403,7 +420,7 @@ func (s *Service) FinalizeTaskExecution(ctx context.Context, task *model.Schedul
 		task.NextRunAt = finishedAt
 	}
 
-	task.LastResult = resultText
+	task.LastResult = persistedResult
 	if execErr != nil {
 		task.LastError = execErr.Error()
 	} else {
@@ -475,6 +492,10 @@ func (n noopService) CreateTask(context.Context, *CreateTaskRequest) (*model.Sch
 	return nil, fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
 
+func (n noopService) GetTask(context.Context, string) (*model.ScheduledTask, error) {
+	return nil, fmt.Errorf("schedule service unavailable: %s", n.reason)
+}
+
 func (n noopService) ListTasks(context.Context, *ListTasksRequest) ([]*model.ScheduledTask, error) {
 	return nil, fmt.Errorf("schedule service unavailable: %s", n.reason)
 }
@@ -531,6 +552,9 @@ func FormatTaskList(tasks []*model.ScheduledTask) string {
 		}
 		sb.WriteString(fmt.Sprintf("   时区: %s\n", task.Timezone))
 		sb.WriteString(fmt.Sprintf("   状态: %s\n", task.Status))
+		if task.SourceMessageID != "" {
+			sb.WriteString(fmt.Sprintf("   来源消息: `%s`\n", task.SourceMessageID))
+		}
 		if task.LastRunAt != nil {
 			sb.WriteString(fmt.Sprintf("   上次执行: %s\n", task.LastRunAt.In(loc).Format("2006-01-02 15:04:05")))
 		}

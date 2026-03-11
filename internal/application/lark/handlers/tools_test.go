@@ -27,6 +27,7 @@ func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 	excluded := map[string]struct{}{
 		"create_schedule":   {},
 		"list_schedules":    {},
+		"query_schedule":    {},
 		"delete_schedule":   {},
 		"pause_schedule":    {},
 		"resume_schedule":   {},
@@ -46,6 +47,9 @@ func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 	if _, ok := schedulable.FunctionCallMap["gold_price_get"]; !ok {
 		t.Fatal("schedulable tools missing gold_price_get")
 	}
+	if _, ok := allTools.FunctionCallMap["query_schedule"]; !ok {
+		t.Fatal("lark tools missing query_schedule")
+	}
 }
 
 func TestBuildSchedulableToolsRestrictsSendMessageChatOverride(t *testing.T) {
@@ -58,7 +62,7 @@ func TestBuildSchedulableToolsRestrictsSendMessageChatOverride(t *testing.T) {
 
 	result := unit.Function(context.Background(), `{"content":"hi","chat_id":"oc_other"}`, toolkit.FCMeta[larkim.P2MessageReceiveV1]{
 		ChatID: "oc_self",
-		UserID: "ou_user",
+		OpenID: "ou_user",
 	})
 	if !result.IsErr() {
 		t.Fatal("expected send_message to reject chat_id override in schedule context")

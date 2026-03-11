@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/bytedance/gg/gresult"
@@ -36,7 +36,7 @@ type SearchResult struct {
 type HybridSearchRequest struct {
 	QueryText []string `json:"query"`
 	TopK      int      `json:"top_k"`
-	UserID    string   `json:"user_id,omitempty"`
+	OpenID    string   `json:"user_id,omitempty"`
 	ChatID    string   `json:"chat_id,omitempty"`
 	StartTime string   `json:"start_time,omitempty"`
 	EndTime   string   `json:"end_time,omitempty"`
@@ -58,8 +58,8 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 	// --- A. 构建过滤 (Filter) 子句 ---
 	// 'filter' 用于精确匹配，不影响评分，例如过滤 user_id
 	filters := []map[string]interface{}{}
-	if req.UserID != "" {
-		filters = append(filters, map[string]interface{}{"term": map[string]interface{}{"user_id": req.UserID}})
+	if req.OpenID != "" {
+		filters = append(filters, map[string]interface{}{"term": map[string]interface{}{"user_id": req.OpenID}})
 	}
 	if req.ChatID != "" {
 		filters = append(filters, map[string]interface{}{"term": map[string]interface{}{"chat_id": req.ChatID}})
@@ -136,7 +136,7 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 		},
 	}
 	span.SetAttributes(attribute.Key("query").String(utils.MustMarshalString(query)))
-	res, err := opensearch.SearchData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, query)
+	res, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, req.ChatID, req.OpenID), query)
 	if err != nil {
 		return nil, fmt.Errorf("搜索请求失败: %w", err)
 	}

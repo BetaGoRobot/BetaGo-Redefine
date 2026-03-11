@@ -34,6 +34,17 @@ const (
 
 	// 开关配置
 	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
+
+	// 字符串配置
+	KeyChatReasoningModel ConfigKey = "chat_reasoning_model"
+	KeyChatNormalModel    ConfigKey = "chat_normal_model"
+	KeyIntentLiteModel    ConfigKey = "intent_lite_model"
+	KeyLarkMsgIndex       ConfigKey = "lark_msg_index"
+	KeyLarkChunkIndex     ConfigKey = "lark_chunk_index"
+
+	// 业务开关
+	KeyMusicCardInThread ConfigKey = "music_card_in_thread"
+	KeyWithDrawReplace   ConfigKey = "with_draw_replace"
 )
 
 // ConfigScope 配置作用域
@@ -53,7 +64,10 @@ type Feature struct {
 	DefaultEnabled bool   `json:"default_enabled"` // 默认是否启用
 }
 
-var currentBotIdentity = botidentity.Current
+var (
+	currentBotIdentity = botidentity.Current
+	currentBaseConfig  = config.Get
+)
 
 // IsValidFeature 检查功能名称是否有效（始终返回 true，兼容旧代码）
 func IsValidFeature(name string) bool {
@@ -62,34 +76,34 @@ func IsValidFeature(name string) bool {
 
 // buildConfigKey 构建带作用域的配置键
 // 格式: bot:app_id:bot_open_id:scope:chat_id:user_id:key
-func buildConfigKey(scope ConfigScope, chatID, userID string, key ConfigKey) string {
-	return namespaceConfigKey(buildRawConfigKey(scope, chatID, userID, key))
+func buildConfigKey(scope ConfigScope, chatID, openID string, key ConfigKey) string {
+	return namespaceConfigKey(buildRawConfigKey(scope, chatID, openID, key))
 }
 
-func buildRawConfigKey(scope ConfigScope, chatID, userID string, key ConfigKey) string {
+func buildRawConfigKey(scope ConfigScope, chatID, openID string, key ConfigKey) string {
 	parts := []string{string(scope)}
 	if chatID != "" {
 		parts = append(parts, chatID)
 	}
-	if userID != "" {
-		parts = append(parts, userID)
+	if openID != "" {
+		parts = append(parts, openID)
 	}
 	parts = append(parts, string(key))
 	return strings.Join(parts, ":")
 }
 
 // buildFeatureBlockKey 构建功能屏蔽的配置键
-func buildFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) string {
-	return namespaceConfigKey(buildRawFeatureBlockKey(scope, chatID, userID, feature))
+func buildFeatureBlockKey(scope ConfigScope, chatID, openID, feature string) string {
+	return namespaceConfigKey(buildRawFeatureBlockKey(scope, chatID, openID, feature))
 }
 
-func buildRawFeatureBlockKey(scope ConfigScope, chatID, userID, feature string) string {
+func buildRawFeatureBlockKey(scope ConfigScope, chatID, openID, feature string) string {
 	parts := []string{"feature_block", string(scope)}
 	if chatID != "" {
 		parts = append(parts, chatID)
 	}
-	if userID != "" {
-		parts = append(parts, userID)
+	if openID != "" {
+		parts = append(parts, openID)
 	}
 	parts = append(parts, feature)
 	return strings.Join(parts, ":")
@@ -118,8 +132,8 @@ func currentBotNamespacePrefix() string {
 	}, ":")
 }
 
-func buildConfigListPrefix(scope ConfigScope, chatID, userID string) string {
-	rawPrefix := buildRawConfigListPrefix(scope, chatID, userID)
+func buildConfigListPrefix(scope ConfigScope, chatID, openID string) string {
+	rawPrefix := buildRawConfigListPrefix(scope, chatID, openID)
 	namespace := currentBotNamespacePrefix()
 	switch {
 	case namespace == "":
@@ -131,7 +145,7 @@ func buildConfigListPrefix(scope ConfigScope, chatID, userID string) string {
 	}
 }
 
-func buildRawConfigListPrefix(scope ConfigScope, chatID, userID string) string {
+func buildRawConfigListPrefix(scope ConfigScope, chatID, openID string) string {
 	switch scope {
 	case ScopeGlobal:
 		return "global:"
@@ -141,11 +155,11 @@ func buildRawConfigListPrefix(scope ConfigScope, chatID, userID string) string {
 		}
 		return "chat:"
 	case ScopeUser:
-		if chatID != "" && userID != "" {
-			return fmt.Sprintf("user:%s:%s:", chatID, userID)
+		if chatID != "" && openID != "" {
+			return fmt.Sprintf("user:%s:%s:", chatID, openID)
 		}
-		if userID != "" {
-			return fmt.Sprintf("user::%s:", userID)
+		if openID != "" {
+			return fmt.Sprintf("user::%s:", openID)
 		}
 		return "user:"
 	default:
@@ -190,10 +204,10 @@ func (m *Manager) SetGetFeaturesFunc(fn func() []Feature) {
 
 // GetInt 获取整数配置
 // 优先级: chat:user > user > chat > global > toml > default
-func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, userID string) int {
+func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID string) int {
 	// 1. 尝试 chat:user 级别
-	if chatID != "" && userID != "" {
-		if val, ok := m.getConfig(ctx, ScopeUser, chatID, userID, key); ok {
+	if chatID != "" && openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
 			if intVal, err := strconv.Atoi(val); err == nil {
 				return intVal
 			}
@@ -201,8 +215,8 @@ func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, userID stri
 	}
 
 	// 2. 尝试 user 级别
-	if userID != "" {
-		if val, ok := m.getConfig(ctx, ScopeUser, "", userID, key); ok {
+	if openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
 			if intVal, err := strconv.Atoi(val); err == nil {
 				return intVal
 			}
@@ -230,10 +244,10 @@ func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, userID stri
 }
 
 // GetBool 获取布尔配置
-func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, userID string) bool {
+func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID string) bool {
 	// 1. 尝试 chat:user 级别
-	if chatID != "" && userID != "" {
-		if val, ok := m.getConfig(ctx, ScopeUser, chatID, userID, key); ok {
+	if chatID != "" && openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
 			if boolVal, err := strconv.ParseBool(val); err == nil {
 				return boolVal
 			}
@@ -241,8 +255,8 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, userID str
 	}
 
 	// 2. 尝试 user 级别
-	if userID != "" {
-		if val, ok := m.getConfig(ctx, ScopeUser, "", userID, key); ok {
+	if openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
 			if boolVal, err := strconv.ParseBool(val); err == nil {
 				return boolVal
 			}
@@ -269,13 +283,45 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, userID str
 	return m.getBoolFromToml(key)
 }
 
-// getConfig 从数据库获取配置
-func (m *Manager) getConfig(ctx context.Context, scope ConfigScope, chatID, userID string, key ConfigKey) (string, bool) {
-	return m.getConfigWithOptions(ctx, scope, chatID, userID, key, ConfigReadOptions{})
+// GetString 获取字符串配置
+func (m *Manager) GetString(ctx context.Context, key ConfigKey, chatID, openID string) string {
+	// 1. 尝试 chat_user 级别（当同时有 chatID 和 openID 时）
+	if chatID != "" && openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
+			return val
+		}
+	}
+
+	// 2. 尝试 user 级别
+	if openID != "" {
+		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
+			return val
+		}
+	}
+
+	// 3. 尝试 chat 级别
+	if chatID != "" {
+		if val, ok := m.getConfig(ctx, ScopeChat, chatID, "", key); ok {
+			return val
+		}
+	}
+
+	// 4. 尝试 global 级别
+	if val, ok := m.getConfig(ctx, ScopeGlobal, "", "", key); ok {
+		return val
+	}
+
+	// 5. 回退到 TOML 配置
+	return m.getStringFromToml(key)
 }
 
-func (m *Manager) getConfigWithOptions(ctx context.Context, scope ConfigScope, chatID, userID string, key ConfigKey, options ConfigReadOptions) (string, bool) {
-	fullKey := buildConfigKey(scope, chatID, userID, key)
+// getConfig 从数据库获取配置
+func (m *Manager) getConfig(ctx context.Context, scope ConfigScope, chatID, openID string, key ConfigKey) (string, bool) {
+	return m.getConfigWithOptions(ctx, scope, chatID, openID, key, ConfigReadOptions{})
+}
+
+func (m *Manager) getConfigWithOptions(ctx context.Context, scope ConfigScope, chatID, openID string, key ConfigKey, options ConfigReadOptions) (string, bool) {
+	fullKey := buildConfigKey(scope, chatID, openID, key)
 	return m.getConfigByFullKeyWithOptions(ctx, fullKey, options)
 }
 
@@ -302,6 +348,10 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 		m.mu.RUnlock()
 	}
 	span.AddEvent("config.cache.miss")
+	if infraDB.DB() == nil {
+		span.AddEvent("config.db.unavailable")
+		return "", false
+	}
 
 	ins := query.Q.DynamicConfig
 	if options.BypassCache {
@@ -330,7 +380,7 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 
 // getIntFromToml 从 TOML 配置获取整数
 func (m *Manager) getIntFromToml(key ConfigKey) int {
-	cfg := config.Get()
+	cfg := currentBaseConfig()
 	if cfg == nil || cfg.RateConfig == nil {
 		return m.getDefaultInt(key)
 	}
@@ -355,16 +405,66 @@ func (m *Manager) getIntFromToml(key ConfigKey) int {
 
 // getBoolFromToml 从 TOML 配置获取布尔值
 func (m *Manager) getBoolFromToml(key ConfigKey) bool {
-	cfg := config.Get()
-	if cfg == nil || cfg.RateConfig == nil {
+	cfg := currentBaseConfig()
+	if cfg == nil {
 		return m.getDefaultBool(key)
 	}
 
 	switch key {
 	case KeyIntentRecognitionEnabled:
+		if cfg.RateConfig == nil {
+			return m.getDefaultBool(key)
+		}
 		return cfg.RateConfig.IntentRecognitionEnabled
+	case KeyMusicCardInThread:
+		if cfg.NeteaseMusicConfig == nil {
+			return m.getDefaultBool(key)
+		}
+		return cfg.NeteaseMusicConfig.MusicCardInThread
+	case KeyWithDrawReplace:
+		if cfg.LarkConfig == nil {
+			return m.getDefaultBool(key)
+		}
+		return cfg.LarkConfig.WithDrawReplace
 	default:
 		return m.getDefaultBool(key)
+	}
+}
+
+func (m *Manager) getStringFromToml(key ConfigKey) string {
+	cfg := currentBaseConfig()
+	if cfg == nil {
+		return m.getDefaultString(key)
+	}
+
+	switch key {
+	case KeyChatReasoningModel:
+		if cfg.ArkConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.ArkConfig.ReasoningModel
+	case KeyChatNormalModel:
+		if cfg.ArkConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.ArkConfig.NormalModel
+	case KeyIntentLiteModel:
+		if cfg.ArkConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.ArkConfig.LiteModel
+	case KeyLarkMsgIndex:
+		if cfg.OpensearchConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.OpensearchConfig.LarkMsgIndex
+	case KeyLarkChunkIndex:
+		if cfg.OpensearchConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.OpensearchConfig.LarkChunkIndex
+	default:
+		return m.getDefaultString(key)
 	}
 }
 
@@ -398,23 +498,30 @@ func (m *Manager) getDefaultBool(key ConfigKey) bool {
 	}
 }
 
+func (m *Manager) getDefaultString(key ConfigKey) string {
+	switch key {
+	default:
+		return ""
+	}
+}
+
 // ==========================================
 // 配置设置方法
 // ==========================================
 
 // SetInt 设置整数配置
-func (m *Manager) SetInt(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, userID string, value int) error {
-	return m.SetString(ctx, key, scope, chatID, userID, strconv.Itoa(value))
+func (m *Manager) SetInt(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string, value int) error {
+	return m.SetString(ctx, key, scope, chatID, openID, strconv.Itoa(value))
 }
 
 // SetBool 设置布尔配置
-func (m *Manager) SetBool(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, userID string, value bool) error {
-	return m.SetString(ctx, key, scope, chatID, userID, strconv.FormatBool(value))
+func (m *Manager) SetBool(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string, value bool) error {
+	return m.SetString(ctx, key, scope, chatID, openID, strconv.FormatBool(value))
 }
 
 // SetString 设置字符串配置
-func (m *Manager) SetString(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, userID string, value string) error {
-	fullKey := buildConfigKey(scope, chatID, userID, key)
+func (m *Manager) SetString(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string, value string) error {
+	fullKey := buildConfigKey(scope, chatID, openID, key)
 	return m.setConfigByFullKey(ctx, fullKey, value)
 }
 
@@ -462,8 +569,8 @@ func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string)
 }
 
 // DeleteConfig 删除配置
-func (m *Manager) DeleteConfig(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, userID string) error {
-	fullKey := buildConfigKey(scope, chatID, userID, key)
+func (m *Manager) DeleteConfig(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string) error {
+	fullKey := buildConfigKey(scope, chatID, openID, key)
 	return m.deleteConfigByFullKey(ctx, fullKey)
 }
 
@@ -497,24 +604,24 @@ func (m *Manager) deleteConfigByFullKey(ctx context.Context, fullKey string) (er
 type ConfigEntry struct {
 	Scope  ConfigScope `json:"scope"`
 	ChatID string      `json:"chat_id,omitempty"`
-	UserID string      `json:"user_id,omitempty"`
+	OpenID string      `json:"user_id,omitempty"`
 	Key    ConfigKey   `json:"key"`
 	Value  string      `json:"value"`
 }
 
 // ListConfigs 列出指定作用域的配置
-func (m *Manager) ListConfigs(ctx context.Context, scope ConfigScope, chatID, userID string) (entries []ConfigEntry, err error) {
+func (m *Manager) ListConfigs(ctx context.Context, scope ConfigScope, chatID, openID string) (entries []ConfigEntry, err error) {
 	ctx, span := otel.StartNamed(ctx, "config.list")
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 	if scope == "" {
 		scope = ScopeChat
 	}
-	prefix := buildConfigListPrefix(scope, chatID, userID)
+	prefix := buildConfigListPrefix(scope, chatID, openID)
 	span.SetAttributes(
 		attribute.String("config.scope", string(scope)),
 		attribute.String("config.chat_id", chatID),
-		attribute.String("config.user_id", userID),
+		attribute.String("config.user_id", openID),
 		attribute.String("config.prefix.preview", otel.PreviewString(prefix, 128)),
 	)
 
@@ -564,10 +671,10 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 		}
 	case ScopeUser:
 		if len(parts) == 3 {
-			return ConfigEntry{Scope: scope, UserID: parts[1], Key: key, Value: value}, true
+			return ConfigEntry{Scope: scope, OpenID: parts[1], Key: key, Value: value}, true
 		}
 		if len(parts) == 4 {
-			return ConfigEntry{Scope: scope, ChatID: parts[1], UserID: parts[2], Key: key, Value: value}, true
+			return ConfigEntry{Scope: scope, ChatID: parts[1], OpenID: parts[2], Key: key, Value: value}, true
 		}
 	}
 	return ConfigEntry{}, false
@@ -580,35 +687,35 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // IsFeatureEnabled 检查功能是否启用
 // 优先级: chat_user > user > chat > global > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
-func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, userID string) bool {
+func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, openID string) bool {
 	ctx, span := otel.StartNamed(ctx, "config.feature_check")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("feature.name", feature),
 		attribute.Bool("feature.default_enabled", defaultEnabled),
 		attribute.String("feature.chat_id", chatID),
-		attribute.String("feature.user_id", userID),
+		attribute.String("feature.user_id", openID),
 	)
 	// 1. 检查 chat_user 级别
-	if chatID != "" && userID != "" {
-		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, userID, feature) {
+	if chatID != "" && openID != "" {
+		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, openID, feature) {
 			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeUser))))
 			logs.L().Ctx(ctx).Debug("feature blocked at chat_user level",
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
-				zap.String("user_id", userID),
+				zap.String("user_id", openID),
 			)
 			return false
 		}
 	}
 
 	// 2. 检查 user 级别
-	if userID != "" {
-		if m.isFeatureBlockedAtScope(ctx, ScopeUser, "", userID, feature) {
+	if openID != "" {
+		if m.isFeatureBlockedAtScope(ctx, ScopeUser, "", openID, feature) {
 			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", "user")))
 			logs.L().Ctx(ctx).Debug("feature blocked at user level",
 				zap.String("feature", feature),
-				zap.String("user_id", userID),
+				zap.String("user_id", openID),
 			)
 			return false
 		}
@@ -672,14 +779,14 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 
 // FeatureCheckFunc 适配 xhandler.FeatureCheckFunc 的检查函数
 func (m *Manager) FeatureCheckFunc() xhandler.FeatureCheckFunc {
-	return func(ctx context.Context, featureID string, defaultEnabled bool, chatID, userID string) bool {
-		return m.IsFeatureEnabled(ctx, featureID, defaultEnabled, chatID, userID)
+	return func(ctx context.Context, featureID string, defaultEnabled bool, chatID, openID string) bool {
+		return m.IsFeatureEnabled(ctx, featureID, defaultEnabled, chatID, openID)
 	}
 }
 
 // isFeatureBlockedAtScope 检查特定作用域是否屏蔽了功能
-func (m *Manager) isFeatureBlockedAtScope(ctx context.Context, scope ConfigScope, chatID, userID, feature string) bool {
-	key := buildFeatureBlockKey(scope, chatID, userID, feature)
+func (m *Manager) isFeatureBlockedAtScope(ctx context.Context, scope ConfigScope, chatID, openID, feature string) bool {
+	key := buildFeatureBlockKey(scope, chatID, openID, feature)
 	val, ok := m.getConfigByFullKey(ctx, key)
 	if !ok {
 		return false
@@ -689,30 +796,30 @@ func (m *Manager) isFeatureBlockedAtScope(ctx context.Context, scope ConfigScope
 }
 
 // BlockFeature 屏蔽功能
-func (m *Manager) BlockFeature(ctx context.Context, feature string, scope ConfigScope, chatID, userID, remark string) error {
+func (m *Manager) BlockFeature(ctx context.Context, feature string, scope ConfigScope, chatID, openID, remark string) error {
 	if !IsValidFeature(feature) {
 		return fmt.Errorf("invalid feature: %s", feature)
 	}
 
-	key := buildFeatureBlockKey(scope, chatID, userID, feature)
+	key := buildFeatureBlockKey(scope, chatID, openID, feature)
 	return m.setConfigByFullKey(ctx, key, "true")
 }
 
 // UnblockFeature 取消屏蔽功能
-func (m *Manager) UnblockFeature(ctx context.Context, feature string, scope ConfigScope, chatID, userID string) error {
+func (m *Manager) UnblockFeature(ctx context.Context, feature string, scope ConfigScope, chatID, openID string) error {
 	if !IsValidFeature(feature) {
 		return fmt.Errorf("invalid feature: %s", feature)
 	}
 
-	key := buildFeatureBlockKey(scope, chatID, userID, feature)
+	key := buildFeatureBlockKey(scope, chatID, openID, feature)
 	return m.deleteConfigByFullKey(ctx, key)
 }
 
 // ListBlockedFeatures 列出被屏蔽的功能
-func (m *Manager) ListBlockedFeatures(ctx context.Context, scope ConfigScope, chatID, userID string) ([]string, error) {
+func (m *Manager) ListBlockedFeatures(ctx context.Context, scope ConfigScope, chatID, openID string) ([]string, error) {
 	blocked := make([]string, 0)
 	for _, f := range m.GetAllFeatures() {
-		if !m.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, userID) {
+		if !m.IsFeatureEnabled(ctx, f.Name, f.DefaultEnabled, chatID, openID) {
 			blocked = append(blocked, f.Name)
 		}
 	}
@@ -750,23 +857,23 @@ func (m *Manager) UnblockFeatureChat(ctx context.Context, feature, chatID string
 }
 
 // BlockFeatureUser 屏蔽指定用户的功能
-func (m *Manager) BlockFeatureUser(ctx context.Context, feature, userID string, remark string) error {
-	return m.BlockFeature(ctx, feature, ScopeUser, "", userID, remark)
+func (m *Manager) BlockFeatureUser(ctx context.Context, feature, openID string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeUser, "", openID, remark)
 }
 
 // UnblockFeatureUser 取消屏蔽指定用户的功能
-func (m *Manager) UnblockFeatureUser(ctx context.Context, feature, userID string) error {
-	return m.UnblockFeature(ctx, feature, ScopeUser, "", userID)
+func (m *Manager) UnblockFeatureUser(ctx context.Context, feature, openID string) error {
+	return m.UnblockFeature(ctx, feature, ScopeUser, "", openID)
 }
 
 // BlockFeatureChatUser 在指定聊天中屏蔽指定用户的功能
-func (m *Manager) BlockFeatureChatUser(ctx context.Context, feature, chatID, userID string, remark string) error {
-	return m.BlockFeature(ctx, feature, ScopeUser, chatID, userID, remark)
+func (m *Manager) BlockFeatureChatUser(ctx context.Context, feature, chatID, openID string, remark string) error {
+	return m.BlockFeature(ctx, feature, ScopeUser, chatID, openID, remark)
 }
 
 // UnblockFeatureChatUser 取消在指定聊天中屏蔽指定用户的功能
-func (m *Manager) UnblockFeatureChatUser(ctx context.Context, feature, chatID, userID string) error {
-	return m.UnblockFeature(ctx, feature, ScopeUser, chatID, userID)
+func (m *Manager) UnblockFeatureChatUser(ctx context.Context, feature, chatID, openID string) error {
+	return m.UnblockFeature(ctx, feature, ScopeUser, chatID, openID)
 }
 
 // ClearCache 清除缓存

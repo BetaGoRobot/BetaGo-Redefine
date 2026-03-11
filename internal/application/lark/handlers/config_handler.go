@@ -154,8 +154,8 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	defer func() { otel.RecordError(span, err) }()
 
 	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, arg.Scope, chatID, userID, config.ConfigCardViewOptions{
+	openID := currentOpenID(data, metaData)
+	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, arg.Scope, chatID, openID, config.ConfigCardViewOptions{
 		BypassCache: true,
 	})
 	if err != nil {
@@ -176,8 +176,8 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 		Value:       arg.Value,
 		Scope:       arg.Scope,
 		ChatID:      currentChatID(data, metaData),
-		UserID:      currentUserID(data, metaData),
-		ActorUserID: currentUserID(data, metaData),
+		OpenID:      currentOpenID(data, metaData),
+		ActorOpenID: currentOpenID(data, metaData),
 	}
 	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {
@@ -246,8 +246,8 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 		Key:         arg.Key,
 		Scope:       arg.Scope,
 		ChatID:      currentChatID(data, metaData),
-		UserID:      currentUserID(data, metaData),
-		ActorUserID: currentUserID(data, metaData),
+		OpenID:      currentOpenID(data, metaData),
+		ActorOpenID: currentOpenID(data, metaData),
 	}
 	resp, err := config.HandleConfigAction(ctx, req)
 	if err != nil {
@@ -289,8 +289,8 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer func() { otel.RecordError(span, err) }()
 
 	chatID := currentChatID(data, metaData)
-	userID := currentUserID(data, metaData)
-	rawCard, err := config.BuildFeatureCard(ctx, chatID, userID)
+	openID := currentOpenID(data, metaData)
+	rawCard, err := config.BuildFeatureCard(ctx, chatID, openID)
 	if err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentUserID(data, metaData), true)
+	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentOpenID(data, metaData), true)
 	if reqErr != nil {
 		return reqErr
 	}
@@ -419,7 +419,7 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentUserID(data, metaData), false)
+	req, reqErr := buildFeatureActionRequest(arg.Scope, arg.Feature, currentChatID(data, metaData), currentOpenID(data, metaData), false)
 	if reqErr != nil {
 		return reqErr
 	}
@@ -433,16 +433,16 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureUnblock", false)
 }
 
-func buildFeatureActionRequest(scopeStr, feature, chatID, userID string, block bool) (*config.FeatureActionRequest, error) {
+func buildFeatureActionRequest(scopeStr, feature, chatID, openID string, block bool) (*config.FeatureActionRequest, error) {
 	req := &config.FeatureActionRequest{
 		Feature: feature,
 		ChatID:  chatID,
-		UserID:  userID,
+		OpenID:  openID,
 	}
 
 	switch scopeStr {
 	case "chat":
-		req.UserID = ""
+		req.OpenID = ""
 		if block {
 			req.Action = config.FeatureActionBlockChat
 		} else {

@@ -3,6 +3,7 @@ package reaction
 import (
 	"context"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -21,8 +22,15 @@ func NewReactionProcessor() *xhandler.Processor[larkim.P2MessageReactionCreatedV
 		OnPanic(func(ctx context.Context, err error, event *larkim.P2MessageReactionCreatedV1, metaData *xhandler.BaseMetaData) {
 			larkmsg.SendRecoveredMsg(ctx, err, *event.Event.MessageId)
 		}).
+		WithMetaDataProcess(metaInit).
 		AddAsync(&FollowReactionOperator{}).
 		AddAsync(&RecordReactionOperator{})
+}
+
+func metaInit(event *larkim.P2MessageReactionCreatedV1) *xhandler.BaseMetaData {
+	return &xhandler.BaseMetaData{
+		OpenID: botidentity.ReactionOpenID(event),
+	}
 }
 
 func init() {

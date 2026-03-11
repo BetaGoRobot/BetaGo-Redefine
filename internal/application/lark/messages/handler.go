@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
@@ -30,7 +31,7 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[lark
 		}).
 		WithMetaDataProcess(metaInit).
 		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
-			go func() { utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId) }()
+			utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId)
 		}).
 		WithDefer(recording.CollectMessage).
 		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
@@ -76,16 +77,10 @@ func init() {
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
-	userID := ""
-	if event.Event.Sender.SenderId.OpenId != nil {
-		userID = *event.Event.Sender.SenderId.OpenId
-	} else if event.Event.Sender.SenderId.UserId != nil {
-		userID = *event.Event.Sender.SenderId.UserId
-	}
-
-	return &xhandler.BaseMetaData{
+	meta := &xhandler.BaseMetaData{
 		ChatID: *event.Event.Message.ChatId,
 		IsP2P:  *event.Event.Message.ChatType == "p2p",
-		UserID: userID,
+		OpenID: botidentity.MessageSenderOpenID(event),
 	}
+	return meta
 }

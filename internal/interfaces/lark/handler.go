@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
@@ -46,6 +46,9 @@ type HandlerSet struct {
 var (
 	defaultHandlersMu sync.RWMutex
 	defaultHandlers   = NewHandlerSet(HandlerSetOptions{})
+
+	buildCardActionMetaData = xhandler.NewBaseMetaDataWithChatIDOpenID
+	recordCardAction        = larkmsg.RecordCardAction2Opensearch
 )
 
 // HandlerSetOptions 允许测试代码和运行时装配代码注入实际要使用的
@@ -153,7 +156,7 @@ func (h *HandlerSet) submitReactionProcessor(ctx context.Context, msgID string, 
 // MessageV2Handler 是聊天消息进入系统后的主 websocket 入口。
 // 它只做传输层边界检查，真正的重活交给挂了执行器的 processor 流水线。
 func (h *HandlerSet) MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) (err error) {
-	ctx, span := otel.StartNamed(ctx, "lark.message.handle")
+	ctx, span := otel.StartEntry(ctx, "lark.message.handle")
 	defer larkmsg.RecoverMsg(ctx, *event.Event.Message.MessageId)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
@@ -163,13 +166,14 @@ func (h *HandlerSet) MessageV2Handler(ctx context.Context, event *larkim.P2Messa
 		attribute.String("chat.type", utils.AddrOrNil(event.Event.Message.ChatType)),
 		attribute.String("sender.open_id", utils.AddrOrNil(event.Event.Sender.SenderId.OpenId)),
 	)
+	senderOpenID := botidentity.MessageSenderOpenID(event)
 
 	if isOutDated(*event.Event.Message.CreateTime) {
 		span.AddEvent("message.skipped", trace.WithAttributes(attribute.String("reason", "outdated")))
 		return nil
 	}
 	// 忽略机器人自己发出的消息，避免形成回声循环。
-	if *event.Event.Sender.SenderId.OpenId == config.Get().LarkConfig.BotOpenID {
+	if current := botidentity.Current(); senderOpenID != "" && current.BotOpenID != "" && senderOpenID == current.BotOpenID {
 		span.AddEvent("message.skipped", trace.WithAttributes(attribute.String("reason", "self_message")))
 		return nil
 	}
@@ -185,7 +189,7 @@ func (h *HandlerSet) MessageV2Handler(ctx context.Context, event *larkim.P2Messa
 
 // MessageReactionHandler 通过受控 reaction 执行器处理表情 / reaction 事件。
 func (h *HandlerSet) MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) (err error) {
-	ctx, span := otel.StartNamed(ctx, "lark.reaction.handle")
+	ctx, span := otel.StartEntry(ctx, "lark.reaction.handle")
 	defer larkmsg.RecoverMsg(ctx, *event.Event.MessageId)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
@@ -206,7 +210,7 @@ func (h *HandlerSet) MessageReactionHandler(ctx context.Context, event *larkim.P
 // 载荷。审计写入仍然是 best-effort 异步，这也是当前执行器模型之外的
 // 一个已知例外。
 func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback.CardActionTriggerEvent) (resp *callback.CardActionTriggerResponse, err error) {
-	ctx, span := otel.StartNamed(ctx, "lark.card_action.handle")
+	ctx, span := otel.StartEntry(ctx, "lark.card_action.handle")
 	defer larkmsg.RecoverMsg(ctx, cardAction.Event.Context.OpenMessageID)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
@@ -215,9 +219,9 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 		attribute.String("chat.id", cardAction.Event.Context.OpenChatID),
 		attribute.String("operator.open_id", cardAction.Event.Operator.OpenID),
 	)
-	metaData := xhandler.NewBaseMetaDataWithChatIDUID(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
+	metaData := buildCardActionMetaData(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
 	// 记录一下操作记录
-	defer func() { go larkmsg.RecordCardAction2Opensearch(ctx, cardAction) }()
+	defer func() { go recordCardAction(ctx, cardAction) }()
 	appcardaction.RegisterBuiltins()
 	resp, dispatchErr := appcardaction.Dispatch(ctx, cardAction, metaData)
 	if dispatchErr != nil {

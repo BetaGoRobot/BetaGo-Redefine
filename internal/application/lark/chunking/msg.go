@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcontent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -38,8 +38,9 @@ func (m *LarkMessageEvent) TimeStamp() (res int64) {
 	return t
 }
 
-func (m *LarkMessageEvent) BuildLine() (line string) {
+func (m *LarkMessageEvent) BuildLine() (line string, ok bool) {
 	mentions := m.Event.Message.Mentions
+	currentBot := botidentity.Current()
 
 	tmpList := make([]string, 0)
 	for msgItem := range larkcontent.
@@ -60,7 +61,7 @@ func (m *LarkMessageEvent) BuildLine() (line string) {
 			if len(mentions) > 0 {
 				for _, mention := range mentions {
 					if mention.Key != nil {
-						if mention.Id != nil && *mention.Id.OpenId == config.Get().LarkConfig.BotOpenID {
+						if mention.Id != nil && mention.Id.OpenId != nil && currentBot.BotOpenID != "" && *mention.Id.OpenId == currentBot.BotOpenID {
 							*mention.Name = "你"
 						}
 						msgItem.Content = strings.ReplaceAll(msgItem.Content, *mention.Key, fmt.Sprintf("@%s", *mention.Name))
@@ -75,11 +76,16 @@ func (m *LarkMessageEvent) BuildLine() (line string) {
 			}
 		}
 	}
+	if len(tmpList) == 0 {
+		// TODO: 对于卡片类型这种解析不了的，返回卡片标识。
+		return "", false
+	}
+	senderOpenID := botidentity.MessageSenderOpenID(m.P2MessageReceiveV1)
 	userName := ""
-	if *m.Event.Sender.SenderId.OpenId == config.Get().LarkConfig.BotOpenID {
+	if senderOpenID != "" && currentBot.BotOpenID != "" && senderOpenID == currentBot.BotOpenID {
 		userName = "机器人"
-	} else {
-		userInfo, err := larkuser.GetUserInfoCache(context.Background(), *m.Event.Message.ChatId, *m.Event.Sender.SenderId.OpenId)
+	} else if senderOpenID != "" {
+		userInfo, err := larkuser.GetUserInfoCache(context.Background(), *m.Event.Message.ChatId, senderOpenID)
 		if err != nil {
 			logs.L().Ctx(context.Background()).Error("got error openID", zap.Error(err))
 		}
@@ -88,8 +94,10 @@ func (m *LarkMessageEvent) BuildLine() (line string) {
 		} else {
 			userName = *userInfo.Name
 		}
+	} else {
+		userName = "NULL"
 	}
 
 	createTime := time.UnixMilli(m.TimeStamp()).In(utils.UTC8Loc()).Format(time.DateTime)
-	return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *m.Event.Sender.SenderId.OpenId, userName, strings.Join(tmpList, ";"))
+	return fmt.Sprintf("[%s](%s) <%s>: %s", createTime, senderOpenID, userName, strings.Join(tmpList, ";")), true
 }

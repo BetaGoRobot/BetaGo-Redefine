@@ -3,11 +3,14 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -33,6 +36,22 @@ type listSchedulesArgs struct {
 	Limit int `json:"limit"`
 }
 
+type TaskQuery struct {
+	Name     string
+	Status   string
+	Type     string
+	ToolName string
+}
+
+type queryScheduleArgs struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Type     string `json:"type"`
+	ToolName string `json:"tool_name"`
+	Limit    int    `json:"limit"`
+}
+
 type deleteScheduleArgs struct {
 	ID string `json:"id"`
 }
@@ -48,6 +67,7 @@ type resumeScheduleArgs struct {
 type (
 	createScheduleHandler struct{}
 	listSchedulesHandler  struct{}
+	queryScheduleHandler  struct{}
 	deleteScheduleHandler struct{}
 	pauseScheduleHandler  struct{}
 	resumeScheduleHandler struct{}
@@ -56,6 +76,7 @@ type (
 var (
 	CreateSchedule createScheduleHandler
 	ListSchedules  listSchedulesHandler
+	QuerySchedule  queryScheduleHandler
 	DeleteSchedule deleteScheduleHandler
 	PauseSchedule  pauseScheduleHandler
 	ResumeSchedule resumeScheduleHandler
@@ -64,6 +85,7 @@ var (
 func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	xcommand.RegisterTool(ins, CreateSchedule)
 	xcommand.RegisterTool(ins, ListSchedules)
+	xcommand.RegisterTool(ins, QuerySchedule)
 	xcommand.RegisterTool(ins, DeleteSchedule)
 	xcommand.RegisterTool(ins, PauseSchedule)
 	xcommand.RegisterTool(ins, ResumeSchedule)
@@ -125,18 +147,19 @@ func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	}
 
 	task, err := GetService().CreateTask(ctx, &CreateTaskRequest{
-		ChatID:        metaData.ChatID,
-		CreatorID:     metaData.UserID,
-		Name:          args.Name,
-		Type:          args.Type,
-		RunAt:         runAt,
-		CronExpr:      strings.TrimSpace(args.CronExpr),
-		Timezone:      strings.TrimSpace(args.Timezone),
-		Message:       args.Message,
-		ToolName:      strings.TrimSpace(args.ToolName),
-		ToolArgs:      string(args.ToolArgs),
-		NotifyOnError: args.NotifyOnError,
-		NotifyResult:  args.NotifyResult,
+		ChatID:          metaData.ChatID,
+		CreatorID:       metaData.OpenID,
+		SourceMessageID: scheduleSourceMessageID(data),
+		Name:            args.Name,
+		Type:            args.Type,
+		RunAt:           runAt,
+		CronExpr:        strings.TrimSpace(args.CronExpr),
+		Timezone:        strings.TrimSpace(args.Timezone),
+		Message:         args.Message,
+		ToolName:        strings.TrimSpace(args.ToolName),
+		ToolArgs:        string(args.ToolArgs),
+		NotifyOnError:   args.NotifyOnError,
+		NotifyResult:    args.NotifyResult,
 	})
 	if err != nil {
 		return err
@@ -152,6 +175,9 @@ func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		result += fmt.Sprintf("\n执行时间: %s", task.RunAt.Format("2006-01-02 15:04:05 MST"))
 	} else {
 		result += fmt.Sprintf("\nCron: `%s`\n下次执行: %s", task.CronExpr, task.NextRunAt.Format("2006-01-02 15:04:05 MST"))
+	}
+	if task.SourceMessageID != "" {
+		result += fmt.Sprintf("\n来源消息: `%s`", task.SourceMessageID)
 	}
 	metaData.SetExtra(scheduleToolResultKey, result)
 	return nil
@@ -178,14 +204,87 @@ func (listSchedulesHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (listSchedulesHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listSchedulesArgs) error {
+	view := NewTaskListCardView(args.Limit)
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
 		ChatID: metaData.ChatID,
-		Limit:  args.Limit,
+		Limit:  view.Limit,
 	})
 	if err != nil {
 		return err
 	}
+	if err := sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 列表", tasks, view), "_scheduleList"); err != nil {
+		return err
+	}
 	metaData.SetExtra(scheduleToolResultKey, FormatTaskList(tasks))
+	return nil
+}
+
+func (queryScheduleHandler) ParseTool(raw string) (queryScheduleArgs, error) {
+	parsed := queryScheduleArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return queryScheduleArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
+	return scheduleResultSpec(
+		"query_schedule",
+		"按 ID、名称、状态、类型或工具名查询当前群聊的 schedule；适合先精确定位，再决定暂停、恢复或删除",
+		tools.NewParams("object").
+			AddProp("id", &tools.Prop{Type: "string", Desc: "要精确查询的 schedule ID"}).
+			AddProp("name", &tools.Prop{Type: "string", Desc: "按名称模糊匹配"}).
+			AddProp("status", &tools.Prop{Type: "string", Desc: "按状态过滤：enabled、paused、completed、disabled"}).
+			AddProp("type", &tools.Prop{Type: "string", Desc: "按类型过滤：once 或 cron"}).
+			AddProp("tool_name", &tools.Prop{Type: "string", Desc: "按执行工具名过滤，例如 send_message"}).
+			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制；未传时默认 100"}),
+	)
+}
+
+func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args queryScheduleArgs) error {
+	if scheduleID := strings.TrimSpace(args.ID); scheduleID != "" {
+		view := NewTaskQueryCardView(scheduleID, TaskQuery{}, args.Limit)
+		task, err := GetService().GetTask(ctx, scheduleID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(task.ChatID) != strings.TrimSpace(metaData.ChatID) {
+			metaData.SetExtra(scheduleToolResultKey, "未找到匹配的 schedule ⏲️")
+			return sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", nil, view), "_scheduleQuery")
+		}
+		if err := sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", []*model.ScheduledTask{task}, view), "_scheduleQuery"); err != nil {
+			return err
+		}
+		metaData.SetExtra(scheduleToolResultKey, FormatTaskList([]*model.ScheduledTask{task}))
+		return nil
+	}
+
+	view := NewTaskQueryCardView("", TaskQuery{
+		Name:     args.Name,
+		Status:   args.Status,
+		Type:     args.Type,
+		ToolName: args.ToolName,
+	}, args.Limit)
+	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
+		ChatID: metaData.ChatID,
+		Limit:  view.Limit,
+	})
+	if err != nil {
+		return err
+	}
+
+	filtered := FilterTasks(tasks, view.Query())
+	if len(filtered) == 0 {
+		metaData.SetExtra(scheduleToolResultKey, "未找到匹配的 schedule ⏲️")
+		return sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", nil, view), "_scheduleQuery")
+	}
+	if err := sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", filtered, view), "_scheduleQuery"); err != nil {
+		return err
+	}
+	metaData.SetExtra(scheduleToolResultKey, FormatTaskList(filtered))
 	return nil
 }
 
@@ -208,6 +307,9 @@ func (deleteScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (deleteScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteScheduleArgs) error {
+	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+		return err
+	}
 	if err := GetService().DeleteTask(ctx, args.ID); err != nil {
 		return err
 	}
@@ -234,6 +336,9 @@ func (pauseScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (pauseScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args pauseScheduleArgs) error {
+	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+		return err
+	}
 	if err := GetService().PauseTask(ctx, args.ID); err != nil {
 		return err
 	}
@@ -260,6 +365,9 @@ func (resumeScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (resumeScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args resumeScheduleArgs) error {
+	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+		return err
+	}
 	task, err := GetService().ResumeTask(ctx, args.ID)
 	if err != nil {
 		return err
@@ -301,4 +409,78 @@ func parseScheduleTime(s, timezone string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("无法解析 schedule 时间: %s", s)
+}
+
+func ParseScheduleTime(s, timezone string) (time.Time, error) {
+	return parseScheduleTime(s, timezone)
+}
+
+func FilterTasks(tasks []*model.ScheduledTask, query TaskQuery) []*model.ScheduledTask {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	nameQuery := strings.ToLower(strings.TrimSpace(query.Name))
+	statusQuery := strings.ToLower(strings.TrimSpace(query.Status))
+	typeQuery := strings.ToLower(strings.TrimSpace(query.Type))
+	toolNameQuery := strings.ToLower(strings.TrimSpace(query.ToolName))
+
+	filtered := make([]*model.ScheduledTask, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if nameQuery != "" && !strings.Contains(strings.ToLower(task.Name), nameQuery) {
+			continue
+		}
+		if statusQuery != "" && strings.ToLower(task.Status) != statusQuery {
+			continue
+		}
+		if typeQuery != "" && strings.ToLower(task.Type) != typeQuery {
+			continue
+		}
+		if toolNameQuery != "" && strings.ToLower(task.ToolName) != toolNameQuery {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered
+}
+
+func sendScheduleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, card larkmsg.RawCard, suffix string) error {
+	content, err := card.JSON()
+	if err != nil {
+		return err
+	}
+
+	if data != nil && data.Event.Message.MessageId != nil {
+		msgID := strings.TrimSpace(*data.Event.Message.MessageId)
+		if msgID != "" {
+			if metaData != nil && metaData.Refresh {
+				return larkmsg.PatchRawCard(ctx, msgID, content)
+			}
+			return larkmsg.ReplyRawCard(ctx, msgID, content, suffix, false)
+		}
+	}
+
+	chatID := ""
+	if data != nil && data.Event.Message.ChatId != nil {
+		chatID = strings.TrimSpace(*data.Event.Message.ChatId)
+	}
+	if chatID == "" && metaData != nil {
+		chatID = strings.TrimSpace(metaData.ChatID)
+	}
+	if chatID == "" {
+		return errors.New("chat_id is required")
+	}
+
+	msgID := fmt.Sprintf("schedule-tool-card-%d", time.Now().UnixNano())
+	return larkmsg.CreateRawCard(ctx, chatID, content, msgID, suffix)
+}
+
+func scheduleSourceMessageID(data *larkim.P2MessageReceiveV1) string {
+	if data == nil || data.Event == nil || data.Event.Message == nil || data.Event.Message.MessageId == nil {
+		return ""
+	}
+	return strings.TrimSpace(*data.Event.Message.MessageId)
 }

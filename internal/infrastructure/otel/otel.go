@@ -9,6 +9,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/go_utils/reflecting"
+	"github.com/rivo/uniseg"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -63,6 +64,20 @@ func StartNamed(ctx context.Context, name string, opts ...trace.SpanStartOption)
 	return T().Start(ctx, name, opts...)
 }
 
+func StartEntry(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	entryOpts := make([]trace.SpanStartOption, 0, len(opts)+1)
+	entryOpts = append(entryOpts, trace.WithNewRoot())
+	entryOpts = append(entryOpts, opts...)
+	return StartNamed(ctx, name, entryOpts...)
+}
+
+func DetachSpan(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+}
+
 func RecordError(span trace.Span, err error) {
 	if span == nil || err == nil {
 		return
@@ -80,18 +95,17 @@ func RecordErrorPtr(span trace.Span, err *error) {
 	RecordError(span, *err)
 }
 
-func PreviewString(value string, limit int) string {
-	if limit <= 0 {
-		return ""
+func PreviewString(s string, maxLen int) string {
+	gr := uniseg.NewGraphemes(s)
+	var byteIdx int
+	for i := 0; i < maxLen && gr.Next(); i++ {
+		_, byteEnd := gr.Positions()
+		byteIdx = byteEnd
 	}
-	value = strings.TrimSpace(value)
-	if len(value) <= limit {
-		return value
-	}
-	if limit <= 3 {
-		return value[:limit]
-	}
-	return value[:limit-3] + "..."
+	if byteIdx == 0 && maxLen > 0 {
+		return s
+	} // 处理未达到长度的情况
+	return s[:byteIdx] + "..."
 }
 
 func PreviewAttrs(key, value string, limit int) []attribute.KeyValue {

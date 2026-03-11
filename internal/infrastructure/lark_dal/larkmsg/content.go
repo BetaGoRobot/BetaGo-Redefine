@@ -15,8 +15,8 @@ import (
 
 var atMsgRepattern = regexp2.MustCompile(`@[^ ]+\s+(?P<content>.+)`, regexp2.RE2)
 
-func AtUser(userID, userName string) string {
-	return fmt.Sprintf("<at user_id=\"%s\">%s</at>", userID, userName)
+func AtUser(openID, userName string) string {
+	return fmt.Sprintf("<at user_id=\"%s\">%s</at>", openID, userName)
 }
 
 // TrimAtMsg trim掉at的消息
@@ -54,9 +54,9 @@ func (t *TextBuilder) Text(text string) *TextBuilder {
 	return t
 }
 
-func (t *TextBuilder) AtUser(userId, name string) *TextBuilder {
+func (t *TextBuilder) AtUser(openID, name string) *TextBuilder {
 	t.builder.WriteString("<at user_id=\"")
-	t.builder.WriteString(userId)
+	t.builder.WriteString(openID)
 	t.builder.WriteString("\">")
 	t.builder.WriteString(name)
 	t.builder.WriteString("</at>")
