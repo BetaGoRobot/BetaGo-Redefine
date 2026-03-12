@@ -14,11 +14,6 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-const (
-	yiyanURL     = "https://api.fanlisky.cn/niuren/getSen"
-	yiyanPoemURL = "https://v1.jinrishici.com/all.json"
-)
-
 // RespBody  一言返回体
 type RespBody struct {
 	ID         int         `json:"id"`
@@ -36,7 +31,7 @@ type RespBody struct {
 }
 
 type OneWordArgs struct {
-	Type string `json:"type"`
+	Type OneWordType `json:"type"`
 }
 
 type oneWordHandler struct{}
@@ -45,7 +40,11 @@ var OneWord oneWordHandler
 
 func (oneWordHandler) ParseCLI(args []string) (OneWordArgs, error) {
 	argMap, _ := parseArgs(args...)
-	return OneWordArgs{Type: argMap["type"]}, nil
+	oneWordType, err := xcommand.ParseEnum[OneWordType](argMap["type"])
+	if err != nil {
+		return OneWordArgs{}, err
+	}
+	return OneWordArgs{Type: oneWordType}, nil
 }
 
 func (oneWordHandler) ParseTool(raw string) (OneWordArgs, error) {
@@ -53,6 +52,11 @@ func (oneWordHandler) ParseTool(raw string) (OneWordArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return OneWordArgs{}, err
 	}
+	oneWordType, err := xcommand.ParseEnum[OneWordType](string(parsed.Type))
+	if err != nil {
+		return OneWordArgs{}, err
+	}
+	parsed.Type = oneWordType
 	return parsed, nil
 }
 
@@ -63,7 +67,7 @@ func (oneWordHandler) ToolSpec() xcommand.ToolSpec {
 		Params: arktools.NewParams("object").
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "一言类型，可选值：二次元、游戏、文学、原创、网络、其他、影视、诗词、网易云、哲学、抖机灵",
+				Desc: "一言分类",
 			}),
 	}
 }
@@ -76,27 +80,27 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	oneWordArgs := []string{}
 
 	switch arg.Type {
-	case "二次元":
+	case OneWordTypeAnime:
 		oneWordArgs = append(oneWordArgs, []string{"a", "b"}...)
-	case "游戏":
+	case OneWordTypeGame:
 		oneWordArgs = append(oneWordArgs, "c")
-	case "文学":
+	case OneWordTypeLiterary:
 		oneWordArgs = append(oneWordArgs, "d")
-	case "原创":
+	case OneWordTypeOriginal:
 		oneWordArgs = append(oneWordArgs, "e")
-	case "网络":
+	case OneWordTypeNetwork:
 		oneWordArgs = append(oneWordArgs, "f")
-	case "其他":
+	case OneWordTypeOther:
 		oneWordArgs = append(oneWordArgs, "g")
-	case "影视":
+	case OneWordTypeFilm:
 		oneWordArgs = append(oneWordArgs, "h")
-	case "诗词":
+	case OneWordTypePoetry:
 		oneWordArgs = append(oneWordArgs, "i")
-	case "网易云":
+	case OneWordTypeNetease:
 		oneWordArgs = append(oneWordArgs, "j")
-	case "哲学":
+	case OneWordTypePhilo:
 		oneWordArgs = append(oneWordArgs, "k")
-	case "抖机灵":
+	case OneWordTypeJoke:
 		oneWordArgs = append(oneWordArgs, "l")
 	}
 

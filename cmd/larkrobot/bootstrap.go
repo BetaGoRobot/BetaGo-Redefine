@@ -216,7 +216,6 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		Start: func(context.Context) error {
 			recording.SetBackgroundSubmitter(components.recordingExecutor)
 			larkchunking.SetExecutor(components.chunkExecutor)
-			larkiface.SetDefaultHandlerSet(components.handlerSet)
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
 			return nil

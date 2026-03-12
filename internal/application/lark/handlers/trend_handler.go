@@ -26,11 +26,11 @@ import (
 )
 
 type TrendArgs struct {
-	Days      int    `json:"days"`
-	Interval  string `json:"interval"`
-	ChartType string `json:"chart_type" cli:"play"`
-	StartTime string `json:"start_time" cli:"st"`
-	EndTime   string `json:"end_time" cli:"et"`
+	Days      int            `json:"days"`
+	Interval  string         `json:"interval"`
+	ChartType TrendChartType `json:"chart_type" cli:"play"`
+	StartTime string         `json:"start_time" cli:"st"`
+	EndTime   string         `json:"end_time" cli:"et"`
 }
 
 type trendHandler struct{}
@@ -39,15 +39,16 @@ var Trend trendHandler
 
 func (trendHandler) ParseCLI(args []string) (TrendArgs, error) {
 	argMap, _ := parseArgs(args...)
+	chartType, err := xcommand.ParseEnum[TrendChartType](argMap["play"])
+	if err != nil {
+		return TrendArgs{}, err
+	}
 	parsed := TrendArgs{
 		Days:      7,
 		Interval:  "1d",
-		ChartType: argMap["play"],
+		ChartType: chartType,
 		StartTime: argMap["st"],
 		EndTime:   argMap["et"],
-	}
-	if parsed.ChartType == "" {
-		parsed.ChartType = "line"
 	}
 	if inputInterval := argMap["interval"]; inputInterval != "" {
 		parsed.Interval = inputInterval
@@ -77,11 +78,11 @@ func (trendHandler) ParseTool(raw string) (TrendArgs, error) {
 	if parsed.Interval == "" {
 		parsed.Interval = "1d"
 	}
-	switch parsed.ChartType {
-	case "", "line", "pie", "bar":
-	default:
-		parsed.ChartType = "line"
+	chartType, err := xcommand.ParseEnum[TrendChartType](string(parsed.ChartType))
+	if err != nil {
+		return TrendArgs{}, err
 	}
+	parsed.ChartType = chartType
 	if parsed.StartTime != "" && parsed.EndTime != "" {
 		parsed.StartTime = normalizeRFC3339(parsed.StartTime)
 		parsed.EndTime = normalizeRFC3339(parsed.EndTime)
@@ -104,7 +105,7 @@ func (trendHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("chart_type", &arktools.Prop{
 				Type: "string",
-				Desc: "图表类型，可选值：line、pie、bar，默认 line",
+				Desc: "图表类型",
 			}).
 			AddProp("start_time", &arktools.Prop{
 				Type: "string",
@@ -153,9 +154,9 @@ func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1,
 	}
 
 	switch arg.ChartType {
-	case "bar":
+	case TrendChartTypeBar:
 		err = helper.DrawTrendBar(ctx, trend, !metaData.Refresh)
-	case "pie":
+	case TrendChartTypePie:
 		err = helper.DrawTrendPie(ctx, trend, !metaData.Refresh)
 	default:
 		graph := vadvisor.NewMultiSeriesLineGraph[string, int64](ctx)

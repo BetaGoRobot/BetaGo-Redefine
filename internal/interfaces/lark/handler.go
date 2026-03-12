@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
@@ -44,9 +43,6 @@ type HandlerSet struct {
 }
 
 var (
-	defaultHandlersMu sync.RWMutex
-	defaultHandlers   = NewHandlerSet(HandlerSetOptions{})
-
 	buildCardActionMetaData = xhandler.NewBaseMetaDataWithChatIDOpenID
 	recordCardAction        = larkmsg.RecordCardAction2Opensearch
 )
@@ -76,24 +72,6 @@ func NewHandlerSet(options HandlerSetOptions) *HandlerSet {
 		handlerSet.reactionProcessor = options.ReactionProcessor
 	}
 	return handlerSet
-}
-
-// SetDefaultHandlerSet 替换下面这些包级转发函数实际使用的 handler facade。
-// 运行时装配根会在启动阶段调用它。
-func SetDefaultHandlerSet(handlerSet *HandlerSet) {
-	if handlerSet == nil {
-		return
-	}
-	defaultHandlersMu.Lock()
-	defer defaultHandlersMu.Unlock()
-	defaultHandlers = handlerSet
-}
-
-// getDefaultHandlerSet 返回旧 dispatcher 接线仍在使用的全局 facade。
-func getDefaultHandlerSet() *HandlerSet {
-	defaultHandlersMu.RLock()
-	defer defaultHandlersMu.RUnlock()
-	return defaultHandlers
 }
 
 // isOutDated 用来过滤明显过期的事件。这类事件常见于重连或重复投递后。
@@ -234,24 +212,4 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 // AuditV6Handler 目前只是一个占位实现，用来满足 dispatcher 接线。
 func (h *HandlerSet) AuditV6Handler(ctx context.Context, event *larkapplication.P2ApplicationAppVersionAuditV6) (err error) {
 	return
-}
-
-// MessageV2Handler 转发到运行时当前配置好的默认 handler set。
-func MessageV2Handler(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
-	return getDefaultHandlerSet().MessageV2Handler(ctx, event)
-}
-
-// MessageReactionHandler 转发到运行时当前配置好的默认 handler set。
-func MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) error {
-	return getDefaultHandlerSet().MessageReactionHandler(ctx, event)
-}
-
-// CardActionHandler 转发到运行时当前配置好的默认 handler set。
-func CardActionHandler(ctx context.Context, cardAction *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
-	return getDefaultHandlerSet().CardActionHandler(ctx, cardAction)
-}
-
-// AuditV6Handler 转发到运行时当前配置好的默认 handler set。
-func AuditV6Handler(ctx context.Context, event *larkapplication.P2ApplicationAppVersionAuditV6) error {
-	return getDefaultHandlerSet().AuditV6Handler(ctx, event)
 }

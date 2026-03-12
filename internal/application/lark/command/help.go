@@ -5,8 +5,7 @@ import (
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
+	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -48,16 +47,25 @@ func (helpHandler) ParseCLI(args []string) (HelpArgs, error) {
 
 func (h helpHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg HelpArgs) error {
 	_ = metaData
-	return larkmsg.ReplyCard(ctx, buildHelpCard(ctx, h.root, arg.Command), *data.Event.Message.MessageId, "_help", true)
+	return larkmsg.ReplyCardJSON(ctx, *data.Event.Message.MessageId, buildHelpCard(ctx, h.root, arg.Command), "_help", false)
 }
 
-func buildHelpCard(ctx context.Context, root *xcommand.Command[*larkim.P2MessageReceiveV1], rawPath string) *larktpl.TemplateCardContent {
+func buildHelpCard(ctx context.Context, root *xcommand.Command[*larkim.P2MessageReceiveV1], rawPath string) larkmsg.RawCard {
+	_ = ctx
 	view := buildHelpView(root, rawPath)
-	return larkcard.NewCardBuildHelper().
-		SetTitle(view.Title).
-		SetSubTitle(view.Subtitle).
-		SetContent(view.Content).
-		Build(ctx)
+	elements := []any{}
+	if view.Subtitle != "" {
+		elements = append(elements, larkmsg.HintMarkdown(view.Subtitle))
+	}
+	elements = append(elements, larkmsg.Markdown("```text\n"+view.Content+"\n```"))
+	if action := buildHelpActionButton(root, rawPath); action != nil {
+		elements = append(elements, larkmsg.Divider(), larkmsg.ButtonRow("none", action))
+	}
+	title := view.Title
+	if title == "" {
+		title = "命令帮助"
+	}
+	return larkmsg.NewCardV2(title, elements, larkmsg.StandardPanelCardV2Options())
 }
 
 func buildHelpText(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawPath string) string {
@@ -220,4 +228,33 @@ func renderHelpNotFound(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawP
 		Subtitle: "未找到命令: /" + path,
 		Content:  rootView.Content,
 	}
+}
+
+func buildHelpActionButton(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawPath string) map[string]any {
+	target := lookupHelpTarget(root, rawPath)
+	if target == nil || target.Func == nil {
+		return nil
+	}
+	rawPath = strings.TrimSpace(strings.TrimPrefix(rawPath, "/"))
+	commandText := target.Path()
+	if rawPath != "" {
+		commandText = "/" + rawPath
+	}
+	commandText = strings.TrimSpace(commandText)
+	if commandText == "" || !CanBuildCommandForm(root, commandText) {
+		return nil
+	}
+
+	label := "直接执行"
+	if len(target.GetArgSpecs()) != 0 {
+		label = "填写参数并执行"
+	}
+	return larkmsg.Button(label, larkmsg.ButtonOptions{
+		Type: "primary",
+		Payload: larkmsg.StringMapToAnyMap(
+			cardaction.New(cardaction.ActionCommandOpenForm).
+				WithCommand(commandText).
+				Payload(),
+		),
+	})
 }

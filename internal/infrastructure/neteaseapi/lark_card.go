@@ -3,6 +3,7 @@ package neteaseapi
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -15,20 +16,41 @@ import (
 	"go.uber.org/zap"
 )
 
-type musicItemTransFunc[T any] func(*T) *SearchMusicItem
+type musicItemTransFunc[T any] func(context.Context, *T) *SearchMusicItem
 
-func MusicItemNoTrans(item *SearchMusicItem) *SearchMusicItem {
+func MusicItemNoTrans(_ context.Context, item *SearchMusicItem) *SearchMusicItem {
 	return item
 }
 
-func MusicItemTransAlbum(album *Album) *SearchMusicItem {
-	return &SearchMusicItem{
-		ID:         album.IDStr,
-		Name:       "[" + album.Type + "] " + album.Name,
-		PicURL:     album.PicURL,
-		ArtistName: album.Artist.Name,
-		ImageKey:   larkimg.UploadPicture2Lark(context.Background(), album.PicURL),
+func MusicItemTransAlbum(ctx context.Context, albumItem *Album) *SearchMusicItem {
+	if albumItem == nil {
+		return nil
 	}
+	imageKey, _, err := larkimg.UploadPicAllinOne(ctx, albumItem.PicURL, int(albumItem.ID), true)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
+		return nil
+	}
+	return &SearchMusicItem{
+		ID:         int(albumItem.ID),
+		Name:       "[" + albumItem.Type + "] " + albumItem.Name,
+		PicURL:     albumItem.PicURL,
+		ArtistName: albumItem.Artist.Name,
+		ImageKey:   imageKey,
+	}
+}
+
+func MusicItemTransItemPic(ctx context.Context, itme *SearchMusicItem) *SearchMusicItem {
+	if itme == nil {
+		return nil
+	}
+	imageKey, _, err := larkimg.UploadPicAllinOne(ctx, itme.PicURL, itme.ID, true)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
+		return nil
+	}
+	itme.ImageKey = imageKey
+	return itme
 }
 
 func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musicItemTransFunc[T], resourceType CommentType, keywords ...string) (content *larktpl.TemplateCardContent, err error) {
@@ -36,10 +58,23 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 	defer span.End()
 
 	res := make([]*SearchMusicItem, len(resList))
+	// trans应该走异步
+	wgTrans := &sync.WaitGroup{}
 	for i, item := range resList {
-		res[i] = transFunc(item)
+		wgTrans.Add(1)
+		go func(i int, item *T) {
+			defer wgTrans.Done()
+			res[i] = transFunc(ctx, item)
+		}(i, item)
 	}
-	lines := make([]map[string]interface{}, len(res))
+	wgTrans.Wait()
+	filtered := make([]*SearchMusicItem, 0, len(res))
+	for _, item := range res {
+		if item != nil {
+			filtered = append(filtered, item)
+		}
+	}
+	lines := make([]map[string]interface{}, len(filtered))
 	var buttonName string
 	var actionName string
 	switch resourceType {
@@ -55,17 +90,17 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 	}
 
 	var (
-		commentChan = make(chan map[string]interface{}, len(resList))
+		commentChan = make(chan map[string]interface{}, len(filtered))
 		wg          = &sync.WaitGroup{}
 	)
 	go func() {
 		defer close(commentChan)
 		defer wg.Wait()
-		for idx, item := range res {
+		for idx, item := range filtered {
 			wg.Add(1)
-			go func(item *SearchMusicItem) {
+			go func(idx int, item *SearchMusicItem) {
 				defer wg.Done()
-				comment, err := NetEaseGCtx.GetComment(ctx, resourceType, item.ID)
+				comment, err := NetEaseGCtx.GetComment(ctx, resourceType, strconv.Itoa(item.ID))
 				if err != nil {
 					logs.L().Ctx(ctx).Error("GetComment Error", zap.Error(err))
 				}
@@ -74,10 +109,10 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 					"field_1":     genMusicTitle(item.Name, item.ArtistName),
 					"field_2":     map[string]any{"img_key": item.ImageKey},
 					"button_info": buttonName,
-					"element_id":  item.ID,
-					"button_val":  cardaction.New(actionName).WithID(item.ID).Payload(),
+					"element_id":  strconv.Itoa(item.ID),
+					"button_val":  cardaction.New(actionName).WithID(strconv.Itoa(item.ID)).Payload(),
 				}
-				if len(comment.Data.Comments) != 0 {
+				if comment != nil && len(comment.Data.Comments) != 0 {
 					line["field_3"] = comment.Data.Comments[0].Content
 					if runeSlice := []rune(comment.Data.Comments[0].Content); len(runeSlice) > 50 {
 						line["field_3"] = string(runeSlice[:50]) + "..."
@@ -88,7 +123,7 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 					line["button_info"] = "歌曲无效"
 				}
 				commentChan <- line
-			}(item)
+			}(idx, item)
 		}
 	}()
 	for line := range commentChan {

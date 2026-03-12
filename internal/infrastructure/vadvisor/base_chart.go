@@ -23,10 +23,9 @@ type BaseChartsGraphWithPlayer[X xconstraints.ValidType, Y xconstraints.Numeric]
 	AnimationEnter  *Animation `json:"animationEnter,omitempty"`
 	AnimationExit   *Animation `json:"animationExit,omitempty"`
 
-	valueMap     map[string]*DataUnit[X, Y]                       `json:"-"`
-	customTagSet map[X]struct{}                                   `json:"-"`
-	playerType   string                                           `json:"-"`
-	sortFunc     func(a *ValueUnit[X, Y], b *ValueUnit[X, Y]) int `json:"-"`
+	valueMap   map[string]*DataUnit[X, Y]                       `json:"-"`
+	playerType string                                           `json:"-"`
+	sortFunc   func(a *ValueUnit[X, Y], b *ValueUnit[X, Y]) int `json:"-"`
 }
 
 type Animation struct {

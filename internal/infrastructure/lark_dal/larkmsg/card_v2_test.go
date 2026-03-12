@@ -221,6 +221,85 @@ func TestSelectPersonNormalizesElementID(t *testing.T) {
 	}
 }
 
+func TestTextInputBuildsNamedField(t *testing.T) {
+	element := TextInput("config_key", TextInputOptions{
+		Placeholder:  "输入配置键",
+		DefaultValue: "intent_recognition_enabled",
+		Required:     boolPtr(true),
+		ElementID:    "config_key_input",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"input"`) {
+		t.Fatalf("expected input tag in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"name":"config_key"`) {
+		t.Fatalf("expected input name in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"输入配置键"`) {
+		t.Fatalf("expected placeholder in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"default_value":"intent_recognition_enabled"`) {
+		t.Fatalf("expected default value in input json: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"required":true`) {
+		t.Fatalf("did not expect required flag in input json: %s", jsonStr)
+	}
+}
+
+func TestTextAreaBuildsNamedField(t *testing.T) {
+	element := TextArea("message", TextInputOptions{
+		Placeholder: "输入消息内容",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"textarea"`) {
+		t.Fatalf("expected textarea tag in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"name":"message"`) {
+		t.Fatalf("expected textarea name in json: %s", jsonStr)
+	}
+}
+
+func TestSelectStaticBuildsNamedField(t *testing.T) {
+	element := SelectStatic("scope", SelectStaticOptions{
+		Placeholder: "选择作用域",
+		Width:       "fill",
+		Options: []SelectStaticOption{
+			{Text: "群聊", Value: "chat"},
+			{Text: "用户", Value: "user"},
+		},
+		ElementID: "scope_picker",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"select_static"`) {
+		t.Fatalf("expected select_static tag in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"name":"scope"`) {
+		t.Fatalf("expected select name in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"value":"chat"`) || !strings.Contains(jsonStr, `"content":"群聊"`) {
+		t.Fatalf("expected options in json: %s", jsonStr)
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func TestCollapsiblePanelBuildsSchemaV2Container(t *testing.T) {
 	element := CollapsiblePanel(
 		"操作记录",

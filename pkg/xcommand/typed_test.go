@@ -77,7 +77,7 @@ func TestRedirectHelpArgs(t *testing.T) {
 
 type docArgs struct {
 	Name  string `json:"name" cli:"name,required" help:"用户名"`
-	Scope string `json:"scope"`
+	Scope string `json:"scope" enum:"chat:群聊,user:用户,global:全局"`
 	Force bool   `json:"force" cli:"force,flag"`
 	Input string `json:"input" cli:"query,input"`
 }
@@ -149,8 +149,14 @@ func TestNewTypedCommandAutoArgs(t *testing.T) {
 	if specs[1].Name != "scope" || specs[1].Description != "作用域" {
 		t.Fatalf("unexpected second arg spec: %+v", specs[1])
 	}
+	if len(specs[1].Options) != 3 || specs[1].Options[0].Value != "chat" || specs[1].Options[0].Label != "群聊" {
+		t.Fatalf("expected enum options on scope arg, got: %+v", specs[1].Options)
+	}
 	if specs[2].Name != "force" || !specs[2].Flag {
 		t.Fatalf("unexpected third arg spec: %+v", specs[2])
+	}
+	if len(specs[2].Options) != 2 || specs[2].Options[0].Value != "true" || specs[2].Options[1].Value != "false" {
+		t.Fatalf("expected bool options on force arg, got: %+v", specs[2].Options)
 	}
 	if specs[3].Name != "query" || !specs[3].Input {
 		t.Fatalf("unexpected fourth arg spec: %+v", specs[3])
@@ -159,6 +165,82 @@ func TestNewTypedCommandAutoArgs(t *testing.T) {
 	examples := cmd.GetExamples()
 	if len(examples) != 1 || examples[0] != "doc --name=alice" {
 		t.Fatalf("unexpected examples: %+v", examples)
+	}
+}
+
+type typedScope string
+
+const (
+	typedScopeChat   typedScope = "chat"
+	typedScopeUser   typedScope = "user"
+	typedScopeGlobal typedScope = "global"
+)
+
+func (typedScope) CommandEnum() EnumDescriptor {
+	return EnumDescriptor{
+		Options: []CommandArgOption{
+			{Value: string(typedScopeChat), Label: "群聊"},
+			{Value: string(typedScopeUser), Label: "用户"},
+			{Value: string(typedScopeGlobal), Label: "全局"},
+		},
+		DefaultValue: string(typedScopeChat),
+	}
+}
+
+type typedEnumArgs struct {
+	Scope  typedScope `json:"scope"`
+	Legacy string     `json:"legacy" enum:"x:X,y:Y"`
+}
+
+type typedEnumHandler struct{}
+
+func (typedEnumHandler) ParseCLI(raw []string) (typedEnumArgs, error) {
+	return typedEnumArgs{}, nil
+}
+
+func (typedEnumHandler) Handle(ctx context.Context, data string, metaData *xhandler.BaseMetaData, arg typedEnumArgs) error {
+	return nil
+}
+
+func TestNewTypedCommandUsesTypedEnumDescriptor(t *testing.T) {
+	cmd := NewTypedCommand[string, typedEnumArgs]("typed", typedEnumHandler{})
+	specs := cmd.GetArgSpecs()
+	if len(specs) != 2 {
+		t.Fatalf("expected 2 arg specs, got: %d", len(specs))
+	}
+	if specs[0].Name != "scope" {
+		t.Fatalf("unexpected first arg spec: %+v", specs[0])
+	}
+	if specs[0].DefaultValue != "chat" {
+		t.Fatalf("expected typed enum default value, got: %+v", specs[0])
+	}
+	if len(specs[0].Options) != 3 || specs[0].Options[1].Value != "user" {
+		t.Fatalf("expected typed enum options, got: %+v", specs[0].Options)
+	}
+	if specs[1].Name != "legacy" || len(specs[1].Options) != 2 || specs[1].DefaultValue != "" {
+		t.Fatalf("expected legacy enum tag fallback, got: %+v", specs[1])
+	}
+}
+
+func TestParseEnumUsesDefaultAndRejectsInvalidValue(t *testing.T) {
+	got, err := ParseEnum[typedScope]("")
+	if err != nil {
+		t.Fatalf("ParseEnum() default error = %v", err)
+	}
+	if got != typedScopeChat {
+		t.Fatalf("expected default enum value, got: %q", got)
+	}
+
+	got, err = ParseEnum[typedScope]("user")
+	if err != nil {
+		t.Fatalf("ParseEnum() explicit value error = %v", err)
+	}
+	if got != typedScopeUser {
+		t.Fatalf("unexpected enum value: %q", got)
+	}
+
+	if _, err := ParseEnum[typedScope]("team"); err == nil {
+		t.Fatal("expected invalid enum value to fail")
 	}
 }
 
@@ -201,6 +283,37 @@ func (toolTestHandler) ToolSpec() ToolSpec {
 			result, _ := metaData.GetExtra("result")
 			return result
 		},
+	}
+}
+
+type toolEnumArgs struct {
+	Scope  typedScope `json:"scope"`
+	Notify bool       `json:"notify"`
+}
+
+type toolEnumHandler struct{}
+
+func (toolEnumHandler) ParseTool(raw string) (toolEnumArgs, error) {
+	return toolEnumArgs{}, nil
+}
+
+func (toolEnumHandler) Handle(ctx context.Context, data *toolTestMeta, metaData *xhandler.BaseMetaData, arg toolEnumArgs) error {
+	return nil
+}
+
+func (toolEnumHandler) ToolSpec() ToolSpec {
+	return ToolSpec{
+		Name: "test.enum",
+		Desc: "test enum tool",
+		Params: arktools.NewParams("object").
+			AddProp("scope", &arktools.Prop{
+				Type: "string",
+				Desc: "作用域",
+			}).
+			AddProp("notify", &arktools.Prop{
+				Type: "boolean",
+				Desc: "是否通知",
+			}),
 	}
 }
 
@@ -271,5 +384,38 @@ func TestRegisterTool(t *testing.T) {
 	}
 	if unit.Parameters.Type != "object" {
 		t.Fatalf("unexpected params type: %s", unit.Parameters.Type)
+	}
+}
+
+func TestRegisterToolInfersEnumAndDefaultFromTypedArgs(t *testing.T) {
+	ins := arktools.New[toolTestMeta]()
+
+	RegisterTool(ins, toolEnumHandler{})
+
+	unit, ok := ins.Get("test.enum")
+	if !ok {
+		t.Fatal("expected registered tool")
+	}
+
+	scopeProp := unit.Parameters.Props["scope"]
+	if scopeProp == nil {
+		t.Fatal("expected scope prop")
+	}
+	if len(scopeProp.Enum) != 3 || scopeProp.Enum[0] != "chat" || scopeProp.Enum[2] != "global" {
+		t.Fatalf("unexpected scope enum: %+v", scopeProp.Enum)
+	}
+	if scopeProp.Default != "chat" {
+		t.Fatalf("unexpected scope default: %#v", scopeProp.Default)
+	}
+
+	notifyProp := unit.Parameters.Props["notify"]
+	if notifyProp == nil {
+		t.Fatal("expected notify prop")
+	}
+	if len(notifyProp.Enum) != 2 || notifyProp.Enum[0] != true || notifyProp.Enum[1] != false {
+		t.Fatalf("unexpected notify enum: %+v", notifyProp.Enum)
+	}
+	if notifyProp.Default != false {
+		t.Fatalf("unexpected notify default: %#v", notifyProp.Default)
 	}
 }

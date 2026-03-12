@@ -155,10 +155,6 @@ func setNoop(reason string) {
 	})
 }
 
-func unavailableErr() error {
-	return errors.New(backend.Reason())
-}
-
 func Status() (bool, string) {
 	reason := backend.Reason()
 	return reason == "", reason

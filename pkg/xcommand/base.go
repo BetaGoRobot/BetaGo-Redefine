@@ -20,12 +20,19 @@ import (
 //	@update 2024-07-18 04:43:42
 type CommandFunc[T any] func(ctx context.Context, data T, metaData *xhandler.BaseMetaData, args ...string) (err error)
 
+type CommandArgOption struct {
+	Value string
+	Label string
+}
+
 type CommandArg struct {
-	Name        string
-	Description string
-	Required    bool
-	Input       bool
-	Flag        bool
+	Name         string
+	Description  string
+	Required     bool
+	Input        bool
+	Flag         bool
+	DefaultValue string
+	Options      []CommandArgOption
 }
 
 // Command Repeat
@@ -33,16 +40,16 @@ type CommandArg struct {
 //	@author heyuhengmatt
 //	@update 2024-07-18 04:43:37
 type Command[T any] struct {
-	Name          string
-	Description   string
-	Examples      []string
-	SubCommands   map[string]*Command[T]
+	Name              string
+	Description       string
+	Examples          []string
+	SubCommands       map[string]*Command[T]
 	DefaultSubCommand string
-	Func          CommandFunc[T]
-	Usage         string
-	SupportArgs   map[string]*CommandArg
-	supportArgSeq []string
-	curComChain   []string
+	Func              CommandFunc[T]
+	Usage             string
+	SupportArgs       map[string]*CommandArg
+	supportArgSeq     []string
+	curComChain       []string
 }
 
 // Execute 从当前节点开始，执行Command

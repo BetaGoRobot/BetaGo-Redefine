@@ -3,17 +3,21 @@ package cardaction
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
+	commandapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
+	"go.uber.org/zap"
 )
 
 var registerBuiltinsOnce sync.Once
@@ -25,7 +29,9 @@ func RegisterBuiltins() {
 		RegisterAsync(cardactionproto.ActionMusicLyrics, handleMusicLyrics)
 		RegisterAsync(cardactionproto.ActionMusicRefresh, handleMusicRefresh)
 		RegisterAsync(cardactionproto.ActionCardWithdraw, handleCardWithdraw)
+		RegisterSync(cardactionproto.ActionCommandOpenForm, handleCommandOpenForm)
 		RegisterAsync(cardactionproto.ActionCommandRefresh, handleCommandRefresh)
+		RegisterAsync(cardactionproto.ActionCommandSubmitForm, handleCommandSubmitForm)
 		RegisterAsync(cardactionproto.ActionCommandSubmitTimeRange, handleCommandSubmitTimeRange)
 		RegisterSync(cardactionproto.ActionFeatureView, handleFeatureView)
 		RegisterSync(cardactionproto.ActionFeatureBlockChat, handleFeatureAction)
@@ -54,7 +60,12 @@ func handleMusicPlay(ctx context.Context, actionCtx *Context) (AsyncTask, error)
 		return nil, err
 	}
 	return func(runCtx context.Context) {
-		cardhandlers.SendMusicCard(runCtx, actionCtx.MetaData, musicID, actionCtx.MessageID(), 1)
+		musicIDInt, err := strconv.Atoi(musicID)
+		if err != nil {
+			logs.L().Ctx(runCtx).Error("[handleMusicPlay] Atoi musicID failed...", zap.Error(err))
+			return
+		}
+		cardhandlers.SendMusicCard(runCtx, actionCtx.MetaData, musicIDInt, actionCtx.MessageID(), 1)
 	}, nil
 }
 
@@ -74,7 +85,12 @@ func handleMusicLyrics(ctx context.Context, actionCtx *Context) (AsyncTask, erro
 		return nil, err
 	}
 	return func(runCtx context.Context) {
-		cardhandlers.HandleFullLyrics(runCtx, actionCtx.MetaData, musicID, actionCtx.MessageID())
+		musicIDInt, err := strconv.Atoi(musicID)
+		if err != nil {
+			logs.L().Ctx(runCtx).Error("[handleMusicLyrics] Atoi musicID failed...", zap.Error(err))
+			return
+		}
+		cardhandlers.HandleFullLyrics(runCtx, actionCtx.MetaData, musicIDInt, actionCtx.MessageID())
 	}, nil
 }
 
@@ -84,7 +100,12 @@ func handleMusicRefresh(ctx context.Context, actionCtx *Context) (AsyncTask, err
 		return nil, err
 	}
 	return func(runCtx context.Context) {
-		cardhandlers.HandleRefreshMusic(runCtx, musicID, actionCtx.MessageID())
+		musicIDInt, err := strconv.Atoi(musicID)
+		if err != nil {
+			logs.L().Ctx(runCtx).Error("[handleMusicRefresh] Atoi musicID failed...", zap.Error(err))
+			return
+		}
+		cardhandlers.HandleRefreshMusic(runCtx, musicIDInt, actionCtx.MessageID())
 	}, nil
 }
 
@@ -97,6 +118,36 @@ func handleCardWithdraw(ctx context.Context, actionCtx *Context) (AsyncTask, err
 func handleCommandRefresh(ctx context.Context, actionCtx *Context) (AsyncTask, error) {
 	return func(runCtx context.Context) {
 		cardhandlers.HandleRefreshObj(runCtx, actionCtx.Event)
+	}, nil
+}
+
+func handleCommandOpenForm(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	rawCommand, err := actionCtx.Action.RequiredString(cardactionproto.CommandField)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	cardData, err := commandapp.BuildCommandFormCardJSON(commandapp.LarkRootCommand, rawCommand)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(cardData), nil
+}
+
+func handleCommandSubmitForm(ctx context.Context, actionCtx *Context) (AsyncTask, error) {
+	rawCommand, err := actionCtx.Action.RequiredString(cardactionproto.CommandField)
+	if err != nil {
+		return nil, err
+	}
+	formValues := make(map[string]any, len(actionCtx.Action.FormValue))
+	for key, value := range actionCtx.Action.FormValue {
+		formValues[key] = value
+	}
+	nextCommand, err := commandapp.BuildCommandFormRawCommand(commandapp.LarkRootCommand, rawCommand, formValues)
+	if err != nil {
+		return nil, err
+	}
+	return func(runCtx context.Context) {
+		cardhandlers.ExecuteRawCommandFromCard(runCtx, actionCtx.Event, nextCommand)
 	}, nil
 }
 

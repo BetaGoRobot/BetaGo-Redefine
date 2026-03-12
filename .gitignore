@@ -2,6 +2,10 @@
 .dev
 __debug_bin*
 .codex*
+!.codex/
+!.codex/skills/
+!.codex/skills/lark-card-debug/
+!.codex/skills/lark-card-debug/**
 .cache
 .env
 *.test

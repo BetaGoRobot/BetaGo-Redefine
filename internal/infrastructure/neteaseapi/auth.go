@@ -189,7 +189,7 @@ func (neteaseCtx *NetEaseContext) LoginNetEaseQR(ctx context.Context) (err error
 }
 
 func qrImgReadCloser(ctx context.Context, imgBase64 string) (r io.ReadCloser) {
-	ctx, span := otel.Start(ctx)
+	_, span := otel.Start(ctx)
 	defer span.End()
 
 	i := strings.Index(imgBase64, ",") // string is img/png;base64,xxx
@@ -293,8 +293,11 @@ func (neteaseCtx *NetEaseContext) TryGetLastCookie(ctx context.Context) {
 		return
 	}
 	defer f.Close()
-	cookieData := make([]byte, 0)
-	cookieData, err = io.ReadAll(f)
+	cookieData, err := io.ReadAll(f)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("error in read last_cookie.json", zap.Error(err))
+		return
+	}
 	if len(cookieData) == 0 {
 		logs.L().Ctx(ctx).Info("No cookieData, skip json marshal")
 		return

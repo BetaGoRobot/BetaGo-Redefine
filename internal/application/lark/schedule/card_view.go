@@ -188,17 +188,26 @@ func buildTaskCreatorFilterRow(tasks []*model.ScheduledTask, view TaskCardViewSt
 		allButtonType = "primary_filled"
 	}
 	clearButton := buildTaskFilterButton("全部", allButtonType, withTaskFilterSelection(view, view.Status, ""))
+	controls := []any{
+		buildTaskCreatorSelection(view),
+		buildTaskCreatorPicker(view),
+		clearButton,
+	}
 	return larkmsg.SplitColumns(
 		[]any{larkmsg.Markdown("**创建者**")},
 		[]any{
 			larkmsg.ColumnSet([]any{
-				larkmsg.Column([]any{buildTaskCreatorPicker(view)}, larkmsg.ColumnOptions{
+				larkmsg.Column([]any{controls[0]}, larkmsg.ColumnOptions{
+					Width:         "auto",
+					VerticalAlign: "center",
+				}),
+				larkmsg.Column([]any{controls[1]}, larkmsg.ColumnOptions{
 					Width:         "auto",
 					VerticalAlign: "top",
 				}),
-				larkmsg.Column([]any{clearButton}, larkmsg.ColumnOptions{
+				larkmsg.Column([]any{controls[2]}, larkmsg.ColumnOptions{
 					Width:         "auto",
-					VerticalAlign: "top",
+					VerticalAlign: "center",
 				}),
 			}, larkmsg.ColumnSetOptions{
 				HorizontalSpacing: "8px",
@@ -220,6 +229,47 @@ func buildTaskCreatorFilterRow(tasks []*model.ScheduledTask, view TaskCardViewSt
 			},
 		},
 	)
+}
+
+func buildTaskCreatorSelection(view TaskCardViewState) any {
+	view = normalizeTaskCardView(view)
+	current := strings.TrimSpace(view.CreatorOpenID)
+	if current == "" {
+		return larkmsg.TextDiv("当前筛选：全部", larkmsg.CardTextOptions{
+			Size:  "notation",
+			Color: "grey",
+			Align: "left",
+		})
+	}
+
+	showAvatar := true
+	showName := false
+	return larkmsg.ColumnSet([]any{
+		larkmsg.Column([]any{
+			larkmsg.TextDiv("当前筛选", larkmsg.CardTextOptions{
+				Size:  "notation",
+				Color: "grey",
+				Align: "left",
+			}),
+		}, larkmsg.ColumnOptions{
+			Width:         "auto",
+			VerticalAlign: "center",
+		}),
+		larkmsg.Column([]any{
+			larkmsg.Person(current, larkmsg.PersonOptions{
+				Size:       "small",
+				ShowAvatar: &showAvatar,
+				ShowName:   &showName,
+				Margin:     "0",
+			}),
+		}, larkmsg.ColumnOptions{
+			Width:         "auto",
+			VerticalAlign: "center",
+		}),
+	}, larkmsg.ColumnSetOptions{
+		HorizontalSpacing: "6px",
+		FlexMode:          "none",
+	})
 }
 
 func buildTaskFilterRow(label string, buttons []map[string]any) map[string]any {
@@ -256,11 +306,12 @@ func buildTaskFilterButton(label, buttonType string, view TaskCardViewState) map
 func buildTaskCreatorPicker(view TaskCardViewState) map[string]any {
 	view = normalizeTaskCardView(view)
 	return larkmsg.SelectPerson(larkmsg.SelectPersonOptions{
-		Placeholder: "选择创建者筛选",
-		Width:       "default",
-		Type:        "default",
-		Payload:     larkmsg.StringMapToAnyMap(BuildTaskCreatorPickerValue(view)),
-		ElementID:   "sched_creator_pick",
+		Placeholder:   "选择创建者筛选",
+		Width:         "default",
+		Type:          "default",
+		InitialOption: view.CreatorOpenID,
+		Payload:       larkmsg.StringMapToAnyMap(BuildTaskCreatorPickerValue(view)),
+		ElementID:     "sched_creator_pick",
 	})
 }
 

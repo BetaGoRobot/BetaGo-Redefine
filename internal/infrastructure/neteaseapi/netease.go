@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
 	"github.com/bytedance/sonic"
@@ -26,18 +28,124 @@ import (
 	"github.com/minio/minio-go/v7"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
-
-const netEaseQRTmpFile = "/data/tmp"
 
 type CommentType string
 
 const (
 	CommentTypeSong  CommentType = "0"
 	CommentTypeAlbum CommentType = "3"
+
+	defaultMusicURLBatchSize   = 5
+	defaultMusicURLConcurrency = 4
+	defaultPictureConcurrency  = 4
 )
 
 var warnOnce sync.Once
+
+func songIDString(id int) string {
+	return strconv.Itoa(id)
+}
+
+func joinSongIDs(ids []int) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		parts = append(parts, songIDString(id))
+	}
+	return strings.Join(parts, ",")
+}
+
+func normalizeMusicIDs(musicIDs ...int) []int {
+	seen := make(map[int]struct{}, len(musicIDs))
+	ids := make([]int, 0, len(musicIDs))
+	for _, id := range musicIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func normalizeBatchSize(batchSize int) int {
+	if batchSize <= 0 {
+		return defaultMusicURLBatchSize
+	}
+	return batchSize
+}
+
+func normalizeMusicURLConcurrency(limit int) int {
+	if limit <= 0 {
+		return defaultMusicURLConcurrency
+	}
+	return limit
+}
+
+func musicURLConcurrencyFor(batchCount int) int {
+	if batchCount <= 0 {
+		return normalizeMusicURLConcurrency(0)
+	}
+	return min(batchCount, normalizeMusicURLConcurrency(0))
+}
+
+func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []int) ([]*musicData, error) {
+	if len(musicIDs) == 0 {
+		return nil, nil
+	}
+	r, err := xhttp.HttpClient.R().SetQueryParams(
+		map[string]string{
+			"id":        joinSongIDs(musicIDs),
+			"level":     "standard",
+			"timestamp": fmt.Sprint(time.Now().UnixNano()),
+		},
+	).SetCookies(cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
+	if err != nil {
+		return nil, err
+	}
+	if r.StatusCode() != 200 {
+		return nil, fmt.Errorf("song url http status: %d", r.StatusCode())
+	}
+	music := &musicList{}
+	if err := sonic.Unmarshal(r.Body(), music); err != nil {
+		return nil, err
+	}
+	return music.Data, nil
+}
+
+func musicObjectKey(musicID int, rawURL string) string {
+	ext := filepath.Ext(rawURL)
+	if parsedURL, err := url.Parse(rawURL); err == nil {
+		if parsedExt := path.Ext(path.Base(parsedURL.Path)); parsedExt != "" {
+			ext = parsedExt
+		}
+	}
+	return "music/" + songIDString(musicID) + ext
+}
+
+func ensureMusicPresignedURL(ctx context.Context, item *musicData) (string, error) {
+	if item == nil || item.ID == 0 || item.URL == "" {
+		return "", nil
+	}
+	objKey := musicObjectKey(item.ID, item.URL)
+	if cachedURL, err := miniodal.TryGetFile(ctx, "cloudmusic", objKey); err != nil {
+		return "", err
+	} else if cachedURL != "" {
+		return cachedURL, nil
+	}
+	return miniodal.New(miniodal.Internal).Upload(ctx).
+		WithContentType(xmodel.ContentTypeAudio.String()).
+		WithURL(item.URL).
+		Do("cloudmusic", objKey, minio.PutObjectOptions{}).
+		PreSignURL()
+}
 
 func Init() {
 	config := config.Get().NeteaseMusicConfig
@@ -93,8 +201,8 @@ func setNoop(reason string) {
 //	@receiver ctx
 //	@return musicIDs
 //	@return err
-func (neteaseCtx *NetEaseContext) GetDailyRecommendID() (musicIDs map[string]string, err error) {
-	musicIDs = make(map[string]string)
+func (neteaseCtx *NetEaseContext) GetDailyRecommendID() (musicIDs map[int]string, err error) {
+	musicIDs = make(map[int]string)
 
 	resp, err := xrequest.
 		ReqTimestamp().
@@ -108,195 +216,88 @@ func (neteaseCtx *NetEaseContext) GetDailyRecommendID() (musicIDs map[string]str
 	music := dailySongs{}
 	sonic.Unmarshal(body, &music)
 	for index := range music.Data.DailySongs {
-		musicIDs[strconv.Itoa(music.Data.DailySongs[index].ID)] = music.Data.DailySongs[index].Name
+		musicIDs[music.Data.DailySongs[index].ID] = music.Data.DailySongs[index].Name
 	}
 	return
+}
+
+func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize int, musicIDs ...int) (map[int]string, error) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Int("batchSize", normalizeBatchSize(batchSize)))
+	defer span.End()
+
+	ids := normalizeMusicIDs(musicIDs...)
+	if len(ids) == 0 {
+		return map[int]string{}, nil
+	}
+
+	batches := utils.Chunk(ids, normalizeBatchSize(batchSize))
+	musicIDURL := make(map[int]string, len(ids))
+	var mu sync.Mutex
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(musicURLConcurrencyFor(len(batches)))
+	for _, batch := range batches {
+		batch := batch
+		group.Go(func() error {
+			rawItems, err := fetchMusicURLBatch(groupCtx, neteaseCtx.cookies, batch)
+			if err != nil {
+				return err
+			}
+			localResults := make(map[int]string, len(rawItems))
+			for _, item := range rawItems {
+				if item == nil || item.ID == 0 {
+					continue
+				}
+				signedURL, err := ensureMusicPresignedURL(groupCtx, item)
+				if err != nil {
+					return err
+				}
+				if signedURL == "" {
+					continue
+				}
+				localResults[item.ID] = signedURL
+			}
+
+			mu.Lock()
+			for musicID, signedURL := range localResults {
+				musicIDURL[musicID] = signedURL
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return musicIDURL, nil
 }
 
 // GetMusicURLByIDs 依据ID获取URL/Name
-//
-//	@receiver ctx
-//	@param IDName
-//	@return InfoList
-//	@return err
-func (neteaseCtx *NetEaseContext) GetMusicURLByIDs(ctx context.Context, musicIDs []string) (musicIDURL map[string]string, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-
-	musicIDURL = make(map[string]string)
-	var fullIDs []string
-
-	for _, ID := range musicIDs {
-		if ID == "" {
-			continue
-		}
-		fullIDs = append(fullIDs, ID)
-	}
-
-	r, err := xhttp.HttpClient.R().SetQueryParams(
-		map[string]string{
-			"id":        strings.Join(fullIDs, ","),
-			"level":     "standard",
-			"timestamp": fmt.Sprint(time.Now().UnixNano()),
-		},
-	).SetCookies(neteaseCtx.cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
-	music := &musicList{}
-	sonic.Unmarshal(r.Body(), music)
-
-	for index := range music.Data {
-		ID := strconv.Itoa(music.Data[index].ID)
-		URL := music.Data[index].URL
-		if URL == "" {
-			logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
-			continue
-		}
-		musicIDURL[ID] = URL
-		go uploadMusic(ctx, URL, ID)
-	}
-	return
+func (neteaseCtx *NetEaseContext) GetMusicURLByIDs(ctx context.Context, musicIDs ...int) (map[int]string, error) {
+	return neteaseCtx.GetMusicURLs(ctx, defaultMusicURLBatchSize, musicIDs...)
 }
 
-func uploadMusic(ctx context.Context, URL string, ID string) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("songID").String(ID))
-	defer span.End()
-	parsedURL, err := url.Parse(URL)
+func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID int) (url string, err error) {
+	urlByID, err := neteaseCtx.GetMusicURLs(ctx, 1, ID)
 	if err != nil {
-		logs.L().Ctx(ctx).Warn("[PreUploadMusic] parsedURL failed...", zap.Error(err))
-		return
+		return "", err
 	}
-	err = miniodal.New(miniodal.Internal).Upload(ctx).
-		WithContentType(xmodel.ContentTypeAudio.String()).
-		WithURL(URL).
-		Do("cloudmusic", "music/"+ID+path.Ext(path.Base(parsedURL.Path)), minio.PutObjectOptions{}).Err()
+	if url, ok := urlByID[ID]; ok {
+		return url, nil
+	}
+	return "", fmt.Errorf("song %d url not found", ID)
+}
+
+func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID int) (musicDetail *MusicDetail) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Int("songID", musicID))
+	defer span.End()
+
+	musicDetail, err := neteaseCtx.getDetailByIDs(ctx, []int{musicID})
 	if err != nil {
-		logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
-	}
-}
-
-// GetMusicURLByID 依据ID获取URL/Name //TODO: replace this method more generic
-//
-//	@receiver ctx
-//	@param IDName
-//	@return InfoList
-//	@return err
-func (neteaseCtx *NetEaseContext) GetMusicURLByID(ctx context.Context, musicIDName []*MusicIDName) (InfoList []MusicInfo, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-
-	var id string
-	for _, m := range musicIDName {
-		if id != "" {
-			id += ","
-		}
-		id += m.ID
-	}
-	r, err := xhttp.HttpClient.R().SetQueryParams(
-		map[string]string{
-			"id":        id,
-			"level":     "standard",
-			"timestamp": fmt.Sprint(time.Now().UnixNano()),
-		},
-	).SetCookies(neteaseCtx.cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
-	body := r.Body()
-	music := musicList{}
-	sonic.ConfigStd.Unmarshal(body, &music)
-
-	for index := range music.Data {
-		ID := strconv.Itoa(music.Data[index].ID)
-		URL := music.Data[index].URL
-		URL, err := miniodal.New(miniodal.Internal).Upload(ctx).
-			WithContentType(xmodel.ContentTypeAudio.String()).
-			WithURL(URL).
-			Do("cloudmusic", "music/"+ID+filepath.Ext(music.Data[index].URL), minio.PutObjectOptions{}).
-			PreSignURL()
-		if err != nil {
-			logs.L().Ctx(ctx).Warn("Get minio url failed, will use raw url", zap.Error(err))
-		}
-		InfoList = append(InfoList, MusicInfo{
-			ID:   ID,
-			Name: musicIDName[index].Name,
-			URL:  URL,
-		})
-	}
-	return
-}
-
-func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID string) (url string, err error) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("songID").String(ID))
-	defer span.End()
-	var (
-		bucketName = "cloudmusic"
-		objPrefix  = "music/" + ID
-		objName    = objPrefix
-		hasObj     = false
-	)
-
-	var maxSize int64
-	dal := miniodal.New(miniodal.Internal)
-	for obj := range dal.ListObjectsIter(
-		ctx, bucketName, minio.ListObjectsOptions{
-			Prefix: objPrefix + ".",
-		},
-	) {
-		if obj.ContentType == xmodel.ContentTypeAudio.String() && obj.Size > maxSize {
-			maxSize = obj.Size
-			hasObj = true
-			objName = objName + filepath.Ext(obj.Key)
-		}
-	}
-
-	if !hasObj {
-		r, err := xhttp.HttpClient.R().SetQueryParams(
-			map[string]string{
-				"id":        ID,
-				"level":     "standard",
-				"timestamp": fmt.Sprint(time.Now().UnixNano()),
-			},
-		).SetCookies(neteaseCtx.cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
-		body := r.Body()
-		music := musicList{}
-		err = sonic.Unmarshal(body, &music)
-		if err != nil {
-			return "", err
-		}
-		URL := music.Data[0].URL
-		objName = objPrefix + filepath.Ext(URL)
-		return miniodal.New(miniodal.Internal).Upload(ctx).
-			SkipDedup(true).
-			WithContentType(xmodel.ContentTypeAudio.String()).
-			WithURL(URL).
-			Do(bucketName, objName, minio.PutObjectOptions{}).PreSignURL()
-	}
-	return miniodal.TryGetFile(ctx, bucketName, objName)
-}
-
-func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string) (musicDetail *MusicDetail) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("songID").String(musicID))
-	defer span.End()
-
-	resp, err := xhttp.HttpClient.R().
-		SetFormDataFromValues(
-			map[string][]string{
-				"ids": {musicID},
-			},
-		).
-		SetCookies(neteaseCtx.cookies).
-		SetQueryParam("timestamp", fmt.Sprint(time.Now().UnixNano())).
-		Post(NetEaseAPIBaseURL + "/song/detail")
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
-	}
-	if resp.StatusCode() != 200 {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
 		return nil
-	}
-	musicDetail = &MusicDetail{}
-	err = sonic.Unmarshal(resp.Body(), musicDetail)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
 	}
 	if len(musicDetail.Songs) == 0 {
 		return nil
@@ -306,7 +307,7 @@ func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string)
 		err := miniodal.New(miniodal.Internal).Upload(ctx).
 			WithContentType(xmodel.ContentTypeImgJPEG.String()).
 			WithURL(picURL).
-			Do("cloudmusic", "picture/"+musicID+filepath.Ext(picURL), minio.PutObjectOptions{}).Err()
+			Do("cloudmusic", "picture/"+songIDString(song.ID)+filepath.Ext(picURL), minio.PutObjectOptions{}).Err()
 		if err != nil {
 			logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
 		}
@@ -314,15 +315,85 @@ func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID string)
 	return
 }
 
-func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID string) (lyrics string, lyricsURL string) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("songID").String(songID))
+func (neteaseCtx *NetEaseContext) getPlaylistDetail(ctx context.Context, playlistID string) (*PlaylistDetail, error) {
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Key("playlistID").String(strings.TrimSpace(playlistID)))
 	defer span.End()
 
 	resp, err := xhttp.HttpClient.R().
 		SetFormDataFromValues(
 			map[string][]string{
-				"id": {songID},
+				"id": {strings.TrimSpace(playlistID)},
+			},
+		).
+		SetCookies(neteaseCtx.cookies).
+		SetQueryParam("timestamp", fmt.Sprint(time.Now().UnixNano())).
+		Post(NetEaseAPIBaseURL + "/playlist/detail")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("playlist detail http status: %d", resp.StatusCode())
+	}
+
+	parsed := &PlaylistDetailResponse{}
+	if err := sonic.Unmarshal(resp.Body(), parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Code != 200 {
+		return nil, fmt.Errorf("playlist detail code: %d", parsed.Code)
+	}
+	return &parsed.Playlist, nil
+}
+
+func (neteaseCtx *NetEaseContext) getDetailByIDs(ctx context.Context, musicIDs []int) (*MusicDetail, error) {
+	_, span := otel.Start(ctx)
+	span.SetAttributes(attribute.String("songIDs", joinSongIDs(musicIDs)))
+	defer span.End()
+
+	cleanIDs := make([]int, 0, len(musicIDs))
+	for _, id := range musicIDs {
+		if id == 0 {
+			continue
+		}
+		cleanIDs = append(cleanIDs, id)
+	}
+	if len(cleanIDs) == 0 {
+		return &MusicDetail{}, nil
+	}
+
+	resp, err := xhttp.HttpClient.R().
+		SetFormDataFromValues(
+			map[string][]string{
+				"ids": {joinSongIDs(cleanIDs)},
+			},
+		).
+		SetCookies(neteaseCtx.cookies).
+		SetQueryParam("timestamp", fmt.Sprint(time.Now().UnixNano())).
+		Post(NetEaseAPIBaseURL + "/song/detail")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("song detail http status: %d", resp.StatusCode())
+	}
+
+	musicDetail := &MusicDetail{}
+	if err := sonic.Unmarshal(resp.Body(), musicDetail); err != nil {
+		return nil, err
+	}
+	return musicDetail, nil
+}
+
+func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID int) (lyrics string, lyricsURL string) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Int("songID", songID))
+	defer span.End()
+
+	resp, err := xhttp.HttpClient.R().
+		SetFormDataFromValues(
+			map[string][]string{
+				"id": {songIDString(songID)},
 			},
 		).
 		SetCookies(neteaseCtx.cookies).
@@ -330,6 +401,11 @@ func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID string) 
 		Post(NetEaseAPIBaseURL + "/lyric")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return
+	}
+	if resp.StatusCode() != 200 {
+		logs.L().Ctx(ctx).Warn("lyric request failed", zap.Int("status_code", resp.StatusCode()))
+		return
 	}
 	searchLyrics := &SearchLyrics{}
 	body := string(resp.Body())
@@ -341,7 +417,7 @@ func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID string) 
 	lyricsURL, err = miniodal.New(miniodal.Internal).Upload(ctx).
 		WithContentType(xmodel.ContentTypePlainText.String()).
 		WithData([]byte(body)).
-		Do("cloudmusic", "lyrics/"+songID+".json", minio.PutObjectOptions{}).PreSignURL()
+		Do("cloudmusic", "lyrics/"+songIDString(songID)+".json", minio.PutObjectOptions{}).PreSignURL()
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
 		return
@@ -358,7 +434,7 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 	for _, line := range lines {
 		match, err := lyricsRepattern.FindStringMatch(line)
 		if err != nil {
-			panic(err)
+			continue
 		}
 		if match != nil {
 			if lyric := match.GroupByName("line").String(); lyric != "" {
@@ -369,7 +445,7 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 	for _, translatedLine := range strings.Split(translatedLyrics, "\n") {
 		match, err := lyricsRepattern.FindStringMatch(translatedLine)
 		if err != nil {
-			panic(err)
+			continue
 		}
 		if match != nil {
 			if lyric := match.GroupByName("line").String(); lyric != "" {
@@ -401,25 +477,37 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 }
 
 func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) (result []*SearchMusicItem, err error) {
-	sResChan := make(chan *SearchMusicItem, len(searchRes.Result.Songs))
-
-	go neteaseCtx.InnerAsyncGetSearchRes(ctx, searchRes, err, sResChan)
-
-	m := asyncUploadPics(ctx, searchRes)
-	for res := range sResChan {
-		res.ImageKey = m[res.ID]
-		result = append(result, res)
+	songIDs := make([]int, 0, len(searchRes.Result.Songs))
+	for idx := range searchRes.Result.Songs {
+		if searchRes.Result.Songs[idx].ID == 0 {
+			continue
+		}
+		songIDs = append(songIDs, searchRes.Result.Songs[idx].ID)
 	}
-	return
+	urlByID, err := neteaseCtx.GetMusicURLByIDs(ctx, songIDs...)
+	if err != nil {
+		return nil, err
+	}
+	imageKeyByID := asyncUploadPics(ctx, searchRes)
+	result = make([]*SearchMusicItem, 0, len(searchRes.Result.Songs))
+	for idx := range searchRes.Result.Songs {
+		song := &searchRes.Result.Songs[idx]
+		if song.ID == 0 {
+			continue
+		}
+		result = append(result, &SearchMusicItem{
+			ID:         song.ID,
+			Name:       song.Name,
+			ArtistName: genArtistName(song),
+			PicURL:     song.Al.PicURL,
+			ImageKey:   imageKeyByID[song.ID],
+			SongURL:    urlByID[song.ID],
+		})
+	}
+	return result, nil
 }
 
 // SearchMusicByKeyWord 通过关键字搜索歌曲
-//
-//	@receiver neteaseCtx
-//	@param ctx
-//	@param keywords
-//	@return result
-//	@return err
 func (neteaseCtx *NetEaseContext) SearchMusicByKeyWord(ctx context.Context, keywords ...string) (result []*SearchMusicItem, err error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("keywords").StringSlice(keywords))
@@ -438,20 +526,93 @@ func (neteaseCtx *NetEaseContext) SearchMusicByKeyWord(ctx context.Context, keyw
 		Post(NetEaseAPIBaseURL + "/cloudsearch")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
+	}
+	if resp1.StatusCode() != 200 {
+		return nil, fmt.Errorf("search music http status: %d", resp1.StatusCode())
 	}
 
 	searchRes := SearchMusic{}
-	sonic.Unmarshal(resp1.Body(), &searchRes)
-
-	result, err = neteaseCtx.AsyncGetSearchRes(ctx, searchRes)
-	if err != nil {
-		return
+	if err = sonic.Unmarshal(resp1.Body(), &searchRes); err != nil {
+		logs.L().Ctx(ctx).Warn("Unmarshal search result failed", zap.Error(err))
+		return nil, err
 	}
 
-	return
+	return neteaseCtx.AsyncGetSearchRes(ctx, searchRes)
 }
 
-func (neteaseCtx *NetEaseContext) SearchPlaylistByKeyWord(ctx context.Context, keywords ...string) {
+func (neteaseCtx *NetEaseContext) SearchMusicByPlaylist(ctx context.Context, playlistID string) (playListDetail *PlaylistDetail, result []*SearchMusicItem, err error) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Key("playlistID").String(strings.TrimSpace(playlistID)))
+	defer span.End()
+
+	playListDetail, err = neteaseCtx.getPlaylistDetail(ctx, playlistID)
+	if err != nil {
+		return nil, nil, err
+	}
+	trackIDs := make([]int, 0, len(playListDetail.TrackIDs))
+	for _, track := range playListDetail.TrackIDs {
+		if track.ID == 0 {
+			continue
+		}
+		trackIDs = append(trackIDs, track.ID)
+	}
+	if len(trackIDs) == 0 {
+		return nil, nil, fmt.Errorf("playlist %s has no tracks", strings.TrimSpace(playlistID))
+	}
+
+	musicDetail, err := neteaseCtx.getDetailByIDs(ctx, trackIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if musicDetail == nil || len(musicDetail.Songs) == 0 {
+		return nil, nil, fmt.Errorf("playlist %s returned no song details", strings.TrimSpace(playlistID))
+	}
+
+	type playlistSongSummary struct {
+		Name       string
+		ArtistName string
+		PicURL     string
+	}
+	songByID := make(map[int]playlistSongSummary, len(musicDetail.Songs))
+	for idx := range musicDetail.Songs {
+		song := &musicDetail.Songs[idx]
+		if song.ID == 0 {
+			continue
+		}
+		artistNames := make([]string, 0, len(song.Ar))
+		for _, artist := range song.Ar {
+			if strings.TrimSpace(artist.Name) == "" {
+				continue
+			}
+			artistNames = append(artistNames, artist.Name)
+		}
+		songByID[song.ID] = playlistSongSummary{
+			Name:       song.Name,
+			ArtistName: strings.Join(artistNames, ", "),
+			PicURL:     song.Al.PicURL,
+		}
+	}
+
+	urlByID, err := neteaseCtx.GetMusicURLs(ctx, defaultMusicURLBatchSize, trackIDs...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	result = make([]*SearchMusicItem, 0, len(trackIDs))
+	for _, id := range trackIDs {
+		song, ok := songByID[id]
+		if !ok {
+			continue
+		}
+		result = append(result, &SearchMusicItem{
+			ID:         id,
+			Name:       song.Name,
+			ArtistName: song.ArtistName,
+			PicURL:     song.PicURL,
+			SongURL:    urlByID[id],
+		})
+	}
 	return
 }
 
@@ -482,12 +643,17 @@ func (neteaseCtx *NetEaseContext) SearchAlbumByKeyWord(ctx context.Context, keyw
 		Post(NetEaseAPIBaseURL + "/cloudsearch")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
+	}
+	if resp1.StatusCode() != 200 {
+		return nil, fmt.Errorf("search album http status: %d", resp1.StatusCode())
 	}
 
 	searchRes := searchAlbumResult{}
 	err = sonic.Unmarshal(resp1.Body(), &searchRes)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
 	}
 	result = searchRes.Result.Albums
 	return
@@ -516,78 +682,67 @@ func (neteaseCtx *NetEaseContext) GetAlbumDetail(ctx context.Context, albumID st
 		Post(NetEaseAPIBaseURL + "/album")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
+	}
+	if resp1.StatusCode() != 200 {
+		return nil, fmt.Errorf("album detail http status: %d", resp1.StatusCode())
 	}
 
 	searchRes := AlbumDetail{}
 	err = sonic.Unmarshal(resp1.Body(), &searchRes)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
 	}
 
 	return &searchRes, err
 }
 
-func asyncUploadPics(ctx context.Context, musicInfos SearchMusic) map[string]string {
+type uploadedPic struct {
+	imageKey string
+	musicID  int
+}
+
+func asyncUploadPics(ctx context.Context, musicInfos SearchMusic) map[int]string {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	var (
-		c  = make(chan [2]string)
-		wg = &sync.WaitGroup{}
-		m  = make(map[string]string, 1)
+		c   = make(chan uploadedPic, len(musicInfos.Result.Songs))
+		wg  = &sync.WaitGroup{}
+		m   = make(map[int]string, len(musicInfos.Result.Songs))
+		sem = make(chan struct{}, defaultPictureConcurrency)
 	)
 	go func(ctx context.Context) {
 		defer close(c)
 		defer wg.Wait()
 
 		for _, m := range musicInfos.Result.Songs {
+			if m.ID == 0 || strings.TrimSpace(m.Al.PicURL) == "" {
+				continue
+			}
 			wg.Add(1)
-			go uploadPicWorker(ctx, wg, m.Al.PicURL, m.ID, c)
+			go func(song Song) {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				uploadPicWorker(ctx, wg, song.Al.PicURL, song.ID, c)
+			}(m)
 		}
 	}(ctx)
 	for res := range c {
-		m[res[1]] = res[0]
+		m[res.musicID] = res.imageKey
 	}
 	return m
 }
 
-func uploadPicWorker(ctx context.Context, wg *sync.WaitGroup, url string, musicID int, c chan [2]string) bool {
+func uploadPicWorker(ctx context.Context, wg *sync.WaitGroup, url string, musicID int, c chan uploadedPic) bool {
 	defer wg.Done()
-	imgKey, _, err := larkimg.UploadPicAllinOne(ctx, url, strconv.Itoa(musicID), true)
+	imgKey, _, err := larkimg.UploadPicAllinOne(ctx, url, musicID, true)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("upload pic to lark error", zap.Error(err))
 		return true
 	}
-	c <- [2]string{imgKey, strconv.Itoa(musicID)}
+	c <- uploadedPic{imageKey: imgKey, musicID: musicID}
 	return false
-}
-
-func (neteaseCtx *NetEaseContext) InnerAsyncGetSearchRes(ctx context.Context, searchMusic SearchMusic, err error, urlChan chan *SearchMusicItem) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer close(urlChan)
-
-	songMap := make(map[string]*Song)
-	songList := make([]string, len(searchMusic.Result.Songs))
-	for i, song := range searchMusic.Result.Songs {
-		songMap[strconv.Itoa(song.ID)] = &searchMusic.Result.Songs[i]
-		songList[i] = strconv.Itoa(song.ID)
-	}
-
-	musicIDURL, err := neteaseCtx.GetMusicURLByIDs(ctx, songList)
-	for _, ID := range songList {
-		songInfo := songMap[ID]
-		urlChan <- &SearchMusicItem{
-			// Index:      index,
-			ID:         ID,
-			Name:       songInfo.Name,
-			ArtistName: genArtistName(songInfo),
-			PicURL:     songInfo.Al.PicURL,
-			SongURL:    musicIDURL[ID],
-		}
-
-	}
-
-	return
 }
 
 func (neteaseCtx *NetEaseContext) GetComment(ctx context.Context, commentType CommentType, id string) (res *CommentResult, err error) {
@@ -610,13 +765,17 @@ func (neteaseCtx *NetEaseContext) GetComment(ctx context.Context, commentType Co
 		Post(NetEaseAPIBaseURL + "/comment/new/")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
+		return nil, err
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("comment http status: %d", resp.StatusCode())
 	}
 	res = &CommentResult{}
 	err = sonic.Unmarshal(resp.Body(), res)
 	if err != nil {
-		return
+		return nil, err
 	}
-	return
+	return res, nil
 }
 
 func genArtistName(song *Song) (artistName string) {
@@ -642,11 +801,20 @@ func (neteaseCtx *NetEaseContext) GetNewRecommendMusic() (res []SearchMusicItem,
 		},
 	).Post(NetEaseAPIBaseURL + "/personalized/newsong")
 	if err != nil {
-		return
+		return nil, err
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("recommend music http status: %d", resp.StatusCode())
 	}
 
 	music := &GlobRecommendMusicRes{}
-	sonic.Unmarshal(resp.Body(), music)
+	if err = sonic.Unmarshal(resp.Body(), music); err != nil {
+		return nil, err
+	}
+	musicIDs := make([]int, 0, len(music.Result))
+	nameByID := make(map[int]string, len(music.Result))
+	artistNameByID := make(map[int]string, len(music.Result))
+	picURLByID := make(map[int]string, len(music.Result))
 	for _, result := range music.Result {
 		var ArtistName string
 		for _, name := range result.Song.Artists {
@@ -655,22 +823,26 @@ func (neteaseCtx *NetEaseContext) GetNewRecommendMusic() (res []SearchMusicItem,
 			}
 			ArtistName += name.Name
 		}
-		SongURL, errIn := neteaseCtx.GetMusicURLByID(context.Background(), []*MusicIDName{
-			{strconv.Itoa(result.Song.ID), result.Song.Name},
-		})
-		if errIn != nil {
-			err = errIn
-			return
-		}
-		if len(SongURL) == 0 {
+		musicIDs = append(musicIDs, result.Song.ID)
+		nameByID[result.Song.ID] = result.Song.Name
+		artistNameByID[result.Song.ID] = ArtistName
+		picURLByID[result.Song.ID] = result.PicURL
+	}
+	urlByID, err := neteaseCtx.GetMusicURLs(context.Background(), defaultMusicURLBatchSize, musicIDs...)
+	if err != nil {
+		return nil, err
+	}
+	for _, musicID := range musicIDs {
+		songURL := urlByID[musicID]
+		if songURL == "" {
 			continue
 		}
 		res = append(res, SearchMusicItem{
-			ID:         strconv.Itoa(result.Song.ID),
-			Name:       result.Song.Name,
-			ArtistName: ArtistName,
-			PicURL:     result.PicURL,
-			SongURL:    SongURL[0].URL,
+			ID:         musicID,
+			Name:       nameByID[musicID],
+			ArtistName: artistNameByID[musicID],
+			PicURL:     picURLByID[musicID],
+			SongURL:    songURL,
 		})
 	}
 	return

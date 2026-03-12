@@ -92,7 +92,7 @@ func ParseViewRequest(parsed *cardactionproto.Parsed) (*ViewRequest, error) {
 	}
 	targetOpenID := readActionValue(parsed, cardactionproto.TargetUserIDField)
 	if shouldApplyPermissionTargetPicker(parsed) {
-		if selected := strings.TrimSpace(parsed.Option); selected != "" {
+		if selected := parsed.SelectedOption(); selected != "" {
 			targetOpenID = selected
 		}
 	}

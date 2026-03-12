@@ -134,7 +134,11 @@ func DownImgFromMsgAsync(ctx context.Context, msgID, fileType, fileKey string) (
 			logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", fileKey), zap.String("file_type", fileType))
 			return
 		}
-		u, err := res.PreSignURL()
+		u, preSignErr := res.PreSignURL()
+		if preSignErr != nil {
+			logs.L().Ctx(ctx).Warn("get presign url error", zap.Error(preSignErr))
+			return
+		}
 		logs.L().Ctx(ctx).Info("upload pic to minio success", zap.String("file_type", fileType),
 			zap.String("url", u))
 	}()
@@ -306,8 +310,6 @@ func jsonTrans[T any](s string) (*T, error) {
 	return t, nil
 }
 
-type visitedMsgKey struct{}
-
 func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[string], err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
@@ -319,10 +321,10 @@ func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[str
 	}
 	msg := resp.Data.Items[0]
 	if msg == nil {
-		return nil, errors.New("No message found")
+		return nil, errors.New("no message found")
 	}
 	if msg.Sender.Id == nil {
-		return nil, errors.New("Message is not sent by bot")
+		return nil, errors.New("message is not sent by bot")
 	}
 	seq, err := GetAllImgTagFromMsg(ctx, msg)
 	if err != nil {
@@ -425,13 +427,14 @@ func checkDBCache(ctx context.Context, musicID string) (imgKey string, err error
 	return res[0].ImgKey, nil
 }
 
-func UploadPicAllinOne(ctx context.Context, imageURL, musicID string, uploadOSS bool) (key string, ossURL string, err error) { // also minio
+func UploadPicAllinOne(ctx context.Context, imageURL string, musicIDInt int, uploadOSS bool) (key string, ossURL string, err error) { // also minio
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.String("music.id", musicID))
+	span.SetAttributes(attribute.Int("music.id", musicIDInt))
 	span.SetAttributes(otel.PreviewAttrs("img_url", imageURL, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
+	musicID := strconv.Itoa(musicIDInt)
 	imgKey, err := checkDBCache(ctx, musicID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("get lark img from db error", zap.String("musicID", musicID))
@@ -569,15 +572,15 @@ func UploadPicture2Lark(ctx context.Context, URL string) (imgKey string) {
 
 func UploadPicBatch(ctx context.Context, sourceURLIDs map[string]int) chan [2]string {
 	var (
-		c  = make(chan [2]string)
+		c  = make(chan [2]string, len(sourceURLIDs))
 		wg = &sync.WaitGroup{}
 	)
-	defer close(c)
-	defer wg.Wait()
 
 	for url, musicID := range sourceURLIDs {
+		wg.Add(1)
 		go func(url string, musicID int) {
-			_, _, err := UploadPicAllinOne(ctx, url, strconv.Itoa(musicID), true)
+			defer wg.Done()
+			_, _, err := UploadPicAllinOne(ctx, url, musicID, true)
 			if err != nil {
 				logs.L().Ctx(ctx).Error("upload pic to lark error", zap.Error(err))
 				return
@@ -585,6 +588,10 @@ func UploadPicBatch(ctx context.Context, sourceURLIDs map[string]int) chan [2]st
 			c <- [2]string{url, strconv.Itoa(musicID)}
 		}(url, musicID)
 	}
+	go func() {
+		wg.Wait()
+		close(c)
+	}()
 
 	return c
 }

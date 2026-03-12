@@ -4,19 +4,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
 	"github.com/bytedance/sonic"
-	jsoniter "github.com/json-iterator/go"
 	"go.uber.org/zap"
 )
 
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
-
 const (
 	hitokotoURL = "https://v1.hitokoto.cn"
-)
-
-const (
-	yiyanURL     = "https://api.fanlisky.cn/niuren/getSen"
-	yiyanPoemURL = "https://v1.jinrishici.com/all.json"
 )
 
 // RespBody  一言返回体

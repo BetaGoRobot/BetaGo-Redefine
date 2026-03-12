@@ -17,8 +17,8 @@ import (
 )
 
 type MusicSearchArgs struct {
-	Type     string `json:"type"`
-	Keywords string `json:"keywords" cli:"keywords,input,required"`
+	Type     MusicSearchType `json:"type"`
+	Keywords string          `json:"keywords" cli:"keywords,input,required"`
 }
 
 type musicSearchHandler struct{}
@@ -27,9 +27,9 @@ var MusicSearch musicSearchHandler
 
 func (musicSearchHandler) ParseCLI(args []string) (MusicSearchArgs, error) {
 	argsMap, input := parseArgs(args...)
-	searchType := argsMap["type"]
-	if searchType == "" {
-		searchType = "song"
+	searchType, err := xcommand.ParseEnum[MusicSearchType](argsMap["type"])
+	if err != nil {
+		return MusicSearchArgs{}, err
 	}
 	if input == "" {
 		return MusicSearchArgs{}, errors.New("keywords is required")
@@ -45,9 +45,11 @@ func (musicSearchHandler) ParseTool(raw string) (MusicSearchArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return MusicSearchArgs{}, err
 	}
-	if parsed.Type == "" {
-		parsed.Type = "song"
+	searchType, err := xcommand.ParseEnum[MusicSearchType](string(parsed.Type))
+	if err != nil {
+		return MusicSearchArgs{}, err
 	}
+	parsed.Type = searchType
 	if parsed.Keywords == "" {
 		return MusicSearchArgs{}, errors.New("keywords is required")
 	}
@@ -61,11 +63,11 @@ func (musicSearchHandler) ToolSpec() xcommand.ToolSpec {
 		Params: arktools.NewParams("object").
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "搜索类型，可选值：song、album。默认 song",
+				Desc: "搜索对象类型",
 			}).
 			AddProp("keywords", &arktools.Prop{
 				Type: "string",
-				Desc: "音乐搜索的关键词, 多个关键词之间用空格隔开",
+				Desc: "搜索关键词；当 type=playlist 时传歌单 ID",
 			}).
 			AddRequired("keywords"),
 	}
@@ -80,7 +82,7 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	keywords := []string{arg.Keywords}
 
 	var cardContent *larktpl.TemplateCardContent
-	if arg.Type == "album" {
+	if arg.Type == MusicSearchTypeAlbum {
 		albumList, err := neteaseapi.NetEaseGCtx.SearchAlbumByKeyWord(ctx, keywords...)
 		if err != nil {
 			return err
@@ -95,9 +97,21 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		if err != nil {
 			return err
 		}
-	} else if arg.Type == "artist" {
-	} else if arg.Type == "playlist" {
-	} else if arg.Type == "song" {
+	} else if arg.Type == MusicSearchTypePlaylist {
+		playListDetail, musicList, err := neteaseapi.NetEaseGCtx.SearchMusicByPlaylist(ctx, arg.Keywords)
+		if err != nil {
+			return err
+		}
+		cardContent, err = neteaseapi.BuildMusicListCard(ctx,
+			musicList,
+			neteaseapi.MusicItemTransItemPic,
+			neteaseapi.CommentTypeSong,
+			playListDetail.Name,
+		)
+		if err != nil {
+			return err
+		}
+	} else if arg.Type == MusicSearchTypeSong {
 		musicList, err := neteaseapi.NetEaseGCtx.SearchMusicByKeyWord(ctx, keywords...)
 		if err != nil {
 			return err
@@ -127,5 +141,6 @@ func (musicSearchHandler) CommandExamples() []string {
 	return []string{
 		"/music 稻香",
 		"/music --type=album 范特西",
+		"/music --type=playlist 3778678",
 	}
 }

@@ -94,3 +94,21 @@ func TestParseViewRequestUsesSelectPersonOption(t *testing.T) {
 		t.Fatalf("unexpected target user id: %q", req.TargetOpenID)
 	}
 }
+
+func TestParseViewRequestUsesSelectPersonOptionsFallback(t *testing.T) {
+	req, err := ParseViewRequest(&cardactionproto.Parsed{
+		Name:    cardactionproto.ActionPermissionView,
+		Tag:     "select_person",
+		Options: []string{"ou_picker_target"},
+		Value: map[string]any{
+			permissionViewSelectField:         permissionViewSelectTargetUser,
+			cardactionproto.TargetUserIDField: "ou_old_target",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseViewRequest() error = %v", err)
+	}
+	if req.TargetOpenID != "ou_picker_target" {
+		t.Fatalf("unexpected target user id from options fallback: %q", req.TargetOpenID)
+	}
+}

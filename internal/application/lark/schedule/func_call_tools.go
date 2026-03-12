@@ -21,7 +21,7 @@ const scheduleToolResultKey = "schedule_tool_result"
 
 type createScheduleArgs struct {
 	Name          string          `json:"name"`
-	Type          string          `json:"type"`
+	Type          TaskType        `json:"type"`
 	RunAt         string          `json:"run_at"`
 	CronExpr      string          `json:"cron_expr"`
 	Timezone      string          `json:"timezone"`
@@ -45,13 +45,13 @@ type TaskQuery struct {
 }
 
 type queryScheduleArgs struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	Type          string `json:"type"`
-	ToolName      string `json:"tool_name"`
-	CreatorOpenID string `json:"creator_open_id"`
-	Limit         int    `json:"limit"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Status        TaskStatus `json:"status"`
+	Type          TaskType   `json:"type"`
+	ToolName      string     `json:"tool_name"`
+	CreatorOpenID string     `json:"creator_open_id"`
+	Limit         int        `json:"limit"`
 }
 
 type deleteScheduleArgs struct {
@@ -110,6 +110,11 @@ func (createScheduleHandler) ParseTool(raw string) (createScheduleArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return createScheduleArgs{}, err
 	}
+	taskType, err := xcommand.ParseEnum[TaskType](string(parsed.Type))
+	if err != nil {
+		return createScheduleArgs{}, err
+	}
+	parsed.Type = taskType
 	return parsed, nil
 }
 
@@ -124,15 +129,15 @@ func (createScheduleHandler) ToolSpec() xcommand.ToolSpec {
 		desc,
 		tools.NewParams("object").
 			AddProp("name", &tools.Prop{Type: "string", Desc: "任务名称，必填"}).
-			AddProp("type", &tools.Prop{Type: "string", Desc: "调度类型: once 或 cron，必填"}).
+			AddProp("type", &tools.Prop{Type: "string", Desc: "调度模式，必填"}).
 			AddProp("run_at", &tools.Prop{Type: "string", Desc: "单次任务的执行时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS"}).
 			AddProp("cron_expr", &tools.Prop{Type: "string", Desc: "周期任务的标准 5 段 cron 表达式，例如 `0 9 * * 1-5`"}).
-			AddProp("timezone", &tools.Prop{Type: "string", Desc: "IANA 时区名，例如 Asia/Shanghai，默认 Asia/Shanghai"}).
+			AddProp("timezone", &tools.Prop{Type: "string", Desc: "IANA 时区名，例如 Asia/Shanghai"}).
 			AddProp("message", &tools.Prop{Type: "string", Desc: "如果只是提醒/发消息，直接传 message，不需要再传 tool_name"}).
 			AddProp("tool_name", &tools.Prop{Type: "string", Desc: "需要自动执行的工具名。message 和 tool_name 二选一"}).
 			AddProp("tool_args", &tools.Prop{Type: "object", Desc: "工具参数对象。使用 tool_name 时传入"}).
-			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否额外发一条错误通知，默认 false"}).
-			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "工具返回文本结果时是否额外发送结果通知，默认 false"}).
+			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否额外发一条错误通知"}).
+			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "工具返回文本结果时是否额外发送结果通知"}).
 			AddRequired("name").
 			AddRequired("type"),
 	)
@@ -153,7 +158,7 @@ func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		CreatorID:       metaData.OpenID,
 		SourceMessageID: scheduleSourceMessageID(data),
 		Name:            args.Name,
-		Type:            args.Type,
+		Type:            string(args.Type),
 		RunAt:           runAt,
 		CronExpr:        strings.TrimSpace(args.CronExpr),
 		Timezone:        strings.TrimSpace(args.Timezone),
@@ -230,6 +235,16 @@ func (queryScheduleHandler) ParseTool(raw string) (queryScheduleArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return queryScheduleArgs{}, err
 	}
+	status, err := xcommand.ParseEnum[TaskStatus](string(parsed.Status))
+	if err != nil {
+		return queryScheduleArgs{}, err
+	}
+	taskType, err := xcommand.ParseEnum[TaskType](string(parsed.Type))
+	if err != nil {
+		return queryScheduleArgs{}, err
+	}
+	parsed.Status = status
+	parsed.Type = taskType
 	return parsed, nil
 }
 
@@ -240,8 +255,8 @@ func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
 		tools.NewParams("object").
 			AddProp("id", &tools.Prop{Type: "string", Desc: "要精确查询的 schedule ID"}).
 			AddProp("name", &tools.Prop{Type: "string", Desc: "按名称模糊匹配"}).
-			AddProp("status", &tools.Prop{Type: "string", Desc: "按状态过滤：enabled、paused、completed、disabled"}).
-			AddProp("type", &tools.Prop{Type: "string", Desc: "按类型过滤：once 或 cron"}).
+			AddProp("status", &tools.Prop{Type: "string", Desc: "按状态过滤"}).
+			AddProp("type", &tools.Prop{Type: "string", Desc: "按调度模式过滤"}).
 			AddProp("tool_name", &tools.Prop{Type: "string", Desc: "按执行工具名过滤，例如 send_message"}).
 			AddProp("creator_open_id", &tools.Prop{Type: "string", Desc: "按创建者 OpenID 过滤"}).
 			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制；未传时默认 100"}),
@@ -269,8 +284,8 @@ func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 
 	view := NewTaskQueryCardView("", TaskQuery{
 		Name:          args.Name,
-		Status:        args.Status,
-		Type:          args.Type,
+		Status:        string(args.Status),
+		Type:          string(args.Type),
 		ToolName:      args.ToolName,
 		CreatorOpenID: args.CreatorOpenID,
 	}, args.Limit)

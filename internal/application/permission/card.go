@@ -141,7 +141,20 @@ func HandleAction(ctx context.Context, req *ActionRequest) (*ActionResponse, err
 
 func buildTargetUserForm(actorOpenID, targetOpenID string, options PermissionCardViewOptions) map[string]any {
 	showAvatar := true
-	showName := true
+	showName := false
+	currentTarget := any(larkmsg.TextDiv("未选择", larkmsg.CardTextOptions{
+		Size:  "notation",
+		Color: "grey",
+		Align: "left",
+	}))
+	if strings.TrimSpace(targetOpenID) != "" {
+		currentTarget = larkmsg.Person(targetOpenID, larkmsg.PersonOptions{
+			Size:       "small",
+			ShowAvatar: &showAvatar,
+			ShowName:   &showName,
+			Margin:     "0",
+		})
+	}
 	return larkmsg.SplitColumns(
 		[]any{
 			larkmsg.Markdown("**查看目标用户**\n使用选人器切换目标用户；候选默认取当前会话成员"),
@@ -157,13 +170,7 @@ func buildTargetUserForm(actorOpenID, targetOpenID string, options PermissionCar
 					VerticalAlign: "center",
 				}),
 				larkmsg.Column([]any{
-					larkmsg.Person(targetOpenID, larkmsg.PersonOptions{
-						Size:       "small",
-						ShowAvatar: &showAvatar,
-						ShowName:   &showName,
-						Style:      "capsule",
-						Margin:     "0",
-					}),
+					currentTarget,
 				}, larkmsg.ColumnOptions{
 					Width:         "auto",
 					VerticalAlign: "center",
@@ -371,14 +378,6 @@ func rawGrantResourceText(grant permissioninfra.Grant) string {
 		return "资源: `-`"
 	}
 	return "资源: `" + strings.Join(parts, " ") + "`"
-}
-
-func sanitizeComponentName(value string) string {
-	value = strings.NewReplacer("-", "_", ".", "_", ":", "_", " ", "_", "|", "_").Replace(value)
-	if value == "" {
-		return "field"
-	}
-	return value
 }
 
 func shortID(id string) string {

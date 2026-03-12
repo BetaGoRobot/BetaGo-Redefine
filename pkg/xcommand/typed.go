@@ -86,6 +86,7 @@ func RegisterTool[TMeta, TArgs any](ins *arktools.Impl[TMeta], handler ToolArgHa
 	if params == nil {
 		params = arktools.NewParams("object")
 	}
+	params = enrichToolParamsFromArgs[TArgs](params)
 
 	unit := arktools.NewUnit[TMeta]().
 		Name(spec.Name).

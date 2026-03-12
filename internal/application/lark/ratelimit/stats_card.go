@@ -41,6 +41,10 @@ func BuildStatsCardJSON(ctx context.Context, chatID string) (map[string]any, err
 	return BuildStatsCardJSONWithOptions(ctx, chatID, StatsCardOptions{})
 }
 
+func BuildStatsCardJSONFromData(ctx context.Context, data *StatsCardData) map[string]any {
+	return map[string]any(buildStatsRawCard(ctx, data))
+}
+
 type StatsCardOptions struct {
 	MessageID      string
 	PendingHistory []larkmsg.CardActionHistoryRecord

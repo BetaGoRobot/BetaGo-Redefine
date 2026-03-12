@@ -21,6 +21,9 @@ func TestBuildTargetUserFormUsesFilledPrimarySubmit(t *testing.T) {
 	if !strings.Contains(jsonStr, `"content":"当前目标"`) || !strings.Contains(jsonStr, `"tag":"person"`) || !strings.Contains(jsonStr, `"user_id":"ou_target"`) {
 		t.Fatalf("expected visible current target person in permission card: %s", jsonStr)
 	}
+	if !strings.Contains(jsonStr, `"show_name":false`) {
+		t.Fatalf("expected current target avatar-only display in permission card: %s", jsonStr)
+	}
 	if !strings.Contains(jsonStr, `"initial_option":"ou_target"`) {
 		t.Fatalf("expected picker initial option in permission card: %s", jsonStr)
 	}
@@ -29,6 +32,18 @@ func TestBuildTargetUserFormUsesFilledPrimarySubmit(t *testing.T) {
 	}
 	if strings.Contains(jsonStr, `"tag":"input"`) {
 		t.Fatalf("did not expect legacy openid input in permission card: %s", jsonStr)
+	}
+}
+
+func TestBuildTargetUserFormShowsEmptyTargetFallback(t *testing.T) {
+	element := buildTargetUserForm("ou_actor", "", PermissionCardViewOptions{})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"content":"当前目标"`) || !strings.Contains(jsonStr, `"content":"未选择"`) {
+		t.Fatalf("expected empty target fallback in permission card: %s", jsonStr)
 	}
 }
 

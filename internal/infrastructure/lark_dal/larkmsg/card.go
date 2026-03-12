@@ -51,15 +51,20 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 }
 
 func CreateMsgCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, chatID string) (err error) {
+	return CreateMsgCardByReceiveID(ctx, cardContent, larkim.ReceiveIdTypeChatId, chatID)
+}
+
+func CreateMsgCardByReceiveID(ctx context.Context, cardContent *larktpl.TemplateCardContent, receiveIDType, receiveID string) (err error) {
 	_, span := otel.Start(ctx)
 	span.SetAttributes(
-		attribute.String("chat.id", chatID),
+		attribute.String("receive.id", receiveID),
+		attribute.String("receive.id_type", receiveIDType),
 		attribute.Int("card.variable.count", len(cardContent.Data.TemplateVariable)),
 	)
 
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	_, err = createMsgRawContentType(ctx, chatID, larkim.MsgTypeInteractive, cardContent.String(), "", "_card", cardContent.GetVariables()...)
+	_, err = createMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, cardContent.String(), "", "_card", cardContent.GetVariables()...)
 	return err
 }

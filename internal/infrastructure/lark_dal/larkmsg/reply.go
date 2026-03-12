@@ -117,24 +117,3 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 	)
 	return
 }
-
-func doSendCard(ctx context.Context, msgID, suffix string, cardContent *larktpl.TemplateCardContent, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
-	uuid := msgID + suffix
-	if len(uuid) > 50 {
-		uuid = uuid[:50]
-	}
-
-	req := larkim.NewReplyMessageReqBuilder().
-		MessageId(msgID).
-		Body(
-			larkim.NewReplyMessageReqBodyBuilder().
-				MsgType(larkim.MsgTypeInteractive).
-				Content(cardContent.String()).
-				Uuid(utils.GenUUIDStr(uuid, 50)).
-				ReplyInThread(replyInThread).
-				Build(),
-		).
-		Build()
-
-	return sendReplyMessage(ctx, req, cardContent.GetVariables()...)
-}

@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/carddebug"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
@@ -52,6 +53,18 @@ type (
 	debugImageArgs      struct {
 		Prompt string `cli:"prompt,input" help:"图片分析提示词"`
 	}
+	debugCardArgs struct {
+		Spec         DebugCardSpec `cli:"spec" help:"内置调试 spec，例如 config/ratelimit.sample"`
+		Template     string        `cli:"template" help:"卡片模板ID或名称"`
+		VarJSON      string        `cli:"vars_json" help:"模板变量 JSON"`
+		ToChatID     string        `cli:"to_chat_id" help:"发送目标 chat_id"`
+		ToOpenID     string        `cli:"to_open_id" help:"发送目标 open_id"`
+		ChatID       string        `cli:"chat_id" help:"业务上下文 chat_id"`
+		ID           string        `cli:"id" help:"业务对象 ID，例如 schedule.task 的 task_id"`
+		ActorOpenID  string        `cli:"actor_open_id" help:"业务上下文操作者 open_id"`
+		TargetOpenID string        `cli:"target_open_id" help:"业务上下文目标 open_id"`
+		Scope        ConfigScope   `cli:"scope" help:"业务上下文 scope，例如 chat/global/user"`
+	}
 )
 type debugConversationArgs struct{}
 
@@ -64,6 +77,7 @@ type (
 	debugRepeatHandler       struct{}
 	debugImageHandler        struct{}
 	debugConversationHandler struct{}
+	debugCardHandler         struct{}
 )
 
 var (
@@ -75,6 +89,7 @@ var (
 	DebugRepeat       debugRepeatHandler
 	DebugImage        debugImageHandler
 	DebugConversation debugConversationHandler
+	DebugCard         debugCardHandler
 )
 
 func (debugGetIDHandler) CommandDescription() string {
@@ -142,6 +157,20 @@ func (debugImageHandler) CommandExamples() []string {
 
 func (debugConversationHandler) CommandExamples() []string {
 	return []string{"/debug conver"}
+}
+
+func (debugCardHandler) CommandDescription() string {
+	return "卡片调试工具，支持模板卡、内置管理卡和样例卡直发"
+}
+
+func (debugCardHandler) CommandExamples() []string {
+	return []string{
+		"/debug card",
+		"/debug card --spec=ratelimit.sample",
+		"/debug card --spec=config --chat_id=oc_abc123 --actor_open_id=ou_admin",
+		"/debug card --spec=schedule.task --id=20260312093000-debugA --chat_id=oc_abc123",
+		"/debug card --template=NormalCardReplyTemplate --vars_json='{\"content\":\"Hello World\"}' --to_open_id=ou_xxx",
+	}
 }
 
 func (debugGetIDHandler) ParseCLI(args []string) (debugGetIDArgs, error) {
@@ -229,6 +258,34 @@ func (debugConversationHandler) ParseCLI(args []string) (debugConversationArgs, 
 
 func (debugConversationHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugConversationArgs) error {
 	return handleDebugConversation(ctx, data, metaData)
+}
+
+func (debugCardHandler) ParseCLI(args []string) (debugCardArgs, error) {
+	argsMap, _ := parseArgs(args...)
+	spec, err := xcommand.ParseEnum[DebugCardSpec](firstNonEmpty(argsMap["spec"], argsMap["card"]))
+	if err != nil {
+		return debugCardArgs{}, err
+	}
+	scope, err := xcommand.ParseEnum[ConfigScope](argsMap["scope"])
+	if err != nil {
+		return debugCardArgs{}, err
+	}
+	return debugCardArgs{
+		Spec:         spec,
+		Template:     argsMap["template"],
+		VarJSON:      firstNonEmpty(argsMap["vars_json"], argsMap["vars"], argsMap["var"]),
+		ToChatID:     firstNonEmpty(argsMap["to_chat_id"], argsMap["chatid"]),
+		ToOpenID:     argsMap["to_open_id"],
+		ChatID:       argsMap["chat_id"],
+		ID:           firstNonEmpty(argsMap["id"], argsMap["task_id"]),
+		ActorOpenID:  argsMap["actor_open_id"],
+		TargetOpenID: argsMap["target_open_id"],
+		Scope:        scope,
+	}, nil
+}
+
+func (debugCardHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugCardArgs) error {
+	return handleDebugCard(ctx, data, metaData, arg)
 }
 
 type traceItem struct {
@@ -668,6 +725,86 @@ func Dedup[T, K comparable](slice []T, keyFunc func(T) K) []T {
 // 		Name("revert_message").Desc("可以撤回指定消息,调用时不需要任何参数，工具会判断要撤回的消息是什么，并且返回撤回的结果。如果不是机器人发出的消息,是不能撤回的").Params(params).Func(revertWrap)
 // 	tools.M().Add(fcu)
 // }
+
+// handleDebugCard 卡片调试处理函数
+//
+//	@param ctx context.Context
+//	@param data *larkim.P2MessageReceiveV1
+//	@param metaData *xhandler.BaseMetaData
+//	@param arg debugCardArgs
+//	@return error
+//	@author heyuhengmatt
+//	@update 2026-03-12
+func handleDebugCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugCardArgs) (err error) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(arg), 256)...)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	if strings.TrimSpace(string(arg.Spec)) == "" && strings.TrimSpace(arg.Template) == "" ||
+		strings.TrimSpace(string(arg.Spec)) == "list" ||
+		strings.TrimSpace(arg.Template) == "list" {
+		var sb strings.Builder
+		sb.WriteString("可用调试卡片入口：\n")
+		sb.WriteString("\n内置 spec:\n")
+		for _, spec := range carddebug.ListSpecs() {
+			sb.WriteString(fmt.Sprintf("- `%s`: %s\n", spec.Name, spec.Description))
+		}
+		sb.WriteString("\n模板别名:\n")
+		for _, tpl := range carddebug.ListTemplates() {
+			sb.WriteString(fmt.Sprintf("- `%s`: `%s`\n", tpl.Name, tpl.ID))
+		}
+		sb.WriteString("\n示例:\n")
+		sb.WriteString("`/debug card --spec=ratelimit.sample`\n")
+		sb.WriteString("`/debug card --spec=config --chat_id=oc_abc123 --actor_open_id=ou_admin`\n")
+		sb.WriteString("`/debug card --spec=schedule.task --id=20260312093000-debugA --chat_id=oc_abc123`\n")
+		sb.WriteString("`/debug card --template=NormalCardReplyTemplate --vars_json='{\"content\":\"测试内容\"}' --to_open_id=ou_xxx`\n")
+
+		return larkmsg.ReplyCardText(ctx, sb.String(), *data.Event.Message.MessageId, "_card_list", false)
+	}
+
+	target, err := carddebug.ResolveReceiveTarget(arg.ToChatID, arg.ToOpenID, currentChatID(data, metaData))
+	if err != nil {
+		return err
+	}
+
+	chatID := firstNonEmpty(arg.ChatID, currentChatID(data, metaData))
+	actorOpenID := firstNonEmpty(arg.ActorOpenID, currentOpenID(data, metaData))
+	targetOpenID := firstNonEmpty(arg.TargetOpenID, arg.ToOpenID)
+	built, err := carddebug.Build(ctx, carddebug.BuildRequest{
+		Spec:         strings.TrimSpace(string(arg.Spec)),
+		Template:     strings.TrimSpace(arg.Template),
+		VarsJSON:     strings.TrimSpace(arg.VarJSON),
+		ChatID:       chatID,
+		ID:           strings.TrimSpace(arg.ID),
+		ActorOpenID:  actorOpenID,
+		TargetOpenID: targetOpenID,
+		Scope:        strings.TrimSpace(string(arg.Scope)),
+	})
+	if err != nil {
+		return err
+	}
+	if err := carddebug.Send(ctx, target, built); err != nil {
+		return fmt.Errorf("发送卡片失败：%w", err)
+	}
+
+	summary := fmt.Sprintf(
+		"已发送 `%s`\n目标: `%s`\n上下文: chat=`%s` actor=`%s`",
+		built.Label,
+		target.String(),
+		previewDebugID(chatID),
+		previewDebugID(actorOpenID),
+	)
+	return larkmsg.ReplyCardText(ctx, summary, *data.Event.Message.MessageId, "_card_send_success", false)
+}
+
+func previewDebugID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:4] + "..." + id[len(id)-4:]
+}
 
 // func revertWrap(ctx context.Context, meta *tools.FunctionCallMeta, args string) (any, error) {
 // 	s := struct {

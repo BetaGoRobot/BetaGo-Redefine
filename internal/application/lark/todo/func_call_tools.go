@@ -83,28 +83,28 @@ func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 }
 
 type createTodoArgs struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Priority    string `json:"priority"`
-	DueAt       string `json:"due_at"`
-	AssigneeID  string `json:"assignee_id"`
-	Tags        string `json:"tags"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Priority    TodoPriority `json:"priority"`
+	DueAt       string       `json:"due_at"`
+	AssigneeID  string       `json:"assignee_id"`
+	Tags        string       `json:"tags"`
 }
 
 type updateTodoArgs struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	Priority    string `json:"priority"`
-	DueAt       string `json:"due_at"`
-	AddTags     string `json:"add_tags"`
-	RemoveTags  string `json:"remove_tags"`
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Status      TodoStatus   `json:"status"`
+	Priority    TodoPriority `json:"priority"`
+	DueAt       string       `json:"due_at"`
+	AddTags     string       `json:"add_tags"`
+	RemoveTags  string       `json:"remove_tags"`
 }
 
 type listTodosArgs struct {
-	Status string `json:"status"`
-	Limit  int    `json:"limit"`
+	Status TodoStatus `json:"status"`
+	Limit  int        `json:"limit"`
 }
 
 type deleteTodoArgs struct {
@@ -141,6 +141,11 @@ func (createTodoHandler) ParseTool(raw string) (createTodoArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return createTodoArgs{}, err
 	}
+	priority, err := xcommand.ParseEnum[TodoPriority](string(parsed.Priority))
+	if err != nil {
+		return createTodoArgs{}, err
+	}
+	parsed.Priority = priority
 	return parsed, nil
 }
 
@@ -151,7 +156,7 @@ func (createTodoHandler) ToolSpec() xcommand.ToolSpec {
 		tools.NewParams("object").
 			AddProp("title", &tools.Prop{Type: "string", Desc: "待办事项的标题，必填"}).
 			AddProp("description", &tools.Prop{Type: "string", Desc: "待办事项的详细描述，可选"}).
-			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级: low(低), medium(中), high(高), urgent(紧急)，默认 medium"}).
+			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级"}).
 			AddProp("due_at", &tools.Prop{Type: "string", Desc: "截止时间，格式为 RFC3339 或 YYYY-MM-DD HH:MM:SS，可选"}).
 			AddProp("assignee_id", &tools.Prop{Type: "string", Desc: "负责人的飞书用户ID，可选"}).
 			AddProp("tags", &tools.Prop{Type: "string", Desc: "标签，多个标签用逗号分隔，可选"}).
@@ -184,7 +189,7 @@ func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 		CreatorName: userName,
 		Title:       args.Title,
 		Description: args.Description,
-		Priority:    args.Priority,
+		Priority:    string(args.Priority),
 		DueAt:       dueAt,
 		Tags:        tags,
 	}
@@ -213,6 +218,18 @@ func (updateTodoHandler) ParseTool(raw string) (updateTodoArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return updateTodoArgs{}, err
 	}
+	status, err := xcommand.ParseEnum[TodoStatus](string(parsed.Status))
+	if err != nil {
+		return updateTodoArgs{}, err
+	}
+	if parsed.Priority != "" {
+		priority, err := xcommand.ParseEnum[TodoPriority](string(parsed.Priority))
+		if err != nil {
+			return updateTodoArgs{}, err
+		}
+		parsed.Priority = priority
+	}
+	parsed.Status = status
 	return parsed, nil
 }
 
@@ -224,8 +241,8 @@ func (updateTodoHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("id", &tools.Prop{Type: "string", Desc: "待办事项的ID，必填"}).
 			AddProp("title", &tools.Prop{Type: "string", Desc: "新的标题，可选"}).
 			AddProp("description", &tools.Prop{Type: "string", Desc: "新的描述，可选"}).
-			AddProp("status", &tools.Prop{Type: "string", Desc: "状态: pending(待处理), doing(进行中), done(已完成), cancelled(已取消)"}).
-			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级: low, medium, high, urgent"}).
+			AddProp("status", &tools.Prop{Type: "string", Desc: "状态"}).
+			AddProp("priority", &tools.Prop{Type: "string", Desc: "优先级"}).
 			AddProp("due_at", &tools.Prop{Type: "string", Desc: "新的截止时间，格式 RFC3339 或 YYYY-MM-DD HH:MM:SS"}).
 			AddProp("add_tags", &tools.Prop{Type: "string", Desc: "要添加的标签，多个用逗号分隔"}).
 			AddProp("remove_tags", &tools.Prop{Type: "string", Desc: "要移除的标签，多个用逗号分隔"}).
@@ -242,10 +259,12 @@ func (updateTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 		req.Description = &args.Description
 	}
 	if args.Status != "" {
-		req.Status = &args.Status
+		status := string(args.Status)
+		req.Status = &status
 	}
 	if args.Priority != "" {
-		req.Priority = &args.Priority
+		priority := string(args.Priority)
+		req.Priority = &priority
 	}
 	if args.DueAt != "" {
 		if t, err := parseTime(args.DueAt); err == nil {
@@ -265,7 +284,7 @@ func (updateTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	}
 
 	result := fmt.Sprintf("✅ 待办更新成功！\n\n标题: %s\n状态: %s", t.Title, t.Status)
-	if args.Status == "done" {
+	if args.Status == TodoStatusDone {
 		result = fmt.Sprintf("🎉 恭喜完成任务！\n\n标题: %s", t.Title)
 	}
 	metaData.SetExtra(todoToolResultKey, result)
@@ -280,6 +299,11 @@ func (listTodosHandler) ParseTool(raw string) (listTodosArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return listTodosArgs{}, err
 	}
+	status, err := xcommand.ParseEnum[TodoStatus](string(parsed.Status))
+	if err != nil {
+		return listTodosArgs{}, err
+	}
+	parsed.Status = status
 	return parsed, nil
 }
 
@@ -288,7 +312,7 @@ func (listTodosHandler) ToolSpec() xcommand.ToolSpec {
 		"list_todos",
 		"列出当前群组的所有待办事项。当用户要求查看待办、任务列表、有什么任务时使用",
 		tools.NewParams("object").
-			AddProp("status", &tools.Prop{Type: "string", Desc: "过滤状态: pending, doing, done, cancelled，不填则列出所有"}).
+			AddProp("status", &tools.Prop{Type: "string", Desc: "过滤状态；不填则列出所有"}).
 			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制，默认 50"}),
 	)
 }
@@ -296,7 +320,8 @@ func (listTodosHandler) ToolSpec() xcommand.ToolSpec {
 func (listTodosHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listTodosArgs) error {
 	req := &ListTodosRequest{ChatID: metaData.ChatID, Limit: args.Limit}
 	if args.Status != "" {
-		req.Status = &args.Status
+		status := string(args.Status)
+		req.Status = &status
 	}
 	todos, err := GetService().ListTodos(ctx, req)
 	if err != nil {

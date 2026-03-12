@@ -52,6 +52,26 @@ type ButtonOptions struct {
 	URL            string
 }
 
+type TextInputOptions struct {
+	Placeholder  string
+	DefaultValue string
+	Required     *bool
+	ElementID    string
+}
+
+type SelectStaticOption struct {
+	Text  string
+	Value string
+}
+
+type SelectStaticOptions struct {
+	Placeholder   string
+	Width         string
+	InitialOption string
+	Options       []SelectStaticOption
+	ElementID     string
+}
+
 type PersonOptions struct {
 	Size       string
 	ShowAvatar *bool
@@ -222,6 +242,75 @@ func SelectPerson(opts SelectPersonOptions) map[string]any {
 	}
 	if opts.Margin != "" {
 		element["margin"] = opts.Margin
+	}
+	if opts.ElementID != "" {
+		if elementID := normalizeElementID(opts.ElementID); elementID != "" {
+			element["element_id"] = elementID
+		}
+	}
+	return element
+}
+
+func TextInput(name string, opts TextInputOptions) map[string]any {
+	return textInputElement("input", name, opts)
+}
+
+func TextArea(name string, opts TextInputOptions) map[string]any {
+	return textInputElement("textarea", name, opts)
+}
+
+func SelectStatic(name string, opts SelectStaticOptions) map[string]any {
+	element := map[string]any{
+		"tag":  "select_static",
+		"name": strings.TrimSpace(name),
+	}
+	if opts.Placeholder != "" {
+		element["placeholder"] = PlainText(opts.Placeholder)
+	}
+	if opts.Width != "" {
+		element["width"] = opts.Width
+	}
+	if initialOption := strings.TrimSpace(opts.InitialOption); initialOption != "" {
+		element["initial_option"] = initialOption
+	}
+	if len(opts.Options) > 0 {
+		options := make([]map[string]any, 0, len(opts.Options))
+		for _, option := range opts.Options {
+			value := strings.TrimSpace(option.Value)
+			if value == "" {
+				continue
+			}
+			label := strings.TrimSpace(option.Text)
+			if label == "" {
+				label = value
+			}
+			options = append(options, map[string]any{
+				"text":  PlainText(label),
+				"value": value,
+			})
+		}
+		if len(options) > 0 {
+			element["options"] = options
+		}
+	}
+	if opts.ElementID != "" {
+		if elementID := normalizeElementID(opts.ElementID); elementID != "" {
+			element["element_id"] = elementID
+		}
+	}
+	return element
+}
+
+func textInputElement(tag, name string, opts TextInputOptions) map[string]any {
+	element := map[string]any{
+		"tag":  tag,
+		"name": strings.TrimSpace(name),
+	}
+	if opts.Placeholder != "" {
+		element["placeholder"] = PlainText(opts.Placeholder)
+	}
+	if defaultValue := strings.TrimSpace(opts.DefaultValue); defaultValue != "" {
+		element["default_value"] = defaultValue
 	}
 	if opts.ElementID != "" {
 		if elementID := normalizeElementID(opts.ElementID); elementID != "" {

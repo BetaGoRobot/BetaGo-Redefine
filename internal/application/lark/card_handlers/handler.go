@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,31 +49,12 @@ func HandleSubmit(ctx context.Context, cardAction *callback.CardActionTriggerEve
 	}
 
 	srcCmd += fmt.Sprintf(" --st=\"%s\" --et=\"%s\"", st.In(utils.UTC8Loc()).Format(time.RFC3339), et.In(utils.UTC8Loc()).Format(time.RFC3339))
-	msgID := cardAction.Event.Context.OpenMessageID
-
-	data := new(larkim.P2MessageReceiveV1)
-	data.Event = new(larkim.P2MessageReceiveV1Data)
-	data.Event.Message = new(larkim.EventMessage)
-	data.Event.Message.MessageId = gptr.Of(msgID)
-	data.Event.Message.ChatId = new(string)
-	*data.Event.Message.ChatId = cardAction.Event.Context.OpenChatID
-
-	err = ops.ExecuteFromRawCommand(
-		ctx,
-		data,
-		&xhandler.BaseMetaData{
-			Refresh: true,
-		},
-		srcCmd,
-	)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("Refresh obj error", zap.Error(err))
-	}
+	ExecuteRawCommandFromCard(ctx, cardAction, srcCmd)
 }
 
-func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.TemplateCardContent {
+func GetCardMusicByPage(ctx context.Context, musicID, page int) *larktpl.TemplateCardContent {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("musicID").String(musicID))
+	span.SetAttributes(attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
 	const (
@@ -87,7 +69,7 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 
 	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
 	if detail == nil || len(detail.Songs) == 0 {
-		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.String("music_id", musicID))
+		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.Int("music_id", musicID))
 		return nil
 	}
 	songDetail := detail.Songs[0]
@@ -130,7 +112,7 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 		WithContentType(xmodel.ContentTypePlainText.String()).
 		SkipDedup(false).
 		WithReader(io.NopCloser(bytes.NewReader(utils.MustMarshal(targetURL)))).
-		Do("cloudmusic", "info/"+musicID+".json", minio.PutObjectOptions{}).PreSignURL()
+		Do("cloudmusic", "info/"+strconv.Itoa(musicID)+".json", minio.PutObjectOptions{}).PreSignURL()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to upload to minio", zap.Error(err))
 		return nil
@@ -170,18 +152,18 @@ func GetCardMusicByPage(ctx context.Context, musicID string, page int) *larktpl.
 		AddVariable("sub_title", songDetail.Ar[0].Name).
 		AddVariable("imgkey", map[string]any{"img_key": imageKey}).
 		AddVariable("player_url", playerURL).
-		AddVariable("full_lyrics_button", cardaction.New(cardaction.ActionMusicLyrics).WithID(musicID).Payload()).
-		AddVariable("refresh_id", cardaction.New(cardaction.ActionMusicRefresh).WithID(musicID).Payload())
+		AddVariable("full_lyrics_button", cardaction.New(cardaction.ActionMusicLyrics).WithID(strconv.Itoa(musicID)).Payload()).
+		AddVariable("refresh_id", cardaction.New(cardaction.ActionMusicRefresh).WithID(strconv.Itoa(musicID)).Payload())
 }
 
-func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID string, msgID string, page int) {
+func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID int, msgID string, page int) {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("musicID").String(musicID))
+	span.SetAttributes(attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
 	card := GetCardMusicByPage(ctx, musicID, page)
 	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
-	err := larkmsg.ReplyCard(ctx, card, msgID, "_music"+musicID, utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
+	err := larkmsg.ReplyCard(ctx, card, msgID, "_music"+strconv.Itoa(musicID), utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
 		return
 	}
@@ -218,23 +200,28 @@ func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID
 	}
 }
 
-func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musicID, msgID string) {
+func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musicID int, msgID string) {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").String(musicID))
+	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
 	defer span.End()
 	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
 	if detail == nil || len(detail.Songs) == 0 {
-		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.String("music_id", musicID))
+		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.Int("music_id", musicID))
 		return
 	}
 	songDetail := detail.Songs[0]
 
 	imgKey, _, err := larkimg.UploadPicAllinOne(ctx, songDetail.Al.PicURL, musicID, true)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
+		return
+	}
 	lyric, _ := neteaseapi.NetEaseGCtx.GetLyrics(ctx, musicID)
 	lyric = utils.TrimLyrics(lyric)
 	sp := strings.Split(lyric, "\n")
-	left := strings.Join(sp[:len(sp)/2], "\n")
-	right := strings.Join(sp[len(sp)/2+1:], "\n")
+	mid := len(sp) / 2
+	left := strings.Join(sp[:mid], "\n")
+	right := strings.Join(sp[mid:], "\n")
 
 	cardContent := larktpl.NewCardContent(
 		ctx,
@@ -244,7 +231,7 @@ func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musi
 		AddVariable("right_lyrics", right).
 		AddVariable("title", songDetail.Name).
 		AddVariable("sub_title", songDetail.Ar[0].Name).
-		AddVariable("imgkey", imgKey)
+		AddVariable("imgkey", map[string]any{"img_key": imgKey})
 	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
 	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_music", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
@@ -276,9 +263,9 @@ func HandleWithDraw(ctx context.Context, cardAction *callback.CardActionTriggerE
 	}
 }
 
-func HandleRefreshMusic(ctx context.Context, musicID, msgID string) {
+func HandleRefreshMusic(ctx context.Context, musicID int, msgID string) {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").String(musicID))
+	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
 	card := GetCardMusicByPage(ctx, musicID, 1)
@@ -302,7 +289,10 @@ func HandleRefreshMusic(ctx context.Context, musicID, msgID string) {
 }
 
 func HandleRefreshObj(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
-	srcCmd := cardAction.Event.Action.Value["command"].(string)
+	ExecuteRawCommandFromCard(ctx, cardAction, cardAction.Event.Action.Value["command"].(string))
+}
+
+func ExecuteRawCommandFromCard(ctx context.Context, cardAction *callback.CardActionTriggerEvent, rawCommand string) {
 	msgID := cardAction.Event.Context.OpenMessageID
 
 	data := new(larkim.P2MessageReceiveV1)
@@ -318,7 +308,7 @@ func HandleRefreshObj(ctx context.Context, cardAction *callback.CardActionTrigge
 		&xhandler.BaseMetaData{
 			Refresh: true,
 		},
-		srcCmd,
+		rawCommand,
 	)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Refresh obj error", zap.Error(err))

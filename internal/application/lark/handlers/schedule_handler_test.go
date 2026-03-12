@@ -18,6 +18,21 @@ func TestScheduleCreateParseCLI(t *testing.T) {
 	}
 }
 
+func TestScheduleCreateParseCLISupportsBareBoolFlag(t *testing.T) {
+	arg, err := ScheduleCreate.ParseCLI([]string{
+		"--name=午休提醒",
+		"--type=once",
+		"--notify_on_error",
+		"--notify_result=false",
+	})
+	if err != nil {
+		t.Fatalf("ParseCLI() error = %v", err)
+	}
+	if !arg.NotifyOnError || arg.NotifyResult {
+		t.Fatalf("unexpected bool args: %+v", arg)
+	}
+}
+
 func TestScheduleManageParseCLI(t *testing.T) {
 	arg, err := ScheduleManage.ParseCLI([]string{"--limit=10"})
 	if err != nil {

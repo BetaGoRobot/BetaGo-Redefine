@@ -23,9 +23,10 @@ type LoginStatusStruct struct {
 type Provider interface {
 	SearchAlbumByKeyWord(ctx context.Context, keywords ...string) ([]*Album, error)
 	SearchMusicByKeyWord(ctx context.Context, keywords ...string) ([]*SearchMusicItem, error)
-	GetMusicURL(ctx context.Context, id string) (string, error)
-	GetDetail(ctx context.Context, musicID string) *MusicDetail
-	GetLyrics(ctx context.Context, songID string) (string, string)
+	SearchMusicByPlaylist(ctx context.Context, playlistID string) (*PlaylistDetail, []*SearchMusicItem, error)
+	GetMusicURL(ctx context.Context, id int) (string, error)
+	GetDetail(ctx context.Context, musicID int) *MusicDetail
+	GetLyrics(ctx context.Context, songID int) (string, string)
 	GetAlbumDetail(ctx context.Context, albumID string) (*AlbumDetail, error)
 	AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) ([]*SearchMusicItem, error)
 	GetComment(ctx context.Context, commentType CommentType, id string) (*CommentResult, error)
@@ -40,8 +41,6 @@ type Provider interface {
 // NetEaseContext 网易云API调用封装
 type NetEaseContext struct {
 	cookies  []*http.Cookie
-	err      error
-	retryCnt int
 	qrStruct struct {
 		isOutDated bool
 		uniKey     string
@@ -69,15 +68,19 @@ func (n noopProvider) SearchMusicByKeyWord(context.Context, ...string) ([]*Searc
 	return nil, n.unavailableErr()
 }
 
-func (n noopProvider) GetMusicURL(context.Context, string) (string, error) {
+func (n noopProvider) SearchMusicByPlaylist(context.Context, string) (*PlaylistDetail, []*SearchMusicItem, error) {
+	return nil, nil, n.unavailableErr()
+}
+
+func (n noopProvider) GetMusicURL(context.Context, int) (string, error) {
 	return "", n.unavailableErr()
 }
 
-func (n noopProvider) GetDetail(context.Context, string) *MusicDetail {
+func (n noopProvider) GetDetail(context.Context, int) *MusicDetail {
 	return &MusicDetail{}
 }
 
-func (n noopProvider) GetLyrics(context.Context, string) (string, string) {
+func (n noopProvider) GetLyrics(context.Context, int) (string, string) {
 	return "", ""
 }
 
@@ -109,17 +112,12 @@ type dailySongs struct {
 	} `json:"data"`
 }
 type musicList struct {
-	Data []struct {
-		ID  int    `json:"id"`
-		URL string `json:"url"`
-	} `json:"data"`
+	Data []*musicData `json:"data"`
 }
 
-// MusicInfo 网易云音乐信息
-type MusicInfo struct {
-	ID   string
-	URL  string
-	Name string
+type musicData struct {
+	ID  int    `json:"id"`
+	URL string `json:"url"`
 }
 
 type SearchMusic struct {
@@ -140,6 +138,7 @@ type AlbumDetail struct {
 
 type Album struct {
 	Name        string `json:"name"`
+	ID          int64  `json:"id"`
 	IDStr       string `json:"idStr"`
 	Type        string `json:"type"`
 	PicURL      string `json:"picUrl"`
@@ -147,39 +146,6 @@ type Album struct {
 	Artist      struct {
 		Name string `json:"name"`
 	} `json:"artist"`
-}
-type searchPlaylistResult struct {
-	Result struct {
-		SearchQcReminder interface{} `json:"searchQcReminder"`
-		Playlists        []struct {
-			ID          int64  `json:"id"`
-			Name        string `json:"name"`
-			CoverImgURL string `json:"coverImgUrl"`
-			Creator     struct {
-				Nickname   string      `json:"nickname"`
-				UserID     int         `json:"userId"`
-				UserType   int         `json:"userType"`
-				AvatarURL  interface{} `json:"avatarUrl"`
-				AuthStatus int         `json:"authStatus"`
-				ExpertTags interface{} `json:"expertTags"`
-				Experts    interface{} `json:"experts"`
-			} `json:"creator"`
-			Subscribed    bool        `json:"subscribed"`
-			TrackCount    int         `json:"trackCount"`
-			UserID        int         `json:"userId"`
-			PlayCount     int         `json:"playCount"`
-			BookCount     int         `json:"bookCount"`
-			SpecialType   int         `json:"specialType"`
-			OfficialTags  interface{} `json:"officialTags"`
-			Action        interface{} `json:"action"`
-			ActionType    interface{} `json:"actionType"`
-			RecommendText interface{} `json:"recommendText"`
-			Score         interface{} `json:"score"`
-			Description   string      `json:"description"`
-			HighQuality   bool        `json:"highQuality"`
-		} `json:"playlists"`
-		PlaylistCount int `json:"playlistCount"`
-	} `json:"result"`
 }
 type Playlist struct {
 	Result struct {
@@ -216,9 +182,27 @@ type Playlist struct {
 	Code int `json:"code"`
 }
 
-type MusicIDName struct {
-	ID   string
-	Name string
+type PlaylistDetailResponse struct {
+	Playlist PlaylistDetail `json:"playlist"`
+	Code     int            `json:"code"`
+}
+
+type PlaylistDetail struct {
+	ID       int64                   `json:"id"`
+	Name     string                  `json:"name"`
+	TrackIDs []PlaylistTrackIdentity `json:"trackIds"`
+	Tracks   []MusicDetailSongLite   `json:"tracks"`
+}
+
+type PlaylistTrackIdentity struct {
+	ID int `json:"id"`
+	V  int `json:"v"`
+	T  int `json:"t"`
+}
+
+type MusicDetailSongLite struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 type Song struct {
@@ -235,7 +219,7 @@ type Song struct {
 // SearchMusicItem  搜索音乐返回结果
 type SearchMusicItem struct {
 	Index      int
-	ID         string
+	ID         int
 	Name       string
 	ArtistName string
 	SongURL    string

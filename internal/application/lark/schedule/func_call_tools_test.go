@@ -3,7 +3,9 @@ package schedule
 import (
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestFilterQueriedSchedules(t *testing.T) {
@@ -52,5 +54,38 @@ func TestFilterQueriedSchedulesByCreatorOpenID(t *testing.T) {
 	}
 	if filtered[0].ID != "task-2" {
 		t.Fatalf("unexpected filtered task: %+v", filtered[0])
+	}
+}
+
+func TestRegisterToolsInfersTypedEnums(t *testing.T) {
+	ins := tools.New[larkim.P2MessageReceiveV1]()
+
+	RegisterTools(ins)
+
+	createUnit, ok := ins.Get("create_schedule")
+	if !ok {
+		t.Fatal("expected create_schedule tool")
+	}
+	createType := createUnit.Parameters.Props["type"]
+	if createType == nil {
+		t.Fatal("expected type prop on create_schedule")
+	}
+	if len(createType.Enum) != 2 || createType.Enum[0] != model.ScheduleTaskTypeOnce || createType.Enum[1] != model.ScheduleTaskTypeCron {
+		t.Fatalf("unexpected create_schedule type enum: %+v", createType.Enum)
+	}
+	if createType.Default != nil {
+		t.Fatalf("expected no create_schedule type default, got %#v", createType.Default)
+	}
+
+	queryUnit, ok := ins.Get("query_schedule")
+	if !ok {
+		t.Fatal("expected query_schedule tool")
+	}
+	statusProp := queryUnit.Parameters.Props["status"]
+	if statusProp == nil {
+		t.Fatal("expected status prop on query_schedule")
+	}
+	if len(statusProp.Enum) != 4 || statusProp.Enum[0] != model.ScheduleTaskStatusEnabled || statusProp.Enum[3] != model.ScheduleTaskStatusDisabled {
+		t.Fatalf("unexpected query_schedule status enum: %+v", statusProp.Enum)
 	}
 }

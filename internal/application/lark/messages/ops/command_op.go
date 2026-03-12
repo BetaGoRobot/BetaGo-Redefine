@@ -7,6 +7,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -23,7 +24,6 @@ var _ Op = &CommandOperator{}
 // CommandOperator Repeat
 type CommandOperator struct {
 	OpBase
-	command string
 }
 
 func (r *CommandOperator) Name() string {
@@ -79,15 +79,18 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 		err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
 		if err != nil {
 			otel.RecordError(span, err)
+			if handled := trySendCommandForm(ctx, event, meta, rawCommand, err); handled {
+				return nil
+			}
 			if errors.Is(err, xerror.ErrCommandNotFound) {
 				meta.SetIsCommand(false)
 				meta.SetMainCommand("")
 				if larkmsg.IsMentioned(event.Event.Message.Mentions) {
-					larkmsg.ReplyCardText(ctx, err.Error(), *event.Event.Message.MessageId, "_OpErr", true)
+					sendCommandErrorCard(ctx, event, meta, err.Error())
 					return
 				}
 			} else {
-				larkmsg.ReplyCardText(ctx, err.Error(), *event.Event.Message.MessageId, "_OpErr", true)
+				sendCommandErrorCard(ctx, event, meta, err.Error())
 				logs.L().Ctx(ctx).Error("CommandOperator", zap.Error(err))
 				return
 			}
@@ -95,4 +98,63 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 		addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
 	}
 	return
+}
+
+func trySendCommandForm(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string, err error) bool {
+	if !shouldReplyCommandForm(err) || !command.CanBuildCommandForm(command.LarkRootCommand, rawCommand) {
+		return false
+	}
+	cardData, buildErr := command.BuildCommandFormCardJSON(command.LarkRootCommand, rawCommand)
+	if buildErr != nil {
+		logs.L().Ctx(ctx).Warn("build command form failed", zap.Error(buildErr), zap.String("raw_command", rawCommand))
+		return false
+	}
+	msgID := currentMessageID(event)
+	if msgID == "" {
+		return false
+	}
+	if meta != nil && meta.Refresh {
+		if patchErr := larkmsg.PatchCardJSON(ctx, msgID, cardData); patchErr == nil {
+			return true
+		}
+	}
+	if replyErr := larkmsg.ReplyCardJSON(ctx, msgID, cardData, "_cmd_form", true); replyErr != nil {
+		logs.L().Ctx(ctx).Warn("reply command form failed", zap.Error(replyErr), zap.String("raw_command", rawCommand))
+		return false
+	}
+	return true
+}
+
+func shouldReplyCommandForm(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, xerror.ErrArgsIncompelete) || errors.Is(err, xerror.ErrCommandIncomplete) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(err.Error())), "usage:")
+}
+
+func sendCommandErrorCard(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, message string) {
+	msgID := currentMessageID(event)
+	if msgID == "" {
+		return
+	}
+	if meta != nil && meta.Refresh {
+		cardContent := larkcard.NewCardBuildHelper().
+			SetTitle("命令执行失败").
+			SetContent(message).
+			Build(ctx)
+		if err := larkmsg.PatchCard(ctx, cardContent, msgID); err == nil {
+			return
+		}
+	}
+	_ = larkmsg.ReplyCardText(ctx, message, msgID, "_OpErr", true)
+}
+
+func currentMessageID(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.MessageId == nil {
+		return ""
+	}
+	return *event.Event.Message.MessageId
 }

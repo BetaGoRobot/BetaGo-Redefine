@@ -29,15 +29,15 @@ import (
 )
 
 type ImageAddArgs struct {
-	URL    string `json:"url"`
-	ImgKey string `json:"img_key"`
-	Type   string `json:"type"`
+	URL    string         `json:"url"`
+	ImgKey string         `json:"img_key"`
+	Type   ImageAssetType `json:"type"`
 }
 
 type ImageGetArgs struct{}
 type ImageDeleteArgs struct {
-	ImgKey string `json:"img_key"`
-	Type   string `json:"type"`
+	ImgKey string         `json:"img_key"`
+	Type   ImageAssetType `json:"type"`
 }
 
 type imageAddHandler struct{}
@@ -50,10 +50,14 @@ var ImageDelete imageDeleteHandler
 
 func (imageAddHandler) ParseCLI(args []string) (ImageAddArgs, error) {
 	argMap, _ := parseArgs(args...)
+	imageType, err := xcommand.ParseEnum[ImageAssetType](normalizeImageType(argMap["type"]))
+	if err != nil {
+		return ImageAddArgs{}, err
+	}
 	return ImageAddArgs{
 		URL:    argMap["url"],
 		ImgKey: argMap["img_key"],
-		Type:   argMap["type"],
+		Type:   imageType,
 	}, nil
 }
 
@@ -62,6 +66,11 @@ func (imageAddHandler) ParseTool(raw string) (ImageAddArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ImageAddArgs{}, err
 	}
+	imageType, err := xcommand.ParseEnum[ImageAssetType](normalizeImageType(string(parsed.Type)))
+	if err != nil {
+		return ImageAddArgs{}, err
+	}
+	parsed.Type = imageType
 	return parsed, nil
 }
 
@@ -80,7 +89,7 @@ func (imageAddHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "素材类型，可选值：image、sticker。使用 img_key 时可传，默认 image",
+				Desc: "素材类型。使用 img_key 时可传",
 			}),
 	}
 }
@@ -98,7 +107,7 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	}
 	if arg.URL != "" || arg.ImgKey != "" {
 		imgKey := arg.ImgKey
-		msgType := normalizeImageType(arg.Type)
+		msgType := normalizeImageType(string(arg.Type))
 		if msgType == "" {
 			msgType = larkim.MsgTypeImage
 		}
@@ -227,9 +236,13 @@ func (imageGetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 
 func (imageDeleteHandler) ParseCLI(args []string) (ImageDeleteArgs, error) {
 	argMap, _ := parseArgs(args...)
+	imageType, err := xcommand.ParseEnum[ImageAssetType](normalizeImageType(argMap["type"]))
+	if err != nil {
+		return ImageDeleteArgs{}, err
+	}
 	return ImageDeleteArgs{
 		ImgKey: argMap["img_key"],
-		Type:   argMap["type"],
+		Type:   imageType,
 	}, nil
 }
 
@@ -241,6 +254,11 @@ func (imageDeleteHandler) ParseTool(raw string) (ImageDeleteArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ImageDeleteArgs{}, err
 	}
+	imageType, err := xcommand.ParseEnum[ImageAssetType](normalizeImageType(string(parsed.Type)))
+	if err != nil {
+		return ImageDeleteArgs{}, err
+	}
+	parsed.Type = imageType
 	return parsed, nil
 }
 
@@ -255,7 +273,7 @@ func (imageDeleteHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "素材类型，可选值：image、sticker。不传则自动尝试两种类型",
+				Desc: "素材类型。不传则自动尝试两种类型",
 			}),
 	}
 }
@@ -272,7 +290,7 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		return errors.New("chat_id is required")
 	}
 	if arg.ImgKey != "" {
-		if err := deleteImageByKey(ctx, chatID, arg.ImgKey, normalizeImageType(arg.Type)); err != nil {
+		if err := deleteImageByKey(ctx, chatID, arg.ImgKey, normalizeImageType(string(arg.Type))); err != nil {
 			return err
 		}
 		if msgID := currentMessageID(data); msgID != "" {

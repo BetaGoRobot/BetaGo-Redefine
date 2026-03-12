@@ -25,11 +25,15 @@ func ReplyCardJSON(ctx context.Context, msgID string, cardData any, suffix strin
 }
 
 func CreateCardJSON(ctx context.Context, chatID string, cardData any, msgID, suffix string) error {
+	return CreateCardJSONByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, cardData, msgID, suffix)
+}
+
+func CreateCardJSONByReceiveID(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
 	content, err := buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
 	if err != nil {
 		return err
 	}
-	_, err = CreateMsgRawContentType(ctx, chatID, larkim.MsgTypeInteractive, content, msgID, suffix)
+	_, err = CreateMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, content, msgID, suffix)
 	return err
 }
 

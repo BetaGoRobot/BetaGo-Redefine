@@ -53,6 +53,9 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 				).
 				AddSubCommand(
 					newTypedCmd("conver", handlers.DebugConversation),
+				).
+				AddSubCommand(
+					newTypedCmd("card", handlers.DebugCard),
 				),
 		).
 		AddSubCommand(

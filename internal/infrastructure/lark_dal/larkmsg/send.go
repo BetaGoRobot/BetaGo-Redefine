@@ -54,10 +54,14 @@ func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err e
 }
 
 func CreateMsgRawContentType(ctx context.Context, chatID, msgType, content, msgID, suffix string) (resp *larkim.CreateMessageResp, err error) {
-	return createMsgRawContentType(ctx, chatID, msgType, content, msgID, suffix)
+	return CreateMsgRawContentTypeByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, msgType, content, msgID, suffix)
 }
 
-func createMsgRawContentType(ctx context.Context, chatID, msgType, content, msgID, suffix string, recordContents ...string) (resp *larkim.CreateMessageResp, err error) {
+func CreateMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, receiveID, msgType, content, msgID, suffix string) (resp *larkim.CreateMessageResp, err error) {
+	return createMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, msgType, content, msgID, suffix)
+}
+
+func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, receiveID, msgType, content, msgID, suffix string, recordContents ...string) (resp *larkim.CreateMessageResp, err error) {
 	if msgID == "" {
 		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
 	}
@@ -65,12 +69,16 @@ func createMsgRawContentType(ctx context.Context, chatID, msgType, content, msgI
 	if len(uuid) > 50 {
 		uuid = uuid[:50]
 	}
+	receiveIDType = strings.TrimSpace(receiveIDType)
+	if receiveIDType == "" {
+		receiveIDType = larkim.ReceiveIdTypeChatId
+	}
 
 	req := larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType(larkim.ReceiveIdTypeChatId).
+		ReceiveIdType(receiveIDType).
 		Body(
 			larkim.NewCreateMessageReqBodyBuilder().
-				ReceiveId(chatID).
+				ReceiveId(receiveID).
 				Content(content).
 				Uuid(utils.GenUUIDStr(uuid, 50)).
 				MsgType(msgType).

@@ -31,7 +31,7 @@ var (
 	TwoColPicTemplate            = "AAq0LPJqOoh3s"
 	AlbumListTemplate            = "AAqdqaEBaxJaf"
 	SingleSongDetailTemplate     = "AAqdrtjg8g1s8"
-	FullLyricsTemplate           = "AAq3mcb9ivduh"
+	FullLyricsTemplate           = "AAqKUroyQOpKU"
 	StreamingReasonTemplate      = "ONLY_SRC_STERAMING_CARD"
 	NormalCardReplyTemplate      = "AAqRQtNPSJbsZ"
 	NormalCardGraphReplyTemplate = "AAqdmx3wt8mit"

@@ -98,3 +98,25 @@ func TestBuildTaskListCardUsesSchemaV2AndFooter(t *testing.T) {
 		t.Fatalf("expected operation history panel in schedule card: %s", jsonStr)
 	}
 }
+
+func TestBuildTaskListCardRehydratesCreatorPickerSelection(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card := BuildTaskListCard(context.Background(), "Schedule 查询", nil, NewTaskQueryCardView("", TaskQuery{
+		CreatorOpenID: "ou_creator_selected",
+	}, 20))
+
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"initial_option":"ou_creator_selected"`) {
+		t.Fatalf("expected creator picker to rehydrate selected open id: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"当前筛选"`) || !strings.Contains(jsonStr, `"user_id":"ou_creator_selected"`) {
+		t.Fatalf("expected creator filter summary to show selected open id: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"show_name":false`) {
+		t.Fatalf("expected creator filter summary avatar-only display: %s", jsonStr)
+	}
+}

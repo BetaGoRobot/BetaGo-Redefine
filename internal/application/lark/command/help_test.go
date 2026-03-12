@@ -60,7 +60,7 @@ func TestBuildHelpTextDebugGroup(t *testing.T) {
 	root := NewLarkRootCommand()
 
 	text := buildHelpText(root, "debug")
-	if !strings.Contains(text, "/debug [chatid, conver, image, msgid, panic, repeat, revert, trace]") {
+	if !strings.Contains(text, "/debug [card, chatid, conver, image, msgid, panic, repeat, revert, trace]") {
 		t.Fatalf("expected debug usage, got: %s", text)
 	}
 	if !strings.Contains(text, "/debug msgid: 查看引用消息 ID") {

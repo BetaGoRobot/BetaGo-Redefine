@@ -265,7 +265,7 @@ func cardActionMetadata(cardAction *callback.CardActionTriggerEvent) (actionName
 			actionTag = strings.TrimSpace(parsed.Tag)
 		}
 		if selectedOption == "" {
-			selectedOption = strings.TrimSpace(parsed.Option)
+			selectedOption = parsed.SelectedOption()
 		}
 		return actionName, actionTag, selectedOption
 	}

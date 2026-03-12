@@ -101,17 +101,28 @@ func describeCLIArgs[TArgs any](handler any) []CommandArg {
 			}
 		}
 
+		baseType := baseFieldType(field.Type)
 		flag := options.Flag
-		if !options.Input && field.Type.Kind() == reflect.Bool {
+		if !options.Input && baseType.Kind() == reflect.Bool {
 			flag = true
+		}
+		enumOptions := []CommandArgOption(nil)
+		defaultValue := ""
+		if enumDesc, ok := enumDescriptorFromType(field.Type); ok {
+			enumOptions = enumDesc.Options
+			defaultValue = enumDesc.DefaultValue
+		} else {
+			enumOptions = parseEnumTag(field.Tag.Get("enum"))
 		}
 
 		args = append(args, CommandArg{
-			Name:        name,
-			Description: desc,
-			Required:    required,
-			Input:       options.Input,
-			Flag:        flag,
+			Name:         name,
+			Description:  desc,
+			Required:     required,
+			Input:        options.Input,
+			Flag:         flag,
+			DefaultValue: defaultValue,
+			Options:      enumOptions,
 		})
 	}
 
@@ -149,6 +160,48 @@ func tagName(tag string) string {
 		return tag[:idx]
 	}
 	return tag
+}
+
+func parseEnumTag(tag string) []CommandArgOption {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	parts := strings.Split(tag, ",")
+	options := make([]CommandArgOption, 0, len(parts))
+	for _, raw := range parts {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		value := raw
+		label := raw
+		if idx := strings.IndexAny(raw, ":="); idx >= 0 {
+			value = strings.TrimSpace(raw[:idx])
+			label = strings.TrimSpace(raw[idx+1:])
+		}
+		if value == "" {
+			continue
+		}
+		if label == "" {
+			label = value
+		}
+		options = append(options, CommandArgOption{
+			Value: value,
+			Label: label,
+		})
+	}
+	if len(options) == 0 {
+		return nil
+	}
+	return options
+}
+
+func baseFieldType(t reflect.Type) reflect.Type {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
 }
 
 func describeCommand(handler any) string {

@@ -3,9 +3,11 @@ package tools
 import "github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 
 type Prop struct {
-	Type  string  `json:"type"`
-	Desc  string  `json:"description"`
-	Items []*Prop `json:"items"`
+	Type    string  `json:"type"`
+	Desc    string  `json:"description"`
+	Items   []*Prop `json:"items"`
+	Enum    []any   `json:"enum,omitempty"`
+	Default any     `json:"default,omitempty"`
 }
 
 type Param struct {

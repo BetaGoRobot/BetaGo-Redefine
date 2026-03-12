@@ -217,7 +217,7 @@ func parseTaskCardViewState(parsed *cardactionproto.Parsed) TaskCardViewState {
 	limit, _ := strconv.Atoi(readScheduleActionValue(parsed, taskCardViewLimitField))
 	creatorOpenID := readScheduleActionValue(parsed, taskCardViewCreatorField)
 	if shouldApplyTaskCreatorPicker(parsed) {
-		if selected := strings.TrimSpace(parsed.Option); selected != "" {
+		if selected := parsed.SelectedOption(); selected != "" {
 			creatorOpenID = selected
 		}
 	}

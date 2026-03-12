@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,4 +72,19 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func parseOptionalBoolArg(argsMap map[string]string, key string) (bool, bool, error) {
+	raw, ok := argsMap[key]
+	if !ok {
+		return false, false, nil
+	}
+	if strings.TrimSpace(raw) == "" {
+		return true, true, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, true, err
+	}
+	return parsed, true, nil
 }

@@ -123,6 +123,26 @@ func TestParseTaskViewRequestUsesSelectPersonOption(t *testing.T) {
 	}
 }
 
+func TestParseTaskViewRequestUsesSelectPersonOptionsFallback(t *testing.T) {
+	req, err := ParseTaskViewRequest(&cardactionproto.Parsed{
+		Name:    cardactionproto.ActionScheduleView,
+		Tag:     "select_person",
+		Options: []string{"ou_picker_selected"},
+		Value: map[string]any{
+			taskCardViewModeField:    "query",
+			taskCardViewStatusField:  "paused",
+			taskCardViewSelectField:  taskCardViewSelectCreator,
+			taskCardViewCreatorField: "ou_creator_old",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseTaskViewRequest() error = %v", err)
+	}
+	if req.View.CreatorOpenID != "ou_picker_selected" {
+		t.Fatalf("expected picker selected creator from options fallback, got %+v", req.View)
+	}
+}
+
 func TestBuildTaskCardPayloadForViewIgnoresDeletedIDQuery(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	previous := globalService

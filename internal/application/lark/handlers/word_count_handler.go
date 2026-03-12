@@ -33,14 +33,14 @@ import (
 )
 
 type WordCloudArgs struct {
-	Days       int    `json:"days"`
-	Interval   string `json:"interval"`
-	MessageTop int    `json:"message_top" cli:"mtop"`
-	ChunkTop   int    `json:"chunk_top" cli:"ctop"`
-	ChatID     string `json:"chat_id"`
-	Sort       string `json:"sort"`
-	StartTime  string `json:"start_time" cli:"st"`
-	EndTime    string `json:"end_time" cli:"et"`
+	Days       int               `json:"days"`
+	Interval   string            `json:"interval"`
+	MessageTop int               `json:"message_top" cli:"mtop"`
+	ChunkTop   int               `json:"chunk_top" cli:"ctop"`
+	ChatID     string            `json:"chat_id"`
+	Sort       WordCloudSortType `json:"sort"`
+	StartTime  string            `json:"start_time" cli:"st"`
+	EndTime    string            `json:"end_time" cli:"et"`
 }
 
 type wordCloudHandler struct{}
@@ -49,13 +49,17 @@ var WordCloud wordCloudHandler
 
 func (wordCloudHandler) ParseCLI(args []string) (WordCloudArgs, error) {
 	argMap, _ := parseArgs(args...)
+	sortType, err := xcommand.ParseEnum[WordCloudSortType](argMap["sort"])
+	if err != nil {
+		return WordCloudArgs{}, err
+	}
 	parsed := WordCloudArgs{
 		Days:       7,
 		Interval:   "1d",
 		MessageTop: 10,
 		ChunkTop:   5,
 		ChatID:     argMap["chat_id"],
-		Sort:       argMap["sort"],
+		Sort:       sortType,
 		StartTime:  argMap["st"],
 		EndTime:    argMap["et"],
 	}
@@ -104,6 +108,11 @@ func (wordCloudHandler) ParseTool(raw string) (WordCloudArgs, error) {
 	if parsed.ChunkTop <= 0 {
 		parsed.ChunkTop = 5
 	}
+	sortType, err := xcommand.ParseEnum[WordCloudSortType](string(parsed.Sort))
+	if err != nil {
+		return WordCloudArgs{}, err
+	}
+	parsed.Sort = sortType
 	if parsed.StartTime != "" && parsed.EndTime != "" {
 		parsed.StartTime = normalizeDateTime(parsed.StartTime)
 		parsed.EndTime = normalizeDateTime(parsed.EndTime)
@@ -138,7 +147,7 @@ func (wordCloudHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("sort", &arktools.Prop{
 				Type: "string",
-				Desc: "摘要排序方式，可选值：relevance、time",
+				Desc: "摘要排序方式",
 			}).
 			AddProp("start_time", &arktools.Prop{
 				Type: "string",
@@ -169,7 +178,7 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 			NewScript("script").Script("doc['msg_ids'].size()").Lang("painless"), "number",
 		).Order(false)
 	)
-	if arg.Sort == "time" {
+	if arg.Sort == WordCloudSortTypeTime {
 		sort = NewFieldSort("timestamp_v2").Desc()
 	}
 
@@ -368,11 +377,6 @@ func genHotRate(ctx context.Context, helper *trendInternalHelper, top int) (user
 	for _, bucket := range msgTrend.Dimension.Buckets {
 		trendMap[bucket.Key] = &larktpl.UserListItem{Number: -1, User: []*larktpl.UserUnit{{ID: bucket.Key}}, MsgCnt: bucket.DocCount}
 	}
-	type UserCountResult struct {
-		OpenID string `gorm:"column:open_id"`
-		Total  int64  `gorm:"column:total"`
-	}
-
 	type GroupResult struct {
 		OpenID string // 根据你的实际 OpenID 类型定义 (string, int 等)
 		Total  int64  `gorm:"column:total"` // 必须对应 As("total") 的名称

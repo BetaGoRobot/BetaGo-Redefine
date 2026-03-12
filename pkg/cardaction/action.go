@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
@@ -30,7 +31,9 @@ const (
 	ActionMusicLyrics            = "music.lyrics"
 	ActionMusicRefresh           = "music.refresh"
 	ActionCardWithdraw           = "card.withdraw"
+	ActionCommandOpenForm        = "command.open_form"
 	ActionCommandRefresh         = "command.refresh"
+	ActionCommandSubmitForm      = "command.submit_form"
 	ActionCommandSubmitTimeRange = "command.submit_time_range"
 	ActionFeatureView            = "feature.view"
 	ActionFeatureBlockChat       = "feature.block_chat"
@@ -119,6 +122,19 @@ func (p *Parsed) RequiredString(key string) (string, error) {
 
 func (p *Parsed) FormString(key string) (string, bool) {
 	return stringValue(p.FormValue, key)
+}
+
+func (p *Parsed) SelectedOption() string {
+	if p == nil {
+		return ""
+	}
+	if option := strings.TrimSpace(p.Option); option != "" {
+		return option
+	}
+	if len(p.Options) == 1 {
+		return strings.TrimSpace(p.Options[0])
+	}
+	return ""
 }
 
 func newParsed(name string, event *callback.CardActionTriggerEvent, value, formValue map[string]any) *Parsed {

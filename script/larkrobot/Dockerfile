@@ -25,6 +25,10 @@ RUN go mod download
 
 COPY . .
 
+RUN go install github.com/BetaGoRobot/go_utils/cmd/tools/warmup@master
+
+RUN warmup .
+
 RUN cd cmd/larkrobot && \
     go build -o /app/larkrobot
 

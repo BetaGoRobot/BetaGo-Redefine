@@ -23,30 +23,30 @@ import (
 // ==========================================
 
 type ConfigSetArgs struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Scope string `json:"scope"`
+	Key   string      `json:"key"`
+	Value string      `json:"value"`
+	Scope ConfigScope `json:"scope"`
 }
 
 type ConfigListArgs struct {
-	Scope string `json:"scope"`
+	Scope ConfigScope `json:"scope"`
 }
 
 type ConfigDeleteArgs struct {
-	Key   string `json:"key"`
-	Scope string `json:"scope"`
+	Key   string      `json:"key"`
+	Scope ConfigScope `json:"scope"`
 }
 
 type FeatureListArgs struct{}
 
 type FeatureBlockArgs struct {
-	Feature string `json:"feature"`
-	Scope   string `json:"scope"`
+	Feature string       `json:"feature"`
+	Scope   FeatureScope `json:"scope"`
 }
 
 type FeatureUnblockArgs struct {
-	Feature string `json:"feature"`
-	Scope   string `json:"scope"`
+	Feature string       `json:"feature"`
+	Scope   FeatureScope `json:"scope"`
 }
 
 type configSetHandler struct{}
@@ -65,16 +65,17 @@ var FeatureUnblock featureUnblockHandler
 
 func (configSetHandler) ParseCLI(args []string) (ConfigSetArgs, error) {
 	argMap, _ := parseArgs(args...)
+	scope, err := xcommand.ParseEnum[ConfigScope](argMap["scope"])
+	if err != nil {
+		return ConfigSetArgs{}, err
+	}
 	parsed := ConfigSetArgs{
 		Key:   argMap["key"],
 		Value: argMap["value"],
-		Scope: argMap["scope"],
+		Scope: scope,
 	}
 	if parsed.Key == "" || parsed.Value == "" {
 		return ConfigSetArgs{}, errors.New("usage: /config set key=xxx value=xxx [scope=global/chat/user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -84,11 +85,13 @@ func (configSetHandler) ParseTool(raw string) (ConfigSetArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ConfigSetArgs{}, err
 	}
+	scope, err := xcommand.ParseEnum[ConfigScope](string(parsed.Scope))
+	if err != nil {
+		return ConfigSetArgs{}, err
+	}
+	parsed.Scope = scope
 	if parsed.Key == "" || parsed.Value == "" {
 		return ConfigSetArgs{}, errors.New("usage: /config set key=xxx value=xxx [scope=global/chat/user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -108,7 +111,7 @@ func (configSetHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("scope", &arktools.Prop{
 				Type: "string",
-				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+				Desc: "配置作用域",
 			}).
 			AddRequired("key").
 			AddRequired("value"),
@@ -117,9 +120,9 @@ func (configSetHandler) ToolSpec() xcommand.ToolSpec {
 
 func (configListHandler) ParseCLI(args []string) (ConfigListArgs, error) {
 	argMap, _ := parseArgs(args...)
-	scope := argMap["scope"]
-	if scope == "" {
-		scope = "chat"
+	scope, err := xcommand.ParseEnum[ConfigScope](argMap["scope"])
+	if err != nil {
+		return ConfigListArgs{}, err
 	}
 	return ConfigListArgs{Scope: scope}, nil
 }
@@ -129,9 +132,11 @@ func (configListHandler) ParseTool(raw string) (ConfigListArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ConfigListArgs{}, err
 	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
+	scope, err := xcommand.ParseEnum[ConfigScope](string(parsed.Scope))
+	if err != nil {
+		return ConfigListArgs{}, err
 	}
+	parsed.Scope = scope
 	return parsed, nil
 }
 
@@ -142,7 +147,7 @@ func (configListHandler) ToolSpec() xcommand.ToolSpec {
 		Params: arktools.NewParams("object").
 			AddProp("scope", &arktools.Prop{
 				Type: "string",
-				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+				Desc: "配置作用域",
 			}),
 	}
 }
@@ -155,7 +160,7 @@ func (configListHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 
 	chatID := currentChatID(data, metaData)
 	openID := currentOpenID(data, metaData)
-	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, arg.Scope, chatID, openID, config.ConfigCardViewOptions{
+	cardData, err := config.BuildConfigCardJSONWithOptions(ctx, string(arg.Scope), chatID, openID, config.ConfigCardViewOptions{
 		BypassCache:        true,
 		LastModifierOpenID: openID,
 	})
@@ -175,7 +180,7 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 		Action:      config.ConfigActionSet,
 		Key:         arg.Key,
 		Value:       arg.Value,
-		Scope:       arg.Scope,
+		Scope:       string(arg.Scope),
 		ChatID:      currentChatID(data, metaData),
 		OpenID:      currentOpenID(data, metaData),
 		ActorOpenID: currentOpenID(data, metaData),
@@ -192,15 +197,16 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 
 func (configDeleteHandler) ParseCLI(args []string) (ConfigDeleteArgs, error) {
 	argMap, _ := parseArgs(args...)
+	scope, err := xcommand.ParseEnum[ConfigScope](argMap["scope"])
+	if err != nil {
+		return ConfigDeleteArgs{}, err
+	}
 	parsed := ConfigDeleteArgs{
 		Key:   argMap["key"],
-		Scope: argMap["scope"],
+		Scope: scope,
 	}
 	if parsed.Key == "" {
 		return ConfigDeleteArgs{}, errors.New("usage: /config delete key=xxx [scope=global/chat/user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -210,11 +216,13 @@ func (configDeleteHandler) ParseTool(raw string) (ConfigDeleteArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ConfigDeleteArgs{}, err
 	}
+	scope, err := xcommand.ParseEnum[ConfigScope](string(parsed.Scope))
+	if err != nil {
+		return ConfigDeleteArgs{}, err
+	}
+	parsed.Scope = scope
 	if parsed.Key == "" {
 		return ConfigDeleteArgs{}, errors.New("usage: /config delete key=xxx [scope=global/chat/user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -230,7 +238,7 @@ func (configDeleteHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("scope", &arktools.Prop{
 				Type: "string",
-				Desc: "配置范围，可选值：chat、user、global。默认 chat",
+				Desc: "配置作用域",
 			}).
 			AddRequired("key"),
 	}
@@ -245,7 +253,7 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	req := &config.ConfigActionRequest{
 		Action:      config.ConfigActionDelete,
 		Key:         arg.Key,
-		Scope:       arg.Scope,
+		Scope:       string(arg.Scope),
 		ChatID:      currentChatID(data, metaData),
 		OpenID:      currentOpenID(data, metaData),
 		ActorOpenID: currentOpenID(data, metaData),
@@ -306,15 +314,16 @@ func (featureListHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 
 func (featureBlockHandler) ParseCLI(args []string) (FeatureBlockArgs, error) {
 	argMap, _ := parseArgs(args...)
+	scope, err := xcommand.ParseEnum[FeatureScope](argMap["scope"])
+	if err != nil {
+		return FeatureBlockArgs{}, err
+	}
 	parsed := FeatureBlockArgs{
 		Feature: argMap["feature"],
-		Scope:   argMap["scope"],
+		Scope:   scope,
 	}
 	if parsed.Feature == "" {
 		return FeatureBlockArgs{}, errors.New("usage: /feature block feature=xxx [scope=chat/user/chat_user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -324,11 +333,13 @@ func (featureBlockHandler) ParseTool(raw string) (FeatureBlockArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return FeatureBlockArgs{}, err
 	}
+	scope, err := xcommand.ParseEnum[FeatureScope](string(parsed.Scope))
+	if err != nil {
+		return FeatureBlockArgs{}, err
+	}
+	parsed.Scope = scope
 	if parsed.Feature == "" {
 		return FeatureBlockArgs{}, errors.New("usage: /feature block feature=xxx [scope=chat/user/chat_user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -344,7 +355,7 @@ func (featureBlockHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("scope", &arktools.Prop{
 				Type: "string",
-				Desc: "生效范围，可选值：chat、user、chat_user。默认 chat",
+				Desc: "生效范围",
 			}).
 			AddRequired("feature"),
 	}
@@ -366,21 +377,22 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, arg.Scope)
+	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, string(arg.Scope))
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureBlock", false)
 }
 
 func (featureUnblockHandler) ParseCLI(args []string) (FeatureUnblockArgs, error) {
 	argMap, _ := parseArgs(args...)
+	scope, err := xcommand.ParseEnum[FeatureScope](argMap["scope"])
+	if err != nil {
+		return FeatureUnblockArgs{}, err
+	}
 	parsed := FeatureUnblockArgs{
 		Feature: argMap["feature"],
-		Scope:   argMap["scope"],
+		Scope:   scope,
 	}
 	if parsed.Feature == "" {
 		return FeatureUnblockArgs{}, errors.New("usage: /feature unblock feature=xxx [scope=chat/user/chat_user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -390,11 +402,13 @@ func (featureUnblockHandler) ParseTool(raw string) (FeatureUnblockArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return FeatureUnblockArgs{}, err
 	}
+	scope, err := xcommand.ParseEnum[FeatureScope](string(parsed.Scope))
+	if err != nil {
+		return FeatureUnblockArgs{}, err
+	}
+	parsed.Scope = scope
 	if parsed.Feature == "" {
 		return FeatureUnblockArgs{}, errors.New("usage: /feature unblock feature=xxx [scope=chat/user/chat_user]")
-	}
-	if parsed.Scope == "" {
-		parsed.Scope = "chat"
 	}
 	return parsed, nil
 }
@@ -410,7 +424,7 @@ func (featureUnblockHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("scope", &arktools.Prop{
 				Type: "string",
-				Desc: "生效范围，可选值：chat、user、chat_user。默认 chat",
+				Desc: "生效范围",
 			}).
 			AddRequired("feature"),
 	}
@@ -432,11 +446,11 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		return err
 	}
 
-	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, arg.Scope)
+	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, string(arg.Scope))
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureUnblock", false)
 }
 
-func buildFeatureActionRequest(scopeStr, feature, chatID, openID string, block bool) (*config.FeatureActionRequest, error) {
+func buildFeatureActionRequest(scopeStr FeatureScope, feature, chatID, openID string, block bool) (*config.FeatureActionRequest, error) {
 	req := &config.FeatureActionRequest{
 		Feature: feature,
 		ChatID:  chatID,
@@ -444,21 +458,21 @@ func buildFeatureActionRequest(scopeStr, feature, chatID, openID string, block b
 	}
 
 	switch scopeStr {
-	case "chat":
+	case FeatureScopeChat:
 		req.OpenID = ""
 		if block {
 			req.Action = config.FeatureActionBlockChat
 		} else {
 			req.Action = config.FeatureActionUnblockChat
 		}
-	case "user":
+	case FeatureScopeUser:
 		req.ChatID = ""
 		if block {
 			req.Action = config.FeatureActionBlockUser
 		} else {
 			req.Action = config.FeatureActionUnblockUser
 		}
-	case "chat_user":
+	case FeatureScopeChatUser:
 		if block {
 			req.Action = config.FeatureActionBlockChatUser
 		} else {

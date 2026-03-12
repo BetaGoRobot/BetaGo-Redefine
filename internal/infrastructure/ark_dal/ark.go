@@ -17,14 +17,10 @@ import (
 )
 
 var (
-	client         *arkruntime.Client
-	arkConfig      *config.ArkConfig
-	reasoningModel string
-	normalModel    string
-	embeddingModel string
-	visionModel    string
-	disableReason  string
-	warnOnce       sync.Once
+	client        *arkruntime.Client
+	arkConfig     *config.ArkConfig
+	disableReason string
+	warnOnce      sync.Once
 )
 
 var errUnavailable = errors.New("ark runtime unavailable")
@@ -36,10 +32,6 @@ func Init(config *config.ArkConfig) {
 	}
 	arkConfig = config
 	client = arkruntime.NewClientWithApiKey(config.APIKey)
-	reasoningModel = config.ReasoningModel
-	normalModel = config.NormalModel
-	embeddingModel = config.EmbeddingModel
-	visionModel = config.VisionModel
 	disableReason = ""
 }
 
@@ -64,10 +56,6 @@ func IsUnavailable(err error) bool {
 func setNoop(reason string) {
 	client = nil
 	arkConfig = nil
-	reasoningModel = ""
-	normalModel = ""
-	embeddingModel = ""
-	visionModel = ""
 	disableReason = reason
 	warnOnce.Do(func() {
 		logs.L().Warn("Ark runtime disabled, falling back to noop",

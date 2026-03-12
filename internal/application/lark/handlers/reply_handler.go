@@ -28,11 +28,11 @@ import (
 )
 
 type ReplyAddArgs struct {
-	Word      string `json:"word"`
-	Type      string `json:"type"`
-	Reply     string `json:"reply"`
-	ReplyType string `json:"reply_type"`
-	ImageKey  string `json:"image_key"`
+	Word      string           `json:"word"`
+	Type      ReplyMatchType   `json:"type"`
+	Reply     string           `json:"reply"`
+	ReplyType ReplyContentType `json:"reply_type"`
+	ImageKey  string           `json:"image_key"`
 }
 
 type ReplyGetArgs struct{}
@@ -45,11 +45,19 @@ var ReplyGet replyGetHandler
 
 func (replyAddHandler) ParseCLI(args []string) (ReplyAddArgs, error) {
 	argMap, _ := parseArgs(args...)
+	matchType, err := xcommand.ParseEnum[ReplyMatchType](argMap["type"])
+	if err != nil {
+		return ReplyAddArgs{}, err
+	}
+	replyType, err := parseReplyContentType(argMap["reply_type"])
+	if err != nil {
+		return ReplyAddArgs{}, err
+	}
 	parsed := ReplyAddArgs{
 		Word:      argMap["word"],
-		Type:      argMap["type"],
+		Type:      matchType,
 		Reply:     argMap["reply"],
-		ReplyType: argMap["reply_type"],
+		ReplyType: replyType,
 		ImageKey:  argMap["image_key"],
 	}
 	if parsed.Word == "" {
@@ -57,11 +65,6 @@ func (replyAddHandler) ParseCLI(args []string) (ReplyAddArgs, error) {
 	}
 	if parsed.Type == "" {
 		return ReplyAddArgs{}, errors.New("arg type(substr, full) is required")
-	}
-	if parsed.ReplyType == "" {
-		parsed.ReplyType = string(xmodel.ReplyTypeText)
-	} else {
-		parsed.ReplyType = normalizeReplyType(parsed.ReplyType)
 	}
 	return parsed, nil
 }
@@ -71,16 +74,21 @@ func (replyAddHandler) ParseTool(raw string) (ReplyAddArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ReplyAddArgs{}, err
 	}
+	matchType, err := xcommand.ParseEnum[ReplyMatchType](string(parsed.Type))
+	if err != nil {
+		return ReplyAddArgs{}, err
+	}
+	replyType, err := parseReplyContentType(string(parsed.ReplyType))
+	if err != nil {
+		return ReplyAddArgs{}, err
+	}
+	parsed.Type = matchType
+	parsed.ReplyType = replyType
 	if parsed.Word == "" {
 		return ReplyAddArgs{}, errors.New("arg word is required")
 	}
 	if parsed.Type == "" {
 		return ReplyAddArgs{}, errors.New("arg type(substr, full) is required")
-	}
-	if parsed.ReplyType == "" {
-		parsed.ReplyType = string(xmodel.ReplyTypeText)
-	} else {
-		parsed.ReplyType = normalizeReplyType(parsed.ReplyType)
 	}
 	return parsed, nil
 }
@@ -96,7 +104,7 @@ func (replyAddHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "匹配类型，可选值：substr、full、regex",
+				Desc: "关键词匹配方式",
 			}).
 			AddProp("reply", &arktools.Prop{
 				Type: "string",
@@ -108,7 +116,7 @@ func (replyAddHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("reply_type", &arktools.Prop{
 				Type: "string",
-				Desc: "回复类型，可选值：text、image。默认 text",
+				Desc: "回复内容类型",
 			}).
 			AddRequired("word").
 			AddRequired("type"),
@@ -127,7 +135,7 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	if arg.Word == "" {
 		return errors.New("arg word is empty, please change your key word")
 	}
-	if arg.Type != string(xmodel.MatchTypeSubStr) && arg.Type != string(xmodel.MatchTypeRegex) && arg.Type != string(xmodel.MatchTypeFull) {
+	if arg.Type != ReplyMatchTypeSubstr && arg.Type != ReplyMatchTypeRegex && arg.Type != ReplyMatchTypeFull {
 		return errors.New("type must be substr, regex or full")
 	}
 	chatID := currentChatID(data, metaData)
@@ -136,7 +144,7 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	}
 
 	reply := arg.Reply
-	replyType := normalizeReplyType(arg.ReplyType)
+	replyType := normalizeReplyType(string(arg.ReplyType))
 	if replyType == string(xmodel.ReplyTypeImg) {
 		if arg.ImageKey != "" {
 			reply = arg.ImageKey
@@ -323,6 +331,17 @@ func normalizeReplyType(input string) string {
 		return string(xmodel.ReplyTypeImg)
 	default:
 		return strings.ToLower(strings.TrimSpace(input))
+	}
+}
+
+func parseReplyContentType(raw string) (ReplyContentType, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(ReplyContentTypeText):
+		return xcommand.ParseEnum[ReplyContentType](string(ReplyContentTypeText))
+	case "image", "img":
+		return xcommand.ParseEnum[ReplyContentType](string(ReplyContentTypeImage))
+	default:
+		return xcommand.ParseEnum[ReplyContentType](raw)
 	}
 }
 

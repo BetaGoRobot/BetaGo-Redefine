@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -24,26 +25,26 @@ type ScheduleManageArgs struct {
 }
 
 type ScheduleQueryArgs struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	Type          string `json:"type"`
-	ToolName      string `json:"tool_name"`
-	CreatorOpenID string `json:"creator_open_id"`
-	Limit         int    `json:"limit"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Status        ScheduleStatus `json:"status"`
+	Type          ScheduleType   `json:"type"`
+	ToolName      string         `json:"tool_name"`
+	CreatorOpenID string         `json:"creator_open_id"`
+	Limit         int            `json:"limit"`
 }
 
 type ScheduleCreateArgs struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	RunAt         string `json:"run_at"`
-	CronExpr      string `json:"cron_expr"`
-	Timezone      string `json:"timezone"`
-	Message       string `json:"message"`
-	ToolName      string `json:"tool_name"`
-	ToolArgs      string `json:"tool_args"`
-	NotifyOnError bool   `json:"notify_on_error"`
-	NotifyResult  bool   `json:"notify_result"`
+	Name          string       `json:"name"`
+	Type          ScheduleType `json:"type"`
+	RunAt         string       `json:"run_at"`
+	CronExpr      string       `json:"cron_expr"`
+	Timezone      string       `json:"timezone"`
+	Message       string       `json:"message"`
+	ToolName      string       `json:"tool_name"`
+	ToolArgs      string       `json:"tool_args"`
+	NotifyOnError bool         `json:"notify_on_error"`
+	NotifyResult  bool         `json:"notify_result"`
 }
 
 type ScheduleDeleteArgs struct {
@@ -89,11 +90,19 @@ func (scheduleManageHandler) ParseCLI(args []string) (ScheduleManageArgs, error)
 func (scheduleQueryHandler) ParseCLI(args []string) (ScheduleQueryArgs, error) {
 	argMap, _ := parseArgs(args...)
 	limit, _ := strconv.Atoi(argMap["limit"])
+	status, err := xcommand.ParseEnum[ScheduleStatus](argMap["status"])
+	if err != nil {
+		return ScheduleQueryArgs{}, err
+	}
+	taskType, err := xcommand.ParseEnum[ScheduleType](argMap["type"])
+	if err != nil {
+		return ScheduleQueryArgs{}, err
+	}
 	return ScheduleQueryArgs{
 		ID:            argMap["id"],
 		Name:          argMap["name"],
-		Status:        argMap["status"],
-		Type:          argMap["type"],
+		Status:        status,
+		Type:          taskType,
 		ToolName:      argMap["tool_name"],
 		CreatorOpenID: firstNonEmpty(argMap["creator_open_id"], argMap["open_id"]),
 		Limit:         limit,
@@ -102,9 +111,13 @@ func (scheduleQueryHandler) ParseCLI(args []string) (ScheduleQueryArgs, error) {
 
 func (scheduleCreateHandler) ParseCLI(args []string) (ScheduleCreateArgs, error) {
 	argMap, _ := parseArgs(args...)
+	taskType, err := xcommand.ParseEnum[ScheduleType](argMap["type"])
+	if err != nil {
+		return ScheduleCreateArgs{}, err
+	}
 	parsed := ScheduleCreateArgs{
 		Name:     argMap["name"],
-		Type:     argMap["type"],
+		Type:     taskType,
 		RunAt:    argMap["run_at"],
 		CronExpr: argMap["cron_expr"],
 		Timezone: argMap["timezone"],
@@ -115,18 +128,19 @@ func (scheduleCreateHandler) ParseCLI(args []string) (ScheduleCreateArgs, error)
 	if parsed.Name == "" || parsed.Type == "" {
 		return ScheduleCreateArgs{}, errors.New("usage: /schedule create --name=任务名 --type=once|cron [--run_at=时间] [--cron_expr=表达式] [--message=内容] [--tool_name=工具] [--tool_args=JSON]")
 	}
-	var err error
-	if argMap["notify_on_error"] != "" {
-		parsed.NotifyOnError, err = strconv.ParseBool(argMap["notify_on_error"])
-		if err != nil {
-			return ScheduleCreateArgs{}, err
-		}
+	notifyOnError, hasNotifyOnError, err := parseOptionalBoolArg(argMap, "notify_on_error")
+	if err != nil {
+		return ScheduleCreateArgs{}, err
 	}
-	if argMap["notify_result"] != "" {
-		parsed.NotifyResult, err = strconv.ParseBool(argMap["notify_result"])
-		if err != nil {
-			return ScheduleCreateArgs{}, err
-		}
+	if hasNotifyOnError {
+		parsed.NotifyOnError = notifyOnError
+	}
+	notifyResult, hasNotifyResult, err := parseOptionalBoolArg(argMap, "notify_result")
+	if err != nil {
+		return ScheduleCreateArgs{}, err
+	}
+	if hasNotifyResult {
+		parsed.NotifyResult = notifyResult
 	}
 	return parsed, nil
 }
@@ -185,6 +199,68 @@ func (scheduleQueryHandler) ParseTool(raw string) (ScheduleQueryArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return ScheduleQueryArgs{}, err
 	}
+	status, err := xcommand.ParseEnum[ScheduleStatus](string(parsed.Status))
+	if err != nil {
+		return ScheduleQueryArgs{}, err
+	}
+	taskType, err := xcommand.ParseEnum[ScheduleType](string(parsed.Type))
+	if err != nil {
+		return ScheduleQueryArgs{}, err
+	}
+	parsed.Status = status
+	parsed.Type = taskType
+	return parsed, nil
+}
+
+func (scheduleCreateHandler) ParseTool(raw string) (ScheduleCreateArgs, error) {
+	parsed := ScheduleCreateArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ScheduleCreateArgs{}, err
+	}
+	taskType, err := xcommand.ParseEnum[ScheduleType](string(parsed.Type))
+	if err != nil {
+		return ScheduleCreateArgs{}, err
+	}
+	parsed.Type = taskType
+	if parsed.Name == "" || parsed.Type == "" {
+		return ScheduleCreateArgs{}, errors.New("usage: /schedule create --name=任务名 --type=once|cron [--run_at=时间] [--cron_expr=表达式] [--message=内容] [--tool_name=工具] [--tool_args=JSON]")
+	}
+	return parsed, nil
+}
+
+func (scheduleDeleteHandler) ParseTool(raw string) (ScheduleDeleteArgs, error) {
+	parsed := ScheduleDeleteArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ScheduleDeleteArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (schedulePauseHandler) ParseTool(raw string) (SchedulePauseArgs, error) {
+	parsed := SchedulePauseArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return SchedulePauseArgs{}, err
+	}
+	return parsed, nil
+}
+
+func (scheduleResumeHandler) ParseTool(raw string) (ScheduleResumeArgs, error) {
+	parsed := ScheduleResumeArgs{}
+	if raw == "" || raw == "{}" {
+		return parsed, nil
+	}
+	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
+		return ScheduleResumeArgs{}, err
+	}
 	return parsed, nil
 }
 
@@ -208,7 +284,7 @@ func (scheduleCreateHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		CreatorID:       currentOpenID(data, metaData),
 		SourceMessageID: currentMessageID(data),
 		Name:            arg.Name,
-		Type:            arg.Type,
+		Type:            string(arg.Type),
 		RunAt:           scheduledAt,
 		CronExpr:        arg.CronExpr,
 		Timezone:        arg.Timezone,
@@ -282,8 +358,8 @@ func (scheduleQueryHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 
 	view := scheduleapp.NewTaskQueryCardView("", scheduleapp.TaskQuery{
 		Name:          arg.Name,
-		Status:        arg.Status,
-		Type:          arg.Type,
+		Status:        string(arg.Status),
+		Type:          string(arg.Type),
 		ToolName:      arg.ToolName,
 		CreatorOpenID: arg.CreatorOpenID,
 	}, arg.Limit)

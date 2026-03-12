@@ -1,67 +1,25 @@
 package neteaseapi
 
-import (
-	"context"
-	"fmt"
-	"net/http"
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestTime(t *testing.T) {
-	for {
-		time.Sleep(10 * time.Second)
-		if string(time.Now().Local().Format("15:04:05")) == "04:54:00" {
-			fmt.Println("test")
-			break
-		}
-	}
+func TestJoinSongIDs(t *testing.T) {
+	t.Parallel()
 
-	fmt.Println(time.Now().Local().Format("15:04:05")) // 13:57:52
-}
-
-func TestNetEaseContext_LoginNetEase(t *testing.T) {
-	type fields struct {
-		cookies []*http.Cookie
-		err     error
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := &NetEaseContext{
-				cookies: tt.fields.cookies,
-				err:     tt.fields.err,
-			}
-			if err := ctx.LoginNetEase(context.Background()); (err != nil) != tt.wantErr {
-				t.Errorf("NetEaseContext.LoginNetEase() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	got := joinSongIDs([]int{0, 123, 456, 0, 789})
+	if got != "123,456,789" {
+		t.Fatalf("joinSongIDs() = %q, want %q", got, "123,456,789")
 	}
 }
 
-func TestNetEaseContext_GetMusicURL(t *testing.T) {
-	NetEaseGCtx.GetMusicURL(context.Background(), "423228325")
-}
+func TestMergeLyrics(t *testing.T) {
+	t.Parallel()
 
-func TestNetEaseContext_LoginNetEaseQR(t *testing.T) {
-	ctx := context.Background()
-	c := &NetEaseContext{
-		retryCnt: 0,
-		qrStruct: struct {
-			isOutDated bool
-			uniKey     string
-			qrBase64   string
-		}{},
+	lyrics := "[00:01.00]line1\n[00:02.00]line2"
+	translated := "[00:01.00]trans1\n[00:02.00]trans2"
+
+	got := mergeLyrics(lyrics, translated)
+	want := "line1\ntrans1\n\nline2\ntrans2\n\n"
+	if got != want {
+		t.Fatalf("mergeLyrics() = %q, want %q", got, want)
 	}
-	c.LoginNetEaseQR(ctx)
-}
-
-func TestNetEaseContext_GetLyrics(t *testing.T) {
-	NetEaseGCtx.GetLyrics(context.Background(), "423228325")
 }
