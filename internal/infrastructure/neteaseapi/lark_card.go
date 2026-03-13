@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
@@ -21,7 +22,7 @@ const (
 	musicListResolveConcurrency = 4
 	defaultMusicListPageSize    = 5
 	maxMusicListPageSize        = 100
-	musicListStreamBatchSize    = 1
+	musicListStreamPatchWindow  = 20 * time.Millisecond
 )
 
 var activeMusicListStreams sync.Map
@@ -213,11 +214,6 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 
 func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string) (string, error)) error {
 	pageStates := r.currentPageStates()
-	if len(pageStates) == 0 {
-		_, err := emit(r.vars(), "")
-		return err
-	}
-
 	messageID, err := emit(r.vars(), "")
 	if err != nil {
 		return err
@@ -225,40 +221,93 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 	if strings.TrimSpace(messageID) == "" {
 		return errors.New("empty message id for music list card")
 	}
+	if len(pageStates) == 0 {
+		return nil
+	}
 
-	for batchStart := 0; batchStart < len(pageStates); batchStart += musicListStreamBatchSize {
-		if err := ctx.Err(); err != nil {
-			return err
+	resolvedCh := make(chan struct{}, len(pageStates))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(musicListResolveConcurrency)
+	for _, state := range pageStates {
+		state := state
+		group.Go(func() error {
+			if err := groupCtx.Err(); err != nil {
+				return err
+			}
+			r.resolveLine(groupCtx, state)
+			if err := groupCtx.Err(); err != nil {
+				return err
+			}
+			select {
+			case resolvedCh <- struct{}{}:
+				return nil
+			case <-groupCtx.Done():
+				return groupCtx.Err()
+			}
+		})
+	}
+
+	groupDone := make(chan error, 1)
+	go func() {
+		groupDone <- group.Wait()
+		close(resolvedCh)
+	}()
+
+	patchTicker := time.NewTicker(musicListStreamPatchWindow)
+	defer patchTicker.Stop()
+
+	pendingPatch := false
+	sentResolvedPatch := false
+	flushPatch := func() error {
+		if !pendingPatch {
+			return nil
 		}
 		if err := streamGuard.EnsureActive(ctx); err != nil {
 			return err
 		}
-		batchEnd := min(batchStart+musicListStreamBatchSize, len(pageStates))
-		r.resolveStates(ctx, pageStates[batchStart:batchEnd])
-		if err := streamGuard.EnsureActive(ctx); err != nil {
-			return err
-		}
-
-		messageID, err = emit(r.vars(), messageID)
+		nextMessageID, err := emit(r.vars(), messageID)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(messageID) == "" {
+		if strings.TrimSpace(nextMessageID) == "" {
 			return errors.New("empty message id for music list card")
 		}
+		messageID = nextMessageID
+		pendingPatch = false
+		return nil
 	}
-	return nil
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case _, ok := <-resolvedCh:
+			if !ok {
+				if err := <-groupDone; err != nil {
+					return err
+				}
+				return flushPatch()
+			}
+			pendingPatch = true
+			if !sentResolvedPatch {
+				if err := flushPatch(); err != nil {
+					return err
+				}
+				sentResolvedPatch = true
+			}
+		case <-patchTicker.C:
+			if err := flushPatch(); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (r *musicListCardRenderer) resolveCurrentPage(ctx context.Context) {
 	pageStates := r.currentPageStates()
-	r.resolveStates(ctx, pageStates)
-}
-
-func (r *musicListCardRenderer) resolveStates(ctx context.Context, states []*musicListLineState) {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
-	for _, state := range states {
+	for _, state := range pageStates {
 		state := state
 		group.Go(func() error {
 			r.resolveLine(groupCtx, state)

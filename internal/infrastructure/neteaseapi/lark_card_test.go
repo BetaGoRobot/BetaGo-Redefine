@@ -57,7 +57,7 @@ func TestMusicListRendererIncludesPaginationPayload(t *testing.T) {
 	}
 }
 
-func TestMusicListStreamRevealsBatches(t *testing.T) {
+func TestMusicListStreamRevealsMonotonicProgress(t *testing.T) {
 	previousProvider := NetEaseGCtx
 	NetEaseGCtx = fakeMusicListProvider{}
 	defer func() { NetEaseGCtx = previousProvider }()
@@ -96,13 +96,24 @@ func TestMusicListStreamRevealsBatches(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("stream current page: %v", err)
 	}
-	if len(resolvedCounts) != 6 {
-		t.Fatalf("expected 6 streaming updates, got %v", resolvedCounts)
+	if len(resolvedCounts) < 2 {
+		t.Fatalf("expected at least placeholder and final updates, got %v", resolvedCounts)
 	}
-	for idx, got := range resolvedCounts {
-		if want := idx; got != want {
-			t.Fatalf("expected placeholder fill [0 1 2 3 4 5], got %v", resolvedCounts)
+	if resolvedCounts[0] != 0 {
+		t.Fatalf("expected first update to be placeholder-only, got %v", resolvedCounts)
+	}
+	if resolvedCounts[len(resolvedCounts)-1] != 5 {
+		t.Fatalf("expected final update to resolve all items, got %v", resolvedCounts)
+	}
+	last := -1
+	for _, got := range resolvedCounts {
+		if got < last {
+			t.Fatalf("expected monotonic progress, got %v", resolvedCounts)
 		}
+		if got < 0 || got > 5 {
+			t.Fatalf("expected resolved count in [0,5], got %v", resolvedCounts)
+		}
+		last = got
 	}
 }
 
