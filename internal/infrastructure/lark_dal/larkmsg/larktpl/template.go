@@ -96,9 +96,7 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 
 	traceID := span.SpanContext().TraceID().String()
 	templateVersion := GetTemplate(ctx, templateID)
-	var t *TemplateCardContent
-	// 纯template
-	t = &TemplateCardContent{
+	t := &TemplateCardContent{
 		Type: "template",
 		Data: CardData{
 			TemplateID:          templateVersion.TemplateID,
@@ -110,17 +108,7 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 		t.Data.TemplateSrc = templateVersion.TemplateSrc
 	}
 
-	// default参数
-	t.AddJaegerTraceInfo(traceID)
-	t.AddVariable("withdraw_info", "撤回卡片")
-	t.AddVariable("withdraw_title", "撤回本条消息")
-	t.AddVariable("withdraw_confirm", "你确定要撤回这条消息吗？")
-	t.AddVariable("withdraw_object", cardaction.New(cardaction.ActionCardWithdraw).Payload())
-	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil {
-		t.AddVariable("raw_cmd", srcCmd.(string))
-		t.AddVariable("refresh_obj", cardaction.New(cardaction.ActionCommandRefresh).WithCommand(srcCmd.(string)).Payload())
-	}
-	t.AddVariable("refresh_time", time.Now().In(utils.UTC8Loc()).Format(time.DateTime))
+	t.AddVariableStruct(defaultCardBaseVars(ctx, traceID))
 	return t
 }
 
@@ -129,9 +117,7 @@ func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersio
 	defer span.End()
 
 	traceID := span.SpanContext().TraceID().String()
-	var t *TemplateCardContent
-	// 纯template
-	t = &TemplateCardContent{
+	t := &TemplateCardContent{
 		Type: "template",
 		Data: CardData{
 			TemplateID:          templateVersion.TemplateID,
@@ -143,7 +129,31 @@ func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersio
 		t.Data.TemplateSrc = templateVersion.TemplateSrc
 	}
 
-	// default参数
+	baseVars := defaultCardBaseVars(ctx, traceID)
+	if templateVersion.Variables != nil {
+		if setter, ok := any(templateVersion.Variables).(CardBaseVarsSetter); ok {
+			setter.SetCardBaseVars(baseVars)
+		} else {
+			t.AddVariableStruct(baseVars)
+		}
+
+		variables, _ := sonic.Marshal(templateVersion.Variables)
+		var sourceMap map[string]any
+		sonic.Unmarshal(variables, &sourceMap)
+		maps.Copy(t.Data.TemplateVariable, sourceMap)
+	} else {
+		t.AddVariableStruct(baseVars)
+	}
+	return t
+}
+
+func NewCardContentWithData[T any](ctx context.Context, templateID string, data *T) *TemplateCardContent {
+	templateVersion := GetTemplateV2[T](ctx, templateID)
+	templateVersion = templateVersion.WithData(data)
+	return NewCardContentV2(ctx, templateVersion)
+}
+
+func defaultCardBaseVars(ctx context.Context, traceID string) CardBaseVars {
 	v := CardBaseVars{
 		JaegerTraceInfo: "Trace",
 		JaegerTraceURL:  utils.GenTraceURL(traceID),
@@ -157,14 +167,7 @@ func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersio
 		v.RawCmd = gptr.Of(srcCmd.(string))
 		v.RefreshObj = &RefreshObj{Action: cardaction.ActionCommandRefresh, Command: srcCmd.(string)}
 	}
-	t.AddVariableStruct(v)
-
-	// 合并
-	variables, _ := sonic.Marshal(templateVersion.Variables)
-	var sourceMap map[string]any
-	sonic.Unmarshal(variables, &sourceMap)
-	maps.Copy(t.Data.TemplateVariable, sourceMap)
-	return t
+	return v
 }
 
 func (c *TemplateCardContent) AddJaegerTraceInfo(traceID string) *TemplateCardContent {

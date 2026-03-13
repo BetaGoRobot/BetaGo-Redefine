@@ -69,6 +69,43 @@ func TestDispatchAsyncRunsTaskWithoutInlineResponse(t *testing.T) {
 	}
 }
 
+func TestDispatchAsyncDetachesCancellation(t *testing.T) {
+	reg := &registry{handlers: make(map[string]entry)}
+	done := make(chan error, 1)
+	reg.register(cardactionproto.ActionMusicRefresh, entry{
+		mode: ModeAsync,
+		async: func(ctx context.Context, actionCtx *Context) (AsyncTask, error) {
+			return func(taskCtx context.Context) {
+				done <- taskCtx.Err()
+			}, nil
+		},
+	})
+
+	prev := defaultRegistry
+	defaultRegistry = reg
+	defer func() { defaultRegistry = prev }()
+
+	parentCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	resp, err := Dispatch(parentCtx, newEvent(cardactionproto.ActionMusicRefresh, nil), nil)
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("expected nil inline response for async handler")
+	}
+
+	select {
+	case got := <-done:
+		if got != nil {
+			t.Fatalf("expected detached async context, got err %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected async task to run")
+	}
+}
+
 func TestDispatchSyncReturnsResponseInline(t *testing.T) {
 	reg := &registry{handlers: make(map[string]entry)}
 	reg.register(cardactionproto.ActionConfigViewScope, entry{

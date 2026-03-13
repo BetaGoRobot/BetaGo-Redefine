@@ -83,7 +83,7 @@ func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaD
 			return nil, err
 		}
 		if task != nil {
-			go task(ctx)
+			go task(context.WithoutCancel(ctx))
 		}
 		return nil, nil
 	case ModeSync:

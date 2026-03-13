@@ -20,11 +20,9 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	cardContent := larktpl.NewCardContent(
-		ctx, larktpl.NormalCardReplyTemplate,
-	).
-		AddJaegerTraceInfo(span.SpanContext().TraceID().String()).
-		AddVariable("content", text)
+	cardContent := larktpl.NewCardContentWithData(ctx, larktpl.NormalCardReplyTemplate, &larktpl.NormalCardReplyVars{
+		Content: text,
+	})
 	logs.L().Ctx(ctx).Info(
 		"reply card text",
 		zap.String("msgID", msgID),
@@ -51,10 +49,20 @@ func ReplyCardText(ctx context.Context, text string, msgID, suffix string, reply
 }
 
 func CreateMsgCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, chatID string) (err error) {
-	return CreateMsgCardByReceiveID(ctx, cardContent, larkim.ReceiveIdTypeChatId, chatID)
+	_, err = CreateMsgCardWithResp(ctx, cardContent, chatID)
+	return err
+}
+
+func CreateMsgCardWithResp(ctx context.Context, cardContent *larktpl.TemplateCardContent, chatID string) (resp *larkim.CreateMessageResp, err error) {
+	return CreateMsgCardByReceiveIDWithResp(ctx, cardContent, larkim.ReceiveIdTypeChatId, chatID)
 }
 
 func CreateMsgCardByReceiveID(ctx context.Context, cardContent *larktpl.TemplateCardContent, receiveIDType, receiveID string) (err error) {
+	_, err = CreateMsgCardByReceiveIDWithResp(ctx, cardContent, receiveIDType, receiveID)
+	return err
+}
+
+func CreateMsgCardByReceiveIDWithResp(ctx context.Context, cardContent *larktpl.TemplateCardContent, receiveIDType, receiveID string) (resp *larkim.CreateMessageResp, err error) {
 	_, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.String("receive.id", receiveID),
@@ -65,6 +73,5 @@ func CreateMsgCardByReceiveID(ctx context.Context, cardContent *larktpl.Template
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	_, err = createMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, cardContent.String(), "", "_card", cardContent.GetVariables()...)
-	return err
+	return createMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, cardContent.String(), "", "_card", cardContent.GetVariables()...)
 }

@@ -14,6 +14,8 @@ import (
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -28,6 +30,7 @@ func RegisterBuiltins() {
 		RegisterAsync(cardactionproto.ActionMusicAlbum, handleMusicAlbum)
 		RegisterAsync(cardactionproto.ActionMusicLyrics, handleMusicLyrics)
 		RegisterAsync(cardactionproto.ActionMusicRefresh, handleMusicRefresh)
+		RegisterAsync(cardactionproto.ActionMusicListPage, handleMusicListPage)
 		RegisterAsync(cardactionproto.ActionCardWithdraw, handleCardWithdraw)
 		RegisterSync(cardactionproto.ActionCommandOpenForm, handleCommandOpenForm)
 		RegisterAsync(cardactionproto.ActionCommandRefresh, handleCommandRefresh)
@@ -106,6 +109,56 @@ func handleMusicRefresh(ctx context.Context, actionCtx *Context) (AsyncTask, err
 			return
 		}
 		cardhandlers.HandleRefreshMusic(runCtx, musicIDInt, actionCtx.MessageID())
+	}, nil
+}
+
+func handleMusicListPage(ctx context.Context, actionCtx *Context) (AsyncTask, error) {
+	scene, err := actionCtx.Action.RequiredString(cardactionproto.SceneField)
+	if err != nil {
+		return nil, err
+	}
+	query, err := actionCtx.Action.RequiredString(cardactionproto.QueryField)
+	if err != nil {
+		return nil, err
+	}
+	pageRaw, err := actionCtx.Action.RequiredString(cardactionproto.PageField)
+	if err != nil {
+		return nil, err
+	}
+	pageSizeRaw, err := actionCtx.Action.RequiredString(cardactionproto.PageSizeField)
+	if err != nil {
+		return nil, err
+	}
+	page, err := strconv.Atoi(pageRaw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid page")
+	}
+	pageSize, err := strconv.Atoi(pageSizeRaw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid page_size")
+	}
+	msgID := strings.TrimSpace(actionCtx.MessageID())
+	if msgID == "" {
+		return nil, fmt.Errorf("message id is required")
+	}
+	return func(runCtx context.Context) {
+		neteaseapi.CancelMusicListStream(runCtx, msgID)
+		err := neteaseapi.StreamMusicListCardForRequest(runCtx, neteaseapi.MusicListRequest{
+			Scene:    neteaseapi.MusicListScene(scene),
+			Query:    query,
+			Page:     page,
+			PageSize: pageSize,
+		}, func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
+			if err := larkmsg.PatchCard(sendCtx, cardContent, msgID); err != nil {
+				return "", err
+			}
+			return msgID, nil
+		}, func(patchCtx context.Context, patchMsgID string, cardContent *larktpl.TemplateCardContent) error {
+			return larkmsg.PatchCard(patchCtx, cardContent, patchMsgID)
+		})
+		if err != nil {
+			logs.L().Ctx(runCtx).Warn("stream music list page card failed", zap.String("message_id", msgID), zap.Error(err))
+		}
 	}, nil
 }
 

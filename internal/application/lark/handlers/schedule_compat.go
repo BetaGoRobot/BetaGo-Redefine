@@ -57,21 +57,36 @@ func sendCompatibleText(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 }
 
 func sendCompatibleCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cardContent *larktpl.TemplateCardContent, suffix string, replyInThread bool) error {
+	_, err := sendCompatibleCardWithMessageID(ctx, data, metaData, cardContent, suffix, replyInThread)
+	return err
+}
+
+func sendCompatibleCardWithMessageID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cardContent *larktpl.TemplateCardContent, suffix string, replyInThread bool) (string, error) {
 	msgID := currentMessageID(data)
 	if msgID != "" {
 		if metaData != nil && metaData.Refresh {
-			return larkmsg.PatchCard(ctx, cardContent, msgID)
+			return msgID, larkmsg.PatchCard(ctx, cardContent, msgID)
 		}
-		if err := larkmsg.ReplyCard(ctx, cardContent, msgID, suffix, replyInThread); err == nil {
-			return nil
+		if resp, err := larkmsg.ReplyCardWithResp(ctx, cardContent, msgID, suffix, replyInThread); err == nil {
+			if resp != nil && resp.Data != nil && resp.Data.MessageId != nil && *resp.Data.MessageId != "" {
+				return *resp.Data.MessageId, nil
+			}
+			return "", errors.New("reply card succeeded but message_id is empty")
 		}
 	}
 
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
-		return errors.New("chat_id is required")
+		return "", errors.New("chat_id is required")
 	}
-	return larkmsg.CreateMsgCard(ctx, cardContent, chatID)
+	resp, err := larkmsg.CreateMsgCardWithResp(ctx, cardContent, chatID)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || resp.Data == nil || resp.Data.MessageId == nil || *resp.Data.MessageId == "" {
+		return "", errors.New("create card succeeded but message_id is empty")
+	}
+	return *resp.Data.MessageId, nil
 }
 
 func sendCompatibleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, content, suffix string, replyInThread bool) error {

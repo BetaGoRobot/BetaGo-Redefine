@@ -134,6 +134,9 @@ type searchAlbumResult struct {
 
 type AlbumDetail struct {
 	Songs []Song `json:"songs"`
+	Album struct {
+		Name string `json:"name"`
+	} `json:"album"`
 }
 
 type Album struct {

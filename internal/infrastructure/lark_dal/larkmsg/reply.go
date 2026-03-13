@@ -76,6 +76,11 @@ func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix stri
 //	@param text
 //	@param msgID
 func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, msgID, suffix string, replyInThread bool) (err error) {
+	_, err = ReplyCardWithResp(ctx, cardContent, msgID, suffix, replyInThread)
+	return err
+}
+
+func ReplyCardWithResp(ctx context.Context, cardContent *larktpl.TemplateCardContent, msgID, suffix string, replyInThread bool) (resp *larkim.ReplyMessageResp, err error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.String("message.id", msgID),
@@ -101,10 +106,10 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 		).
 		Build()
 
-	_, err = sendReplyMessage(ctx, req, cardContent.GetVariables()...)
+	resp, err = sendReplyMessage(ctx, req, cardContent.GetVariables()...)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("ReplyCard failed", zap.Error(err))
-		return
+		return nil, err
 	}
 
 	span.SetAttributes(otel.PreviewAttrs("card.content", cardContent.String(), 256)...)
@@ -115,5 +120,5 @@ func ReplyCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, ms
 		zap.Bool("replyInThread", replyInThread),
 		zap.String("cardContent", cardContent.String()),
 	)
-	return
+	return resp, nil
 }

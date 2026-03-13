@@ -143,17 +143,19 @@ func GetCardMusicByPage(ctx context.Context, musicID, page int) *larktpl.Templat
 
 	lyrics = strings.Join(newList, "\n")
 
-	return larktpl.NewCardContent(
-		ctx,
-		larktpl.SingleSongDetailTemplate,
-	).
-		AddVariable("lyrics", lyrics).
-		AddVariable("title", songDetail.Name).
-		AddVariable("sub_title", songDetail.Ar[0].Name).
-		AddVariable("imgkey", map[string]any{"img_key": imageKey}).
-		AddVariable("player_url", playerURL).
-		AddVariable("full_lyrics_button", cardaction.New(cardaction.ActionMusicLyrics).WithID(strconv.Itoa(musicID)).Payload()).
-		AddVariable("refresh_id", cardaction.New(cardaction.ActionMusicRefresh).WithID(strconv.Itoa(musicID)).Payload())
+	return larktpl.NewCardContentWithData(ctx, larktpl.SingleSongDetailTemplate, &larktpl.SingleSongDetailCardVars{
+		Lyrics:    lyrics,
+		Title:     songDetail.Name,
+		SubTitle:  songDetail.Ar[0].Name,
+		ImgKey:    larktpl.ImageKeyRef{ImgKey: imageKey},
+		PlayerURL: playerURL,
+		FullLyricsButton: cardaction.New(cardaction.ActionMusicLyrics).
+			WithID(strconv.Itoa(musicID)).
+			Payload(),
+		RefreshID: cardaction.New(cardaction.ActionMusicRefresh).
+			WithID(strconv.Itoa(musicID)).
+			Payload(),
+	})
 }
 
 func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID int, msgID string, page int) {
@@ -174,23 +176,12 @@ func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID
 	span.SetAttributes(attribute.Key("albumID").String(albumID))
 	defer span.End()
 
-	albumDetails, err := neteaseapi.NetEaseGCtx.GetAlbumDetail(ctx, albumID)
+	cardContent, err := neteaseapi.BuildMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+		Scene: neteaseapi.MusicListSceneAlbumDetail,
+		Query: albumID,
+	})
 	if err != nil {
-		logs.L().Ctx(ctx).Error("Failed to get album detail", zap.Error(err))
-		return
-	}
-	searchRes := neteaseapi.SearchMusic{Result: *albumDetails}
-
-	result, err := neteaseapi.NetEaseGCtx.AsyncGetSearchRes(ctx, searchRes)
-	if err != nil {
-		return
-	}
-	cardContent, err := neteaseapi.BuildMusicListCard(ctx,
-		result,
-		neteaseapi.MusicItemNoTrans,
-		neteaseapi.CommentTypeSong,
-	)
-	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to build album detail card", zap.Error(err))
 		return
 	}
 	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
@@ -223,15 +214,13 @@ func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musi
 	left := strings.Join(sp[:mid], "\n")
 	right := strings.Join(sp[mid:], "\n")
 
-	cardContent := larktpl.NewCardContent(
-		ctx,
-		larktpl.FullLyricsTemplate,
-	).
-		AddVariable("left_lyrics", left).
-		AddVariable("right_lyrics", right).
-		AddVariable("title", songDetail.Name).
-		AddVariable("sub_title", songDetail.Ar[0].Name).
-		AddVariable("imgkey", map[string]any{"img_key": imgKey})
+	cardContent := larktpl.NewCardContentWithData(ctx, larktpl.FullLyricsTemplate, &larktpl.FullLyricsCardVars{
+		LeftLyrics:  left,
+		RightLyrics: right,
+		Title:       songDetail.Name,
+		SubTitle:    songDetail.Ar[0].Name,
+		ImgKey:      larktpl.ImageKeyRef{ImgKey: imgKey},
+	})
 	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
 	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_music", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {

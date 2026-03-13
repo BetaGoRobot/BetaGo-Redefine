@@ -6,6 +6,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -79,58 +80,32 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	keywords := []string{arg.Keywords}
-
-	var cardContent *larktpl.TemplateCardContent
-	if arg.Type == MusicSearchTypeAlbum {
-		albumList, err := neteaseapi.NetEaseGCtx.SearchAlbumByKeyWord(ctx, keywords...)
-		if err != nil {
-			return err
-		}
-
-		cardContent, err = neteaseapi.BuildMusicListCard(ctx,
-			albumList,
-			neteaseapi.MusicItemTransAlbum,
-			neteaseapi.CommentTypeAlbum,
-			keywords...,
-		)
-		if err != nil {
-			return err
-		}
-	} else if arg.Type == MusicSearchTypePlaylist {
-		playListDetail, musicList, err := neteaseapi.NetEaseGCtx.SearchMusicByPlaylist(ctx, arg.Keywords)
-		if err != nil {
-			return err
-		}
-		cardContent, err = neteaseapi.BuildMusicListCard(ctx,
-			musicList,
-			neteaseapi.MusicItemTransItemPic,
-			neteaseapi.CommentTypeSong,
-			playListDetail.Name,
-		)
-		if err != nil {
-			return err
-		}
-	} else if arg.Type == MusicSearchTypeSong {
-		musicList, err := neteaseapi.NetEaseGCtx.SearchMusicByKeyWord(ctx, keywords...)
-		if err != nil {
-			return err
-		}
-		cardContent, err = neteaseapi.BuildMusicListCard(ctx,
-			musicList,
-			neteaseapi.MusicItemNoTrans,
-			neteaseapi.CommentTypeSong,
-			keywords...,
-		)
-		if err != nil {
-			return err
-		}
-	} else {
-		return errors.New("Unknown search type")
+	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
+	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
+	send := func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
+		return sendCompatibleCardWithMessageID(sendCtx, data, metaData, cardContent, "_musicSearch", replyInThread)
+	}
+	patch := func(patchCtx context.Context, msgID string, cardContent *larktpl.TemplateCardContent) error {
+		return larkmsg.PatchCard(patchCtx, cardContent, msgID)
 	}
 
-	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
-	return sendCompatibleCard(ctx, data, metaData, cardContent, "_musicSearch", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
+	if arg.Type == MusicSearchTypeAlbum {
+		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+			Scene: neteaseapi.MusicListSceneAlbumSearch,
+			Query: arg.Keywords,
+		}, send, patch)
+	} else if arg.Type == MusicSearchTypePlaylist {
+		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+			Scene: neteaseapi.MusicListScenePlaylistDetail,
+			Query: arg.Keywords,
+		}, send, patch)
+	} else if arg.Type == MusicSearchTypeSong {
+		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+			Scene: neteaseapi.MusicListSceneSongSearch,
+			Query: arg.Keywords,
+		}, send, patch)
+	}
+	return errors.New("unknown search type")
 }
 
 func (musicSearchHandler) CommandDescription() string {

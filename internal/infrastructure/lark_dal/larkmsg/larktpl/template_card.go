@@ -20,6 +20,10 @@ type CardBaseVars struct {
 	RefreshObj *RefreshObj `json:"refresh_obj,omitempty"`
 }
 
+type CardBaseVarsSetter interface {
+	SetCardBaseVars(CardBaseVars)
+}
+
 type RefreshObj struct {
 	Action  string `json:"action"`
 	Command string `json:"command"`
@@ -27,6 +31,86 @@ type RefreshObj struct {
 
 type WithDrawObj struct {
 	Action string `json:"action"`
+}
+
+type ImageKeyRef struct {
+	ImgKey string `json:"img_key,omitempty"`
+}
+
+type MusicListCardVars struct {
+	CardBaseVars
+	ObjectList1  []*MusicListCardItem `json:"object_list_1"`
+	Query        string               `json:"query"`
+	PageInfoText string               `json:"page_info_text,omitempty"`
+	CurrentPage  int                  `json:"current_page,omitempty"`
+	TotalPages   int                  `json:"total_pages,omitempty"`
+	HasPrev      bool                 `json:"has_prev"`
+	HasNext      bool                 `json:"has_next"`
+	PrevPageVal  map[string]string    `json:"prev_page_val,omitempty"`
+	NextPageVal  map[string]string    `json:"next_page_val,omitempty"`
+}
+
+func (v *MusicListCardVars) SetCardBaseVars(base CardBaseVars) {
+	if v == nil {
+		return
+	}
+	v.CardBaseVars = base
+}
+
+type MusicListCardItem struct {
+	Field1      string            `json:"field_1,omitempty"`
+	Field2      ImageKeyRef       `json:"field_2,omitempty"`
+	Field3      string            `json:"field_3,omitempty"`
+	CommentTime string            `json:"comment_time,omitempty"`
+	ButtonInfo  string            `json:"button_info,omitempty"`
+	ElementID   string            `json:"element_id,omitempty"`
+	ButtonVal   map[string]string `json:"button_val,omitempty"`
+}
+
+type SingleSongDetailCardVars struct {
+	CardBaseVars
+	Lyrics           string            `json:"lyrics"`
+	Title            string            `json:"title"`
+	SubTitle         string            `json:"sub_title"`
+	ImgKey           ImageKeyRef       `json:"imgkey"`
+	PlayerURL        string            `json:"player_url"`
+	FullLyricsButton map[string]string `json:"full_lyrics_button"`
+	RefreshID        map[string]string `json:"refresh_id"`
+}
+
+func (v *SingleSongDetailCardVars) SetCardBaseVars(base CardBaseVars) {
+	if v == nil {
+		return
+	}
+	v.CardBaseVars = base
+}
+
+type FullLyricsCardVars struct {
+	CardBaseVars
+	LeftLyrics  string      `json:"left_lyrics"`
+	RightLyrics string      `json:"right_lyrics"`
+	Title       string      `json:"title"`
+	SubTitle    string      `json:"sub_title"`
+	ImgKey      ImageKeyRef `json:"imgkey"`
+}
+
+func (v *FullLyricsCardVars) SetCardBaseVars(base CardBaseVars) {
+	if v == nil {
+		return
+	}
+	v.CardBaseVars = base
+}
+
+type NormalCardReplyVars struct {
+	CardBaseVars
+	Content string `json:"content"`
+}
+
+func (v *NormalCardReplyVars) SetCardBaseVars(base CardBaseVars) {
+	if v == nil {
+		return
+	}
+	v.CardBaseVars = base
 }
 
 type ToneData struct {
