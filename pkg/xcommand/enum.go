@@ -11,6 +11,8 @@ type EnumDescriptor struct {
 	DefaultValue string
 }
 
+type enumDescriptorResolver func() EnumDescriptor
+
 type enumDescriber interface {
 	CommandEnum() EnumDescriptor
 }
@@ -63,20 +65,33 @@ func boolEnumDescriptor() EnumDescriptor {
 }
 
 func enumDescriptorFromType(t reflect.Type) (EnumDescriptor, bool) {
-	baseType := baseFieldType(t)
-	if baseType == nil {
-		return EnumDescriptor{}, false
-	}
-	if baseType.Kind() == reflect.Bool {
-		return boolEnumDescriptor(), true
-	}
-
-	value := reflect.New(baseType).Elem().Interface()
-	provider, ok := value.(enumDescriber)
+	resolver, ok := enumDescriptorResolverFromType(t)
 	if !ok {
 		return EnumDescriptor{}, false
 	}
-	return sanitizeEnumDescriptor(provider.CommandEnum()), true
+	return sanitizeEnumDescriptor(resolver()), true
+}
+
+func enumDescriptorResolverFromType(t reflect.Type) (enumDescriptorResolver, bool) {
+	baseType := baseFieldType(t)
+	if baseType == nil {
+		return nil, false
+	}
+	if baseType.Kind() == reflect.Bool {
+		return boolEnumDescriptor, true
+	}
+	value := reflect.New(baseType).Elem().Interface()
+	if _, ok := value.(enumDescriber); !ok {
+		return nil, false
+	}
+	return func() EnumDescriptor {
+		value := reflect.New(baseType).Elem().Interface()
+		provider, ok := value.(enumDescriber)
+		if !ok {
+			return EnumDescriptor{}
+		}
+		return provider.CommandEnum()
+	}, true
 }
 
 func sanitizeEnumDescriptor(desc EnumDescriptor) EnumDescriptor {

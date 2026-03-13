@@ -33,6 +33,7 @@ type CommandArg struct {
 	Flag         bool
 	DefaultValue string
 	Options      []CommandArgOption
+	enumResolver enumDescriptorResolver
 }
 
 // Command Repeat
@@ -161,7 +162,7 @@ func (c *Command[T]) GetArgSpecs() []CommandArg {
 		if spec == nil {
 			continue
 		}
-		argSpecs = append(argSpecs, *spec)
+		argSpecs = append(argSpecs, spec.resolved())
 	}
 	return argSpecs
 }
@@ -330,6 +331,16 @@ func (c *Command[T]) AddArgSpec(arg CommandArg) *Command[T] {
 	}
 	c.SupportArgs[arg.Name] = &spec
 	return c
+}
+
+func (a CommandArg) resolved() CommandArg {
+	if a.enumResolver == nil {
+		return a
+	}
+	desc := sanitizeEnumDescriptor(a.enumResolver())
+	a.Options = desc.Options
+	a.DefaultValue = desc.DefaultValue
+	return a
 }
 
 // IsCommand 判断传入的文本是否符合 Command 的触发格式

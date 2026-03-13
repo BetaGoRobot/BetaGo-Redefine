@@ -10,6 +10,8 @@ import (
 const (
 	configLastModifierField  = "config_last_modifier_open_id"
 	featureLastModifierField = "feature_last_modifier_open_id"
+	configSelectedKeyField   = "config_selected_key"
+	configViewKeyFormField   = "config_view_key_form_field"
 )
 
 type ConfigViewState struct {
@@ -17,6 +19,7 @@ type ConfigViewState struct {
 	ChatID             string
 	OpenID             string
 	LastModifierOpenID string
+	SelectedKey        string
 }
 
 type FeatureViewState struct {
@@ -125,7 +128,8 @@ func newConfigActionBuilder(action ConfigAction, key string, state ConfigViewSta
 		WithValue(cardaction.ScopeField, state.Scope).
 		WithValue(cardaction.ChatIDField, state.ChatID).
 		WithValue(cardaction.UserIDField, state.OpenID).
-		WithValue(configLastModifierField, state.LastModifierOpenID)
+		WithValue(configLastModifierField, state.LastModifierOpenID).
+		WithValue(configSelectedKeyField, state.SelectedKey)
 	return builder, true
 }
 
@@ -138,11 +142,23 @@ func BuildConfigViewValue(scope, chatID, openID string) map[string]string {
 }
 
 func BuildConfigViewValueWithState(state ConfigViewState) map[string]string {
+	builder := cardaction.New(cardaction.ActionConfigViewScope).
+		WithValue(cardaction.ScopeField, state.Scope).
+		WithValue(cardaction.ChatIDField, state.ChatID).
+		WithValue(cardaction.UserIDField, state.OpenID).
+		WithValue(configLastModifierField, state.LastModifierOpenID).
+		WithValue(configSelectedKeyField, state.SelectedKey)
+	return builder.Payload()
+}
+
+func BuildConfigViewFormValueWithState(state ConfigViewState, keyFormField string) map[string]string {
 	return cardaction.New(cardaction.ActionConfigViewScope).
 		WithValue(cardaction.ScopeField, state.Scope).
 		WithValue(cardaction.ChatIDField, state.ChatID).
 		WithValue(cardaction.UserIDField, state.OpenID).
 		WithValue(configLastModifierField, state.LastModifierOpenID).
+		WithValue(configSelectedKeyField, state.SelectedKey).
+		WithValue(configViewKeyFormField, keyFormField).
 		Payload()
 }
 
@@ -213,6 +229,7 @@ func ParseConfigActionRequest(parsed *cardaction.Parsed) (*ConfigActionRequest, 
 		ChatID:             chatID,
 		OpenID:             openID,
 		LastModifierOpenID: readConfigActionValue(parsed, configLastModifierField),
+		SelectedKey:        readConfigActionValue(parsed, configSelectedKeyField),
 	}, nil
 }
 
@@ -237,6 +254,7 @@ type ConfigViewRequest struct {
 	ChatID             string `json:"chat_id"`
 	OpenID             string `json:"user_id"`
 	LastModifierOpenID string `json:"last_modifier_open_id,omitempty"`
+	SelectedKey        string `json:"selected_key,omitempty"`
 }
 
 type FeatureViewRequest struct {
@@ -255,11 +273,17 @@ func ParseConfigViewRequest(parsed *cardaction.Parsed) (*ConfigViewRequest, erro
 	}
 	chatID, _ := parsed.String(cardaction.ChatIDField)
 	openID, _ := parsed.String(cardaction.UserIDField)
+	selectedKey := readConfigActionValue(parsed, configSelectedKeyField)
+	if strings.TrimSpace(selectedKey) == "" {
+		keyFormField, _ := parsed.String(configViewKeyFormField)
+		selectedKey, _ = resolveConfigFormValue(parsed, keyFormField)
+	}
 	return &ConfigViewRequest{
 		Scope:              scope,
 		ChatID:             chatID,
 		OpenID:             openID,
 		LastModifierOpenID: readConfigActionValue(parsed, configLastModifierField),
+		SelectedKey:        strings.TrimSpace(selectedKey),
 	}, nil
 }
 

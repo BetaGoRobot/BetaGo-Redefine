@@ -163,12 +163,15 @@ func TestParseConfigViewRequest(t *testing.T) {
 			cardaction.ChatIDField:  "chat-1",
 			cardaction.UserIDField:  "user-1",
 			configLastModifierField: "ou_modifier",
+			configSelectedKeyField:  string(KeyChatReasoningModel),
+			configViewKeyFormField:  "config_selected_key",
 		},
+		FormValue: map[string]any{"config_selected_key": string(KeyChatReasoningModel)},
 	})
 	if err != nil {
 		t.Fatalf("ParseConfigViewRequest() error = %v", err)
 	}
-	if req.Scope != "user" || req.ChatID != "chat-1" || req.OpenID != "user-1" || req.LastModifierOpenID != "ou_modifier" {
+	if req.Scope != "user" || req.ChatID != "chat-1" || req.OpenID != "user-1" || req.LastModifierOpenID != "ou_modifier" || req.SelectedKey != string(KeyChatReasoningModel) {
 		t.Fatalf("unexpected req: %+v", req)
 	}
 }

@@ -27,27 +27,35 @@ func GetCommand(ctx context.Context, content string) (commands []string) {
 	}
 
 	match, err := commandMsgRepattern.FindStringMatch(content)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("GetCommand", zap.Error(err))
+		return
+	}
+	if match == nil {
+		return nil
+	}
 	if match.GroupByName("commands") != nil { // 提取command
 		commands = strings.Fields(match.GroupByName("commands").String())
 
 		// 转换args
-		match, err := commandArgRepattern.FindStringMatch(content)
+		argMatch, err := commandArgRepattern.FindStringMatch(content)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("GetCommand", zap.Error(err))
 			return
 		}
-		if match != nil {
+		if argMatch != nil {
 			lastIdx := 0
-			for match, err = commandArgRepattern.FindStringMatch(content); match != nil; {
-				lastIdx = match.Index + len(match.String()) + 1
+			for argMatch != nil {
+				lastIdx = argMatch.Index + len(argMatch.String()) + 1
 				commands = append(commands, ReBuildArgs(
-					match.GroupByName("arg_name").String(),
-					match.GroupByName("arg_value").String()),
+					argMatch.GroupByName("arg_name").String(),
+					argMatch.GroupByName("arg_value").String()),
 				)
+				argMatch, err = commandArgRepattern.FindNextMatch(argMatch)
 				if err != nil {
-					panic(err)
+					logs.L().Ctx(ctx).Error("GetCommand", zap.Error(err))
+					return
 				}
-				match, err = commandArgRepattern.FindNextMatch(match)
 			}
 			if lastIdx < len(content) {
 				commands = append(commands, content[lastIdx:])

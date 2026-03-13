@@ -133,6 +133,46 @@ func TestBuildConfigActionRowContainsStandardActionPayload(t *testing.T) {
 	}
 }
 
+func TestBuildConfigCardContainsPickerForm(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card, err := BuildConfigCardWithOptions(context.Background(), "chat", "chat-1", "user-1", ConfigCardViewOptions{})
+	if err != nil {
+		t.Fatalf("BuildConfigCardWithOptions() error = %v", err)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `配置筛选`) || !strings.Contains(jsonStr, `"name":"config_selected_key"`) {
+		t.Fatalf("expected config picker form in config card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, string(KeyMusicCardInThread)) || !strings.Contains(jsonStr, string(KeyChatReasoningModel)) {
+		t.Fatalf("expected accessor-backed config keys in picker: %s", jsonStr)
+	}
+}
+
+func TestBuildConfigCardOnlyRendersSelectedConfigItem(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card, err := BuildConfigCardWithOptions(context.Background(), "chat", "chat-1", "user-1", ConfigCardViewOptions{
+		SelectedKey: string(KeyChatReasoningModel),
+	})
+	if err != nil {
+		t.Fatalf("BuildConfigCardWithOptions() error = %v", err)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"name":"form_chat_reasoning_model"`) {
+		t.Fatalf("expected selected config item in card json: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"name":"form_intent_recognition_enabled"`) {
+		t.Fatalf("did not expect non-selected config item in card json: %s", jsonStr)
+	}
+}
+
 func TestBuildFeatureActionRowContainsStandardActionPayload(t *testing.T) {
 	element := buildFeatureActionRow(FeatureItem{
 		Name:              "chat",
@@ -202,7 +242,7 @@ func TestBuildFeatureCardAddsOperationHistoryPanel(t *testing.T) {
 }
 
 func TestBuildConfigCustomValueFormContainsInputAndSubmit(t *testing.T) {
-	element := buildConfigCustomValueForm(ConfigItem{
+	element := buildConfigValueForm(ConfigItem{
 		Key:       string(KeyReactionDefaultRate),
 		Value:     "30",
 		ValueType: "int",
@@ -253,6 +293,29 @@ func TestBuildConfigCustomValueFormContainsInputAndSubmit(t *testing.T) {
 	}
 	if strings.Contains(jsonStr, `"size":"small"`) {
 		t.Fatalf("did not expect small size on restore default button: %s", jsonStr)
+	}
+}
+
+func TestBuildConfigValueFormSupportsStringConfig(t *testing.T) {
+	element := buildConfigValueForm(ConfigItem{
+		Key:       string(KeyChatReasoningModel),
+		Value:     "deep-reasoner",
+		ValueType: "string",
+		ChatID:    "chat-1",
+		OpenID:    "user-1",
+	}, ConfigViewState{
+		Scope: "chat",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"select_static"`) || !strings.Contains(jsonStr, `"initial_option":"deep-reasoner"`) {
+		t.Fatalf("expected enum string config select in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `deep-reasoner | 当前值`) && !strings.Contains(jsonStr, `deep-reasoner | reasoning_model`) {
+		t.Fatalf("expected string config options in card json: %s", jsonStr)
 	}
 }
 

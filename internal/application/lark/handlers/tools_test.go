@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -69,5 +70,42 @@ func TestBuildSchedulableToolsRestrictsSendMessageChatOverride(t *testing.T) {
 	}
 	if !strings.Contains(result.Err().Error(), "cannot override chat_id") {
 		t.Fatalf("unexpected error: %v", result.Err())
+	}
+}
+
+func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {
+		return []appconfig.Feature{
+			{Name: "chat", Description: "聊天"},
+			{Name: "music", Description: "音乐"},
+		}
+	})
+	defer appconfig.SetGetFeaturesFunc(nil)
+
+	allTools := larktools()
+
+	configSetUnit, ok := allTools.Get("config_set")
+	if !ok {
+		t.Fatal("expected config_set tool")
+	}
+	keyProp := configSetUnit.Parameters.Props["key"]
+	if keyProp == nil || len(keyProp.Enum) == 0 {
+		t.Fatalf("expected config_set key enum, got: %+v", keyProp)
+	}
+	if keyProp.Enum[0] != "reaction_default_rate" {
+		t.Fatalf("unexpected first config key enum: %+v", keyProp.Enum)
+	}
+
+	featureBlockUnit, ok := allTools.Get("feature_block")
+	if !ok {
+		t.Fatal("expected feature_block tool")
+	}
+	featureProp := featureBlockUnit.Parameters.Props["feature"]
+	if featureProp == nil || len(featureProp.Enum) != 2 {
+		t.Fatalf("expected feature_block feature enum, got: %+v", featureProp)
+	}
+	if featureProp.Enum[0] != "chat" || featureProp.Enum[1] != "music" {
+		t.Fatalf("unexpected feature enum values: %+v", featureProp.Enum)
 	}
 }

@@ -915,37 +915,19 @@ func SetGetFeaturesFunc(fn func() []Feature) {
 
 // GetAllConfigKeys 获取所有配置键列表
 func GetAllConfigKeys() []ConfigKey {
-	return []ConfigKey{
-		KeyReactionDefaultRate,
-		KeyReactionFollowDefaultRate,
-		KeyRepeatDefaultRate,
-		KeyImitateDefaultRate,
-		KeyIntentFallbackRate,
-		KeyIntentReplyThreshold,
-		KeyIntentRecognitionEnabled,
+	keys := make([]ConfigKey, 0, len(configDefinitions))
+	for _, def := range configDefinitions {
+		keys = append(keys, def.Key)
 	}
+	return keys
 }
 
 // GetConfigDescription 获取配置描述
 func GetConfigDescription(key ConfigKey) string {
-	switch key {
-	case KeyReactionDefaultRate:
-		return "默认回应表情概率 (0-100)"
-	case KeyReactionFollowDefaultRate:
-		return "跟随回应表情概率 (0-100)"
-	case KeyRepeatDefaultRate:
-		return "默认复读消息概率 (0-100)"
-	case KeyImitateDefaultRate:
-		return "默认模仿发言概率 (0-100)"
-	case KeyIntentFallbackRate:
-		return "意图识别失败回退概率 (0-100)"
-	case KeyIntentReplyThreshold:
-		return "意图识别回复阈值 (0-100)"
-	case KeyIntentRecognitionEnabled:
-		return "是否启用意图识别"
-	default:
-		return "未知配置"
+	if def, ok := GetConfigDefinition(key); ok {
+		return def.Description
 	}
+	return "未知配置"
 }
 
 // GetAllFeatures 获取所有功能列表（保留用于向后兼容）

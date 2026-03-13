@@ -139,3 +139,75 @@ func TestParseConfigKeySupportsBotNamespace(t *testing.T) {
 		t.Fatalf("unexpected entry key/value: %+v", entry)
 	}
 }
+
+func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
+	keys := GetAllConfigKeys()
+	set := make(map[ConfigKey]struct{}, len(keys))
+	for _, key := range keys {
+		set[key] = struct{}{}
+	}
+
+	expected := []ConfigKey{
+		KeyMusicCardInThread,
+		KeyWithDrawReplace,
+		KeyChatReasoningModel,
+		KeyChatNormalModel,
+		KeyIntentLiteModel,
+		KeyLarkMsgIndex,
+		KeyLarkChunkIndex,
+	}
+	for _, key := range expected {
+		if _, ok := set[key]; !ok {
+			t.Fatalf("expected config key %q in GetAllConfigKeys()", key)
+		}
+	}
+}
+
+func TestConfigDefaultDisplayValueSupportsStringDefaults(t *testing.T) {
+	oldConfig := currentBaseConfig
+	currentBaseConfig = func() *infraConfig.BaseConfig {
+		return &infraConfig.BaseConfig{
+			ArkConfig: &infraConfig.ArkConfig{
+				ReasoningModel: "deep-reasoner",
+			},
+		}
+	}
+	defer func() {
+		currentBaseConfig = oldConfig
+	}()
+
+	manager := NewManager()
+	if got := configDefaultDisplayValue(manager, KeyChatReasoningModel); got != "deep-reasoner" {
+		t.Fatalf("configDefaultDisplayValue() = %q, want %q", got, "deep-reasoner")
+	}
+}
+
+func TestGetConfigEnumOptionsBuildsCandidatesFromBaseConfig(t *testing.T) {
+	oldConfig := currentBaseConfig
+	currentBaseConfig = func() *infraConfig.BaseConfig {
+		return &infraConfig.BaseConfig{
+			ArkConfig: &infraConfig.ArkConfig{
+				ReasoningModel: "deep-reasoner",
+				NormalModel:    "fast-chat",
+				LiteModel:      "intent-lite",
+			},
+			OpensearchConfig: &infraConfig.OpensearchConfig{
+				LarkMsgIndex:   "lark_msg_index_jieba",
+				LarkChunkIndex: "lark_chunk_index_jieba",
+			},
+		}
+	}
+	defer func() {
+		currentBaseConfig = oldConfig
+	}()
+
+	modelOptions := GetConfigEnumOptions(KeyChatReasoningModel, "")
+	if len(modelOptions) != 3 {
+		t.Fatalf("expected 3 model options, got %+v", modelOptions)
+	}
+
+	indexOptions := GetConfigEnumOptions(KeyLarkMsgIndex, "")
+	if len(indexOptions) != 2 {
+		t.Fatalf("expected 2 index options, got %+v", indexOptions)
+	}
+}

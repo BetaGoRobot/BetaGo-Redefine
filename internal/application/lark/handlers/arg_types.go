@@ -185,6 +185,77 @@ func (WordCloudSortType) CommandEnum() xcommand.EnumDescriptor {
 	}
 }
 
+type WordChunkIntentType string
+
+const (
+	WordChunkIntentTypeAll                   WordChunkIntentType = "all"
+	WordChunkIntentTypeSocialCoordination    WordChunkIntentType = "SOCIAL_COORDINATION"
+	WordChunkIntentTypeInformationSharing    WordChunkIntentType = "INFORMATION_SHARING"
+	WordChunkIntentTypeSeekingHelpOrAdvice   WordChunkIntentType = "SEEKING_HELP_OR_ADVICE"
+	WordChunkIntentTypeDebateOrDiscussion    WordChunkIntentType = "DEBATE_OR_DISCUSSION"
+	WordChunkIntentTypeEmotionalSharing      WordChunkIntentType = "EMOTIONAL_SHARING_OR_SUPPORT"
+	WordChunkIntentTypeRequestRecommendation WordChunkIntentType = "REQUESTING_RECOMMENDATION"
+	WordChunkIntentTypeCasualChitchat        WordChunkIntentType = "CASUAL_CHITCHAT"
+)
+
+func (WordChunkIntentType) CommandEnum() xcommand.EnumDescriptor {
+	return xcommand.EnumDescriptor{
+		Options: []xcommand.CommandArgOption{
+			{Value: string(WordChunkIntentTypeAll), Label: "全部意图"},
+			{Value: string(WordChunkIntentTypeSocialCoordination), Label: "共商议事"},
+			{Value: string(WordChunkIntentTypeInformationSharing), Label: "见闻共飨"},
+			{Value: string(WordChunkIntentTypeSeekingHelpOrAdvice), Label: "求教问策"},
+			{Value: string(WordChunkIntentTypeDebateOrDiscussion), Label: "明辨事理"},
+			{Value: string(WordChunkIntentTypeEmotionalSharing), Label: "悲欢与共"},
+			{Value: string(WordChunkIntentTypeRequestRecommendation), Label: "求珍问宝"},
+			{Value: string(WordChunkIntentTypeCasualChitchat), Label: "谈天说地"},
+		},
+		DefaultValue: string(WordChunkIntentTypeAll),
+	}
+}
+
+type WordChunkSentimentType string
+
+const (
+	WordChunkSentimentTypeAll      WordChunkSentimentType = "all"
+	WordChunkSentimentTypePositive WordChunkSentimentType = "POSITIVE"
+	WordChunkSentimentTypeNegative WordChunkSentimentType = "NEGATIVE"
+	WordChunkSentimentTypeNeutral  WordChunkSentimentType = "NEUTRAL"
+	WordChunkSentimentTypeMixed    WordChunkSentimentType = "MIXED"
+)
+
+func (WordChunkSentimentType) CommandEnum() xcommand.EnumDescriptor {
+	return xcommand.EnumDescriptor{
+		Options: []xcommand.CommandArgOption{
+			{Value: string(WordChunkSentimentTypeAll), Label: "全部情绪"},
+			{Value: string(WordChunkSentimentTypePositive), Label: "正向"},
+			{Value: string(WordChunkSentimentTypeNegative), Label: "负向"},
+			{Value: string(WordChunkSentimentTypeNeutral), Label: "中性"},
+			{Value: string(WordChunkSentimentTypeMixed), Label: "混合"},
+		},
+		DefaultValue: string(WordChunkSentimentTypeAll),
+	}
+}
+
+type WordChunkQuestionMode string
+
+const (
+	WordChunkQuestionModeAll        WordChunkQuestionMode = "all"
+	WordChunkQuestionModeQuestion   WordChunkQuestionMode = "question"
+	WordChunkQuestionModeNoQuestion WordChunkQuestionMode = "no_question"
+)
+
+func (WordChunkQuestionMode) CommandEnum() xcommand.EnumDescriptor {
+	return xcommand.EnumDescriptor{
+		Options: []xcommand.CommandArgOption{
+			{Value: string(WordChunkQuestionModeAll), Label: "全部"},
+			{Value: string(WordChunkQuestionModeQuestion), Label: "仅有问题"},
+			{Value: string(WordChunkQuestionModeNoQuestion), Label: "仅无问题"},
+		},
+		DefaultValue: string(WordChunkQuestionModeAll),
+	}
+}
+
 type ImageAssetType string
 
 const (

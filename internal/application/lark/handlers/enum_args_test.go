@@ -40,6 +40,29 @@ func TestWordCloudParseCLIDefaultsTypedSort(t *testing.T) {
 	}
 }
 
+func TestWordCloudGraphParseCLIDefaults(t *testing.T) {
+	arg, err := WordCloudGraph.ParseCLI(nil)
+	if err != nil {
+		t.Fatalf("ParseCLI() error = %v", err)
+	}
+	if arg.Top != 40 || arg.Days != 7 {
+		t.Fatalf("unexpected defaults: %+v", arg)
+	}
+}
+
+func TestWordChunksParseCLIDefaultsTypedEnums(t *testing.T) {
+	arg, err := WordChunks.ParseCLI(nil)
+	if err != nil {
+		t.Fatalf("ParseCLI() error = %v", err)
+	}
+	if arg.Sort != WordCloudSortTypeRelevance {
+		t.Fatalf("unexpected sort default: %+v", arg)
+	}
+	if arg.Intent != WordChunkIntentTypeAll || arg.Sentiment != WordChunkSentimentTypeAll || arg.QuestionMode != WordChunkQuestionModeAll {
+		t.Fatalf("unexpected chunk filter defaults: %+v", arg)
+	}
+}
+
 func TestImageAddParseCLINormalizesTypeAlias(t *testing.T) {
 	arg, err := ImageAdd.ParseCLI([]string{"--type=img"})
 	if err != nil {

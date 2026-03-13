@@ -147,7 +147,35 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 		).
 		AddSubCommand(
 			newTypedCmd("talkrate", handlers.Trend),
-		).AddSubCommand(newTypedCmd("wc", handlers.WordCloud)).
+		).
+		AddSubCommand(newTypedCmd("wc", handlers.WordCloud)).
+		AddSubCommand(
+			newCmd("wordcount", larkCommandNilFunc).
+				AddDescription("群聊词云与 chunk 分析").
+				AddExamples(
+					"/wordcount summary --days=7",
+					"/wordcount cloud --top=40",
+					"/wordcount chunks --sort=time --question_mode=question",
+					"/wordcount chunk --id=9f35b54e-7af4-11ef-bbaa-acde48001122",
+					"/wordcount talkrate --play=bar",
+				).
+				SetDefaultSubCommand("summary").
+				AddSubCommand(
+					newTypedCmd("summary", handlers.WordCloud),
+				).
+				AddSubCommand(
+					newTypedCmd("cloud", handlers.WordCloudGraph),
+				).
+				AddSubCommand(
+					newTypedCmd("chunks", handlers.WordChunks),
+				).
+				AddSubCommand(
+					newTypedCmd("chunk", handlers.WordChunkDetail),
+				).
+				AddSubCommand(
+					newTypedCmd("talkrate", handlers.Trend),
+				),
+		).
 		AddSubCommand(
 			newCmd("ratelimit", larkCommandNilFunc).
 				AddDescription("频控管理").

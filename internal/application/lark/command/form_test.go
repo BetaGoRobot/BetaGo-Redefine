@@ -1,10 +1,12 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
@@ -39,8 +41,11 @@ func TestBuildCommandFormCardJSON(t *testing.T) {
 	if !strings.Contains(jsonStr, `"initial_option":"chat"`) {
 		t.Fatalf("expected enum field to rehydrate default option: %s", jsonStr)
 	}
-	if !strings.Contains(jsonStr, `"name":"key"`) || !strings.Contains(jsonStr, `"default_value":"intent_recognition_enabled"`) {
-		t.Fatalf("expected input field to rehydrate current value: %s", jsonStr)
+	if !strings.Contains(jsonStr, `"name":"key"`) || !strings.Contains(jsonStr, `"initial_option":"intent_recognition_enabled"`) {
+		t.Fatalf("expected key enum field to rehydrate current value: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"value":"intent_recognition_enabled"`) || !strings.Contains(jsonStr, `intent_recognition_enabled | 是否启用意图识别`) {
+		t.Fatalf("expected config key options in form card: %s", jsonStr)
 	}
 	if !strings.Contains(jsonStr, `"command":"/config set --key=intent_recognition_enabled"`) {
 		t.Fatalf("expected original command payload in form card: %s", jsonStr)
@@ -85,6 +90,34 @@ func TestBuildCommandFormCardJSONUsesTypedEnumDescriptorWithoutLegacyTag(t *test
 	}
 }
 
+func TestBuildCommandFormCardJSONResolvesFeatureEnumsLazily(t *testing.T) {
+	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {
+		return []appconfig.Feature{
+			{Name: "chat", Description: "聊天"},
+			{Name: "music", Description: "音乐"},
+		}
+	})
+	defer appconfig.SetGetFeaturesFunc(nil)
+
+	root := NewLarkRootCommand()
+	cardData, err := BuildCommandFormCardJSON(root, "/feature block --feature=music")
+	if err != nil {
+		t.Fatalf("BuildCommandFormCardJSON() error = %v", err)
+	}
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"initial_option":"music"`) {
+		t.Fatalf("expected selected feature option to be rehydrated: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"value":"music"`) || !strings.Contains(jsonStr, `music | 音乐`) {
+		t.Fatalf("expected runtime feature options in form card: %s", jsonStr)
+	}
+}
+
 func TestBuildCommandFormCardJSONUsesDynamicSpecOptionsForDebugCard(t *testing.T) {
 	root := NewLarkRootCommand()
 
@@ -106,6 +139,77 @@ func TestBuildCommandFormCardJSONUsesDynamicSpecOptionsForDebugCard(t *testing.T
 	}
 	if strings.Contains(jsonStr, `"name":"template","tag":"select_static"`) {
 		t.Fatalf("did not expect template field to be forced into enum options: %s", jsonStr)
+	}
+}
+
+func TestBuildCommandFormCardJSONUsesEnumFiltersForWordChunks(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData, err := BuildCommandFormCardJSON(root, "/wordcount chunks --question_mode=question")
+	if err != nil {
+		t.Fatalf("BuildCommandFormCardJSON() error = %v", err)
+	}
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"name":"sort"`) ||
+		!strings.Contains(jsonStr, `"name":"intent"`) ||
+		!strings.Contains(jsonStr, `"name":"sentiment"`) ||
+		!strings.Contains(jsonStr, `"name":"question_mode"`) {
+		t.Fatalf("expected wordcount chunk filters in form card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"initial_option":"question"`) {
+		t.Fatalf("expected explicit question_mode to be rehydrated: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"value":"CASUAL_CHITCHAT"`) ||
+		!strings.Contains(jsonStr, `"value":"NEGATIVE"`) ||
+		!strings.Contains(jsonStr, `"value":"no_question"`) {
+		t.Fatalf("expected enum options for chunk filters: %s", jsonStr)
+	}
+}
+
+func TestBuildCommandFormCardJSONSupportsWordCountChunkDetailCommand(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData, err := BuildCommandFormCardJSON(root, "/wordcount chunk")
+	if err != nil {
+		t.Fatalf("BuildCommandFormCardJSON() error = %v", err)
+	}
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"name":"id"`) {
+		t.Fatalf("expected chunk detail form to expose id field: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"name":"chat_id"`) {
+		t.Fatalf("expected chunk detail form to expose chat_id override: %s", jsonStr)
+	}
+}
+
+func TestBuildCommandFormCardJSONSupportsWcAliasSubcommands(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData, err := BuildCommandFormCardJSON(root, "/wc chunks --question_mode=question")
+	if err != nil {
+		t.Fatalf("BuildCommandFormCardJSON() error = %v", err)
+	}
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"name":"question_mode"`) {
+		t.Fatalf("expected wc chunks form to resolve to chunk filters: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"**命令**: `+"`wc chunks`"+`"`) {
+		t.Fatalf("expected wc alias path to be preserved in form title block: %s", jsonStr)
 	}
 }
 
@@ -160,7 +264,7 @@ func TestBuildCommandFormRawCommandPreservesAndUpdatesFlagArgs(t *testing.T) {
 func TestBuildHelpCardIncludesCommandFormButton(t *testing.T) {
 	root := NewLarkRootCommand()
 
-	cardData := buildHelpCard(nil, root, "config set")
+	cardData := buildHelpCard(context.TODO(), root, "config set")
 	raw, err := json.Marshal(cardData)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)

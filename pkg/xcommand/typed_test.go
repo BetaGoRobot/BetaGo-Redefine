@@ -222,6 +222,56 @@ func TestNewTypedCommandUsesTypedEnumDescriptor(t *testing.T) {
 	}
 }
 
+var dynamicEnumOptions = []CommandArgOption{
+	{Value: "first", Label: "First"},
+}
+
+type dynamicEnum string
+
+func (dynamicEnum) CommandEnum() EnumDescriptor {
+	return EnumDescriptor{
+		Options:      append([]CommandArgOption(nil), dynamicEnumOptions...),
+		DefaultValue: dynamicEnumOptions[0].Value,
+	}
+}
+
+type dynamicEnumArgs struct {
+	Value dynamicEnum `json:"value"`
+}
+
+type dynamicEnumHandler struct{}
+
+func (dynamicEnumHandler) ParseCLI(raw []string) (dynamicEnumArgs, error) {
+	return dynamicEnumArgs{}, nil
+}
+
+func (dynamicEnumHandler) Handle(ctx context.Context, data string, metaData *xhandler.BaseMetaData, arg dynamicEnumArgs) error {
+	return nil
+}
+
+func TestNewTypedCommandResolvesEnumDescriptorLazily(t *testing.T) {
+	dynamicEnumOptions = []CommandArgOption{
+		{Value: "first", Label: "First"},
+	}
+	cmd := NewTypedCommand[string, dynamicEnumArgs]("dynamic", dynamicEnumHandler{})
+
+	dynamicEnumOptions = []CommandArgOption{
+		{Value: "second", Label: "Second"},
+		{Value: "third", Label: "Third"},
+	}
+
+	specs := cmd.GetArgSpecs()
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 arg spec, got: %d", len(specs))
+	}
+	if specs[0].DefaultValue != "second" {
+		t.Fatalf("expected lazy default value, got: %+v", specs[0])
+	}
+	if len(specs[0].Options) != 2 || specs[0].Options[0].Value != "second" || specs[0].Options[1].Value != "third" {
+		t.Fatalf("expected lazy enum options, got: %+v", specs[0].Options)
+	}
+}
+
 func TestParseEnumUsesDefaultAndRejectsInvalidValue(t *testing.T) {
 	got, err := ParseEnum[typedScope]("")
 	if err != nil {

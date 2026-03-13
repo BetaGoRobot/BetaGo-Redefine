@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 )
@@ -19,6 +20,7 @@ type ConfigCardViewOptions struct {
 	LastModifierOpenID string
 	MessageID          string
 	PendingHistory     []larkmsg.CardActionHistoryRecord
+	SelectedKey        string
 }
 
 type FeatureCardViewOptions struct {
@@ -41,7 +43,7 @@ type ConfigItem struct {
 	Key         string `json:"key"`
 	Description string `json:"description"`
 	Value       string `json:"value"`
-	ValueType   string `json:"value_type"`  // "int" | "bool"
+	ValueType   string `json:"value_type"`  // "int" | "bool" | "string"
 	Scope       string `json:"scope"`       // "global" | "chat" | "user" | "default"
 	IsEditable  bool   `json:"is_editable"` // 是否可编辑
 	ChatID      string `json:"chat_id,omitempty"`
@@ -122,6 +124,7 @@ type ConfigActionRequest struct {
 	OpenID             string       `json:"user_id"`
 	ActorOpenID        string       `json:"actor_user_id"`
 	LastModifierOpenID string       `json:"last_modifier_open_id,omitempty"`
+	SelectedKey        string       `json:"selected_key,omitempty"`
 }
 
 // ConfigActionResponse 配置操作响应
@@ -143,9 +146,13 @@ func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, openID
 	mgr := GetManager()
 	allKeys := GetAllConfigKeys()
 	viewScope = normalizeConfigScope(viewScope)
+	selectedKey := normalizeSelectedConfigKey(options.SelectedKey)
 
 	items := make([]ConfigItem, 0, len(allKeys))
 	for _, key := range allKeys {
+		if selectedKey != "" && string(key) != selectedKey {
+			continue
+		}
 		item := ConfigItem{
 			Key:         string(key),
 			Description: GetConfigDescription(key),
@@ -246,18 +253,39 @@ func configLookupChain(viewScope, chatID, openID string) []configLookupCandidate
 }
 
 func configValueTypeForKey(key ConfigKey) string {
-	switch key {
-	case KeyIntentRecognitionEnabled:
-		return "bool"
-	default:
-		return "int"
+	if def, ok := GetConfigDefinition(key); ok {
+		return def.ValueType
 	}
+	return "string"
+}
+
+func normalizeSelectedConfigKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		keys := GetAllConfigKeys()
+		if len(keys) == 0 {
+			return ""
+		}
+		return string(keys[0])
+	}
+	for _, key := range GetAllConfigKeys() {
+		if string(key) == raw {
+			return raw
+		}
+	}
+	keys := GetAllConfigKeys()
+	if len(keys) == 0 {
+		return ""
+	}
+	return string(keys[0])
 }
 
 func configDefaultDisplayValue(mgr *Manager, key ConfigKey) string {
 	switch configValueTypeForKey(key) {
 	case "bool":
 		return strconv.FormatBool(mgr.getBoolFromToml(key))
+	case "string":
+		return mgr.getStringFromToml(key)
 	default:
 		return strconv.Itoa(mgr.getIntFromToml(key))
 	}
@@ -393,6 +421,13 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 	}
 
 	configKey := ConfigKey(req.Key)
+	def, ok := GetConfigDefinition(configKey)
+	if !ok {
+		return &ConfigActionResponse{
+			Success: false,
+			Message: "无效的配置定义: " + req.Key,
+		}, nil
+	}
 	var err error
 
 	if req.Action == ConfigActionDelete {
@@ -409,8 +444,8 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 		}, nil
 	}
 
-	switch configKey {
-	case KeyIntentRecognitionEnabled:
+	switch def.ValueType {
+	case "bool":
 		boolVal, boolErr := strconv.ParseBool(req.Value)
 		if boolErr != nil {
 			return &ConfigActionResponse{
@@ -419,6 +454,8 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 			}, nil
 		}
 		err = mgr.SetBool(ctx, configKey, scope, chatID, openID, boolVal)
+	case "string":
+		err = mgr.SetString(ctx, configKey, scope, chatID, openID, req.Value)
 	default:
 		intVal, intErr := strconv.Atoi(req.Value)
 		if intErr != nil {
@@ -427,10 +464,10 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 				Message: "值必须是整数",
 			}, nil
 		}
-		if intVal < 0 || intVal > 100 {
+		if intVal < def.IntMin || intVal > def.IntMax {
 			return &ConfigActionResponse{
 				Success: false,
-				Message: "值必须在 0-100 之间",
+				Message: "值必须在 " + strconv.Itoa(def.IntMin) + "-" + strconv.Itoa(def.IntMax) + " 之间",
 			}, nil
 		}
 		err = mgr.SetInt(ctx, configKey, scope, chatID, openID, intVal)

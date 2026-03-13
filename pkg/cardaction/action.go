@@ -58,6 +58,8 @@ const (
 	ActionSchedulePause          = "schedule.pause"
 	ActionScheduleResume         = "schedule.resume"
 	ActionScheduleDelete         = "schedule.delete"
+	ActionWordChunksView         = "wordcount.chunks.view"
+	ActionWordChunkDetail        = "wordcount.chunk.detail"
 )
 
 var (

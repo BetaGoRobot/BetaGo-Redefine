@@ -14,6 +14,7 @@ func BuildConfigCard(ctx context.Context, scope, chatID, openID string) (larkmsg
 
 func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, openID string, options ConfigCardViewOptions) (larkmsg.RawCard, error) {
 	scope = normalizeConfigScope(scope)
+	options.SelectedKey = normalizeSelectedConfigKey(options.SelectedKey)
 	cardData, err := GetConfigCardDataWithOptions(ctx, scope, chatID, openID, options)
 	if err != nil {
 		return nil, err
@@ -23,11 +24,13 @@ func BuildConfigCardWithOptions(ctx context.Context, scope, chatID, openID strin
 		ChatID:             chatID,
 		OpenID:             openID,
 		LastModifierOpenID: options.LastModifierOpenID,
+		SelectedKey:        options.SelectedKey,
 	}
 
 	elements := make([]any, 0, len(cardData.Configs)*4+3)
 	elements = append(elements, markdownBlock(fmt.Sprintf("当前查看/写入作用域: `%s`  当前上下文: chat=`%s` user=`%s`", scope, shortID(chatID), shortID(openID))))
 	elements = append(elements, buildConfigScopeRow(view))
+	elements = append(elements, buildConfigPickerForm(view))
 	configSections := make([][]any, 0, len(cardData.Configs))
 	for _, item := range cardData.Configs {
 		configSections = append(configSections, []any{buildConfigItemSection(item, view)})
@@ -96,10 +99,11 @@ func buildConfigItemBlock(item ConfigItem) map[string]any {
 }
 
 func buildConfigItemSection(item ConfigItem, view ConfigViewState) map[string]any {
-	if item.ValueType == "int" {
-		return buildConfigCustomValueForm(item, view)
-	} else {
+	switch item.ValueType {
+	case "bool":
 		return buildConfigColumns(buildConfigItemBlock(item), []any{buildConfigActionRow(item, view)})
+	default:
+		return buildConfigValueForm(item, view)
 	}
 }
 
@@ -115,13 +119,12 @@ func buildConfigActionRow(item ConfigItem, view ConfigViewState) map[string]any 
 	return buttonRow("flow", buttons...)
 }
 
-func buildConfigCustomValueForm(item ConfigItem, view ConfigViewState) map[string]any {
+func buildConfigValueForm(item ConfigItem, view ConfigViewState) map[string]any {
 	formName := "form_" + sanitizeComponentName(item.Key)
 	formField := configFormFieldName(item.Key)
 	submitName := "btn_submit_" + sanitizeComponentName(item.Key)
 	resetName := "btn_reset_" + sanitizeComponentName(item.Key)
 	resetDefaultName := "btn_restore_" + sanitizeComponentName(item.Key)
-	placeholder := fmt.Sprintf("输入 0-100，自定义覆盖当前值 %s", item.Value)
 
 	return map[string]any{
 		"tag":                "form",
@@ -132,13 +135,7 @@ func buildConfigCustomValueForm(item ConfigItem, view ConfigViewState) map[strin
 			buildConfigColumns(
 				buildConfigItemBlock(item),
 				[]any{
-					map[string]any{
-						"tag":           "input",
-						"name":          formField,
-						"width":         "fill",
-						"placeholder":   plainText(placeholder),
-						"default_value": item.Value,
-					},
+					buildConfigValueInput(item, formField),
 					buttonRow(
 						"none",
 						buildFormButton(
@@ -211,6 +208,130 @@ func buildConfigScopeRow(view ConfigViewState) map[string]any {
 		buttons = append(buttons, buildButton(item.Label, buttonType, BuildConfigViewValueWithState(nextView)))
 	}
 	return buttonRow("flow", buttons...)
+}
+
+func buildConfigPickerForm(view ConfigViewState) map[string]any {
+	keyField := "config_selected_key"
+	options := allConfigKeyOptions()
+	initialOption := view.SelectedKey
+	if !hasSelectStaticValue(options, initialOption) {
+		initialOption = firstSelectStaticValue(options)
+	}
+	return map[string]any{
+		"tag":                "form",
+		"name":               "form_config_selected_key",
+		"vertical_spacing":   "8px",
+		"horizontal_spacing": "8px",
+		"elements": []any{
+			buildConfigColumns(
+				markdownBlock("**配置筛选**\n用下拉选择要查看和修改的配置项，卡片下方只渲染当前选中的那一项。"),
+				[]any{
+					larkmsg.SelectStatic(keyField, larkmsg.SelectStaticOptions{
+						Width:         "fill",
+						InitialOption: initialOption,
+						Options:       options,
+						ElementID:     "config_selected_key",
+					}),
+					buttonRow(
+						"none",
+						buildFormButton(
+							"btn_config_selected_key_submit",
+							"查看",
+							"primary_filled",
+							"submit",
+							BuildConfigViewFormValueWithState(view, keyField),
+						),
+					),
+				},
+			),
+		},
+	}
+}
+
+func buildConfigValueInput(item ConfigItem, formField string) map[string]any {
+	if enumOptions := enumValueOptionsForConfigItem(item); len(enumOptions) > 0 {
+		return larkmsg.SelectStatic(formField, larkmsg.SelectStaticOptions{
+			Width:         "fill",
+			Placeholder:   "选择预设值",
+			InitialOption: initialSelectValueForCurrentItem(enumOptions, item.Value),
+			Options:       enumOptions,
+			ElementID:     formField,
+		})
+	}
+
+	placeholder := "输入新的配置值"
+	if def, ok := GetConfigDefinition(ConfigKey(item.Key)); ok && def.ValueType == "int" {
+		placeholder = fmt.Sprintf("输入 %d-%d，自定义覆盖当前值 %s", def.IntMin, def.IntMax, item.Value)
+	} else if item.ValueType == "string" {
+		placeholder = fmt.Sprintf("输入字符串，覆盖当前值 %s", item.Value)
+	}
+	return larkmsg.TextInput(formField, larkmsg.TextInputOptions{
+		Placeholder:  placeholder,
+		DefaultValue: item.Value,
+	})
+}
+
+func allConfigKeyOptions() []larkmsg.SelectStaticOption {
+	keys := GetAllConfigKeys()
+	options := make([]larkmsg.SelectStaticOption, 0, len(keys))
+	for _, key := range keys {
+		options = append(options, larkmsg.SelectStaticOption{
+			Text:  fmt.Sprintf("%s | %s", GetConfigDescription(key), key),
+			Value: string(key),
+		})
+	}
+	return options
+}
+
+func enumValueOptionsForConfigItem(item ConfigItem) []larkmsg.SelectStaticOption {
+	return toLarkSelectOptions(GetConfigEnumOptions(ConfigKey(item.Key), item.Value))
+}
+
+func toLarkSelectOptions(options []ConfigEnumOption) []larkmsg.SelectStaticOption {
+	selectOptions := make([]larkmsg.SelectStaticOption, 0, len(options))
+	for _, option := range options {
+		value := strings.TrimSpace(option.Value)
+		if value == "" {
+			continue
+		}
+		selectOptions = append(selectOptions, larkmsg.SelectStaticOption{
+			Text:  option.Text,
+			Value: value,
+		})
+	}
+	return selectOptions
+}
+
+func initialSelectValueForCurrentItem(options []larkmsg.SelectStaticOption, currentValue string) string {
+	currentValue = strings.TrimSpace(currentValue)
+	if currentValue != "" {
+		for _, option := range options {
+			if option.Value == currentValue {
+				return currentValue
+			}
+		}
+	}
+	return firstSelectStaticValue(options)
+}
+
+func hasSelectStaticValue(options []larkmsg.SelectStaticOption, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, option := range options {
+		if strings.TrimSpace(option.Value) == value {
+			return true
+		}
+	}
+	return false
+}
+
+func firstSelectStaticValue(options []larkmsg.SelectStaticOption) string {
+	if len(options) == 0 {
+		return ""
+	}
+	return options[0].Value
 }
 
 func buildFeatureItemBlock(item FeatureItem) map[string]any {
@@ -297,10 +418,6 @@ func withConfigItemView(view ConfigViewState, item ConfigItem) ConfigViewState {
 	view.ChatID = item.ChatID
 	view.OpenID = item.OpenID
 	return view
-}
-
-func plainText(content string) map[string]any {
-	return larkmsg.PlainText(content)
 }
 
 func newRawCard(ctx context.Context, title string, elements []any, footerOptions ...larkmsg.StandardCardFooterOptions) larkmsg.RawCard {

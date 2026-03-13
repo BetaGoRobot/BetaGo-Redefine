@@ -95,6 +95,18 @@ func TestBuildHelpTextScheduleGroup(t *testing.T) {
 	}
 }
 
+func TestBuildHelpTextWcAliasGroup(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	text := buildHelpText(root, "wc")
+	if !strings.Contains(text, "/wc [chunk, chunks, cloud, summary, talkrate]") {
+		t.Fatalf("expected wc help to expose wordcount subcommands, got: %s", text)
+	}
+	if !strings.Contains(text, "/wc summary") || !strings.Contains(text, "/wc chunks") {
+		t.Fatalf("expected wc help to include aliased subcommand paths, got: %s", text)
+	}
+}
+
 func TestBuildHelpView(t *testing.T) {
 	root := NewLarkRootCommand()
 

@@ -108,9 +108,11 @@ func describeCLIArgs[TArgs any](handler any) []CommandArg {
 		}
 		enumOptions := []CommandArgOption(nil)
 		defaultValue := ""
+		var enumResolver enumDescriptorResolver
 		if enumDesc, ok := enumDescriptorFromType(field.Type); ok {
 			enumOptions = enumDesc.Options
 			defaultValue = enumDesc.DefaultValue
+			enumResolver, _ = enumDescriptorResolverFromType(field.Type)
 		} else {
 			enumOptions = parseEnumTag(field.Tag.Get("enum"))
 		}
@@ -123,6 +125,7 @@ func describeCLIArgs[TArgs any](handler any) []CommandArg {
 			Flag:         flag,
 			DefaultValue: defaultValue,
 			Options:      enumOptions,
+			enumResolver: enumResolver,
 		})
 	}
 

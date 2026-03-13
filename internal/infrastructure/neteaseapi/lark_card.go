@@ -591,7 +591,10 @@ func newMusicListCardLoadingItem(item *SearchMusicItem) larktpl.MusicListCardIte
 		elementID = strconv.Itoa(item.ID)
 	}
 	return larktpl.MusicListCardItem{
-		Field1:      "加载中",
+		Field1: "加载中",
+		Field2: larktpl.ImageKeyRef{
+			ImgKey: "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g",
+		},
 		Field3:      "加载中",
 		CommentTime: "加载中",
 		ButtonInfo:  "加载中",

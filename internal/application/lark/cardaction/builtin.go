@@ -10,6 +10,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
 	commandapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
+	larkhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
@@ -54,6 +55,8 @@ func RegisterBuiltins() {
 		RegisterSync(cardactionproto.ActionSchedulePause, handleScheduleAction)
 		RegisterSync(cardactionproto.ActionScheduleResume, handleScheduleAction)
 		RegisterSync(cardactionproto.ActionScheduleDelete, handleScheduleAction)
+		RegisterSync(cardactionproto.ActionWordChunksView, handleWordChunkView)
+		RegisterSync(cardactionproto.ActionWordChunkDetail, handleWordChunkDetail)
 	})
 }
 
@@ -271,6 +274,7 @@ func handleConfigAction(ctx context.Context, actionCtx *Context) (*callback.Card
 		LastModifierOpenID: actionCtx.OpenID(),
 		MessageID:          actionCtx.MessageID(),
 		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
+		SelectedKey:        req.SelectedKey,
 	})
 	if cardErr != nil {
 		return InfoToast(resp.Message), nil
@@ -288,6 +292,7 @@ func handleConfigView(ctx context.Context, actionCtx *Context) (*callback.CardAc
 		LastModifierOpenID: req.LastModifierOpenID,
 		MessageID:          actionCtx.MessageID(),
 		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
+		SelectedKey:        req.SelectedKey,
 	})
 	if err != nil {
 		return ErrorToast(err.Error()), nil
@@ -418,4 +423,36 @@ func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.Ca
 		return InfoToast(message), nil
 	}
 	return InfoToastWithRawCardPayload(message, card), nil
+}
+
+func handleWordChunkView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	chatID := strings.TrimSpace(actionCtx.ChatID())
+	if chatID == "" && actionCtx.MetaData != nil {
+		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
+	}
+	card, err := larkhandlers.BuildWordChunkViewCardPayload(ctx, actionCtx.Action, chatID, larkhandlers.WordChunkCardBuildOptions{
+		MessageID:          actionCtx.MessageID(),
+		LastModifierOpenID: actionCtx.OpenID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
+	})
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(card), nil
+}
+
+func handleWordChunkDetail(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	chatID := strings.TrimSpace(actionCtx.ChatID())
+	if chatID == "" && actionCtx.MetaData != nil {
+		chatID = strings.TrimSpace(actionCtx.MetaData.ChatID)
+	}
+	card, err := larkhandlers.BuildWordChunkDetailCardPayload(ctx, actionCtx.Action, chatID, larkhandlers.WordChunkCardBuildOptions{
+		MessageID:          actionCtx.MessageID(),
+		LastModifierOpenID: actionCtx.OpenID(),
+		PendingHistory:     []larkmsg.CardActionHistoryRecord{larkmsg.NewCardActionHistoryRecord(actionCtx.Event)},
+	})
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	return RawCardPayloadOnly(card), nil
 }

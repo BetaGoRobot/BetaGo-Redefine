@@ -4,31 +4,24 @@ import (
 	"context"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/vadvisor"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	commonutils "github.com/BetaGoRobot/go_utils/common_utils"
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"github.com/olivere/elastic/v7"
-	. "github.com/olivere/elastic/v7"
-	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	"go.uber.org/zap"
 )
 
@@ -166,36 +159,13 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	var (
-		st, et time.Time
-	)
-	chatID := currentChatID(data, metaData)
-	if arg.ChatID != "" {
-		chatID = arg.ChatID
-	}
-	var (
-		sort Sorter = NewScriptSort(
-			NewScript("script").Script("doc['msg_ids'].size()").Lang("painless"), "number",
-		).Order(false)
-	)
-	if arg.Sort == WordCloudSortTypeTime {
-		sort = NewFieldSort("timestamp_v2").Desc()
-	}
-
-	st, et = GetBackDays(arg.Days)
-	if arg.StartTime != "" && arg.EndTime != "" {
-		st, err = time.ParseInLocation(time.DateTime, arg.StartTime, utils.UTC8Loc())
-		if err != nil {
-			return err
-		}
-		et, err = time.ParseInLocation(time.DateTime, arg.EndTime, utils.UTC8Loc())
-		if err != nil {
-			return err
-		}
+	scope, err := resolveWordCountScope(data, metaData, arg.ChatID, arg.Days, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return err
 	}
 
 	helper := &trendInternalHelper{
-		days: arg.Days, st: st, et: et, msgID: currentMessageID(data), chatID: chatID, interval: arg.Interval,
+		days: arg.Days, st: scope.Start, et: scope.End, msgID: currentMessageID(data), chatID: scope.ChatID, interval: arg.Interval,
 	}
 
 	userList, err := genHotRate(ctx, helper, arg.MessageTop)
@@ -203,33 +173,24 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 		return
 	}
 
-	wc, err := genWordCount(ctx, chatID, st, et)
+	wc, err := genWordCount(ctx, scope.ChatID, scope.Start, scope.End)
 	if err != nil {
 		return
 	}
 
-	chunks, err := getChunks(ctx, chatID, st, et, arg.ChunkTop, sort)
+	chunks, err := getChunks(ctx, scope.ChatID, scope.Start, scope.End, arg.ChunkTop, arg.Sort)
 	if err != nil {
 		return
 	}
-	wordCloud := vadvisor.NewWordCloudChartsGraphWithPlayer[string, int]()
-	for _, bucket := range wc.Dimension.Dimension.Dimension.Buckets {
-		wordCloud.AddData("user_name",
-			&vadvisor.ValueUnit[string, int]{
-				XField:      bucket.Key,
-				YField:      bucket.DocCount,
-				SeriesField: strconv.Itoa(bucket.DocCount),
-			})
-	}
-	wordCloud.Build(ctx)
+	wordCloud := buildWordCloudGraph(ctx, wc, maxWordCloudGraphTop, false)
 
 	tpl := larktpl.GetTemplateV2[larktpl.WordCountCardVars[xmodel.MessageChunkLogV3]](ctx, larktpl.WordCountTemplate)
 	cardVar := &larktpl.WordCountCardVars[xmodel.MessageChunkLogV3]{
 		UserList:  userList,
 		WordCloud: wordCloud,
 		Chunks:    chunks,
-		StartTime: st.Format("2006-01-02 15:04"),
-		EndTime:   et.Format("2006-01-02 15:04"),
+		StartTime: scope.Start.Format("2006-01-02 15:04"),
+		EndTime:   scope.End.Format("2006-01-02 15:04"),
 	}
 	tpl.WithData(cardVar)
 	cardContent := larktpl.NewCardContentV2(ctx, tpl)
@@ -325,49 +286,25 @@ func GetToneStyle(key string) (phrase string, color string) {
 	return key, "neutral"
 }
 
-func getChunks(ctx context.Context, chatID string, st, et time.Time, size int, sort elastic.Sorter) (chunks []*larktpl.ChunkData[xmodel.MessageChunkLogV3], err error) {
-	chunks = make([]*larktpl.ChunkData[xmodel.MessageChunkLogV3], 0)
-	queryReq := NewSearchRequest().
-		Query(NewBoolQuery().Must(
-			NewTermQuery("group_id", chatID),
-			NewRangeQuery("timestamp_v2").Gte(st.Format(time.RFC3339)).Lte(et.Format(time.RFC3339)),
-		)).
-		FetchSourceIncludeExclude(
-			[]string{}, []string{"conversation_embedding", "msg_ids", "msg_list"},
-		).
-		SortBy(sort).Size(size)
-	// SortBy(
-	// 	NewFieldSort("timestamp").Desc(),
-	// ).
-	// Size(5)
-
-	data, err := queryReq.Body()
+func getChunks(ctx context.Context, chatID string, st, et time.Time, size int, sortType WordCloudSortType) (chunks []*larktpl.ChunkData[xmodel.MessageChunkLogV3], err error) {
+	rawChunks, err := searchChunkLogs(ctx, wordChunkQuery{
+		ChatID:       chatID,
+		Start:        st,
+		End:          et,
+		Limit:        size,
+		Sort:         sortType,
+		Intent:       WordChunkIntentTypeAll,
+		Sentiment:    WordChunkSentimentTypeAll,
+		QuestionMode: WordChunkQuestionModeAll,
+	})
 	if err != nil {
-		return
+		return nil, err
 	}
-	resp, err := opensearch.SearchDataStr(ctx, appconfig.GetLarkChunkIndex(ctx, chatID, ""), data)
-	if err != nil {
-		return
+	chunks = make([]*larktpl.ChunkData[xmodel.MessageChunkLogV3], 0, len(rawChunks))
+	for _, chunkLog := range rawChunks {
+		chunks = append(chunks, buildChunkTemplateData(chunkLog))
 	}
-
-	return commonutils.TransSlice(resp.Hits.Hits, func(hit opensearchapi.SearchHit) (target *larktpl.ChunkData[xmodel.MessageChunkLogV3]) {
-		chunkLog := &xmodel.MessageChunkLogV3{}
-		sonic.Unmarshal(hit.Source, chunkLog)
-		chunkData := &larktpl.ChunkData[xmodel.MessageChunkLogV3]{
-			ChunkLog: chunkLog,
-		}
-		chunkData.ChunkLog.Intent = larkmsg.TagText(GetIntentPhraseWithFallback(chunkLog.Intent))
-		chunkData.Sentiment = larkmsg.TagText(SentimentColor(chunkData.ChunkLog.SentimentAndTone.Sentiment))
-		chunkData.Tones = strings.Join(commonutils.TransSlice(chunkData.ChunkLog.SentimentAndTone.Tones, func(s string) string { return larkmsg.TagText(GetToneStyle(s)) }), "")
-		chunkData.ChunkLog.SentimentAndTone = nil
-
-		chunkData.UserIDs4Lark = commonutils.TransSlice(chunkLog.InteractionAnalysis.Participants, func(p *xmodel.Participant) *larktpl.UserUnit { return &larktpl.UserUnit{ID: p.OpenID} })
-		chunkData.UserIDs4Lark = utils.Dedup(chunkData.UserIDs4Lark)
-		chunkData.ChunkLog.OpenIDs = nil
-
-		chunkData.UnresolvedQuestions = strings.Join(commonutils.TransSlice(chunkLog.InteractionAnalysis.UnresolvedQuestions, func(q string) string { return larkmsg.TagText(q, "red") }), "")
-		return chunkData
-	}), err
+	return chunks, nil
 }
 
 func genHotRate(ctx context.Context, helper *trendInternalHelper, top int) (userList []*larktpl.UserListItem, err error) {

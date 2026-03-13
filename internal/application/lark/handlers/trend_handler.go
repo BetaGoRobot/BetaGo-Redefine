@@ -29,6 +29,7 @@ type TrendArgs struct {
 	Days      int            `json:"days"`
 	Interval  string         `json:"interval"`
 	ChartType TrendChartType `json:"chart_type" cli:"play"`
+	ChatID    string         `json:"chat_id"`
 	StartTime string         `json:"start_time" cli:"st"`
 	EndTime   string         `json:"end_time" cli:"et"`
 }
@@ -47,6 +48,7 @@ func (trendHandler) ParseCLI(args []string) (TrendArgs, error) {
 		Days:      7,
 		Interval:  "1d",
 		ChartType: chartType,
+		ChatID:    argMap["chat_id"],
 		StartTime: argMap["st"],
 		EndTime:   argMap["et"],
 	}
@@ -107,6 +109,10 @@ func (trendHandler) ToolSpec() xcommand.ToolSpec {
 				Type: "string",
 				Desc: "图表类型",
 			}).
+			AddProp("chat_id", &arktools.Prop{
+				Type: "string",
+				Desc: "目标群聊 ID，不填则使用当前群聊",
+			}).
 			AddProp("start_time", &arktools.Prop{
 				Type: "string",
 				Desc: "开始时间，支持 RFC3339 或 YYYY-MM-DD HH:MM:SS",
@@ -135,7 +141,7 @@ func (trendHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1,
 			return err
 		}
 	}
-	chatID := currentChatID(data, metaData)
+	chatID := firstNonEmpty(arg.ChatID, currentChatID(data, metaData))
 	if chatID == "" {
 		return fmt.Errorf("chat_id is required")
 	}
@@ -335,5 +341,6 @@ func (trendHandler) CommandExamples() []string {
 	return []string{
 		"/talkrate --days=7 --interval=1d",
 		"/talkrate --play=bar --st=2026-03-01T00:00:00+08:00 --et=2026-03-07T23:59:59+08:00",
+		"/talkrate --chat_id=oc_xxx --play=pie",
 	}
 }

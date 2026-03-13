@@ -43,6 +43,9 @@ func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetCh
 	xcommand.RegisterTool(ins, ZhAStock)
 	xcommand.RegisterTool(ins, Trend)
 	xcommand.RegisterTool(ins, WordCloud)
+	xcommand.RegisterTool(ins, WordCloudGraph)
+	xcommand.RegisterTool(ins, WordChunks)
+	xcommand.RegisterTool(ins, WordChunkDetail)
 
 	xcommand.RegisterTool(ins, ConfigList)
 	xcommand.RegisterTool(ins, ConfigSet)
