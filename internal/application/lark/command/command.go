@@ -148,9 +148,9 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 		AddSubCommand(
 			newTypedCmd("talkrate", handlers.Trend),
 		).
-		AddSubCommand(newTypedCmd("wc", handlers.WordCloud)).
 		AddSubCommand(
 			newCmd("wordcount", larkCommandNilFunc).
+				AddAliases("wc").
 				AddDescription("群聊词云与 chunk 分析").
 				AddExamples(
 					"/wordcount summary --days=7",
@@ -194,7 +194,14 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 		AddSubCommand(
 			newCmd("schedule", larkCommandNilFunc).
 				AddDescription("schedule 管理").
-				AddExamples("/schedule manage", "/schedule create --name=午休提醒 --type=once --run_at=2026-03-11T13:00:00+08:00 --message=记得午休", "/schedule list", "/schedule query --name=提醒", "/schedule pause --id=task_id", "/schedule resume --id=task_id", "/schedule delete --id=task_id").
+				AddExamples(
+					"/schedule manage",
+					"/schedule create --name=午休提醒 --type=once --run_at=2026-03-11T13:00:00+08:00 --message=记得午休",
+					"/schedule list", "/schedule query --name=提醒",
+					"/schedule pause --id=task_id",
+					"/schedule resume --id=task_id",
+					"/schedule delete --id=task_id",
+				).
 				SetDefaultSubCommand("manage").
 				AddSubCommand(
 					newTypedCmd("create", handlers.ScheduleCreate),

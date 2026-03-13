@@ -50,6 +50,7 @@ type ButtonOptions struct {
 	FormActionType string
 	Payload        map[string]any
 	URL            string
+	Fill           bool
 }
 
 type TextInputOptions struct {
@@ -422,6 +423,9 @@ func Button(text string, opts ButtonOptions) map[string]any {
 	}
 	if opts.FormActionType != "" {
 		button["form_action_type"] = opts.FormActionType
+	}
+	if opts.Fill {
+		button["width"] = "fill"
 	}
 	if behaviors := CallbackBehaviors(opts.Payload); len(behaviors) > 0 {
 		button["behaviors"] = behaviors

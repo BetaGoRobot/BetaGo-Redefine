@@ -42,6 +42,7 @@ type CommandArg struct {
 //	@update 2024-07-18 04:43:37
 type Command[T any] struct {
 	Name              string
+	Aliases           []string
 	Description       string
 	Examples          []string
 	SubCommands       map[string]*Command[T]
@@ -79,7 +80,7 @@ func (c *Command[T]) Execute(ctx context.Context, data T, metaData *xhandler.Bas
 		}
 	}
 
-	if subcommand, ok := c.SubCommands[args[0]]; ok {
+	if subcommand, ok := c.lookupSubCommand(args[0]); ok {
 		err := subcommand.Execute(ctx, data, metaData, args[1:])
 		if err != nil && err == xerror.ErrArgsIncompelete {
 			return fmt.Errorf("%w: %s", xerror.ErrArgsIncompelete, subcommand.FormatUsage())
@@ -229,7 +230,7 @@ func (c *Command[T]) Validate(ctx context.Context, data T, args []string) bool {
 		}
 		return false
 	}
-	if subcommand, ok := c.SubCommands[args[0]]; ok {
+	if subcommand, ok := c.lookupSubCommand(args[0]); ok {
 		return subcommand.Validate(ctx, data, args[1:])
 	}
 	return true
@@ -242,8 +243,68 @@ func (c *Command[T]) Validate(ctx context.Context, data T, args []string) bool {
 //	@author heyuhengmatt
 //	@update 2024-07-18 05:30:07
 func (c *Command[T]) AddSubCommand(subCommand *Command[T]) *Command[T] {
+	if c == nil || subCommand == nil {
+		return c
+	}
+	subCommand.Name = strings.TrimSpace(subCommand.Name)
+	if subCommand.Name == "" {
+		return c
+	}
+	if _, ok := c.lookupSubCommand(subCommand.Name); ok {
+		panic("duplicate subcommand: " + subCommand.Name)
+	}
+	for _, alias := range subCommand.GetAliases() {
+		if _, ok := c.lookupSubCommand(alias); ok {
+			panic("duplicate subcommand alias: " + alias)
+		}
+	}
 	c.SubCommands[subCommand.Name] = subCommand
 	return c
+}
+
+func (c *Command[T]) AddAliases(aliases ...string) *Command[T] {
+	if c == nil {
+		return c
+	}
+	seen := make(map[string]struct{}, len(c.Aliases)+len(aliases)+1)
+	seen[c.Name] = struct{}{}
+	next := make([]string, 0, len(c.Aliases)+len(aliases))
+	for _, alias := range append(append([]string{}, c.Aliases...), aliases...) {
+		alias = strings.TrimSpace(strings.TrimPrefix(alias, "/"))
+		if alias == "" {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		next = append(next, alias)
+	}
+	c.Aliases = next
+	return c
+}
+
+func (c *Command[T]) GetAliases() []string {
+	if c == nil || len(c.Aliases) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(c.Aliases))
+	seen := make(map[string]struct{}, len(c.Aliases)+1)
+	if name := strings.TrimSpace(c.Name); name != "" {
+		seen[name] = struct{}{}
+	}
+	for _, alias := range c.Aliases {
+		alias = strings.TrimSpace(strings.TrimPrefix(alias, "/"))
+		if alias == "" {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		result = append(result, alias)
+	}
+	return result
 }
 
 func (c *Command[T]) SetDefaultSubCommand(name string) *Command[T] {
@@ -356,10 +417,10 @@ func (c *Command[T]) IsCommand(ctx context.Context, text string) bool {
 	}
 
 	targetName := cmds[0]
-	if _, ok := c.SubCommands[targetName]; ok {
+	if _, ok := c.lookupSubCommand(targetName); ok {
 		return true
 	}
-	if c.Name == targetName {
+	if c.matchesName(targetName) {
 		return true
 	}
 
@@ -435,11 +496,56 @@ func (c *Command[T]) Find(path ...string) *Command[T] {
 		if strings.HasPrefix(name, "--") {
 			return nil
 		}
-		next, ok := cur.SubCommands[name]
+		next, ok := cur.lookupSubCommand(name)
 		if !ok {
 			return nil
 		}
 		cur = next
 	}
 	return cur
+}
+
+func (c *Command[T]) LookupSubCommand(name string) (*Command[T], bool) {
+	return c.lookupSubCommand(name)
+}
+
+func (c *Command[T]) lookupSubCommand(name string) (*Command[T], bool) {
+	if c == nil {
+		return nil, false
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if name == "" {
+		return nil, false
+	}
+	if next, ok := c.SubCommands[name]; ok && next != nil {
+		return next, true
+	}
+	for _, subcommand := range c.SubCommands {
+		if subcommand == nil {
+			continue
+		}
+		if subcommand.matchesName(name) {
+			return subcommand, true
+		}
+	}
+	return nil, false
+}
+
+func (c *Command[T]) matchesName(name string) bool {
+	if c == nil {
+		return false
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	if name == "" {
+		return false
+	}
+	if strings.TrimSpace(c.Name) == name {
+		return true
+	}
+	for _, alias := range c.GetAliases() {
+		if alias == name {
+			return true
+		}
+	}
+	return false
 }

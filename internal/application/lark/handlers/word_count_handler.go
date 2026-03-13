@@ -442,6 +442,6 @@ func (wordCloudHandler) CommandDescription() string {
 func (wordCloudHandler) CommandExamples() []string {
 	return []string{
 		"/wc --days=7 --mtop=10 --ctop=5",
-		"/wc --sort=time --chat_id=oc_xxx",
+		"/wordcount summary --sort=time --chat_id=oc_xxx",
 	}
 }

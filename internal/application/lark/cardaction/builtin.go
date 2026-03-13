@@ -33,6 +33,7 @@ func RegisterBuiltins() {
 		RegisterAsync(cardactionproto.ActionMusicRefresh, handleMusicRefresh)
 		RegisterAsync(cardactionproto.ActionMusicListPage, handleMusicListPage)
 		RegisterAsync(cardactionproto.ActionCardWithdraw, handleCardWithdraw)
+		RegisterSync(cardactionproto.ActionCommandOpenHelp, handleCommandOpenHelp)
 		RegisterSync(cardactionproto.ActionCommandOpenForm, handleCommandOpenForm)
 		RegisterAsync(cardactionproto.ActionCommandRefresh, handleCommandRefresh)
 		RegisterAsync(cardactionproto.ActionCommandSubmitForm, handleCommandSubmitForm)
@@ -182,10 +183,20 @@ func handleCommandOpenForm(ctx context.Context, actionCtx *Context) (*callback.C
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
-	cardData, err := commandapp.BuildCommandFormCardJSON(commandapp.LarkRootCommand, rawCommand)
+	viewMode, _ := actionCtx.Action.String(cardactionproto.ViewField)
+	cardData, err := commandapp.BuildCommandFormCardJSONWithViewMode(commandapp.LarkRootCommand, rawCommand, commandapp.CommandFormViewMode(viewMode))
 	if err != nil {
 		return ErrorToast(err.Error()), nil
 	}
+	return RawCardPayloadOnly(cardData), nil
+}
+
+func handleCommandOpenHelp(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	rawCommand, err := actionCtx.Action.RequiredString(cardactionproto.CommandField)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+	cardData := commandapp.BuildHelpCardJSON(commandapp.LarkRootCommand, rawCommand)
 	return RawCardPayloadOnly(cardData), nil
 }
 

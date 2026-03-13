@@ -27,16 +27,30 @@ type commandFormState struct {
 	Description string
 }
 
+type CommandFormViewMode string
+
+const (
+	CommandFormViewCompact  CommandFormViewMode = "compact"
+	CommandFormViewExpanded CommandFormViewMode = "expanded"
+
+	commandFormCompactOptionalLimit = 3
+)
+
 func CanBuildCommandForm(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawCommand string) bool {
 	_, err := resolveCommandFormState(root, rawCommand)
 	return err == nil
 }
 
 func BuildCommandFormCardJSON(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawCommand string) (larkmsg.RawCard, error) {
+	return BuildCommandFormCardJSONWithViewMode(root, rawCommand, CommandFormViewCompact)
+}
+
+func BuildCommandFormCardJSONWithViewMode(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawCommand string, viewMode CommandFormViewMode) (larkmsg.RawCard, error) {
 	state, err := resolveCommandFormState(root, rawCommand)
 	if err != nil {
 		return nil, err
 	}
+	viewMode = normalizeCommandFormViewMode(state, viewMode)
 
 	elements := []any{
 		larkmsg.Markdown(fmt.Sprintf("**命令**: `%s`", strings.Join(state.PathTokens, " "))),
@@ -44,7 +58,11 @@ func BuildCommandFormCardJSON(root *xcommand.Command[*larkim.P2MessageReceiveV1]
 	if state.Description != "" {
 		elements = append(elements, larkmsg.HintMarkdown(state.Description))
 	}
+	elements = append(elements, buildCommandPathNavigationElements(state.PathTokens)...)
 	elements = append(elements, larkmsg.HintMarkdown("留空表示沿用当前命令中的同名参数；当前版本暂不支持通过表单清空已有参数。"))
+	if toggle := buildCommandFormViewToggleButton(state, viewMode); toggle != nil {
+		elements = append(elements, larkmsg.ButtonRow("none", toggle))
+	}
 
 	submitPayload := larkmsg.StringMapToAnyMap(
 		cardaction.New(cardaction.ActionCommandSubmitForm).
@@ -52,6 +70,7 @@ func BuildCommandFormCardJSON(root *xcommand.Command[*larkim.P2MessageReceiveV1]
 			Payload(),
 	)
 
+	argSpecs := visibleCommandFormSpecs(state, viewMode)
 	if len(state.ArgSpecs) == 0 {
 		elements = append(elements,
 			larkmsg.Markdown("这个命令没有结构化参数，点击下方按钮可直接执行。"),
@@ -64,8 +83,8 @@ func BuildCommandFormCardJSON(root *xcommand.Command[*larkim.P2MessageReceiveV1]
 			),
 		)
 	} else {
-		formElements := make([]any, 0, len(state.ArgSpecs)*3+2)
-		for idx, spec := range state.ArgSpecs {
+		formElements := make([]any, 0, len(argSpecs)*3+2)
+		for idx, spec := range argSpecs {
 			if idx > 0 {
 				formElements = append(formElements, larkmsg.Divider())
 			}
@@ -251,7 +270,7 @@ func resolveCommandTarget(root *xcommand.Command[*larkim.P2MessageReceiveV1], to
 		if strings.HasPrefix(token, "--") {
 			break
 		}
-		next, ok := cur.SubCommands[token]
+		next, ok := cur.LookupSubCommand(token)
 		if !ok {
 			break
 		}
@@ -319,6 +338,80 @@ func parseCommandArgs(tokens []string) (map[string]string, string, []string, map
 		present[name] = true
 	}
 	return values, input, order, present
+}
+
+func normalizeCommandFormViewMode(state *commandFormState, mode CommandFormViewMode) CommandFormViewMode {
+	if mode != CommandFormViewExpanded {
+		mode = CommandFormViewCompact
+	}
+	if !hasHiddenOptionalCommandFormSpecs(state) {
+		return CommandFormViewExpanded
+	}
+	return mode
+}
+
+func hasHiddenOptionalCommandFormSpecs(state *commandFormState) bool {
+	if state == nil {
+		return false
+	}
+	_, hidden := splitCommandFormSpecs(state)
+	return len(hidden) != 0
+}
+
+func visibleCommandFormSpecs(state *commandFormState, mode CommandFormViewMode) []xcommand.CommandArg {
+	if state == nil {
+		return nil
+	}
+	visible, hidden := splitCommandFormSpecs(state)
+	if mode == CommandFormViewExpanded || len(hidden) == 0 {
+		return state.ArgSpecs
+	}
+	return visible
+}
+
+func splitCommandFormSpecs(state *commandFormState) ([]xcommand.CommandArg, []xcommand.CommandArg) {
+	if state == nil {
+		return nil, nil
+	}
+	visible := make([]xcommand.CommandArg, 0, len(state.ArgSpecs))
+	hidden := make([]xcommand.CommandArg, 0, len(state.ArgSpecs))
+	remainingOptionalBudget := commandFormCompactOptionalLimit
+	for _, spec := range state.ArgSpecs {
+		if commandFormSpecAlwaysVisible(state, spec) {
+			visible = append(visible, spec)
+			continue
+		}
+		if remainingOptionalBudget > 0 {
+			visible = append(visible, spec)
+			remainingOptionalBudget--
+			continue
+		}
+		hidden = append(hidden, spec)
+	}
+	return visible, hidden
+}
+
+func commandFormSpecAlwaysVisible(state *commandFormState, spec xcommand.CommandArg) bool {
+	if spec.Required || spec.Input {
+		return true
+	}
+	if state == nil {
+		return false
+	}
+	return state.ArgPresent[spec.Name]
+}
+
+func buildCommandFormViewToggleButton(state *commandFormState, viewMode CommandFormViewMode) map[string]any {
+	if state == nil || !hasHiddenOptionalCommandFormSpecs(state) {
+		return nil
+	}
+	_, hidden := splitCommandFormSpecs(state)
+	switch normalizeCommandFormViewMode(state, viewMode) {
+	case CommandFormViewExpanded:
+		return buildCommandOpenFormButton("收起可选参数", state.RawCommand, "default", CommandFormViewCompact)
+	default:
+		return buildCommandOpenFormButton(fmt.Sprintf("展开可选参数（%d）", len(hidden)), state.RawCommand, "default", CommandFormViewExpanded)
+	}
 }
 
 func buildCommandFormField(spec xcommand.CommandArg, state *commandFormState) []any {

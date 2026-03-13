@@ -417,6 +417,48 @@ func TestExecuteUsesDefaultSubCommand(t *testing.T) {
 	}
 }
 
+func TestFindAndExecuteResolveAliases(t *testing.T) {
+	root := NewRootCommand[string](nil)
+	meta := &xhandler.BaseMetaData{}
+	called := false
+
+	root.AddSubCommand(
+		NewCommand[string]("wordcount", nil).
+			AddAliases("wc").
+			SetDefaultSubCommand("summary").
+			AddSubCommand(
+				NewCommand[string]("summary", func(ctx context.Context, data string, metaData *xhandler.BaseMetaData, args ...string) error {
+					called = true
+					metaData.SetExtra("path", "summary")
+					return nil
+				}),
+			).
+			AddSubCommand(
+				NewCommand[string]("chunks", func(ctx context.Context, data string, metaData *xhandler.BaseMetaData, args ...string) error {
+					metaData.SetExtra("path", "chunks")
+					return nil
+				}),
+			),
+	)
+	root.BuildChain()
+
+	if target := root.Find("wc", "chunks"); target == nil || target.Path() != "/wordcount chunks" {
+		t.Fatalf("expected alias path to resolve to canonical chunks command, got: %+v", target)
+	}
+	if !root.IsCommand(context.Background(), "/wc") {
+		t.Fatal("expected alias to be treated as command")
+	}
+	if err := root.Execute(context.Background(), "payload", meta, []string{"wc"}); err != nil {
+		t.Fatalf("Execute() via alias error = %v", err)
+	}
+	if !called {
+		t.Fatal("expected alias execution to hit default subcommand")
+	}
+	if value, ok := meta.GetExtra("path"); !ok || value != "summary" {
+		t.Fatalf("expected alias execution to resolve to summary, got: %v %v", value, ok)
+	}
+}
+
 func TestRegisterTool(t *testing.T) {
 	ins := arktools.New[toolTestMeta]()
 

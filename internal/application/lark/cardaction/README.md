@@ -44,12 +44,20 @@
   - `music.album`
   - `music.lyrics`
   - `music.refresh`
+  - `music.list_page`
   - `card.withdraw`
   - `command.refresh`
+  - `command.submit_form`
   - `command.submit_time_range`
 - `sync`
+  - `command.open_form`
   - `feature.*`
   - `config.*`
+  - `permission.*`
+  - `ratelimit.view`
+  - `schedule.view/pause/resume/delete`
+  - `wordcount.chunks.view`
+  - `wordcount.chunk.detail`
 
 ## 发卡与回调的联动
 
@@ -92,6 +100,13 @@
 - 发卡侧在 `internal/application/config/card_view.go`
 - payload builder 在 `internal/application/config/card_action.go`
 - 回调解析也在 `internal/application/config/card_action.go`
+
+命令帮助卡和命令表单卡同样走这一套：
+
+- 帮助卡主按钮写 `command.open_form`
+- 帮助卡里的子命令快捷入口也写 `command.open_form`
+- 参数表单提交写 `command.submit_form`
+- 回调只负责恢复 raw command，真正执行仍回到标准命令链路
 
 ## 新增或修改回调的 SOP
 
@@ -170,6 +185,9 @@
 4. callback 卡片类型测试
 - 即使 payload 是 Card JSON v2，callback response 的 `card.type` 也必须还是 `raw`
 
+5. template 卡异步 patch 覆盖测试
+- 如果 handler 会在 callback 返回后继续异步 patch 当前卡片，确认不会再被旧的同步 `resp.card.content` 覆盖回去
+
 ## 修改或新增回调时的注意点
 
 1. 先决定注册模式，不要先写代码再想是否异步。
@@ -205,3 +223,10 @@
 - 至少覆盖注册模式
 - 至少覆盖 payload 解析
 - 如果返回卡片，确认 callback response 里的 type 仍然是 `raw`
+
+9. template 卡如果走异步 patch，优先避免“同步返回旧内容 + 异步再 patch”这个组合
+- 这类场景常见于分页、流式刷新、命令执行后重绘
+- 如果同步响应里携带旧 `content`，飞书可能会在异步 patch 后又把卡片立即改回旧内容
+- 处理方式通常有两种：
+  - 纯同步：直接返回最终卡片
+  - 纯异步：callback 只做轻响应，最终内容由 patch 写入

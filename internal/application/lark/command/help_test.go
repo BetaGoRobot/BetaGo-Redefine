@@ -1,8 +1,14 @@
 package command
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestLookupHelpTarget(t *testing.T) {
@@ -99,11 +105,32 @@ func TestBuildHelpTextWcAliasGroup(t *testing.T) {
 	root := NewLarkRootCommand()
 
 	text := buildHelpText(root, "wc")
-	if !strings.Contains(text, "/wc [chunk, chunks, cloud, summary, talkrate]") {
-		t.Fatalf("expected wc help to expose wordcount subcommands, got: %s", text)
+	if !strings.Contains(text, "/wc") {
+		t.Fatalf("expected wc alias help to display raw alias path, got: %s", text)
+	}
+	if !strings.Contains(text, "Usage: /wc [chunk, chunks, cloud, summary, talkrate]") {
+		t.Fatalf("expected wc alias usage to preserve raw alias path, got: %s", text)
+	}
+	if !strings.Contains(text, "Aliases: wc") {
+		t.Fatalf("expected canonical help to show alias note, got: %s", text)
+	}
+	if !strings.Contains(text, "Canonical: /wordcount") {
+		t.Fatalf("expected canonical path note in alias help, got: %s", text)
 	}
 	if !strings.Contains(text, "/wc summary") || !strings.Contains(text, "/wc chunks") {
-		t.Fatalf("expected wc help to include aliased subcommand paths, got: %s", text)
+		t.Fatalf("expected alias subcommand paths in alias help, got: %s", text)
+	}
+}
+
+func TestBuildHelpTextRootShowsAliasWithoutDuplicateCommand(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	text := buildHelpText(root, "")
+	if !strings.Contains(text, "/wordcount (aliases: wc) [chunk, chunks, cloud, summary, talkrate]") {
+		t.Fatalf("expected root help to show wordcount alias note, got: %s", text)
+	}
+	if strings.Contains(text, "\n  /wc:") || strings.Contains(text, "\n  /wc [") {
+		t.Fatalf("did not expect alias to appear as duplicate top-level command, got: %s", text)
 	}
 }
 
@@ -134,5 +161,184 @@ func TestBuildHelpTextNotFound(t *testing.T) {
 	}
 	if !strings.Contains(text, "Usage: /help [command]") {
 		t.Fatalf("expected root help fallback, got: %s", text)
+	}
+}
+
+func TestBuildHelpCardIncludesSubCommandQuickEntriesForAliasGroup(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "wc")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"子命令入口"`) {
+		t.Fatalf("expected subcommand quick entry panel in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"action":"command.open_help"`) {
+		t.Fatalf("expected subcommand quick entry to open child help: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"command":"/wc summary"`) || !strings.Contains(jsonStr, `"command":"/wc chunks"`) {
+		t.Fatalf("expected alias-preserving subcommand help payloads in help card: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"command":"/wordcount summary"`) || strings.Contains(jsonStr, `"command":"/wordcount chunks"`) {
+		t.Fatalf("did not expect canonical subcommand payloads when alias path is used: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"/wc"`) {
+		t.Fatalf("expected alias title to be preserved in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `Usage: /wc [chunk, chunks, cloud, summary, talkrate]`) {
+		t.Fatalf("expected alias usage path to be preserved in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `Canonical: /wordcount`) {
+		t.Fatalf("expected canonical hint in alias help card: %s", jsonStr)
+	}
+}
+
+func TestBuildHelpCardUsesCompactTextButtonsForSubCommandEntries(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "wc")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"子命令入口"`) {
+		t.Fatalf("expected subcommand entry panel in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"type":"text"`) || !strings.Contains(jsonStr, `"size":"small"`) {
+		t.Fatalf("expected subcommand quick entries to use compact text buttons: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"/summary"`) || !strings.Contains(jsonStr, `"content":"/chunks"`) {
+		t.Fatalf("expected slash-prefixed subcommand quick entry labels: %s", jsonStr)
+	}
+}
+
+func TestBuildCommandPathNavigationElementsWrapsWithinSixColumns(t *testing.T) {
+	elements := buildCommandPathNavigationElements([]string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"})
+	if len(elements) != 2 {
+		t.Fatalf("expected path navigation to wrap into multiple rows, got %d rows", len(elements))
+	}
+	for idx, element := range elements {
+		row, ok := element.(map[string]any)
+		if !ok {
+			t.Fatalf("expected row %d to be a map, got %#v", idx, element)
+		}
+		columns, ok := row["columns"].([]any)
+		if !ok {
+			t.Fatalf("expected row %d to contain columns, got %#v", idx, row["columns"])
+		}
+		if len(columns) > 6 {
+			t.Fatalf("expected row %d to contain at most 6 columns, got %d", idx, len(columns))
+		}
+	}
+}
+
+func TestBuildHelpCardRootIncludesCommandQuickEntries(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"action":"command.open_help"`) {
+		t.Fatalf("expected root help card to contain open help quick entries: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"command":"/config"`) || !strings.Contains(jsonStr, `"command":"/wordcount"`) {
+		t.Fatalf("expected root help quick entry payloads: %s", jsonStr)
+	}
+}
+
+func TestBuildHelpCardTopLevelIncludesRootShortcut(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "wc")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"command":"/"`) {
+		t.Fatalf("expected top-level help card to retain root shortcut: %s", jsonStr)
+	}
+}
+
+func TestBuildHelpCardIncludesParentHelpNavigation(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "wc chunks")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"action":"command.open_help"`) {
+		t.Fatalf("expected help navigation action in child help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"command":"/wc"`) {
+		t.Fatalf("expected parent help payload in child help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"command":"/wc"`) ||
+		!strings.Contains(jsonStr, `"command":"/wc chunks"`) {
+		t.Fatalf("expected clickable path navigation payloads in child help card: %s", jsonStr)
+	}
+}
+
+func TestBuildHelpCardUsesInlinePathNavigation(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	cardData := buildHelpCard(context.TODO(), root, "wc chunks")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Contains(jsonStr, "层级跳转") {
+		t.Fatalf("did not expect legacy path navigation hint in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"type":"text"`) || !strings.Contains(jsonStr, `"size":"small"`) {
+		t.Fatalf("expected compact text-style path navigation buttons in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content":"root"`) {
+		t.Fatalf("expected root shortcut label in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"command":"/"`) ||
+		!strings.Contains(jsonStr, `"command":"/wc"`) ||
+		!strings.Contains(jsonStr, `"command":"/wc chunks"`) {
+		t.Fatalf("expected path navigation callbacks in help card: %s", jsonStr)
+	}
+}
+
+func TestBuildHelpCardCollapsesOptionalArgsWhenTooMany(t *testing.T) {
+	root := xcommand.NewRootCommand[*larkim.P2MessageReceiveV1](nil)
+	root.AddSubCommand(
+		xcommand.NewCommand[*larkim.P2MessageReceiveV1]("complex", func(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args ...string) error {
+			return nil
+		}).
+			AddDescription("复杂命令").
+			AddArgSpec(xcommand.CommandArg{Name: "required", Required: true, Description: "必填参数"}).
+			AddArgSpec(xcommand.CommandArg{Name: "opt_a", Description: "可选参数 A"}).
+			AddArgSpec(xcommand.CommandArg{Name: "opt_b", Description: "可选参数 B"}).
+			AddArgSpec(xcommand.CommandArg{Name: "opt_c", Description: "可选参数 C"}).
+			AddArgSpec(xcommand.CommandArg{Name: "opt_d", Description: "可选参数 D"}).
+			AddArgSpec(xcommand.CommandArg{Name: "opt_e", Description: "可选参数 E"}),
+	)
+	root.BuildChain()
+
+	cardData := buildHelpCard(context.TODO(), root, "complex")
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"tag":"collapsible_panel"`) {
+		t.Fatalf("expected collapsible panel for optional args in help card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `可选参数（5）`) {
+		t.Fatalf("expected optional args panel title in help card: %s", jsonStr)
 	}
 }

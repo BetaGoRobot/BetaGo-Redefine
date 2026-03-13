@@ -11,6 +11,7 @@
 - `hr`
 - `column`
 - `column_set`
+- `collapsible_panel`
 - `button`
 - callback behaviors
 
@@ -56,6 +57,7 @@
 - `Column`
 - `ColumnSet`
 - `ButtonRow`
+- `CollapsiblePanel`
 
 交互：
 - `Button`
@@ -107,6 +109,20 @@
 - 统一通过 `StringMapToAnyMap(...)` 转为卡片 `Payload`
 - 不要在各业务包里重复维护 `toAnyMap` / `stringMapToAnyMap`
 
+8. `collapsible_panel` 只适合包展示元素，不适合包 `form`
+- 飞书当前不支持把 `tag=form` 放进 `collapsible_panel`
+- 否则会报类似 `type of element is not supported tag: form`
+- 所以：
+  - help/说明类卡片可以把“可选参数”“示例”“子命令入口”折叠起来
+  - 真正的参数表单仍应平铺，或者拆成多步卡 / 分组卡
+
+9. 组件预算除了总量，还要关注“单个容器体积”
+- 某些场景即使没有超过整体 200 组件，也可能因为单卡元素过多触发 `element exceeds the limit`
+- 对长列表、长表单、全量筛选项：
+  - 优先分页
+  - 优先折叠非核心信息
+  - 优先把有限枚举做成下拉，而不是平铺一大堆按钮
+
 ## 新增卡片 SOP
 
 1. 先定义 snapshot / data / policy
@@ -123,6 +139,12 @@
 4. 如果发现多个卡片还在重复新的结构：
 - 先判断是否真的是通用 primitive
 - 是的话，再下沉到 `larkmsg/card_v2.go`
+
+补充建议：
+
+- 展示类卡片先考虑 `CollapsiblePanel`
+- 表单类卡片先考虑 typed struct + 有限枚举下拉
+- 列表类卡片优先考虑分页 / 流式 patch，而不是一口气把所有元素打满
 
 ## 当前未覆盖
 
