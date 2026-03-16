@@ -21,7 +21,6 @@ require (
 	github.com/gotify/go-api-client/v2 v2.0.4
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/jinzhu/copier v0.4.0
-	github.com/json-iterator/go v1.1.12
 	github.com/kevinmatthe/zaplog v0.1.6
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/lib/pq v1.11.2
@@ -37,7 +36,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/tmc/langchaingo v0.1.14
-	github.com/volcengine/volcengine-go-sdk v1.2.19
+	github.com/volcengine/volcengine-go-sdk v1.2.20
 	github.com/yanyiwu/gojieba v1.4.7
 	go.opentelemetry.io/contrib/bridges/otelzap v0.17.0
 	go.opentelemetry.io/otel v1.42.0
@@ -114,8 +113,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
-	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.6 // indirect
