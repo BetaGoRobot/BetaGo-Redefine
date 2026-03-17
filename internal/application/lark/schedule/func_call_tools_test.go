@@ -88,4 +88,60 @@ func TestRegisterToolsInfersTypedEnums(t *testing.T) {
 	if len(statusProp.Enum) != 4 || statusProp.Enum[0] != model.ScheduleTaskStatusEnabled || statusProp.Enum[3] != model.ScheduleTaskStatusDisabled {
 		t.Fatalf("unexpected query_schedule status enum: %+v", statusProp.Enum)
 	}
+
+	listUnit, ok := ins.Get("list_schedules")
+	if !ok {
+		t.Fatal("expected list_schedules tool")
+	}
+	if listUnit.Parameters.Props["chat_scope"] != nil {
+		t.Fatalf("did not expect list_schedules to expose chat_scope: %+v", listUnit.Parameters.Props["chat_scope"])
+	}
+	if listUnit.Parameters.Props["chat_id"] != nil {
+		t.Fatalf("did not expect list_schedules to expose chat_id: %+v", listUnit.Parameters.Props["chat_id"])
+	}
+}
+
+func TestListSchedulesParseToolDefaultsToCurrentChatScope(t *testing.T) {
+	arg, err := ListSchedules.ParseTool(`{}`)
+	if err != nil {
+		t.Fatalf("ParseTool() error = %v", err)
+	}
+	if arg.ChatScope != TaskChatScopeCurrent {
+		t.Fatalf("expected default current chat scope, got %+v", arg)
+	}
+}
+
+func TestQueryScheduleParseToolIgnoresLegacyCrossChatFields(t *testing.T) {
+	arg, err := QuerySchedule.ParseTool(`{"status":"paused","type":"once","chat_scope":"all","chat_id":"oc_target_chat"}`)
+	if err != nil {
+		t.Fatalf("ParseTool() error = %v", err)
+	}
+	if arg.Status != TaskStatusPaused || arg.Type != TaskTypeOnce {
+		t.Fatalf("expected typed status and type, got %+v", arg)
+	}
+	if arg.ChatScope != TaskChatScopeCurrent || arg.ChatID != "" {
+		t.Fatalf("expected legacy cross-chat fields to normalize to current chat, got %+v", arg)
+	}
+}
+
+func TestDeleteScheduleParseToolDefaultsToCurrentChatScope(t *testing.T) {
+	arg, err := DeleteSchedule.ParseTool(`{"id":"task-1"}`)
+	if err != nil {
+		t.Fatalf("ParseTool() error = %v", err)
+	}
+	if arg.ID != "task-1" || arg.ChatScope != TaskChatScopeCurrent {
+		t.Fatalf("expected current-scope delete args, got %+v", arg)
+	}
+}
+
+func TestResolveToolScheduleTargetChatID(t *testing.T) {
+	if got := resolveToolScheduleTargetChatID(TaskChatScopeCurrent, "", "oc_current_chat"); got != "oc_current_chat" {
+		t.Fatalf("expected fallback current chat id, got %q", got)
+	}
+	if got := resolveToolScheduleTargetChatID(TaskChatScopeAll, "", "oc_current_chat"); got != "oc_current_chat" {
+		t.Fatalf("expected legacy all-scope resolution to stay on current chat, got %q", got)
+	}
+	if got := resolveToolScheduleTargetChatID(TaskChatScopeCurrent, "oc_explicit_chat", "oc_current_chat"); got != "oc_current_chat" {
+		t.Fatalf("expected explicit chat id override to be ignored, got %q", got)
+	}
 }

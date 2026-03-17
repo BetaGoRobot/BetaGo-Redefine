@@ -296,6 +296,29 @@ func TestSelectStaticBuildsNamedField(t *testing.T) {
 	}
 }
 
+func TestButtonRowsWithLimitWrapsButtonsIntoMultipleRows(t *testing.T) {
+	rows := ButtonRowsWithLimit(ButtonRowsOptions{
+		FlexMode:          "none",
+		MaxColumns:        3,
+		HorizontalSpacing: "0px",
+		VerticalAlign:     "center",
+	}, Button("1", ButtonOptions{}), Button("2", ButtonOptions{}), Button("3", ButtonOptions{}), Button("4", ButtonOptions{}))
+	if len(rows) != 2 {
+		t.Fatalf("expected wrapped button rows, got %d rows", len(rows))
+	}
+	firstRow, ok := rows[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first row to be a map, got %#v", rows[0])
+	}
+	columns, ok := firstRow["columns"].([]any)
+	if !ok || len(columns) != 3 {
+		t.Fatalf("expected first row to contain 3 columns, got %#v", firstRow["columns"])
+	}
+	if firstRow["horizontal_spacing"] != "0px" {
+		t.Fatalf("expected custom spacing in wrapped rows, got %#v", firstRow["horizontal_spacing"])
+	}
+}
+
 func boolPtr(v bool) *bool {
 	return &v
 }

@@ -40,3 +40,12 @@ func (TaskStatus) CommandEnum() xcommand.EnumDescriptor {
 		},
 	}
 }
+
+func (TaskChatScope) CommandEnum() xcommand.EnumDescriptor {
+	return xcommand.EnumDescriptor{
+		Options: []xcommand.CommandArgOption{
+			{Value: string(TaskChatScopeCurrent), Label: "当前群"},
+		},
+		DefaultValue: string(TaskChatScopeCurrent),
+	}
+}

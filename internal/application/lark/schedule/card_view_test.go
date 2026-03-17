@@ -120,3 +120,72 @@ func TestBuildTaskListCardRehydratesCreatorPickerSelection(t *testing.T) {
 		t.Fatalf("expected creator filter summary avatar-only display: %s", jsonStr)
 	}
 }
+
+func TestBuildTaskListCardDoesNotExposeChatScopeControls(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card := BuildTaskListCard(context.Background(), "Schedule 列表", nil, NewTaskListCardView(20))
+
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Contains(jsonStr, `**范围**`) || strings.Contains(jsonStr, `"content":"全部群"`) {
+		t.Fatalf("did not expect chat scope controls in card json: %s", jsonStr)
+	}
+}
+
+func TestBuildTaskListCardDoesNotShowLegacyExplicitChatSelectionSummary(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	card := BuildTaskListCard(context.Background(), "Schedule 查询", []*model.ScheduledTask{
+		{
+			ID:        "task-1",
+			ChatID:    "oc_target_chat",
+			Name:      "跨群提醒",
+			CreatorID: "ou_creator_1",
+			Status:    model.ScheduleTaskStatusEnabled,
+			Type:      model.ScheduleTaskTypeOnce,
+			ToolName:  "send_message",
+			Timezone:  model.ScheduleTaskDefaultTimezone,
+		},
+	}, NewTaskQueryCardView("", TaskQuery{
+		ChatID: "oc_target_chat",
+	}, 20))
+
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Contains(jsonStr, `指定群: oc_target_chat`) || strings.Contains(jsonStr, "群聊: `oc_target_chat`") {
+		t.Fatalf("did not expect explicit chat summary in card json: %s", jsonStr)
+	}
+}
+
+func TestBuildTaskListCardDoesNotShowTaskChatIDWhenLegacyScopeIsAll(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	view := NewTaskListCardView(20)
+	view.ChatScope = TaskChatScopeAll
+	card := BuildTaskListCard(context.Background(), "Schedule 列表", []*model.ScheduledTask{
+		{
+			ID:        "task-1",
+			ChatID:    "oc_other_chat",
+			Name:      "全局巡检",
+			CreatorID: "ou_creator_1",
+			Status:    model.ScheduleTaskStatusEnabled,
+			Type:      model.ScheduleTaskTypeCron,
+			ToolName:  "send_message",
+			CronExpr:  "0 9 * * *",
+			Timezone:  model.ScheduleTaskDefaultTimezone,
+		},
+	}, view)
+
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Contains(jsonStr, "群聊: `oc_other_chat`") {
+		t.Fatalf("did not expect all-scope task section to show chat id: %s", jsonStr)
+	}
+}

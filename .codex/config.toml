@@ -1,0 +1,10 @@
+[features]
+multi_agent = true
+
+[agents.lark_card_tester]
+description = "飞书卡片校验与发送测试专家"
+config_file = "/mnt/RapidPool/workspace/BetaGo_v2/.codex/agents/lark_card_tester.toml"
+
+[agents.design_philosophy_auditor]
+description = "基于仓库文档的设计哲学与治理一致性审计员"
+config_file = "/mnt/RapidPool/workspace/BetaGo_v2/.codex/agents/design_philosophy_auditor.toml"

@@ -53,6 +53,14 @@ type ButtonOptions struct {
 	Fill           bool
 }
 
+type ButtonRowsOptions struct {
+	FlexMode          string
+	MaxColumns        int
+	HorizontalSpacing string
+	VerticalAlign     string
+	ColumnWidth       string
+}
+
 type TextInputOptions struct {
 	Placeholder  string
 	DefaultValue string
@@ -461,17 +469,76 @@ func OpenURLBehaviors(rawURL string) []any {
 }
 
 func ButtonRow(flexMode string, buttons ...map[string]any) map[string]any {
-	columns := make([]any, 0, len(buttons))
+	rows := ButtonRowsWithLimit(ButtonRowsOptions{
+		FlexMode:          flexMode,
+		MaxColumns:        0,
+		HorizontalSpacing: "8px",
+		VerticalAlign:     "top",
+		ColumnWidth:       "auto",
+	}, buttons...)
+	if len(rows) == 0 {
+		return ColumnSet(nil, ColumnSetOptions{
+			HorizontalSpacing: "8px",
+			FlexMode:          flexMode,
+		})
+	}
+	row, _ := rows[0].(map[string]any)
+	return row
+}
+
+func ButtonRowsWithLimit(opts ButtonRowsOptions, buttons ...map[string]any) []any {
+	filtered := make([]map[string]any, 0, len(buttons))
 	for _, button := range buttons {
-		columns = append(columns, Column([]any{button}, ColumnOptions{
-			Width:         "auto",
-			VerticalAlign: "top",
-		}))
+		if button != nil {
+			filtered = append(filtered, button)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
 	}
 
+	maxColumns := opts.MaxColumns
+	if maxColumns <= 0 {
+		maxColumns = len(filtered)
+	}
+	rows := make([]any, 0, (len(filtered)+maxColumns-1)/maxColumns)
+	for start := 0; start < len(filtered); start += maxColumns {
+		end := start + maxColumns
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		rows = append(rows, buildButtonRow(filtered[start:end], opts))
+	}
+	return rows
+}
+
+func buildButtonRow(buttons []map[string]any, opts ButtonRowsOptions) map[string]any {
+	verticalAlign := opts.VerticalAlign
+	if verticalAlign == "" {
+		verticalAlign = "top"
+	}
+	columnWidth := opts.ColumnWidth
+	if columnWidth == "" {
+		columnWidth = "auto"
+	}
+	horizontalSpacing := opts.HorizontalSpacing
+	if horizontalSpacing == "" {
+		horizontalSpacing = "8px"
+	}
+
+	columns := make([]any, 0, len(buttons))
+	for _, button := range buttons {
+		if button == nil {
+			continue
+		}
+		columns = append(columns, Column([]any{button}, ColumnOptions{
+			Width:         columnWidth,
+			VerticalAlign: verticalAlign,
+		}))
+	}
 	return ColumnSet(columns, ColumnSetOptions{
-		HorizontalSpacing: "8px",
-		FlexMode:          flexMode,
+		HorizontalSpacing: horizontalSpacing,
+		FlexMode:          opts.FlexMode,
 	})
 }
 

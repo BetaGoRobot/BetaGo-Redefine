@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/carddebug"
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -97,6 +98,22 @@ func (ScheduleType) CommandEnum() xcommand.EnumDescriptor {
 			{Value: string(ScheduleTypeOnce), Label: "单次"},
 			{Value: string(ScheduleTypeCron), Label: "周期"},
 		},
+	}
+}
+
+type ScheduleChatScope string
+
+const (
+	ScheduleChatScopeCurrent ScheduleChatScope = ScheduleChatScope(scheduleapp.TaskChatScopeCurrent)
+	ScheduleChatScopeAll     ScheduleChatScope = ScheduleChatScope(scheduleapp.TaskChatScopeAll)
+)
+
+func (ScheduleChatScope) CommandEnum() xcommand.EnumDescriptor {
+	return xcommand.EnumDescriptor{
+		Options: []xcommand.CommandArgOption{
+			{Value: string(ScheduleChatScopeCurrent), Label: "当前群"},
+		},
+		DefaultValue: string(ScheduleChatScopeCurrent),
 	}
 }
 

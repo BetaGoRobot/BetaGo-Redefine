@@ -465,18 +465,13 @@ func buildHelpFooterButtons(state *helpCardState) []map[string]any {
 
 func buildCommandPathNavigationElements(tokens []string) []any {
 	buttons := buildCommandPathNavigationButtons(tokens)
-	if len(buttons) == 0 {
-		return nil
-	}
-	rows := make([]any, 0, (len(buttons)+commandPathButtonsPerRow-1)/commandPathButtonsPerRow)
-	for start := 0; start < len(buttons); start += commandPathButtonsPerRow {
-		end := start + commandPathButtonsPerRow
-		if end > len(buttons) {
-			end = len(buttons)
-		}
-		rows = append(rows, buildCommandPathNavigationRow(buttons[start:end]))
-	}
-	return rows
+	return larkmsg.ButtonRowsWithLimit(larkmsg.ButtonRowsOptions{
+		FlexMode:          "none",
+		MaxColumns:        commandPathButtonsPerRow,
+		HorizontalSpacing: "0px",
+		VerticalAlign:     "center",
+		ColumnWidth:       "auto",
+	}, buttons...)
 }
 
 func buildCommandPathNavigationButtons(tokens []string) []map[string]any {
@@ -484,7 +479,7 @@ func buildCommandPathNavigationButtons(tokens []string) []map[string]any {
 		return nil
 	}
 	buttons := make([]map[string]any, 0, len(tokens)+1)
-	buttons = append(buttons, buildCompactCommandOpenHelpButton("$", "/"))
+	buttons = append(buttons, buildCompactCommandOpenHelpButton("root", "/"))
 	currentPath := make([]string, 0, len(tokens))
 	for _, token := range tokens {
 		currentPath = append(currentPath, token)
@@ -497,24 +492,6 @@ func buildCommandPathNavigationButtons(tokens []string) []map[string]any {
 		}
 	}
 	return result
-}
-
-func buildCommandPathNavigationRow(buttons []map[string]any) map[string]any {
-	columns := make([]any, 0, len(buttons))
-	for _, button := range buttons {
-		if button == nil {
-			continue
-		}
-		columns = append(columns, larkmsg.Column([]any{button}, larkmsg.ColumnOptions{
-			Width:         "auto",
-			VerticalAlign: "center",
-		}))
-	}
-	return larkmsg.ColumnSet(columns, larkmsg.ColumnSetOptions{
-		HorizontalSpacing: "0px",
-		FlexMode:          "none",
-		HorizontalAlign:   "left",
-	})
 }
 
 func renderRootHelp(root *xcommand.Command[*larkim.P2MessageReceiveV1]) helpView {

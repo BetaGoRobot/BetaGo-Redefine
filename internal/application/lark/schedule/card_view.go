@@ -58,6 +58,9 @@ func buildTaskSection(ctx context.Context, task *model.ScheduledTask, view TaskC
 		fmt.Sprintf("创建者: `%s`", shortScheduleID(task.CreatorID)),
 		fmt.Sprintf("工具: `%s`  时区: `%s`", task.ToolName, task.Timezone),
 	}
+	if shouldShowTaskChatID(view) {
+		leftLines = append(leftLines, fmt.Sprintf("群聊: `%s`", previewTaskResult(task.ChatID, 24)))
+	}
 	if task.IsCron() {
 		leftLines = append(leftLines, fmt.Sprintf("Cron: `%s`", task.CronExpr))
 	}
@@ -179,6 +182,43 @@ func buildTaskStatusFilterRow(view TaskCardViewState) map[string]any {
 		buttons = append(buttons, buildTaskFilterButton(option.Label, buttonType, nextView))
 	}
 	return buildTaskFilterRow("状态", buttons)
+}
+
+func buildTaskChatScopeFilterRow(view TaskCardViewState) map[string]any {
+	view = normalizeTaskCardView(view)
+	buttons := []map[string]any{
+		buildTaskFilterButton("当前群", buttonTypeForSelected(view.ChatID == "" && view.ChatScope != TaskChatScopeAll), withTaskChatScopeSelection(view, TaskChatScopeCurrent)),
+		buildTaskFilterButton("全部群", buttonTypeForSelected(view.ChatID == "" && view.ChatScope == TaskChatScopeAll), withTaskChatScopeSelection(view, TaskChatScopeAll)),
+	}
+
+	rightElements := make([]any, 0, 2)
+	if view.ChatID != "" {
+		rightElements = append(rightElements, larkmsg.TextDiv("指定群: "+previewTaskResult(view.ChatID, 24), larkmsg.CardTextOptions{
+			Size:  "notation",
+			Color: "grey",
+			Align: "left",
+		}))
+	}
+	rightElements = append(rightElements, larkmsg.ButtonRow("flow", buttons...))
+	return larkmsg.SplitColumns(
+		[]any{larkmsg.Markdown("**范围**")},
+		rightElements,
+		larkmsg.SplitColumnsOptions{
+			Left: larkmsg.ColumnOptions{
+				Weight:        1,
+				VerticalAlign: "top",
+			},
+			Right: larkmsg.ColumnOptions{
+				Weight:          5,
+				VerticalAlign:   "top",
+				VerticalSpacing: "4px",
+			},
+			Row: larkmsg.ColumnSetOptions{
+				HorizontalSpacing: "12px",
+				FlexMode:          "stretch",
+			},
+		},
+	)
 }
 
 func buildTaskCreatorFilterRow(tasks []*model.ScheduledTask, view TaskCardViewState) map[string]any {
@@ -303,6 +343,13 @@ func buildTaskFilterButton(label, buttonType string, view TaskCardViewState) map
 	})
 }
 
+func buttonTypeForSelected(selected bool) string {
+	if selected {
+		return "primary_filled"
+	}
+	return "default"
+}
+
 func buildTaskCreatorPicker(view TaskCardViewState) map[string]any {
 	view = normalizeTaskCardView(view)
 	return larkmsg.SelectPerson(larkmsg.SelectPersonOptions{
@@ -326,6 +373,19 @@ func withTaskFilterSelection(view TaskCardViewState, status, creatorOpenID strin
 		view.Mode = TaskCardViewModeList
 	}
 	return normalizeTaskCardView(view)
+}
+
+func withTaskChatScopeSelection(view TaskCardViewState, scope TaskChatScope) TaskCardViewState {
+	view = normalizeTaskCardView(view)
+	view.ID = ""
+	view.ChatScope = scope
+	view.ChatID = ""
+	return normalizeTaskCardView(view)
+}
+
+func shouldShowTaskChatID(view TaskCardViewState) bool {
+	_ = normalizeTaskCardView(view)
+	return false
 }
 
 func shortScheduleID(id string) string {

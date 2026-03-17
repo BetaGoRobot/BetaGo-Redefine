@@ -13,6 +13,9 @@
 ### CLI
 
 - `go run ./cmd/lark-card-debug ...`
+- `go run ./cmd/lark-card-debug --list-scenes`
+- `go run ./cmd/lark-card-debug --scene <scene-key> --case <case-name> --dry-run`
+- `go run ./cmd/lark-card-debug --suite smoke --dry-run --report-json /tmp/regression.json`
 
 ### Codex skill
 
@@ -36,6 +39,26 @@ skill 脚本本质上只是包装并调用同一个 CLI。
 - `schedule.sample`
 - `wordcount.sample`
 - `chunk.sample`
+
+### 1.1 回归 scene
+
+当前已接入统一回归协议的 canonical scene key：
+
+- `help.view`
+- `command.form`
+- `config.list`
+- `feature.list`
+- `permission.manage`
+- `ratelimit.stats`
+- `schedule.list`
+- `schedule.query`
+
+说明：
+
+- `--scene` 走 canonical scene key。
+- `--spec` 保留兼容旧入口，但内部会优先桥接到 scene registry。
+- `--suite smoke` 会跑所有带 `smoke` tag 的 case。
+- `--suite live-smoke` 会跑所有带 `live` tag 的 case。
 
 ### 2. 模板卡
 
@@ -62,7 +85,11 @@ skill 脚本本质上只是包装并调用同一个 CLI。
 
 ```bash
 go run ./cmd/lark-card-debug --list-specs
+go run ./cmd/lark-card-debug --list-scenes
 go run ./cmd/lark-card-debug --spec ratelimit.sample --to-open-id ou_xxx
+go run ./cmd/lark-card-debug --scene config.list --case smoke-default --dry-run --print-payload
+go run ./cmd/lark-card-debug --scene permission.manage --case live-default --chat-id oc_xxx --actor-open-id ou_admin --to-open-id ou_xxx
+go run ./cmd/lark-card-debug --suite smoke --dry-run --report-json /tmp/card-regression.json
 go run ./cmd/lark-card-debug --spec config --to-open-id ou_xxx --chat-id oc_xxx --actor-open-id ou_admin
 go run ./cmd/lark-card-debug --template NormalCardReplyTemplate --vars-json '{"title":"BetaGo","content":"调试卡片"}' --to-open-id ou_xxx
 go run ./cmd/lark-card-debug --card-file /tmp/card.json --to-open-id ou_xxx
@@ -85,5 +112,6 @@ go run ./cmd/lark-card-debug --card-file /tmp/card.json --to-open-id ou_xxx
 ## 代码结构
 
 - `card_debug.go`: spec 注册、构卡、发送目标解析
+- `internal/application/lark/cardregression`: scene 协议、registry、runner
 - `card_debug_test.go`: 构卡与 spec 基础测试
 - `cmd/lark-card-debug`: CLI 入口

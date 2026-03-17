@@ -9,3 +9,4 @@ __debug_bin*
 .cache
 .env
 *.test
+script/neteaseapi/api_repo/*

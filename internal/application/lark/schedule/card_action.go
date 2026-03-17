@@ -12,16 +12,18 @@ import (
 )
 
 const (
-	taskCardViewModeField     = "schedule_view_mode"
-	taskCardViewIDField       = "schedule_view_id"
-	taskCardViewNameField     = "schedule_view_name"
-	taskCardViewStatusField   = "schedule_view_status"
-	taskCardViewTaskTypeField = "schedule_view_task_type"
-	taskCardViewToolNameField = "schedule_view_tool_name"
-	taskCardViewCreatorField  = "schedule_view_creator_open_id"
-	taskCardViewLimitField    = "schedule_view_limit"
-	taskCardLastModifierField = "schedule_last_modifier_open_id"
-	taskCardViewSelectField   = "schedule_view_select_field"
+	taskCardViewModeField      = "schedule_view_mode"
+	taskCardViewIDField        = "schedule_view_id"
+	taskCardViewNameField      = "schedule_view_name"
+	taskCardViewStatusField    = "schedule_view_status"
+	taskCardViewTaskTypeField  = "schedule_view_task_type"
+	taskCardViewToolNameField  = "schedule_view_tool_name"
+	taskCardViewCreatorField   = "schedule_view_creator_open_id"
+	taskCardViewChatScopeField = "schedule_view_chat_scope"
+	taskCardViewChatIDField    = "schedule_view_chat_id"
+	taskCardViewLimitField     = "schedule_view_limit"
+	taskCardLastModifierField  = "schedule_last_modifier_open_id"
+	taskCardViewSelectField    = "schedule_view_select_field"
 )
 
 const taskCardViewSelectCreator = "creator_open_id"
@@ -41,6 +43,13 @@ const (
 	TaskCardViewModeQuery TaskCardViewMode = "query"
 )
 
+type TaskChatScope string
+
+const (
+	TaskChatScopeCurrent TaskChatScope = "current"
+	TaskChatScopeAll     TaskChatScope = "all"
+)
+
 type TaskCardViewState struct {
 	Mode               TaskCardViewMode
 	ID                 string
@@ -49,6 +58,8 @@ type TaskCardViewState struct {
 	TaskType           string
 	ToolName           string
 	CreatorOpenID      string
+	ChatScope          TaskChatScope
+	ChatID             string
 	LastModifierOpenID string
 	MessageID          string
 	PendingHistory     []larkmsg.CardActionHistoryRecord
@@ -200,6 +211,8 @@ func normalizeTaskCardView(view TaskCardViewState) TaskCardViewState {
 	view.TaskType = strings.TrimSpace(view.TaskType)
 	view.ToolName = strings.TrimSpace(view.ToolName)
 	view.CreatorOpenID = strings.TrimSpace(view.CreatorOpenID)
+	view.ChatScope = TaskChatScopeCurrent
+	view.ChatID = ""
 	view.LastModifierOpenID = strings.TrimSpace(view.LastModifierOpenID)
 	view.MessageID = strings.TrimSpace(view.MessageID)
 
@@ -229,6 +242,8 @@ func parseTaskCardViewState(parsed *cardactionproto.Parsed) TaskCardViewState {
 		TaskType:           readScheduleActionValue(parsed, taskCardViewTaskTypeField),
 		ToolName:           readScheduleActionValue(parsed, taskCardViewToolNameField),
 		CreatorOpenID:      creatorOpenID,
+		ChatScope:          TaskChatScope(readScheduleActionValue(parsed, taskCardViewChatScopeField)),
+		ChatID:             readScheduleActionValue(parsed, taskCardViewChatIDField),
 		LastModifierOpenID: readScheduleActionValue(parsed, taskCardLastModifierField),
 		Limit:              limit,
 	})
@@ -246,10 +261,10 @@ func shouldApplyTaskCreatorPicker(parsed *cardactionproto.Parsed) bool {
 
 func loadTasksForView(ctx context.Context, chatID string, view TaskCardViewState, allowMissingID bool) ([]*model.ScheduledTask, error) {
 	view = normalizeTaskCardView(view)
-	chatID = strings.TrimSpace(chatID)
+	targetChatID := resolveViewTargetChatID(chatID, view)
 
 	if view.Mode == TaskCardViewModeQuery && view.ID != "" {
-		task, err := GetTaskForChat(ctx, chatID, view.ID)
+		task, err := getTaskForView(ctx, targetChatID, view.ID)
 		if err != nil {
 			if allowMissingID && isTaskNotFoundErr(err) {
 				return nil, nil
@@ -260,7 +275,7 @@ func loadTasksForView(ctx context.Context, chatID string, view TaskCardViewState
 	}
 
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
-		ChatID: chatID,
+		ChatID: targetChatID,
 		Limit:  view.Limit,
 	})
 	if err != nil {
@@ -270,6 +285,19 @@ func loadTasksForView(ctx context.Context, chatID string, view TaskCardViewState
 		return tasks, nil
 	}
 	return FilterTasks(tasks, view.Query()), nil
+}
+
+func resolveViewTargetChatID(fallbackChatID string, view TaskCardViewState) string {
+	_ = normalizeTaskCardView(view)
+	return strings.TrimSpace(fallbackChatID)
+}
+
+func getTaskForView(ctx context.Context, targetChatID, id string) (*model.ScheduledTask, error) {
+	targetChatID = strings.TrimSpace(targetChatID)
+	if targetChatID == "" {
+		return GetService().GetTask(ctx, strings.TrimSpace(id))
+	}
+	return GetTaskForChat(ctx, targetChatID, id)
 }
 
 func GetTaskForChat(ctx context.Context, chatID, id string) (*model.ScheduledTask, error) {

@@ -67,7 +67,7 @@ func (r *Repository) GetTaskByID(ctx context.Context, id string) (*model.Schedul
 	return tasks[0], nil
 }
 
-func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit, offset int) ([]*model.ScheduledTask, error) {
+func (r *Repository) ListTasks(ctx context.Context, chatID string, limit, offset int) ([]*model.ScheduledTask, error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.String("chat.id", chatID),
@@ -77,9 +77,11 @@ func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit
 	defer span.End()
 
 	ins := r.q.ScheduledTask
-	tasks, err := r.scopedScheduledTask(ctx).
-		Where(ins.ChatID.Eq(chatID)).
-		Order(ins.CreatedAt.Desc()).
+	query := r.scopedScheduledTask(ctx)
+	if chatID != "" {
+		query = query.Where(ins.ChatID.Eq(chatID))
+	}
+	tasks, err := query.Order(ins.CreatedAt.Desc()).
 		Limit(limit).
 		Offset(offset).
 		Find()
@@ -89,6 +91,10 @@ func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit
 	}
 	span.SetAttributes(attribute.Int("schedule.count", len(tasks)))
 	return tasks, nil
+}
+
+func (r *Repository) ListTasksByChatID(ctx context.Context, chatID string, limit, offset int) ([]*model.ScheduledTask, error) {
+	return r.ListTasks(ctx, chatID, limit, offset)
 }
 
 func (r *Repository) ListDueTasks(ctx context.Context, now time.Time, limit int) ([]*model.ScheduledTask, error) {

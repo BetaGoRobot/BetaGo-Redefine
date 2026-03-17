@@ -9,6 +9,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	appbotidentity "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardregression"
 	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
@@ -37,17 +38,14 @@ const (
 	SpecChunkSample     = "chunk.sample"
 )
 
-type BuiltCardMode string
+type BuiltCardMode = cardregression.BuiltCardMode
 
 const (
-	BuiltCardModeTemplate BuiltCardMode = "template"
-	BuiltCardModeCardJSON BuiltCardMode = "card_json"
+	BuiltCardModeTemplate = cardregression.BuiltCardModeTemplate
+	BuiltCardModeCardJSON = cardregression.BuiltCardModeCardJSON
 )
 
-type ReceiveTarget struct {
-	ReceiveIDType string
-	ReceiveID     string
-}
+type ReceiveTarget = cardregression.ReceiveTarget
 
 type SpecInfo struct {
 	Name        string
@@ -68,29 +66,29 @@ type BuildRequest struct {
 	ActorOpenID  string
 	TargetOpenID string
 	Scope        string
+	Case         string
 }
 
-type BuiltCard struct {
-	Mode         BuiltCardMode
-	Label        string
-	TemplateID   string
-	TemplateName string
-	TemplateCard *larktpl.TemplateCardContent
-	CardJSON     map[string]any
+type BuiltCard = cardregression.BuiltCard
+
+type sceneAlias struct {
+	SceneKey    string
+	DefaultCase string
 }
 
-func (t ReceiveTarget) String() string {
-	return fmt.Sprintf("%s=%s", strings.TrimSpace(t.ReceiveIDType), strings.TrimSpace(t.ReceiveID))
-}
+var regressionRegistry = cardregression.DefaultRegistry()
 
-func (t ReceiveTarget) Valid() error {
-	if strings.TrimSpace(t.ReceiveIDType) == "" {
-		return fmt.Errorf("receive_id_type is required")
-	}
-	if strings.TrimSpace(t.ReceiveID) == "" {
-		return fmt.Errorf("receive_id is required")
-	}
-	return nil
+var legacySceneAliases = map[string]sceneAlias{
+	SpecConfig:          {SceneKey: "config.list", DefaultCase: "live-default"},
+	SpecFeature:         {SceneKey: "feature.list", DefaultCase: "live-default"},
+	SpecPermission:      {SceneKey: "permission.manage", DefaultCase: "live-default"},
+	SpecRateLimit:       {SceneKey: "ratelimit.stats", DefaultCase: "live-default"},
+	SpecRateLimitSample: {SceneKey: "ratelimit.stats", DefaultCase: "smoke-default"},
+	SpecScheduleList:    {SceneKey: "schedule.list", DefaultCase: "live-default"},
+	SpecScheduleSample:  {SceneKey: "schedule.list", DefaultCase: "smoke-default"},
+	SpecScheduleTask:    {SceneKey: "schedule.query", DefaultCase: "live-default"},
+	SpecWordCountSample: {SceneKey: "wordcount.chunks", DefaultCase: "sample-default"},
+	SpecChunkSample:     {SceneKey: "wordchunk.detail", DefaultCase: "sample-default"},
 }
 
 func ResolveReceiveTarget(toChatID, toOpenID, fallbackChatID string) (ReceiveTarget, error) {
@@ -165,6 +163,9 @@ func Build(ctx context.Context, req BuildRequest) (*BuiltCard, error) {
 	if strings.TrimSpace(req.Template) != "" {
 		return buildTemplateCard(ctx, req)
 	}
+	if built, ok, err := buildSceneCard(ctx, req); ok {
+		return built, err
+	}
 
 	switch strings.TrimSpace(req.Spec) {
 	case SpecConfig:
@@ -190,6 +191,58 @@ func Build(ctx context.Context, req BuildRequest) (*BuiltCard, error) {
 	default:
 		return nil, fmt.Errorf("unsupported card spec %q", strings.TrimSpace(req.Spec))
 	}
+}
+
+func buildSceneCard(ctx context.Context, req BuildRequest) (*BuiltCard, bool, error) {
+	sceneKey, caseName, ok := resolveSceneRequest(req.Spec, req.Case)
+	if !ok || regressionRegistry == nil {
+		return nil, false, nil
+	}
+	scene, ok := regressionRegistry.Get(sceneKey)
+	if !ok {
+		return nil, false, nil
+	}
+	selectedCase, err := resolveRegisteredCase(scene.TestCases(), caseName)
+	if err != nil {
+		return nil, true, err
+	}
+	built, err := scene.BuildTestCard(ctx, cardregression.TestCardBuildRequest{
+		Business: cardregression.CardBusinessContext{
+			ChatID:       strings.TrimSpace(req.ChatID),
+			ActorOpenID:  strings.TrimSpace(req.ActorOpenID),
+			TargetOpenID: strings.TrimSpace(req.TargetOpenID),
+			Scope:        strings.TrimSpace(req.Scope),
+			ObjectID:     strings.TrimSpace(req.ID),
+		},
+		Case:   selectedCase,
+		DryRun: false,
+	})
+	return built, true, err
+}
+
+func resolveSceneRequest(spec, caseName string) (sceneKey, resolvedCase string, ok bool) {
+	spec = strings.TrimSpace(spec)
+	caseName = strings.TrimSpace(caseName)
+	if spec == "" {
+		return "", "", false
+	}
+	if alias, found := legacySceneAliases[spec]; found {
+		return alias.SceneKey, firstNonEmpty(caseName, alias.DefaultCase), true
+	}
+	return spec, firstNonEmpty(caseName, "smoke-default"), true
+}
+
+func resolveRegisteredCase(cases []cardregression.CardRegressionCase, caseName string) (cardregression.CardRegressionCase, error) {
+	caseName = strings.TrimSpace(caseName)
+	if caseName == "" {
+		caseName = "smoke-default"
+	}
+	for _, c := range cases {
+		if strings.TrimSpace(c.Name) == caseName {
+			return c, nil
+		}
+	}
+	return cardregression.CardRegressionCase{}, fmt.Errorf("case %q not found for registered scene", caseName)
 }
 
 func buildTemplateCard(ctx context.Context, req BuildRequest) (*BuiltCard, error) {

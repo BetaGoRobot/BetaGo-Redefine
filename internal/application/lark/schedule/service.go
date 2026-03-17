@@ -225,7 +225,7 @@ func (s *Service) ListTasks(ctx context.Context, req *ListTasksRequest) ([]*mode
 		attribute.Int("schedule.limit", req.Limit),
 		attribute.Int("schedule.offset", req.Offset),
 	)
-	return s.repo.ListTasksByChatID(ctx, req.ChatID, req.Limit, req.Offset)
+	return s.repo.ListTasks(ctx, req.ChatID, req.Limit, req.Offset)
 }
 
 func (s *Service) GetTask(ctx context.Context, id string) (*model.ScheduledTask, error) {

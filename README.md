@@ -33,6 +33,8 @@ BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言
 - `todo` 与 `schedule` 两套任务能力，支持一次性提醒、cron 任务和定时执行工具
 - 运行时配置管理、功能开关管理、智能频控、消息撤回/禁言等运营能力
 - 图片词库、回复词库、音乐卡片、金价/A 股查询、词云和活跃度分析等插件能力
+- 命令帮助卡、参数表单卡、枚举参数下拉与管理面板卡片回调
+- `cmd/lark-card-debug` 调试入口，可把模板卡、schema v2 卡或内置 spec 直接发到指定 `chat_id` / `open_id`
 
 ## 核心功能
 
@@ -43,10 +45,11 @@ BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言
 - 支持通过 @bot 或命令触发
 
 ### 2. 音乐搜索与分享
-- 网易云音乐搜索（歌曲、专辑）
+- 网易云音乐搜索（歌曲、专辑、歌单）
 - 音乐卡片展示和分享
 - 歌词显示
 - 音乐播放器集成
+- 长列表卡片的异步流式刷新与翻页
 
 ### 3. 股票查询
 - 股票行情查询（A股）
@@ -369,19 +372,26 @@ docker build -f script/neteaseapi/Dockerfile -t betago-neteaseapi:local .
 
 | 命令 | 说明 |
 | --- | --- |
-| `/help` | 查看命令帮助 |
+| `/help` | 查看命令帮助卡，并可直接跳转到子命令参数卡 |
 | `/config list/set/delete` | 管理运行时配置 |
 | `/feature list/block/unblock` | 管理功能开关 |
 | `/word add/get` | 管理词库 |
 | `/reply add/get` | 管理回复词库 |
 | `/image add/get/del` | 管理图片词库 |
-| `/music` | 搜索音乐/专辑并发送卡片 |
+| `/music` | 搜索歌曲 / 专辑 / 歌单，并发送支持流式刷新与翻页的卡片 |
 | `/stock gold` / `/stock zh_a` | 查询金价和 A 股行情 |
 | `/talkrate` | 活跃度趋势分析 |
-| `/wc` | 词云统计 |
+| `/wordcount` (`/wc`) | 词云、chunk 列表、chunk 详情、词云图、发言趋势分析 |
 | `/ratelimit stats/list` | 查看频控面板 |
 | `/mute` | 群级别禁言机器人 |
 | `/permission` | 查看当前机器人支持的权限点，并交互式管理用户授权 |
+
+命令系统当前额外支持：
+
+- `/help <command>` 直接返回 schema v2 帮助卡，而不是纯文本
+- 帮助卡可直接打开命令参数卡；显式子命令不会再错误回落到 default subcommand
+- 通过 typed handler 注册的有限枚举参数会自动变成下拉选项，并在卡片回显当前值
+- `/wordcount` 是 canonical command，`/wc` 是框架级 alias；help、form、执行链路都会统一解析
 
 权限管理面板目前内建两个权限点：
 
@@ -419,16 +429,71 @@ LLM 工具和应用服务已经接入以下任务能力：
 
 设计说明见 [`docs/todo_system_design.md`](./docs/todo_system_design.md)。
 
+## 开发调试
+
+### 1. 卡片调试 CLI
+
+仓库内置了一个专门的飞书卡片调试入口：
+
+- 二进制入口：[`cmd/lark-card-debug`](./cmd/lark-card-debug)
+- Codex skill：[`lark-card-debug`](./.codex/skills/lark-card-debug/SKILL.md)
+
+它支持三类输入：
+
+- 内置调试 spec，例如 `config`、`feature`、`permission`、`ratelimit.sample`、`schedule.sample`
+- 模板卡片：`--template + --vars-json`
+- 原生 schema v2 卡片：`--card-json` 或 `--card-file`
+
+常用示例：
+
+```bash
+go run ./cmd/lark-card-debug --list-specs
+go run ./cmd/lark-card-debug --spec ratelimit.sample --to-open-id ou_xxx
+go run ./cmd/lark-card-debug --template NormalCardReplyTemplate --vars-json '{"title":"BetaGo","content":"调试卡片"}' --to-open-id ou_xxx
+go run ./cmd/lark-card-debug --card-file /tmp/card.json --to-open-id ou_xxx
+```
+
+如果你在 Codex 中工作，优先复用 skill 包装脚本：
+
+```bash
+.codex/skills/lark-card-debug/scripts/send_card.sh --list-specs
+.codex/skills/lark-card-debug/scripts/send_card.sh --spec config --to-open-id ou_xxx --chat-id oc_xxx
+```
+
+### 2. 命令卡片调试
+
+命令帮助与参数卡片的主链路位于：
+
+- [`internal/application/lark/command`](./internal/application/lark/command)
+- [`internal/application/lark/cardaction`](./internal/application/lark/cardaction)
+
+推荐从下面几个入口验证：
+
+```text
+/help music
+/help wordcount
+/music --type=playlist 3778678
+/wc chunks --question_mode=question
+```
+
+更多约束和扩展建议见：
+
+- [`internal/application/lark/command/README.md`](./internal/application/lark/command/README.md)
+- [`internal/application/lark/cardaction/README.md`](./internal/application/lark/cardaction/README.md)
+- [`internal/infrastructure/lark_dal/larkmsg/CARD_V2.md`](./internal/infrastructure/lark_dal/larkmsg/CARD_V2.md)
+
 ## 仓库结构
 
 ```
 BetaGo-Redefine/
 ├── cmd/
 │   ├── generate/          # 代码生成工具
+│   ├── lark-card-debug/   # 飞书卡片调试 CLI
 │   └── larkrobot/         # Lark 机器人主程序入口
 ├── internal/
 │   ├── application/       # 应用层（业务逻辑）
 │   │   └── lark/
+│   │       ├── carddebug/       # 卡片调试 spec / build / send
 │   │       ├── card_handlers/   # 卡片交互处理器
 │   │       ├── chunking/        # 消息分块处理
 │   │       ├── command/         # 命令解析器

@@ -11,7 +11,12 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/carddebug"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardregression"
+	commandapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
+	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
+	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
@@ -23,9 +28,13 @@ import (
 
 type options struct {
 	ListSpecs     bool
+	ListScenes    bool
 	ListTemplates bool
 
 	Spec     string
+	Scene    string
+	Case     string
+	Suite    string
 	Template string
 	VarsJSON string
 	CardJSON string
@@ -41,6 +50,7 @@ type options struct {
 
 	DryRun       bool
 	PrintPayload bool
+	ReportJSON   string
 }
 
 type bootstrapPlan struct {
@@ -48,6 +58,7 @@ type bootstrapPlan struct {
 	NeedDB              bool
 	NeedRedis           bool
 	NeedFeatureRegistry bool
+	NeedActorOpenID     bool
 }
 
 type cleanupStack struct {
@@ -83,9 +94,14 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	registerRegressionScenes()
 
 	if opts.ListSpecs {
 		printSpecs()
+		return nil
+	}
+	if opts.ListScenes {
+		fmt.Print(renderScenes())
 		return nil
 	}
 	if opts.ListTemplates {
@@ -107,6 +123,10 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup.Close(ctx)
+
+	if strings.TrimSpace(opts.Suite) != "" {
+		return runSuite(ctx, opts, cfg)
+	}
 
 	built, err := buildCard(ctx, opts, cfg)
 	if err != nil {
@@ -140,8 +160,12 @@ func parseFlags(args []string) (options, error) {
 
 	var opts options
 	fs.BoolVar(&opts.ListSpecs, "list-specs", false, "列出内置 card spec")
+	fs.BoolVar(&opts.ListScenes, "list-scenes", false, "列出已注册回归 scene")
 	fs.BoolVar(&opts.ListTemplates, "list-templates", false, "列出已注册模板别名")
 	fs.StringVar(&opts.Spec, "spec", "", "内置卡片 spec，例如 config、ratelimit.sample")
+	fs.StringVar(&opts.Scene, "scene", "", "回归 scene key，例如 help.view")
+	fs.StringVar(&opts.Case, "case", "", "回归 case name，例如 smoke-default")
+	fs.StringVar(&opts.Suite, "suite", "", "回归 suite，例如 smoke、live-smoke、send-smoke")
 	fs.StringVar(&opts.Template, "template", "", "模板名称或模板 ID")
 	fs.StringVar(&opts.VarsJSON, "vars-json", "", "模板变量 JSON")
 	fs.StringVar(&opts.CardJSON, "card-json", "", "原生 schema v2 card JSON")
@@ -155,11 +179,15 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.Scope, "scope", "", "业务上下文 scope，例如 chat/global/user")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "只构卡并输出 payload，不发送")
 	fs.BoolVar(&opts.PrintPayload, "print-payload", false, "发送前输出 payload")
+	fs.StringVar(&opts.ReportJSON, "report-json", "", "将回归结果写入 JSON 文件")
 
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage:")
 		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --list-specs")
+		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --list-scenes")
 		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --spec ratelimit.sample --to-open-id ou_xxx")
+		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --scene help.view --case smoke-default --dry-run")
+		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --suite smoke --dry-run --report-json /tmp/regression.json")
 		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --template NormalCardReplyTemplate --vars-json '{\"content\":\"调试卡片\"}' --to-open-id ou_xxx")
 		fmt.Fprintln(os.Stderr, "  go run ./cmd/lark-card-debug --card-file /tmp/card.json --to-open-id ou_xxx")
 		fs.PrintDefaults()
@@ -169,7 +197,7 @@ func parseFlags(args []string) (options, error) {
 		return options{}, err
 	}
 
-	if !opts.ListSpecs && !opts.ListTemplates && !hasBuildSource(opts) {
+	if !opts.ListSpecs && !opts.ListScenes && !opts.ListTemplates && !hasBuildSource(opts) {
 		fs.Usage()
 		return options{}, fmt.Errorf("one of --spec, --template, --card-json, or --card-file is required")
 	}
@@ -197,6 +225,16 @@ func buildPlan(opts options) bootstrapPlan {
 	}
 	if strings.TrimSpace(opts.Spec) == carddebug.SpecFeature {
 		plan.NeedFeatureRegistry = true
+	}
+	switch strings.TrimSpace(opts.Spec) {
+	case carddebug.SpecConfig, carddebug.SpecFeature, carddebug.SpecPermission:
+		plan.NeedActorOpenID = true
+	}
+	if sceneKey := strings.TrimSpace(opts.Scene); sceneKey != "" {
+		accumulateSceneRequirements(&plan, sceneKey, strings.TrimSpace(opts.Case))
+	}
+	if suiteName := strings.TrimSpace(opts.Suite); suiteName != "" {
+		accumulateSuiteRequirements(&plan, cardregression.SuiteName(suiteName))
 	}
 	return plan
 }
@@ -256,7 +294,7 @@ func buildCard(ctx context.Context, opts options, cfg *infraConfig.BaseConfig) (
 	}
 
 	req := carddebug.BuildRequest{
-		Spec:         strings.TrimSpace(opts.Spec),
+		Spec:         firstNonEmpty(strings.TrimSpace(opts.Scene), strings.TrimSpace(opts.Spec)),
 		Template:     strings.TrimSpace(opts.Template),
 		VarsJSON:     strings.TrimSpace(opts.VarsJSON),
 		ChatID:       strings.TrimSpace(opts.ChatID),
@@ -264,6 +302,7 @@ func buildCard(ctx context.Context, opts options, cfg *infraConfig.BaseConfig) (
 		ActorOpenID:  actorOpenID,
 		TargetOpenID: strings.TrimSpace(opts.TargetOpenID),
 		Scope:        strings.TrimSpace(opts.Scope),
+		Case:         strings.TrimSpace(opts.Case),
 	}
 	return carddebug.Build(ctx, req)
 }
@@ -316,6 +355,19 @@ func printSpecs() {
 	}
 }
 
+func renderScenes() string {
+	scenes := cardregression.DefaultRegistry().List()
+	if len(scenes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, scene := range scenes {
+		meta := scene.Meta()
+		fmt.Fprintf(&b, "%-20s %s\n", scene.SceneKey(), meta.Description)
+	}
+	return b.String()
+}
+
 func printTemplates() {
 	for _, tpl := range carddebug.ListTemplates() {
 		fmt.Printf("%-30s %s\n", tpl.Name, tpl.ID)
@@ -327,11 +379,13 @@ func loadConfig() (*infraConfig.BaseConfig, error) {
 }
 
 func needConfig(plan bootstrapPlan, opts options) bool {
-	if plan.NeedLark || plan.NeedDB || plan.NeedRedis {
+	if plan.NeedLark || plan.NeedDB || plan.NeedRedis || plan.NeedFeatureRegistry {
 		return true
 	}
-	return strings.TrimSpace(opts.ActorOpenID) == "" &&
-		(strings.TrimSpace(opts.Spec) != "" || strings.TrimSpace(opts.Template) != "")
+	if strings.TrimSpace(opts.ActorOpenID) != "" {
+		return false
+	}
+	return plan.NeedActorOpenID || strings.TrimSpace(opts.Template) != ""
 }
 
 func loadConfigPath() string {
@@ -343,9 +397,142 @@ func loadConfigPath() string {
 
 func hasBuildSource(opts options) bool {
 	return strings.TrimSpace(opts.Spec) != "" ||
+		strings.TrimSpace(opts.Scene) != "" ||
+		strings.TrimSpace(opts.Suite) != "" ||
 		strings.TrimSpace(opts.Template) != "" ||
 		strings.TrimSpace(opts.CardJSON) != "" ||
 		strings.TrimSpace(opts.CardFile) != ""
+}
+
+func registerRegressionScenes() {
+	commandapp.RegisterRegressionScenes(cardregression.DefaultRegistry())
+	appconfig.RegisterRegressionScenes(cardregression.DefaultRegistry())
+	apppermission.RegisterRegressionScenes(cardregression.DefaultRegistry())
+	appratelimit.RegisterRegressionScenes(cardregression.DefaultRegistry())
+	scheduleapp.RegisterRegressionScenes(cardregression.DefaultRegistry())
+}
+
+func runSuite(ctx context.Context, opts options, cfg *infraConfig.BaseConfig) error {
+	actorOpenID := strings.TrimSpace(opts.ActorOpenID)
+	if actorOpenID == "" && cfg != nil && cfg.LarkConfig != nil {
+		actorOpenID = strings.TrimSpace(cfg.LarkConfig.BootstrapAdminOpenID)
+	}
+	if actorOpenID == "" {
+		actorOpenID = strings.TrimSpace(opts.ToOpenID)
+	}
+	runner := cardregression.NewRunner(cardregression.DefaultRegistry(), cliSender{})
+	results, err := runner.RunSuite(ctx, cardregression.RunSuiteOptions{
+		Suite:    cardregression.SuiteName(strings.TrimSpace(opts.Suite)),
+		DryRun:   opts.DryRun,
+		Business: cardregression.CardBusinessContext{ChatID: strings.TrimSpace(opts.ChatID), ActorOpenID: actorOpenID, TargetOpenID: strings.TrimSpace(opts.TargetOpenID), Scope: strings.TrimSpace(opts.Scope), ObjectID: strings.TrimSpace(opts.ID)},
+		Target:   buildRegressionTarget(opts),
+	})
+	if err != nil {
+		return err
+	}
+	if path := strings.TrimSpace(opts.ReportJSON); path != "" {
+		data, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func accumulateSceneRequirements(plan *bootstrapPlan, sceneKey, caseName string) {
+	scene, ok := cardregression.DefaultRegistry().Get(strings.TrimSpace(sceneKey))
+	if !ok || scene == nil {
+		return
+	}
+	selectedCase, ok := selectSceneCase(scene.TestCases(), caseName)
+	if !ok {
+		return
+	}
+	mergeCaseRequirements(plan, selectedCase.Requires)
+}
+
+func accumulateSuiteRequirements(plan *bootstrapPlan, suite cardregression.SuiteName) {
+	tag := suiteFilterTag(suite)
+	for _, scene := range cardregression.DefaultRegistry().List() {
+		for _, c := range scene.TestCases() {
+			if hasCaseTag(c.Tags, tag) {
+				mergeCaseRequirements(plan, c.Requires)
+			}
+		}
+	}
+}
+
+func selectSceneCase(cases []cardregression.CardRegressionCase, caseName string) (cardregression.CardRegressionCase, bool) {
+	caseName = strings.TrimSpace(caseName)
+	if caseName == "" {
+		caseName = "smoke-default"
+	}
+	for _, c := range cases {
+		if strings.TrimSpace(c.Name) == caseName {
+			return c, true
+		}
+	}
+	return cardregression.CardRegressionCase{}, false
+}
+
+func mergeCaseRequirements(plan *bootstrapPlan, req cardregression.CardRequirementSet) {
+	if plan == nil {
+		return
+	}
+	plan.NeedDB = plan.NeedDB || req.NeedDB
+	plan.NeedRedis = plan.NeedRedis || req.NeedRedis
+	plan.NeedFeatureRegistry = plan.NeedFeatureRegistry || req.NeedFeatureRegistry
+	plan.NeedActorOpenID = plan.NeedActorOpenID || req.NeedActorOpenID
+}
+
+func suiteFilterTag(suite cardregression.SuiteName) string {
+	switch suite {
+	case cardregression.SuiteLiveSmoke:
+		return "live"
+	case cardregression.SuiteSmoke, cardregression.SuiteSendSmoke, "":
+		return "smoke"
+	default:
+		return string(suite)
+	}
+}
+
+func hasCaseTag(tags []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return true
+	}
+	for _, tag := range tags {
+		if strings.TrimSpace(tag) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRegressionTarget(opts options) *cardregression.ReceiveTarget {
+	target, err := carddebug.ResolveReceiveTarget(opts.ToChatID, opts.ToOpenID, "")
+	if err != nil {
+		return nil
+	}
+	return &target
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+type cliSender struct{}
+
+func (cliSender) Send(ctx context.Context, target cardregression.ReceiveTarget, built *cardregression.BuiltCard) (string, error) {
+	return "", carddebug.Send(ctx, target, built)
 }
 
 func closeDB() error {

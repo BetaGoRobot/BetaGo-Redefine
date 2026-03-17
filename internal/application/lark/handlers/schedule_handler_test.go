@@ -41,6 +41,9 @@ func TestScheduleManageParseCLI(t *testing.T) {
 	if arg.Limit != 10 {
 		t.Fatalf("unexpected args: %+v", arg)
 	}
+	if arg.ChatScope != ScheduleChatScopeCurrent {
+		t.Fatalf("expected manage to default to current chat scope, got %+v", arg)
+	}
 }
 
 func TestScheduleQueryParseCLIUsesCreatorOpenIDAlias(t *testing.T) {
@@ -49,6 +52,19 @@ func TestScheduleQueryParseCLIUsesCreatorOpenIDAlias(t *testing.T) {
 		t.Fatalf("ParseCLI() error = %v", err)
 	}
 	if arg.Status != "paused" || arg.CreatorOpenID != "ou_creator" {
+		t.Fatalf("unexpected args: %+v", arg)
+	}
+	if arg.ChatScope != ScheduleChatScopeCurrent {
+		t.Fatalf("expected query to default to current chat scope, got %+v", arg)
+	}
+}
+
+func TestScheduleListParseCLIIgnoresLegacyCrossChatFlags(t *testing.T) {
+	arg, err := ScheduleList.ParseCLI([]string{"--chat_scope=all", "--chat_id=oc_target", "--limit=5"})
+	if err != nil {
+		t.Fatalf("ParseCLI() error = %v", err)
+	}
+	if arg.Limit != 5 {
 		t.Fatalf("unexpected args: %+v", arg)
 	}
 }

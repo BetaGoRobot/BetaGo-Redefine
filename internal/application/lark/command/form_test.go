@@ -218,6 +218,26 @@ func TestBuildCommandFormCardJSONSupportsWcAliasSubcommands(t *testing.T) {
 	}
 }
 
+func TestBuildCommandFormCardJSONDoesNotExposeLegacyScheduleCrossChatFields(t *testing.T) {
+	root := NewLarkRootCommand()
+
+	for _, rawCommand := range []string{"/schedule list", "/schedule query"} {
+		cardData, err := BuildCommandFormCardJSON(root, rawCommand)
+		if err != nil {
+			t.Fatalf("BuildCommandFormCardJSON(%q) error = %v", rawCommand, err)
+		}
+
+		raw, err := json.Marshal(cardData)
+		if err != nil {
+			t.Fatalf("Marshal(%q) error = %v", rawCommand, err)
+		}
+		jsonStr := string(raw)
+		if strings.Contains(jsonStr, `"name":"chat_scope"`) || strings.Contains(jsonStr, `"name":"chat_id"`) {
+			t.Fatalf("did not expect legacy schedule cross-chat fields in %s form: %s", rawCommand, jsonStr)
+		}
+	}
+}
+
 func TestBuildCommandFormCardJSONExpandedViewShowsOptionalFields(t *testing.T) {
 	root := NewLarkRootCommand()
 

@@ -33,7 +33,9 @@ type createScheduleArgs struct {
 }
 
 type listSchedulesArgs struct {
-	Limit int `json:"limit"`
+	ChatScope TaskChatScope `json:"chat_scope"`
+	ChatID    string        `json:"chat_id"`
+	Limit     int           `json:"limit"`
 }
 
 type TaskQuery struct {
@@ -42,28 +44,38 @@ type TaskQuery struct {
 	Type          string
 	ToolName      string
 	CreatorOpenID string
+	ChatScope     string
+	ChatID        string
 }
 
 type queryScheduleArgs struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Status        TaskStatus `json:"status"`
-	Type          TaskType   `json:"type"`
-	ToolName      string     `json:"tool_name"`
-	CreatorOpenID string     `json:"creator_open_id"`
-	Limit         int        `json:"limit"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Status        TaskStatus    `json:"status"`
+	Type          TaskType      `json:"type"`
+	ToolName      string        `json:"tool_name"`
+	CreatorOpenID string        `json:"creator_open_id"`
+	ChatScope     TaskChatScope `json:"chat_scope"`
+	ChatID        string        `json:"chat_id"`
+	Limit         int           `json:"limit"`
 }
 
 type deleteScheduleArgs struct {
-	ID string `json:"id"`
+	ID        string        `json:"id"`
+	ChatScope TaskChatScope `json:"chat_scope"`
+	ChatID    string        `json:"chat_id"`
 }
 
 type pauseScheduleArgs struct {
-	ID string `json:"id"`
+	ID        string        `json:"id"`
+	ChatScope TaskChatScope `json:"chat_scope"`
+	ChatID    string        `json:"chat_id"`
 }
 
 type resumeScheduleArgs struct {
-	ID string `json:"id"`
+	ID        string        `json:"id"`
+	ChatScope TaskChatScope `json:"chat_scope"`
+	ChatID    string        `json:"chat_id"`
 }
 
 type (
@@ -193,18 +205,21 @@ func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 func (listSchedulesHandler) ParseTool(raw string) (listSchedulesArgs, error) {
 	parsed := listSchedulesArgs{}
 	if raw == "" || raw == "{}" {
+		parsed.ChatScope = TaskChatScopeCurrent
 		return parsed, nil
 	}
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return listSchedulesArgs{}, err
 	}
+	parsed.ChatScope = TaskChatScopeCurrent
+	parsed.ChatID = ""
 	return parsed, nil
 }
 
 func (listSchedulesHandler) ToolSpec() xcommand.ToolSpec {
 	return scheduleResultSpec(
 		"list_schedules",
-		"列出当前群聊的 schedule，包括单次提醒和 cron 任务",
+		"列出当前群的 schedule",
 		tools.NewParams("object").
 			AddProp("limit", &tools.Prop{Type: "number", Desc: "返回数量限制，默认 50"}),
 	)
@@ -213,8 +228,9 @@ func (listSchedulesHandler) ToolSpec() xcommand.ToolSpec {
 func (listSchedulesHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args listSchedulesArgs) error {
 	view := NewTaskListCardView(args.Limit)
 	view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
+	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
-		ChatID: metaData.ChatID,
+		ChatID: targetChatID,
 		Limit:  view.Limit,
 	})
 	if err != nil {
@@ -230,6 +246,7 @@ func (listSchedulesHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 func (queryScheduleHandler) ParseTool(raw string) (queryScheduleArgs, error) {
 	parsed := queryScheduleArgs{}
 	if raw == "" || raw == "{}" {
+		parsed.ChatScope = TaskChatScopeCurrent
 		return parsed, nil
 	}
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
@@ -245,13 +262,15 @@ func (queryScheduleHandler) ParseTool(raw string) (queryScheduleArgs, error) {
 	}
 	parsed.Status = status
 	parsed.Type = taskType
+	parsed.ChatScope = TaskChatScopeCurrent
+	parsed.ChatID = ""
 	return parsed, nil
 }
 
 func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
 	return scheduleResultSpec(
 		"query_schedule",
-		"按 ID、名称、状态、类型或工具名查询当前群聊的 schedule；适合先精确定位，再决定暂停、恢复或删除",
+		"按 ID、名称、状态、类型或工具名查询当前群的 schedule",
 		tools.NewParams("object").
 			AddProp("id", &tools.Prop{Type: "string", Desc: "要精确查询的 schedule ID"}).
 			AddProp("name", &tools.Prop{Type: "string", Desc: "按名称模糊匹配"}).
@@ -264,16 +283,13 @@ func (queryScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args queryScheduleArgs) error {
+	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
 	if scheduleID := strings.TrimSpace(args.ID); scheduleID != "" {
 		view := NewTaskQueryCardView(scheduleID, TaskQuery{}, args.Limit)
 		view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
-		task, err := GetService().GetTask(ctx, scheduleID)
+		task, err := getToolScheduleTaskForTarget(ctx, targetChatID, scheduleID)
 		if err != nil {
 			return err
-		}
-		if strings.TrimSpace(task.ChatID) != strings.TrimSpace(metaData.ChatID) {
-			metaData.SetExtra(scheduleToolResultKey, "未找到匹配的 schedule ⏲️")
-			return sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", nil, view), "_scheduleQuery")
 		}
 		if err := sendScheduleRawCard(ctx, data, metaData, BuildTaskListCard(ctx, "Schedule 查询", []*model.ScheduledTask{task}, view), "_scheduleQuery"); err != nil {
 			return err
@@ -291,7 +307,7 @@ func (queryScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	}, args.Limit)
 	view.LastModifierOpenID = strings.TrimSpace(metaData.OpenID)
 	tasks, err := GetService().ListTasks(ctx, &ListTasksRequest{
-		ChatID: metaData.ChatID,
+		ChatID: targetChatID,
 		Limit:  view.Limit,
 	})
 	if err != nil {
@@ -315,13 +331,15 @@ func (deleteScheduleHandler) ParseTool(raw string) (deleteScheduleArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return deleteScheduleArgs{}, err
 	}
+	parsed.ChatScope = TaskChatScopeCurrent
+	parsed.ChatID = ""
 	return parsed, nil
 }
 
 func (deleteScheduleHandler) ToolSpec() xcommand.ToolSpec {
 	return scheduleResultSpec(
 		"delete_schedule",
-		"删除一个 schedule",
+		"删除当前群中的一个 schedule",
 		tools.NewParams("object").
 			AddProp("id", &tools.Prop{Type: "string", Desc: "要删除的 schedule ID"}).
 			AddRequired("id"),
@@ -329,7 +347,8 @@ func (deleteScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (deleteScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteScheduleArgs) error {
-	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
+	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
 	}
 	if err := GetService().DeleteTask(ctx, args.ID, metaData.OpenID); err != nil {
@@ -344,13 +363,15 @@ func (pauseScheduleHandler) ParseTool(raw string) (pauseScheduleArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return pauseScheduleArgs{}, err
 	}
+	parsed.ChatScope = TaskChatScopeCurrent
+	parsed.ChatID = ""
 	return parsed, nil
 }
 
 func (pauseScheduleHandler) ToolSpec() xcommand.ToolSpec {
 	return scheduleResultSpec(
 		"pause_schedule",
-		"暂停一个 schedule",
+		"暂停当前群中的一个 schedule",
 		tools.NewParams("object").
 			AddProp("id", &tools.Prop{Type: "string", Desc: "要暂停的 schedule ID"}).
 			AddRequired("id"),
@@ -358,7 +379,8 @@ func (pauseScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (pauseScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args pauseScheduleArgs) error {
-	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
+	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
 	}
 	if err := GetService().PauseTask(ctx, args.ID, metaData.OpenID); err != nil {
@@ -373,13 +395,15 @@ func (resumeScheduleHandler) ParseTool(raw string) (resumeScheduleArgs, error) {
 	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
 		return resumeScheduleArgs{}, err
 	}
+	parsed.ChatScope = TaskChatScopeCurrent
+	parsed.ChatID = ""
 	return parsed, nil
 }
 
 func (resumeScheduleHandler) ToolSpec() xcommand.ToolSpec {
 	return scheduleResultSpec(
 		"resume_schedule",
-		"恢复一个已暂停的 schedule",
+		"恢复当前群中一个已暂停的 schedule",
 		tools.NewParams("object").
 			AddProp("id", &tools.Prop{Type: "string", Desc: "要恢复的 schedule ID"}).
 			AddRequired("id"),
@@ -387,7 +411,8 @@ func (resumeScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (resumeScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args resumeScheduleArgs) error {
-	if _, err := GetTaskForChat(ctx, metaData.ChatID, args.ID); err != nil {
+	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
+	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
 	}
 	task, err := GetService().ResumeTask(ctx, args.ID, metaData.OpenID)
@@ -502,6 +527,29 @@ func sendScheduleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1, m
 
 	msgID := fmt.Sprintf("schedule-tool-card-%d", time.Now().UnixNano())
 	return larkmsg.CreateRawCard(ctx, chatID, content, msgID, suffix)
+}
+
+func normalizeToolScheduleChatScope(scope TaskChatScope) TaskChatScope {
+	_ = scope
+	return TaskChatScopeCurrent
+}
+
+func normalizedToolScheduleViewChatID(scope TaskChatScope, explicitChatID string) string {
+	_, _ = scope, explicitChatID
+	return ""
+}
+
+func resolveToolScheduleTargetChatID(scope TaskChatScope, explicitChatID, fallbackChatID string) string {
+	_, _ = scope, explicitChatID
+	return strings.TrimSpace(fallbackChatID)
+}
+
+func getToolScheduleTaskForTarget(ctx context.Context, targetChatID, id string) (*model.ScheduledTask, error) {
+	targetChatID = strings.TrimSpace(targetChatID)
+	if targetChatID == "" {
+		return GetService().GetTask(ctx, id)
+	}
+	return GetTaskForChat(ctx, targetChatID, id)
 }
 
 func scheduleSourceMessageID(data *larkim.P2MessageReceiveV1) string {

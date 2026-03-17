@@ -29,10 +29,13 @@ func TestBuildTaskActionValueUsesStandardAction(t *testing.T) {
 }
 
 func TestBuildTaskViewValueUsesStandardAction(t *testing.T) {
-	payload := BuildTaskViewValue(NewTaskQueryCardView("task-1", TaskQuery{
+	view := NewTaskQueryCardView("task-1", TaskQuery{
 		Name:          "提醒",
 		CreatorOpenID: "ou_creator",
-	}, 20))
+	}, 20)
+	view.ChatScope = TaskChatScopeAll
+	view.ChatID = "oc_target_chat"
+	payload := BuildTaskViewValue(view)
 	if payload[cardactionproto.ActionField] != cardactionproto.ActionScheduleView {
 		t.Fatalf("unexpected action field: %q", payload[cardactionproto.ActionField])
 	}
@@ -41,6 +44,12 @@ func TestBuildTaskViewValueUsesStandardAction(t *testing.T) {
 	}
 	if payload[taskCardViewCreatorField] != "ou_creator" {
 		t.Fatalf("unexpected creator payload: %+v", payload)
+	}
+	if _, ok := payload[taskCardViewChatScopeField]; ok {
+		t.Fatalf("did not expect chat scope payload on current-chat cards: %+v", payload)
+	}
+	if _, ok := payload[taskCardViewChatIDField]; ok {
+		t.Fatalf("did not expect chat id payload on current-chat cards: %+v", payload)
 	}
 }
 
@@ -85,20 +94,22 @@ func TestParseTaskViewRequest(t *testing.T) {
 	req, err := ParseTaskViewRequest(&cardactionproto.Parsed{
 		Name: cardactionproto.ActionScheduleView,
 		Value: map[string]any{
-			taskCardViewModeField:     "query",
-			taskCardViewIDField:       "task-2",
-			taskCardViewNameField:     "提醒",
-			taskCardViewStatusField:   "paused",
-			taskCardViewTaskTypeField: "once",
-			taskCardViewToolNameField: "send_message",
-			taskCardViewCreatorField:  "ou_creator",
-			taskCardViewLimitField:    "25",
+			taskCardViewModeField:      "query",
+			taskCardViewIDField:        "task-2",
+			taskCardViewNameField:      "提醒",
+			taskCardViewStatusField:    "paused",
+			taskCardViewTaskTypeField:  "once",
+			taskCardViewToolNameField:  "send_message",
+			taskCardViewCreatorField:   "ou_creator",
+			taskCardViewChatScopeField: "all",
+			taskCardViewChatIDField:    "oc_target_chat",
+			taskCardViewLimitField:     "25",
 		},
 	})
 	if err != nil {
 		t.Fatalf("ParseTaskViewRequest() error = %v", err)
 	}
-	if req.View.Mode != TaskCardViewModeQuery || req.View.ID != "task-2" || req.View.Name != "提醒" || req.View.TaskType != "once" || req.View.CreatorOpenID != "ou_creator" || req.View.Limit != 25 {
+	if req.View.Mode != TaskCardViewModeQuery || req.View.ID != "task-2" || req.View.Name != "提醒" || req.View.TaskType != "once" || req.View.CreatorOpenID != "ou_creator" || req.View.ChatScope != TaskChatScopeCurrent || req.View.ChatID != "" || req.View.Limit != 25 {
 		t.Fatalf("unexpected view: %+v", req.View)
 	}
 }
@@ -217,6 +228,29 @@ func TestBuildTaskCardPayloadForViewFiltersTasks(t *testing.T) {
 	foundTask1 := containsAll(allContent, "早报提醒", "状态: `enabled`")
 	if !foundTask2 || foundTask1 {
 		t.Fatalf("unexpected filtered card elements: %#v", elements)
+	}
+}
+
+func TestBuildTaskCardPayloadForViewKeepsCurrentChatWhenLegacyScopeRequestsAll(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	previous := globalService
+	globalService = scheduleTestService{
+		noopService: noopService{reason: "test"},
+		listTasksFunc: func(_ context.Context, req *ListTasksRequest) ([]*model.ScheduledTask, error) {
+			if req.ChatID != "chat-current" {
+				t.Fatalf("expected current-chat view to keep chat filter, got %+v", req)
+			}
+			return []*model.ScheduledTask{
+				{ID: "task-1", ChatID: "chat-1", Name: "A", Status: model.ScheduleTaskStatusEnabled, Type: model.ScheduleTaskTypeOnce, ToolName: "send_message", Timezone: model.ScheduleTaskDefaultTimezone},
+			}, nil
+		},
+	}
+	t.Cleanup(func() { globalService = previous })
+
+	view := NewTaskListCardView(10)
+	view.ChatScope = TaskChatScopeAll
+	if _, err := BuildTaskCardPayloadForView(context.Background(), "chat-current", view, false); err != nil {
+		t.Fatalf("BuildTaskCardPayloadForView() error = %v", err)
 	}
 }
 
