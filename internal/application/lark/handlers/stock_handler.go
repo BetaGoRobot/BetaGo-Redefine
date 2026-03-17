@@ -16,6 +16,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -192,7 +193,7 @@ func (zhAStockHandler) ParseCLI(args []string) (ZhAStockArgs, error) {
 		EndTime:   argMap["et"],
 	}
 	if parsed.Code == "" {
-		return ZhAStockArgs{}, fmt.Errorf("stock code is required")
+		return ZhAStockArgs{}, fmt.Errorf("stock code is required: %w", xerror.ErrArgsIncompelete)
 	}
 	if daysStr := argMap["days"]; daysStr != "" {
 		days, err := strconv.Atoi(daysStr)
@@ -211,7 +212,7 @@ func (zhAStockHandler) ParseTool(raw string) (ZhAStockArgs, error) {
 		return ZhAStockArgs{}, err
 	}
 	if parsed.Code == "" {
-		return ZhAStockArgs{}, fmt.Errorf("stock code is required")
+		return ZhAStockArgs{}, fmt.Errorf("stock code is required: %w", xerror.ErrArgsIncompelete)
 	}
 	if parsed.Days <= 0 {
 		parsed.Days = 1
