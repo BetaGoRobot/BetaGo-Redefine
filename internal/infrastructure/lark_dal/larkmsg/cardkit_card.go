@@ -7,6 +7,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -38,10 +39,7 @@ func CreateCardJSONByReceiveID(ctx context.Context, receiveIDType, receiveID str
 }
 
 func PatchCardJSON(ctx context.Context, msgID string, cardData any) error {
-	content, err := buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
-	if err != nil {
-		return err
-	}
+	content := utils.MustMarshalString(cardData)
 	resp, err := lark_dal.Client().Im.V1.Message.Patch(
 		ctx,
 		larkim.NewPatchMessageReqBuilder().
