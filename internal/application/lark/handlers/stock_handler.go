@@ -259,7 +259,20 @@ func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		days                  = arg.Days
 		defaultDays           = 1
 		st, et      time.Time = time.Now().AddDate(0, 0, -1*defaultDays), time.Now()
+		llmResult   string
 	)
+	defer func() {
+		if err != nil {
+			metaData.SetExtra("stock_result", "执行失败，错误原因"+err.Error())
+		} else {
+			if llmResult != "" {
+				metaData.SetExtra("stock_result", llmResult)
+			} else {
+				metaData.SetExtra("stock_result", "执行成功")
+			}
+		}
+	}()
+
 	if days <= 0 {
 		days = defaultDays
 		st, et = time.Now().AddDate(0, 0, -1*days), time.Now()
@@ -296,6 +309,7 @@ func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 					continue
 				}
 
+				price.MarkValid()
 				if !yield(vadvisor.XYSUnit[string, float64]{X: t.In(utils.UTC8Loc()).Format(time.DateTime), Y: utils.Must2Float(price.Open), S: "开盘"}) {
 					return
 				}
@@ -311,6 +325,7 @@ func (zhAStockHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 			}
 		},
 	)
+	llmResult = stockPrice.ToLLMTable(arg.Code)
 	cardContent := larkcard.NewCardBuildGraphHelper(graph).
 		SetTitle(fmt.Sprintf("沪A-[%s]%s-近<%d>天", arg.Code, stockName, days)).
 		SetStartTime(st).
@@ -340,6 +355,7 @@ func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (string, *larktp
 					if t.Before(st) || t.After(et) {
 						continue
 					}
+					price.MarkValid()
 					d := t.Format(time.DateOnly)
 					if !yield(vadvisor.XYSUnit[string, float64]{X: d, Y: price.Close, S: "收盘价"}) ||
 						!yield(vadvisor.XYSUnit[string, float64]{X: d, Y: price.Open, S: "开盘价"}) ||
@@ -378,6 +394,7 @@ func GetHistoryGoldGraph(ctx context.Context, st, et time.Time) (string, *larktp
 				if t.Before(st) || t.After(et) {
 					continue
 				}
+				price.MarkValid()
 				if price.Price > resultMap["最高价"].Y {
 					resultMap["最高价"].Y = price.Price
 				}
@@ -417,6 +434,7 @@ func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (string, *
 					if t.Before(st) || t.After(et) {
 						continue
 					}
+					price.MarkValid()
 					if !yield(vadvisor.XYSUnit[string, float64]{X: t.Format(time.TimeOnly), Y: price.Price, S: price.Kind}) {
 						return
 					}
@@ -429,62 +447,8 @@ func GetRealtimeGoldPriceGraph(ctx context.Context, st, et time.Time) (string, *
 		SetStartTime(st).
 		SetEndTime(et).
 		Build(ctx)
-	return goldPrice.ToLLMTable(), card, nil
+	return goldPrice.ToLLMTable("黄金价格/RMB"), card, nil
 }
-
-// func init() {
-// 	params := tools.NewParameters("object").
-// 		AddProperty("start_time", &tools.Property{
-// 			Type:        "string",
-// 			Description: "开始时间，默认可以不穿，格式为YYYY-MM-DD HH:MM:SS",
-// 		}).
-// 		AddProperty("end_time", &tools.Property{
-// 			Type:        "string",
-// 			Description: "结束时间，默认可以不传，格式为YYYY-MM-DD HH:MM:SS",
-// 		}).
-// 		AddProperty("hours", &tools.Property{
-// 			Type:        "number",
-// 			Description: "查询的小时数，默认1小时",
-// 		}).
-// 		AddProperty("days", &tools.Property{
-// 			Type:        "number",
-// 			Description: "查询的天数，默认30天",
-// 		})
-// 	fcu := tools.NewFunctionCallUnit().
-// 		Name("gold_price_get").Desc("搜索指定时间范围内的金价变化情况，可选相对时间天或小时，也可以指定时间范围").Params(params).Func(goldWrap)
-// 	tools.M().Add(fcu)
-// }
-
-// func goldWrap(ctx context.Context, meta *tools.FunctionCallMeta, args string) (any, error) {
-// 	s := struct {
-// 		StartTime string `json:"start_time"`
-// 		EndTime   string `json:"end_time"`
-// 		Days      *int   `json:"days"`
-// 		Hours     *int   `json:"hours"`
-// 	}{}
-// 	err := utils.UnmarshallStringPre(args, &s)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	argsSlice := make([]string, 0)
-// 	if s.Days != nil && *s.Days > 0 {
-// 		argsSlice = append(argsSlice, "--d", strconv.Itoa(*s.Days))
-// 	}
-// 	if s.Hours != nil && *s.Hours > 0 {
-// 		argsSlice = append(argsSlice, "--h", strconv.Itoa(*s.Hours))
-// 	}
-// 	if s.StartTime != "" {
-// 		argsSlice = append(argsSlice, "--st="+s.StartTime)
-// 	}
-// 	if s.EndTime != "" {
-// 		argsSlice = append(argsSlice, "--et="+s.EndTime)
-// 	}
-// 	metaData := xhandler.NewBaseMetaDataWithChatIDOpenID(ctx, meta.ChatID, meta.OpenID)
-// 	if err := GoldHandler(ctx, meta.LarkData, metaData, argsSlice...); err != nil {
-// 		return nil, err
-// 	}
-// 	return goption.Of(metaData.GetExtra("gold_result")).ValueOr("执行完成但没有结果"), nil
-// }
 
 func (goldHandler) CommandDescription() string {
 	return "查看金价走势"

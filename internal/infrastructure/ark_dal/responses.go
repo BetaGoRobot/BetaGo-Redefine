@@ -2,12 +2,15 @@ package ark_dal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"maps"
 	"strings"
+	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -30,12 +33,13 @@ type (
 	ResponsesImpl[T any] struct {
 		meta tools.FCMeta[T]
 
-		handlers        map[funcName]tools.HandlerFunc[T]
-		tools           []*responses.ResponsesTool
-		lastCallID      callID
-		functionCallMap map[callID]funcName
-		functionInput   map[callID]any
-		functionResult  map[callID]gresult.R[string]
+		handlers               map[funcName]tools.HandlerFunc[T]
+		tools                  []*responses.ResponsesTool
+		lastCallID             callID
+		functionCallMap        map[callID]funcName
+		functionInput          map[callID]any
+		functionResult         map[callID]gresult.R[string]
+		pendingCapabilityCalls []CapabilityCallTrace
 
 		lastRespID string
 		textOutput textOutput
@@ -82,10 +86,49 @@ type ReplyUnit struct {
 	Content string
 }
 
+type CapabilityCallTrace struct {
+	CallID             string
+	FunctionName       string
+	Arguments          string
+	Output             string
+	PreviousResponseID string
+	Pending            bool
+	ApprovalType       string
+	ApprovalTitle      string
+	ApprovalSummary    string
+	ApprovalExpiresAt  time.Time
+}
+
+type ToolOutputInput struct {
+	CallID string
+	Output string
+}
+
+type ResponseTurnRequest struct {
+	ModelID            string
+	SystemPrompt       string
+	UserPrompt         string
+	Files              []string
+	PreviousResponseID string
+	ToolOutput         *ToolOutputInput
+}
+
+type ToolCallIntent struct {
+	CallID       string
+	FunctionName string
+	Arguments    string
+}
+
+type ResponseTurnSnapshot struct {
+	ResponseID string
+	ToolCall   *ToolCallIntent
+}
+
 type ModelStreamRespReasoning struct {
 	ReasoningContent string
 	Content          string
 	ContentStruct    ContentStruct
+	CapabilityCall   *CapabilityCallTrace
 	Reply2Show       *ReplyUnit
 }
 
@@ -101,11 +144,12 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		meta: tools.FCMeta[T]{
 			ChatID: chatID, OpenID: openID, Data: data,
 		},
-		handlers:        make(map[string]tools.HandlerFunc[T]),
-		tools:           make([]*responses.ResponsesTool, 0),
-		functionCallMap: make(map[callID]funcName),
-		functionInput:   make(map[callID]any),
-		functionResult:  make(map[callID]gresult.R[string]),
+		handlers:               make(map[string]tools.HandlerFunc[T]),
+		tools:                  make([]*responses.ResponsesTool, 0),
+		functionCallMap:        make(map[callID]funcName),
+		functionInput:          make(map[callID]any),
+		functionResult:         make(map[callID]gresult.R[string]),
+		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
 	}
 }
 
@@ -124,8 +168,8 @@ func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Eve
 	item := event.GetItem()
 	if call := item.GetItem().GetFunctionToolCall(); call != nil {
 		functionName := call.GetName()
-		r.functionCallMap[call.GetCallId()] = functionName
-		r.lastCallID = call.GetCallId()
+		r.functionCallMap[call.GetId()] = functionName
+		r.lastCallID = call.GetId()
 	}
 }
 
@@ -136,10 +180,11 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 
 	argsDoneEvent := event.GetFunctionCallArgumentsDone()
 	args := argsDoneEvent.GetArguments()
-	span.SetAttributes(attribute.String("call.id", argsDoneEvent.GetItemId()))
+	callID := argsDoneEvent.GetItemId()
+	span.SetAttributes(attribute.String("call.id", callID))
 	span.SetAttributes(otel.PreviewAttrs("call.args", args, 256)...)
-	r.functionInput[r.lastCallID] = args
-	handlerName := r.functionCallMap[r.lastCallID]
+	r.functionInput[callID] = args
+	handlerName := r.functionCallMap[callID]
 	span.SetAttributes(attribute.String("handler.name", handlerName))
 	logs.L().Ctx(ctx).Info("OnCallArgs",
 		zap.String("args_preview", otel.PreviewString(args, 256)),
@@ -147,7 +192,34 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 	)
 	if handler, ok := r.handlers[handlerName]; ok {
 		res := handler(ctx, args, r.meta)
-		r.functionResult[r.lastCallID] = res
+		r.functionResult[callID] = res
+		traceOutput := strings.TrimSpace(res.Value())
+		if traceOutput == "" && res.IsErr() && res.Err() != nil {
+			traceOutput = strings.TrimSpace(res.Err().Error())
+		}
+		if deferred, ok := runtimecontext.PopDeferredToolCall(ctx); ok && !res.IsErr() {
+			if traceOutput == "" {
+				traceOutput = strings.TrimSpace(deferred.PlaceholderOutput)
+			}
+			r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
+				CallID:            callID,
+				FunctionName:      handlerName,
+				Arguments:         strings.TrimSpace(args),
+				Output:            traceOutput,
+				Pending:           true,
+				ApprovalType:      strings.TrimSpace(deferred.ApprovalType),
+				ApprovalTitle:     strings.TrimSpace(deferred.ApprovalTitle),
+				ApprovalSummary:   strings.TrimSpace(deferred.ApprovalSummary),
+				ApprovalExpiresAt: deferred.ApprovalExpiresAt.UTC(),
+			})
+		} else {
+			r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
+				CallID:       callID,
+				FunctionName: handlerName,
+				Arguments:    strings.TrimSpace(args),
+				Output:       traceOutput,
+			})
+		}
 		if res.IsErr() {
 			logs.L().Ctx(ctx).Error("function call failed",
 				zap.String("function_name", handlerName),
@@ -178,6 +250,17 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			Model:              cfg.NormalModel,
 			PreviousResponseId: gptr.Of(r.lastRespID),
 			Input:              message,
+			Store:              gptr.Of(true),
+			Tools:              r.tools,
+			// Text: &responses.ResponsesText{
+			// 	Format: &responses.TextFormat{
+			// 		Type: responses.TextType_json_object,
+			// 	},
+			// },
+			Reasoning: &responses.ResponsesReasoning{
+				Effort: responses.ReasoningEffort_medium,
+			},
+			Stream: gptr.Of(true),
 		})
 		if err != nil {
 			return
@@ -187,6 +270,7 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			zap.String("function_name", handlerName),
 			zap.String("args", args),
 		)
+		return nil, errors.New("no handler found for function call: " + handlerName)
 	}
 	return resp, err
 }
@@ -269,6 +353,27 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
 }
 
+func (r *ResponsesImpl[T]) drainPendingStreamItems() []*ModelStreamRespReasoning {
+	items := make([]*ModelStreamRespReasoning, 0, 1+len(r.pendingCapabilityCalls))
+	if r.textOutput.ReasoningTextDelta != "" || r.textOutput.NormalTextDelta != "" {
+		items = append(items, &ModelStreamRespReasoning{
+			ReasoningContent: r.textOutput.ReasoningTextDelta,
+			Content:          r.textOutput.NormalTextDelta,
+		})
+	}
+	r.textOutput.ReasoningTextDelta = ""
+	r.textOutput.NormalTextDelta = ""
+
+	for _, trace := range r.pendingCapabilityCalls {
+		traceCopy := trace
+		items = append(items, &ModelStreamRespReasoning{
+			CapabilityCall: &traceCopy,
+		})
+	}
+	r.pendingCapabilityCalls = r.pendingCapabilityCalls[:0]
+	return items
+}
+
 func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
 	_, cfg, err := runtimeClient()
 	if err != nil {
@@ -312,13 +417,13 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		Input: input,
 		Store: gptr.Of(true),
 		Tools: r.tools,
-		Text: &responses.ResponsesText{
-			Format: &responses.TextFormat{
-				Type: responses.TextType_json_object,
-			},
-		},
+		// Text: &responses.ResponsesText{
+		// 	Format: &responses.TextFormat{
+		// 		Type: responses.TextType_json_object,
+		// 	},
+		// },
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_minimal,
+			Effort: responses.ReasoningEffort_medium,
 		},
 		Stream: gptr.Of(true),
 	}
@@ -352,12 +457,16 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 				logs.L().Ctx(subCtx).Error("handle event error", zap.String("last_resp_id", r.lastRespID), zap.Error(err))
 				return
 			}
+			if resp == nil {
+				// 忽略空resp
+				logs.L().Ctx(subCtx).Warn("ignore empty resp", zap.String("last_resp_id", r.lastRespID))
+				continue
+			}
 
-			if !yield(&ModelStreamRespReasoning{
-				ReasoningContent: r.textOutput.ReasoningTextDelta,
-				Content:          r.textOutput.NormalTextDelta,
-			}) {
-				return
+			for _, item := range r.drainPendingStreamItems() {
+				if !yield(item) {
+					return
+				}
 			}
 		}
 	}, nil

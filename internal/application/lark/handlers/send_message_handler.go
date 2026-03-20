@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -50,6 +52,7 @@ func (h sendMessageHandler) ToolSpec() xcommand.ToolSpec {
 	} else {
 		desc = "发送一条消息到当前任务所属的对话。当你需要主动通知用户、发送提醒确认、或者发送额外信息时使用此工具"
 	}
+	desc += "。如果需要@成员，优先直接输出飞书格式 `<at user_id=\"open_id\">姓名</at>`；如果只知道名字，也可以输出 `@姓名`，系统会尝试按当前群成员匹配。"
 	return xcommand.ToolSpec{
 		Name:   "send_message",
 		Desc:   desc,
@@ -66,22 +69,43 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	if arg.ChatID != "" && !h.allowTargetChatOverride {
 		return fmt.Errorf("scheduled send_message cannot override chat_id")
 	}
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "send_message",
+		ApprovalSummary: resolveSendMessageApprovalSummary(arg),
+	}) {
+		return nil
+	}
 	if arg.ChatID != "" {
 		targetChatID = arg.ChatID
+	}
+	content := arg.Content
+	if normalized, err := mention.NormalizeOutgoingText(ctx, targetChatID, content); err == nil {
+		content = normalized
 	}
 
 	if !h.allowTargetChatOverride {
 		if msgID := currentMessageID(data); msgID != "" {
-			if _, err := larkmsg.ReplyMsgText(ctx, arg.Content, msgID, "_sendMessage", false); err == nil {
+			if _, err := larkmsg.ReplyMsgText(ctx, content, msgID, "_sendMessage", false); err == nil {
+				if metaData != nil {
+					metaData.SetLastReplyRef(msgID, "text")
+				}
+				runtimecontext.RecordCompatibleReplyRef(ctx, msgID, "text")
 				metaData.SetExtra("send_message_result", "消息发送成功")
 				return nil
 			}
 		}
 	}
 
-	if err := larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(arg.Content).Build(), "", targetChatID); err != nil {
+	if err := larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), "", targetChatID); err != nil {
 		return err
 	}
 	metaData.SetExtra("send_message_result", "消息发送成功")
 	return nil
+}
+
+func resolveSendMessageApprovalSummary(arg SendMessageArgs) string {
+	if arg.ChatID != "" {
+		return "将向指定群发送一条消息"
+	}
+	return "将向当前对话发送一条消息"
 }

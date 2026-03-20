@@ -10,3 +10,4 @@ __debug_bin*
 .env
 *.test
 script/neteaseapi/api_repo/*
+**__pycache__**

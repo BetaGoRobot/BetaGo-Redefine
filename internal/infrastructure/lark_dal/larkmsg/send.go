@@ -7,30 +7,19 @@ import (
 	"iter"
 	"runtime/debug"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/bytedance/sonic"
-	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"golang.org/x/sync/errgroup"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
-
-type KV[K comparable, V any] struct {
-	Key K
-	Val V
-}
 
 // CreateMsgTextRaw 需要自行BuildText
 func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err error) {
@@ -93,174 +82,8 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-
-	// create Card
-	// 创建卡片实体
-	// template := larktpl.GetTemplate(larktpl.StreamingReasonTemplate)
-	// cardSrc := template.TemplateSrc
-	cardContent := larktpl.NewCardContent(ctx, larktpl.NormalCardReplyTemplate)
-	// 首先Create卡片实体
-	cardEntiReq := larkcardkit.NewCreateCardReqBuilder().Body(
-		larkcardkit.NewCreateCardReqBodyBuilder().
-			// Type(`card_json`).
-			Type(`template`).
-			Data(cardContent.DataString()).
-			Build(),
-	).Build()
-	createEntiResp, err := lark_dal.Client().Cardkit.V1.Card.Create(ctx, cardEntiReq)
-	if err != nil {
-		return err
-	}
-	if !createEntiResp.Success() {
-		return errors.New(createEntiResp.CodeError.Error())
-	}
-	cardID := *createEntiResp.Data.CardId
-
-	// 发送卡片
-	req := larkim.NewReplyMessageReqBuilder().
-		MessageId(*msg.MessageId).
-		Body(
-			larkim.NewReplyMessageReqBodyBuilder().ReplyInThread(inThread).
-				MsgType(larkim.MsgTypeInteractive).
-				Content(larkcard.NewCardEntityContent(cardID).String()).
-				Build(),
-		).
-		Build()
-	resp, err := lark_dal.Client().Im.V1.Message.Reply(ctx, req)
-	if err != nil {
-		return err
-	}
-	if !resp.Success() {
-		return errors.New(resp.Error())
-	}
-
-	go RecordReplyMessage2Opensearch(ctx, resp)
-
-	err, lastIdx := updateCardFunc(ctx, msgSeq, cardID)
-	if err != nil {
-		return err
-	}
-	settingUpdateReq := larkcardkit.NewSettingsCardReqBuilder().
-		CardId(cardID).
-		Body(larkcardkit.NewSettingsCardReqBodyBuilder().
-			Settings(larkcard.DisableCardStreaming().String()).
-			Sequence(lastIdx + 1).
-			Build()).
-		Build()
-	// 发起请求
-	settingUpdateResp, err := lark_dal.Client().Cardkit.V1.Card.
-		Settings(ctx, settingUpdateReq)
-	if err != nil {
-		return err
-	}
-	if !settingUpdateResp.Success() {
-		return errors.New(settingUpdateResp.CodeError.Error())
-	}
-	return nil
-}
-
-func updateCardFunc(ctx context.Context, res iter.Seq[*ark_dal.ModelStreamRespReasoning], cardID string) (err error, lastIdx int) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-	idx := &atomic.Int32{}
-	idx.Store(0)
-
-	defer func() {
-		lastIdx = int(idx.Load())
-	}()
-	sendFunc := func(key, content string) {
-		ctx, span := otel.Start(ctx)
-		span.SetAttributes(otel.PreviewAttrs("content", content, 256)...)
-		defer span.End()
-		defer func() { otel.RecordError(span, err) }()
-		body := larkcardkit.NewContentCardElementReqBodyBuilder().Content(content).Sequence(int(idx.Add(1))).Build()
-		req := larkcardkit.NewContentCardElementReqBuilder().CardId(cardID).ElementId(key).Body(body).Build()
-		resp, err := lark_dal.Client().Cardkit.V1.CardElement.Content(ctx, req)
-		if err != nil {
-			logs.L().Ctx(ctx).Error("patch message failed with error msg", zap.Error(err))
-			return
-		}
-		if !resp.Success() {
-			logs.L().Ctx(ctx).Error("patch message failed with error msg", zap.String("CodeError.Error", resp.CodeError.Error()))
-			return
-		}
-	}
-	var (
-		msgChan = make(chan KV[string, string], 10)
-		ticker  = time.NewTicker(time.Millisecond * 20)
-	)
-	defer ticker.Stop()
-	eg := errgroup.Group{}
-
-	eg.Go(func() error {
-		defer close(msgChan)
-
-		writeFunc := func(data ark_dal.ModelStreamRespReasoning) error {
-			_, span := otel.Start(ctx)
-			defer span.End()
-			defer func() { otel.RecordError(span, err) }()
-
-			if data.ReasoningContent != "" {
-				contentSlice := []string{}
-				for _, item := range strings.Split(data.ReasoningContent, "\n") {
-					contentSlice = append(contentSlice, "> "+item)
-				}
-				data.ReasoningContent = strings.Join(contentSlice, "\n")
-			}
-
-			if data.Content != "" {
-				msgChan <- KV[string, string]{"content", data.Content}
-			}
-
-			if data.ReasoningContent != "" {
-				msgChan <- KV[string, string]{"cot", data.ReasoningContent}
-			}
-			return nil
-		}
-
-		for data := range res {
-			err = writeFunc(*data)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-
-	chunkQueue := make(map[string]string)
-	clearQueue := func() {
-		if len(chunkQueue) > 0 {
-			for key, content := range chunkQueue {
-				if key == "content" {
-					// 尝试修复 JSON 字符串
-					contentStruct := &ark_dal.ContentStruct{}
-					if !strings.HasSuffix(content, "}") {
-						content += "}"
-					}
-					if sonic.UnmarshalString(content+"}", &contentStruct); contentStruct != nil {
-						content = contentStruct.BuildOutput()
-					}
-				}
-				sendFunc(key, content)
-			}
-			chunkQueue = map[string]string{}
-		}
-	}
-updateChunkLoop:
-	for {
-		select {
-		case chunk, ok := <-msgChan:
-			if !ok {
-				break updateChunkLoop
-			}
-			chunkQueue[chunk.Key] = chunk.Val
-		case <-ticker.C:
-			clearQueue()
-		}
-	}
-	clearQueue()
-	return
+	_, err = sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread)
+	return err
 }
 
 // SendRecoveredMsg  SendRecoveredMsg
@@ -292,70 +115,15 @@ func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, m
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	_, err = SendAndUpdateStreamingCardWithRefs(ctx, msg, msgSeq)
+	return err
+}
 
-	// create Card
-	// 创建卡片实体
-
-	cardContent := larktpl.NewCardContent(ctx, larktpl.NormalCardReplyTemplate)
-	// 首先Create卡片实体
-	cardEntiReq := larkcardkit.NewCreateCardReqBuilder().Body(
-		larkcardkit.NewCreateCardReqBodyBuilder().
-			// Type(`card_json`).
-			Type(`template`).
-			Data(cardContent.DataString()).
-			Build(),
-	).Build()
-	createEntiResp, err := lark_dal.Client().Cardkit.V1.Card.Create(ctx, cardEntiReq)
-	if err != nil {
-		return err
-	}
-	if !createEntiResp.Success() {
-		return errors.New(createEntiResp.CodeError.Error())
-	}
-	cardID := *createEntiResp.Data.CardId
-
-	// 发送卡片
-	req := larkim.NewCreateMessageReqBuilder().
-		ReceiveIdType(larkim.ReceiveIdTypeChatId).
-		Body(
-			larkim.NewCreateMessageReqBodyBuilder().
-				ReceiveId(*msg.ChatId).
-				MsgType(larkim.MsgTypeInteractive).
-				Content(larkcard.NewCardEntityContent(cardID).String()).
-				Build(),
-		).
-		Build()
-	resp, err := lark_dal.Client().Im.V1.Message.Create(ctx, req)
-	if err != nil {
-		return err
-	}
-	if !resp.Success() {
-		return errors.New(resp.Error())
-	}
-
-	RecordMessage2Opensearch(ctx, resp)
-
-	err, lastIdx := updateCardFunc(ctx, msgSeq, cardID)
-	if err != nil {
-		return err
-	}
-	settingUpdateReq := larkcardkit.NewSettingsCardReqBuilder().
-		CardId(cardID).
-		Body(larkcardkit.NewSettingsCardReqBodyBuilder().
-			Settings(larkcard.DisableCardStreaming().String()).
-			Sequence(lastIdx + 1).
-			Build()).
-		Build()
-	// 发起请求
-	settingUpdateResp, err := lark_dal.Client().Cardkit.V1.Card.
-		Settings(ctx, settingUpdateReq)
-	if err != nil {
-		return err
-	}
-	if !settingUpdateResp.Success() {
-		return errors.New(settingUpdateResp.CodeError.Error())
-	}
-	return nil
+func SendAndUpdateStreamingCardWithRefs(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (refs AgentStreamingCardRefs, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+	return sendAgentStreamingCreateCardFunc(ctx, msg, msgSeq)
 }
 
 func RecoverMsg(ctx context.Context, msgID string) {

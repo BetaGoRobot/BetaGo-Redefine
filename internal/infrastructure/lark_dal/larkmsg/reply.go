@@ -2,7 +2,9 @@ package larkmsg
 
 import (
 	"context"
+	"errors"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -68,6 +70,27 @@ func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix stri
 	).MessageId(msgID).Build()
 
 	return sendReplyMessage(ctx, req, content)
+}
+
+func PatchTextMessage(ctx context.Context, msgID, text string) error {
+	resp, err := lark_dal.Client().Im.V1.Message.Patch(
+		ctx,
+		larkim.NewPatchMessageReqBuilder().
+			MessageId(msgID).
+			Body(
+				larkim.NewPatchMessageReqBodyBuilder().
+					Content(NewTextMsgBuilder().Text(text).Build()).
+					Build(),
+			).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
 }
 
 // ReplyCard  注意：不要传入已经Build过的文本

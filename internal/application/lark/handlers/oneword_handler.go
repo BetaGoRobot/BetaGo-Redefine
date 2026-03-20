@@ -38,6 +38,8 @@ type oneWordHandler struct{}
 
 var OneWord oneWordHandler
 
+const oneWordToolResultKey = "oneword_result"
+
 func (oneWordHandler) ParseCLI(args []string) (OneWordArgs, error) {
 	argMap, _ := parseArgs(args...)
 	oneWordType, err := xcommand.ParseEnum[OneWordType](argMap["type"])
@@ -69,6 +71,10 @@ func (oneWordHandler) ToolSpec() xcommand.ToolSpec {
 				Type: "string",
 				Desc: "一言分类",
 			}),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(oneWordToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -76,6 +82,12 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "oneword_get",
+		ApprovalSummary: resolveOneWordApprovalSummary(arg),
+	}) {
+		return nil
+	}
 
 	oneWordArgs := []string{}
 
@@ -109,7 +121,18 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 		return err
 	}
 	msg := fmt.Sprintf("%s 很喜欢《%s》中的一句话\n%s", emoji.Mountain.String(), hitokotoRes.From, hitokotoRes.Hitokoto)
-	return sendCompatibleText(ctx, data, metaData, msg, "_oneWord", false)
+	if err := sendCompatibleText(ctx, data, metaData, msg, "_oneWord", false); err != nil {
+		return err
+	}
+	metaData.SetExtra(oneWordToolResultKey, "一言已发送")
+	return nil
+}
+
+func resolveOneWordApprovalSummary(arg OneWordArgs) string {
+	if arg.Type == "" {
+		return "将向当前对话发送一言"
+	}
+	return "将向当前对话发送「" + string(arg.Type) + "」分类的一言"
 }
 
 func (oneWordHandler) CommandDescription() string {

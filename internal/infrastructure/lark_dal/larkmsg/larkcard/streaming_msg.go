@@ -17,12 +17,20 @@ type CardStreamingSettings struct {
 	} `json:"config"`
 }
 
+func EnableCardStreaming() *CardStreamingSettings {
+	return newCardStreamingSettings(true)
+}
+
 func DisableCardStreaming() *CardStreamingSettings {
+	return newCardStreamingSettings(false)
+}
+
+func newCardStreamingSettings(enabled bool) *CardStreamingSettings {
 	return &CardStreamingSettings{
 		struct {
 			StreamingMode bool "json:\"streaming_mode\""
 		}{
-			false,
+			enabled,
 		},
 	}
 }

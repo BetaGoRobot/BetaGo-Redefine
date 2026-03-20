@@ -34,8 +34,12 @@ const (
 
 	// 开关配置
 	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
+	KeyAgentRuntimeEnabled      ConfigKey = "agent_runtime_enabled"
+	KeyAgentRuntimeShadowOnly   ConfigKey = "agent_runtime_shadow_only"
+	KeyAgentRuntimeChatCutover  ConfigKey = "agent_runtime_chat_cutover"
 
 	// 字符串配置
+	KeyChatMode           ConfigKey = "chat_mode"
 	KeyChatReasoningModel ConfigKey = "chat_reasoning_model"
 	KeyChatNormalModel    ConfigKey = "chat_normal_model"
 	KeyIntentLiteModel    ConfigKey = "intent_lite_model"
@@ -438,6 +442,8 @@ func (m *Manager) getStringFromToml(key ConfigKey) string {
 	}
 
 	switch key {
+	case KeyChatMode:
+		return m.getDefaultString(key)
 	case KeyChatReasoningModel:
 		if cfg.ArkConfig == nil {
 			return m.getDefaultString(key)
@@ -493,6 +499,8 @@ func (m *Manager) getDefaultBool(key ConfigKey) bool {
 	switch key {
 	case KeyIntentRecognitionEnabled:
 		return true
+	case KeyAgentRuntimeEnabled, KeyAgentRuntimeShadowOnly, KeyAgentRuntimeChatCutover:
+		return false
 	default:
 		return false
 	}
@@ -500,6 +508,8 @@ func (m *Manager) getDefaultBool(key ConfigKey) bool {
 
 func (m *Manager) getDefaultString(key ConfigKey) string {
 	switch key {
+	case KeyChatMode:
+		return string(ChatModeStandard)
 	default:
 		return ""
 	}

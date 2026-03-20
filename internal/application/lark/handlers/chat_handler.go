@@ -10,7 +10,9 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
@@ -49,24 +51,40 @@ type ChatArgs struct {
 	Input     string `cli:"input,input" help:"聊天输入内容"`
 }
 
-type chatHandler struct {
-	defaultType string
-}
+type standardChatHandler struct{}
+type agenticChatHandler struct{}
 
-var Chat = chatHandler{defaultType: "chat"}
+var (
+	Chat        standardChatHandler
+	AgenticChat agenticChatHandler
 
-func (chatHandler) CommandDescription() string {
+	agenticChatEntryHandler  = agentruntime.NewDefaultChatEntryHandler()
+	standardChatSeqGenerator = generateStandardChatSeq
+)
+
+func (standardChatHandler) CommandDescription() string {
 	return "与机器人对话"
 }
 
-func (chatHandler) CommandExamples() []string {
+func (agenticChatHandler) CommandDescription() string {
+	return "与机器人对话"
+}
+
+func (standardChatHandler) CommandExamples() []string {
 	return []string{
 		"/bb 今天天气怎么样",
 		"/bb --r 帮我总结一下这周讨论",
 	}
 }
 
-func (h chatHandler) ParseCLI(args []string) (ChatArgs, error) {
+func (agenticChatHandler) CommandExamples() []string {
+	return []string{
+		"/bb 今天天气怎么样",
+		"/bb --r 帮我总结一下这周讨论",
+	}
+}
+
+func (standardChatHandler) ParseCLI(args []string) (ChatArgs, error) {
 	argMap, input := parseArgs(args...)
 	_, reason := argMap["r"]
 	_, noContext := argMap["c"]
@@ -77,10 +95,21 @@ func (h chatHandler) ParseCLI(args []string) (ChatArgs, error) {
 	}, nil
 }
 
-func (h chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
+func (agenticChatHandler) ParseCLI(args []string) (ChatArgs, error) {
+	argMap, input := parseArgs(args...)
+	_, reason := argMap["r"]
+	_, noContext := argMap["c"]
+	return ChatArgs{
+		Reason:    reason,
+		NoContext: noContext,
+		Input:     input,
+	}, nil
+}
+
+func (standardChatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
 	defer func() { metaData.SetSkipDone(true) }()
 
-	chatType := h.defaultType
+	chatType := "chat"
 	size := 20
 	if arg.Reason {
 		chatType = MODEL_TYPE_REASON
@@ -88,11 +117,28 @@ func (h chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV
 	if arg.NoContext {
 		size = 0
 	}
-
 	return ChatHandlerInner(ctx, event, chatType, &size, arg.Input)
 }
 
+func (agenticChatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
+	defer func() { metaData.SetSkipDone(true) }()
+
+	chatType := "chat"
+	size := 20
+	if arg.Reason {
+		chatType = MODEL_TYPE_REASON
+	}
+	if arg.NoContext {
+		size = 0
+	}
+	return runAgenticChat(ctx, event, chatType, &size, arg.Input)
+}
+
 func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
+	return runStandardChat(ctx, event, chatType, size, args...)
+}
+
+func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -102,12 +148,12 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 		res   iter.Seq[*ark_dal.ModelStreamRespReasoning]
 		files = make([]string, 0)
 	)
-	if !larkmsg.IsMentioned(event.Event.Message.Mentions) { // 禁言判断只对非at的生效
-		if ext, err := redis.GetRedisClient().
-			Exists(ctx, MuteRedisKey(*event.Event.Message.ChatId)).Result(); err != nil {
-			return err
+	if !larkmsg.IsMentioned(event.Event.Message.Mentions) {
+		if ext, extErr := redis.GetRedisClient().
+			Exists(ctx, MuteRedisKey(*event.Event.Message.ChatId)).Result(); extErr != nil {
+			return extErr
 		} else if ext != 0 {
-			return nil // Do nothing
+			return nil
 		}
 	}
 	urlSeq, err := larkimg.GetAllImgURLFromMsg(ctx, *event.Event.Message.MessageId)
@@ -119,7 +165,6 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 			files = append(files, url)
 		}
 	}
-	// 看看有没有quote的消息包含图片
 	urlSeq, err = larkimg.GetAllImgURLFromParent(ctx, event)
 	if err != nil {
 		return err
@@ -162,11 +207,11 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 			}
 		}
 
-		resp, err := larkmsg.ReplyMsgText(
+		resp, replyErr := larkmsg.ReplyMsgText(
 			ctx, lastData.ContentStruct.Reply, *event.Event.Message.MessageId, "_chat_random", false,
 		)
-		if err != nil {
-			return err
+		if replyErr != nil {
+			return replyErr
 		}
 		if !resp.Success() {
 			return errors.New(resp.Error())
@@ -175,12 +220,25 @@ func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, cha
 	return
 }
 
+func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
+	if agenticChatEntryHandler == nil {
+		return nil
+	}
+	return agenticChatEntryHandler.Handle(ctx, event, chatType, size, args...)
+}
+
 func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
+	if standardChatSeqGenerator == nil {
+		return nil, nil
+	}
+	return standardChatSeqGenerator(ctx, event, modelID, size, files, input...)
+}
+
+func generateStandardChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	// 默认获取最近20条消息
 	if size == nil {
 		size = new(int)
 		*size = 20
@@ -245,13 +303,13 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 	for _, doc := range docs {
 		msgID, ok := doc.Metadata["msg_id"]
 		if ok {
-			resp, err := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
+			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 				Search().Sort("timestamp_v2", osquery.OrderDesc).
 				Query(osquery.Bool().Must(osquery.Term("msg_ids", msgID))).
 				Size(1),
 			)
-			if err != nil {
-				return nil, err
+			if searchErr != nil {
+				return nil, searchErr
 			}
 			chunk := &xmodel.MessageChunkLogV3{}
 			if len(resp.Hits.Hits) > 0 {
@@ -267,35 +325,19 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		return nil, err
 	}
 
-	iter, err := ark_dal.
+	iterSeq, err := ark_dal.
 		New(chatID, currentOpenID(event, nil), event).
 		WithTools(larktools()).
 		Do(ctx, b.String(), strings.Join(fullTpl.UserInput, "\n"), files...)
+	if err != nil {
+		return nil, err
+	}
 
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		contentBuilder := &strings.Builder{}
 		reasonBuilder := &strings.Builder{}
-
-		mentionMap := make(map[string]string)
-		for _, item := range messageList {
-			mentionMap[item.UserName] = larkmsg.AtUser(item.OpenID, item.UserName)
-			mentionMap[item.OpenID] = larkmsg.AtUser(item.OpenID, item.UserName)
-			for _, mention := range item.MentionList {
-				mentionMap[*mention.Name] = larkmsg.AtUser(*mention.Id, *mention.Name)
-				mentionMap[*mention.Id] = larkmsg.AtUser(*mention.Id, *mention.Name)
-			}
-		}
-		memberMap, err := larkuser.GetUserMapFromChatIDCache(ctx, chatID)
-		if err != nil {
-			return
-		}
-		for _, member := range memberMap {
-			mentionMap[*member.Name] = larkmsg.AtUser(*member.MemberId, *member.Name)
-			mentionMap[*member.MemberId] = larkmsg.AtUser(*member.MemberId, *member.Name)
-		}
-		trie := utils.BuildTrie(mentionMap)
 		lastData := &ark_dal.ModelStreamRespReasoning{}
-		for data := range iter {
+		for data := range iterSeq {
 			lastData = data
 			contentBuilder.WriteString(data.Content)
 			reasonBuilder.WriteString(data.ReasoningContent)
@@ -306,20 +348,21 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		}
 
 		fullContent := contentBuilder.String()
-		err = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
-		if err != nil {
-			fullContent, err = jsonrepair.RepairJSON(fullContent)
-			if err != nil {
+		parseErr := sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
+		if parseErr != nil {
+			fullContent, parseErr = jsonrepair.RepairJSON(fullContent)
+			if parseErr != nil {
 				return
 			}
-			err = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
-			if err != nil {
+			parseErr = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
+			if parseErr != nil {
 				return
 			}
 		}
-		lastData.ContentStruct.Reply = trie.ReplaceMentionsWithTrie(lastData.ContentStruct.Reply)
-		if !yield(lastData) {
-			return
+		if normalizedReply, normalizeErr := mention.NormalizeReplyText(ctx, chatID, messageList, lastData.ContentStruct.Reply); normalizeErr == nil {
+			lastData.ContentStruct.Reply = normalizedReply
 		}
-	}, err
+		lastData.ReasoningContent = reasonBuilder.String()
+		yield(lastData)
+	}, nil
 }

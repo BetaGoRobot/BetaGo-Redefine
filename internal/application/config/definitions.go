@@ -72,6 +72,21 @@ var configDefinitions = []ConfigDefinition{
 		ValueType:   "bool",
 	},
 	{
+		Key:         KeyAgentRuntimeEnabled,
+		Description: "是否启用 Agent Runtime 入口",
+		ValueType:   "bool",
+	},
+	{
+		Key:         KeyAgentRuntimeShadowOnly,
+		Description: "Agent Runtime 是否仅 shadow 观察，不接管用户可见回复",
+		ValueType:   "bool",
+	},
+	{
+		Key:         KeyAgentRuntimeChatCutover,
+		Description: "Agent Runtime 是否接管聊天主链路",
+		ValueType:   "bool",
+	},
+	{
 		Key:         KeyMusicCardInThread,
 		Description: "音乐卡片是否默认在话题内回复",
 		ValueType:   "bool",
@@ -80,6 +95,17 @@ var configDefinitions = []ConfigDefinition{
 		Key:         KeyWithDrawReplace,
 		Description: "是否使用伪撤回替代真实撤回",
 		ValueType:   "bool",
+	},
+	{
+		Key:         KeyChatMode,
+		Description: "聊天模式，standard 为标准聊天，agentic 为 agentic 卡片聊天",
+		ValueType:   "string",
+		EnumOptionsFunc: func() []ConfigEnumOption {
+			return []ConfigEnumOption{
+				{Text: "standard | 标准聊天", Value: string(ChatModeStandard)},
+				{Text: "agentic | Agentic 卡片聊天", Value: string(ChatModeAgentic)},
+			}
+		},
 	},
 	{
 		Key:             KeyChatReasoningModel,

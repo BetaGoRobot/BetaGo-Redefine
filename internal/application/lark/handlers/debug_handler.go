@@ -229,6 +229,12 @@ func (debugRevertHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (debugRevertHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg debugRevertArgs) error {
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "revert_message",
+		ApprovalSummary: "将撤回当前上下文中的机器人消息",
+	}) {
+		return nil
+	}
 	return handleDebugRevert(ctx, data, metaData)
 }
 

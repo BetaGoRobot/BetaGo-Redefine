@@ -3,18 +3,13 @@ package ops
 import (
 	"context"
 
-	"go.uber.org/zap"
-
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.uber.org/zap"
 )
 
 var _ Op = &ChatMsgOperator{}
@@ -101,7 +96,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
-			err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
+			err := standardChatInvoker(ctx, event, meta)
 			if err != nil {
 				return err
 			}
@@ -156,7 +151,7 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 			zap.String("ratelimit_reason", decision.Reason),
 		)
 		// sendMsg
-		err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
+		err := standardChatInvoker(ctx, event, meta)
 		if err != nil {
 			return err
 		}

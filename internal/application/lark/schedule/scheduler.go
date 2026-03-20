@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -216,6 +217,9 @@ func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, conte
 		attribute.Int("schedule.content.len", len(content)),
 		attribute.String("schedule.content.preview", otel.PreviewString(content, 128)),
 	)
+	if normalized, normalizeErr := mention.NormalizeOutgoingText(ctx, chatID, content); normalizeErr == nil {
+		content = normalized
+	}
 	notifyID := fmt.Sprintf("schedule-notify-%s-%d", taskID, time.Now().UnixNano())
 	if sourceMessageID != "" {
 		if _, err = larkmsg.ReplyMsgText(ctx, content, sourceMessageID, "_scheduleNotify", false); err == nil {

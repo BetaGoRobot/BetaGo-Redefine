@@ -34,6 +34,8 @@ type wordGetHandler struct{}
 var WordAdd wordAddHandler
 var WordGet wordGetHandler
 
+const wordActionToolResultKey = "word_action_result"
+
 func (wordAddHandler) ParseCLI(args []string) (WordAddArgs, error) {
 	argMap, _ := parseArgs(args...)
 	word := argMap["word"]
@@ -80,6 +82,10 @@ func (wordAddHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddRequired("word").
 			AddRequired("rate"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(wordActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -89,15 +95,25 @@ func (wordAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "word_add",
+		ApprovalSummary: "将把复读词条「" + arg.Word + "」设置为权重 " + strconv.Itoa(arg.Rate),
+	}) {
+		return nil
+	}
 
 	ChatID := currentChatID(data, metaData)
-	return query.Q.RepeatWordsRateCustom.WithContext(ctx).Clauses(clause.OnConflict{
+	if err := query.Q.RepeatWordsRateCustom.WithContext(ctx).Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&model.RepeatWordsRateCustom{
 		GuildID: ChatID,
 		Word:    arg.Word,
 		Rate:    int64(arg.Rate),
-	})
+	}); err != nil {
+		return err
+	}
+	metaData.SetExtra(wordActionToolResultKey, "复读词条更新成功")
+	return nil
 }
 
 func (wordGetHandler) ParseCLI(args []string) (WordGetArgs, error) {

@@ -148,8 +148,12 @@ func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
 	}
 
 	expected := []ConfigKey{
+		KeyAgentRuntimeEnabled,
+		KeyAgentRuntimeShadowOnly,
+		KeyAgentRuntimeChatCutover,
 		KeyMusicCardInThread,
 		KeyWithDrawReplace,
+		KeyChatMode,
 		KeyChatReasoningModel,
 		KeyChatNormalModel,
 		KeyIntentLiteModel,
@@ -209,5 +213,34 @@ func TestGetConfigEnumOptionsBuildsCandidatesFromBaseConfig(t *testing.T) {
 	indexOptions := GetConfigEnumOptions(KeyLarkMsgIndex, "")
 	if len(indexOptions) != 2 {
 		t.Fatalf("expected 2 index options, got %+v", indexOptions)
+	}
+
+	modeOptions := GetConfigEnumOptions(KeyChatMode, "")
+	if len(modeOptions) != 2 {
+		t.Fatalf("expected 2 chat mode options, got %+v", modeOptions)
+	}
+	if modeOptions[0].Value != string(ChatModeStandard) || modeOptions[1].Value != string(ChatModeAgentic) {
+		t.Fatalf("unexpected chat mode options: %+v", modeOptions)
+	}
+}
+
+func TestGetStringFallsBackToDefaultForChatMode(t *testing.T) {
+	manager := NewManager()
+	if got := manager.GetString(context.Background(), KeyChatMode, "", ""); got != string(ChatModeStandard) {
+		t.Fatalf("GetString(chat mode) = %q, want %q", got, ChatModeStandard)
+	}
+}
+
+func TestGetBoolFallsBackToDefaultForAgentRuntimeFlags(t *testing.T) {
+	manager := NewManager()
+
+	if manager.GetBool(context.Background(), KeyAgentRuntimeEnabled, "", "") {
+		t.Fatal("expected agent_runtime_enabled to default to false")
+	}
+	if manager.GetBool(context.Background(), KeyAgentRuntimeShadowOnly, "", "") {
+		t.Fatal("expected agent_runtime_shadow_only to default to false")
+	}
+	if manager.GetBool(context.Background(), KeyAgentRuntimeChatCutover, "", "") {
+		t.Fatal("expected agent_runtime_chat_cutover to default to false")
 	}
 }

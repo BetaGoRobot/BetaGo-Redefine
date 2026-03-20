@@ -166,7 +166,7 @@ func loadCardActionHistoryRecords(ctx context.Context, openMessageID string, lim
 		},
 		"sort": []any{
 			map[string]any{"create_time_unix": map[string]any{"order": "desc"}},
-			map[string]any{"create_time.keyword": map[string]any{"order": "desc"}},
+			// map[string]any{"create_time.keyword": map[string]any{"order": "desc"}},
 		},
 	})
 	if err != nil {

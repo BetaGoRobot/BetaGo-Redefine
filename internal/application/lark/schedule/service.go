@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -171,7 +172,7 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 		return nil, errScheduleServiceUnavailable
 	}
 	taskType := strings.ToLower(strings.TrimSpace(req.Type))
-	toolName, toolArgs, err := s.resolveAction(req)
+	toolName, toolArgs, err := s.resolveAction(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +453,7 @@ func (s *Service) FinalizeTaskExecution(ctx context.Context, task *model.Schedul
 	return s.repo.UpdateTaskFields(ctx, task.ID, updates)
 }
 
-func (s *Service) resolveAction(req *CreateTaskRequest) (string, string, error) {
+func (s *Service) resolveAction(ctx context.Context, req *CreateTaskRequest) (string, string, error) {
 	message := strings.TrimSpace(req.Message)
 	toolName := strings.TrimSpace(req.ToolName)
 	toolArgs := normalizeToolArgs(req.ToolArgs)
@@ -461,6 +462,9 @@ func (s *Service) resolveAction(req *CreateTaskRequest) (string, string, error) 
 	case message != "" && toolName != "":
 		return "", "", fmt.Errorf("message and tool_name are mutually exclusive")
 	case message != "":
+		if normalized, err := mention.NormalizeOutgoingText(ctx, req.ChatID, message); err == nil {
+			message = normalized
+		}
 		payload := sendMessageArgs{Content: message}
 		return "send_message", utils.MustMarshalString(payload), nil
 	case toolName == "":

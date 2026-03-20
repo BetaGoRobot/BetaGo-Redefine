@@ -56,6 +56,10 @@ func PatchCardJSON(ctx context.Context, msgID string, cardData any) error {
 	return nil
 }
 
+func BuildCardEntityContent(ctx context.Context, cardData any) (string, error) {
+	return buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
+}
+
 func buildCardEntityContent(ctx context.Context, cardType string, cardData any) (string, error) {
 	raw, err := json.Marshal(cardData)
 	if err != nil {

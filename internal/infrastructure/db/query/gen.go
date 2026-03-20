@@ -18,6 +18,9 @@ import (
 var (
 	Q                     = new(Query)
 	Administrator         *administrator
+	AgentRun              *agentRun
+	AgentSession          *agentSession
+	AgentStep             *agentStep
 	AlertList             *alertList
 	CardActionRecordLog   *cardActionRecordLog
 	ChannelLog            *channelLog
@@ -56,6 +59,9 @@ var (
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	*Q = *Use(db, opts...)
 	Administrator = &Q.Administrator
+	AgentRun = &Q.AgentRun
+	AgentSession = &Q.AgentSession
+	AgentStep = &Q.AgentStep
 	AlertList = &Q.AlertList
 	CardActionRecordLog = &Q.CardActionRecordLog
 	ChannelLog = &Q.ChannelLog
@@ -95,6 +101,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
 		db:                    db,
 		Administrator:         newAdministrator(db, opts...),
+		AgentRun:              newAgentRun(db, opts...),
+		AgentSession:          newAgentSession(db, opts...),
+		AgentStep:             newAgentStep(db, opts...),
 		AlertList:             newAlertList(db, opts...),
 		CardActionRecordLog:   newCardActionRecordLog(db, opts...),
 		ChannelLog:            newChannelLog(db, opts...),
@@ -135,6 +144,9 @@ type Query struct {
 	db *gorm.DB
 
 	Administrator         administrator
+	AgentRun              agentRun
+	AgentSession          agentSession
+	AgentStep             agentStep
 	AlertList             alertList
 	CardActionRecordLog   cardActionRecordLog
 	ChannelLog            channelLog
@@ -176,6 +188,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
 		db:                    db,
 		Administrator:         q.Administrator.clone(db),
+		AgentRun:              q.AgentRun.clone(db),
+		AgentSession:          q.AgentSession.clone(db),
+		AgentStep:             q.AgentStep.clone(db),
 		AlertList:             q.AlertList.clone(db),
 		CardActionRecordLog:   q.CardActionRecordLog.clone(db),
 		ChannelLog:            q.ChannelLog.clone(db),
@@ -224,6 +239,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
 		db:                    db,
 		Administrator:         q.Administrator.replaceDB(db),
+		AgentRun:              q.AgentRun.replaceDB(db),
+		AgentSession:          q.AgentSession.replaceDB(db),
+		AgentStep:             q.AgentStep.replaceDB(db),
 		AlertList:             q.AlertList.replaceDB(db),
 		CardActionRecordLog:   q.CardActionRecordLog.replaceDB(db),
 		ChannelLog:            q.ChannelLog.replaceDB(db),
@@ -262,6 +280,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 
 type queryCtx struct {
 	Administrator         IAdministratorDo
+	AgentRun              IAgentRunDo
+	AgentSession          IAgentSessionDo
+	AgentStep             IAgentStepDo
 	AlertList             IAlertListDo
 	CardActionRecordLog   ICardActionRecordLogDo
 	ChannelLog            IChannelLogDo
@@ -300,6 +321,9 @@ type queryCtx struct {
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
 		Administrator:         q.Administrator.WithContext(ctx),
+		AgentRun:              q.AgentRun.WithContext(ctx),
+		AgentSession:          q.AgentSession.WithContext(ctx),
+		AgentStep:             q.AgentStep.WithContext(ctx),
 		AlertList:             q.AlertList.WithContext(ctx),
 		CardActionRecordLog:   q.CardActionRecordLog.WithContext(ctx),
 		ChannelLog:            q.ChannelLog.WithContext(ctx),

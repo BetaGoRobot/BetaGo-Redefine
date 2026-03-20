@@ -66,9 +66,11 @@ type (
 		MainCommand string
 		TraceID     string
 
-		ForceReplyDirect bool
-		SkipDone         bool
-		Extra            map[string]string
+		ForceReplyDirect   bool
+		SkipDone           bool
+		Extra              map[string]string
+		LastReplyMessageID string
+		LastReplyKind      string
 
 		// TODO: 暂时没有用上，后续改造替换掉st、et的反复解析，搞成通用参数
 		StartTime string
@@ -129,6 +131,19 @@ func (m *BaseMetaData) ShouldSkipDone() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.SkipDone
+}
+
+func (m *BaseMetaData) SetLastReplyRef(messageID, kind string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.LastReplyMessageID = messageID
+	m.LastReplyKind = kind
+}
+
+func (m *BaseMetaData) LastReplyRef() (messageID, kind string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.LastReplyMessageID, m.LastReplyKind
 }
 
 // GetChatID 实现 MetaDataWithOpenID 接口

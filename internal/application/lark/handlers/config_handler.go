@@ -63,6 +63,11 @@ var FeatureList featureListHandler
 var FeatureBlock featureBlockHandler
 var FeatureUnblock featureUnblockHandler
 
+const (
+	configActionToolResultKey  = "config_action_result"
+	featureActionToolResultKey = "feature_action_result"
+)
+
 func (configSetHandler) ParseCLI(args []string) (ConfigSetArgs, error) {
 	argMap, _ := parseArgs(args...)
 	key, err := xcommand.ParseEnum[config.ConfigKey](argMap["key"])
@@ -124,6 +129,10 @@ func (configSetHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddRequired("key").
 			AddRequired("value"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(configActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -184,6 +193,12 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "config_set",
+		ApprovalSummary: fmt.Sprintf("将设置配置 %s=%s，作用域 %s", arg.Key, arg.Value, arg.Scope),
+	}) {
+		return nil
+	}
 
 	req := &config.ConfigActionRequest{
 		Action:      config.ConfigActionSet,
@@ -201,6 +216,7 @@ func (configSetHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	}
 
 	msg := fmt.Sprintf("✅ %s\n\nKey: %s\nValue: %s\nScope: %s", resp.Message, req.Key, req.Value, req.Scope)
+	metaData.SetExtra(configActionToolResultKey, msg)
 	return sendCompatibleText(ctx, data, metaData, msg, "_configSet", false)
 }
 
@@ -259,6 +275,10 @@ func (configDeleteHandler) ToolSpec() xcommand.ToolSpec {
 				Desc: "配置作用域",
 			}).
 			AddRequired("key"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(configActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -267,6 +287,12 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "config_delete",
+		ApprovalSummary: fmt.Sprintf("将删除配置 %s，作用域 %s", arg.Key, arg.Scope),
+	}) {
+		return nil
+	}
 
 	req := &config.ConfigActionRequest{
 		Action:      config.ConfigActionDelete,
@@ -283,6 +309,7 @@ func (configDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	}
 
 	msg := fmt.Sprintf("✅ %s\n\nKey: %s\nScope: %s", resp.Message, req.Key, req.Scope)
+	metaData.SetExtra(configActionToolResultKey, msg)
 	return sendCompatibleText(ctx, data, metaData, msg, "_configDelete", false)
 }
 
@@ -385,6 +412,10 @@ func (featureBlockHandler) ToolSpec() xcommand.ToolSpec {
 				Desc: "生效范围",
 			}).
 			AddRequired("feature"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(featureActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -393,6 +424,12 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "feature_block",
+		ApprovalSummary: fmt.Sprintf("将屏蔽功能 %s，作用域 %s", arg.Feature, arg.Scope),
+	}) {
+		return nil
+	}
 
 	req, reqErr := buildFeatureActionRequest(arg.Scope, string(arg.Feature), currentChatID(data, metaData), currentOpenID(data, metaData), true)
 	if reqErr != nil {
@@ -405,6 +442,7 @@ func (featureBlockHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	}
 
 	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, string(arg.Scope))
+	metaData.SetExtra(featureActionToolResultKey, msg)
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureBlock", false)
 }
 
@@ -463,6 +501,10 @@ func (featureUnblockHandler) ToolSpec() xcommand.ToolSpec {
 				Desc: "生效范围",
 			}).
 			AddRequired("feature"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(featureActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -471,6 +513,12 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "feature_unblock",
+		ApprovalSummary: fmt.Sprintf("将恢复功能 %s，作用域 %s", arg.Feature, arg.Scope),
+	}) {
+		return nil
+	}
 
 	req, reqErr := buildFeatureActionRequest(arg.Scope, string(arg.Feature), currentChatID(data, metaData), currentOpenID(data, metaData), false)
 	if reqErr != nil {
@@ -483,6 +531,7 @@ func (featureUnblockHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	}
 
 	msg := fmt.Sprintf("✅ %s\n\nFeature: %s\nScope: %s", resp.Message, req.Feature, string(arg.Scope))
+	metaData.SetExtra(featureActionToolResultKey, msg)
 	return sendCompatibleText(ctx, data, metaData, msg, "_featureUnblock", false)
 }
 

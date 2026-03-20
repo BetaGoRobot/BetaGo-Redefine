@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"time"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mutestate"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
@@ -16,11 +17,11 @@ import (
 )
 
 const (
-	MuteRedisKeyPrefix = "betago:mute"
+	MuteRedisKeyPrefix = mutestate.RedisKeyPrefix
 )
 
 func MuteRedisKey(chatID string) string {
-	return botidentity.Current().NamespaceKey(MuteRedisKeyPrefix, chatID)
+	return mutestate.RedisKey(chatID)
 }
 
 type MuteArgs struct {
@@ -82,6 +83,14 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if chatID == "" {
 		return errors.New("chat_id is required")
 	}
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "mute_robot",
+		ApprovalTitle:   resolveMuteApprovalTitle(arg),
+		ApprovalSummary: resolveMuteApprovalSummary(arg),
+	}) {
+		res = "已发起审批，等待确认后调整禁言。"
+		return nil
+	}
 	if arg.Cancel {
 		// 取消禁言
 		// 先检查是否已经取消禁言
@@ -113,6 +122,23 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 		res = "已启用" + muteTimeDuration.String() + "禁言"
 	}
 	return sendCompatibleText(ctx, event, metaData, res, "_mute", true)
+}
+
+func resolveMuteApprovalTitle(arg MuteArgs) string {
+	if arg.Cancel {
+		return "审批取消禁言"
+	}
+	return "审批设置禁言"
+}
+
+func resolveMuteApprovalSummary(arg MuteArgs) string {
+	if arg.Cancel {
+		return "将取消当前对话中的机器人禁言"
+	}
+	if strings.TrimSpace(arg.Time) != "" {
+		return "将调整机器人禁言时长为 " + strings.TrimSpace(arg.Time)
+	}
+	return "将调整机器人禁言时长为 3m"
 }
 
 func (muteHandler) CommandDescription() string {

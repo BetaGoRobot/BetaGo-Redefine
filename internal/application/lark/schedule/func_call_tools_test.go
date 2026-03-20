@@ -1,10 +1,16 @@
 package schedule
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -58,6 +64,7 @@ func TestFilterQueriedSchedulesByCreatorOpenID(t *testing.T) {
 }
 
 func TestRegisterToolsInfersTypedEnums(t *testing.T) {
+	useWorkspaceConfigPath(t)
 	ins := tools.New[larkim.P2MessageReceiveV1]()
 
 	RegisterTools(ins)
@@ -143,5 +150,127 @@ func TestResolveToolScheduleTargetChatID(t *testing.T) {
 	}
 	if got := resolveToolScheduleTargetChatID(TaskChatScopeCurrent, "oc_explicit_chat", "oc_current_chat"); got != "oc_current_chat" {
 		t.Fatalf("expected explicit chat id override to be ignored, got %q", got)
+	}
+}
+
+type fakeScheduleRuntimeResumeEnqueuer struct {
+	seen redis_dal.ResumeEvent
+}
+
+func (f *fakeScheduleRuntimeResumeEnqueuer) EnqueueResumeEvent(ctx context.Context, event redis_dal.ResumeEvent) error {
+	f.seen = event
+	return nil
+}
+
+func TestAgentRuntimeResumeHandleEnqueuesResumeEvent(t *testing.T) {
+	prev := buildScheduleAgentRuntimeResumeEnqueuer
+	fake := &fakeScheduleRuntimeResumeEnqueuer{}
+	buildScheduleAgentRuntimeResumeEnqueuer = func(context.Context) scheduleRuntimeResumeEnqueuer {
+		return fake
+	}
+	defer func() { buildScheduleAgentRuntimeResumeEnqueuer = prev }()
+
+	err := AgentRuntimeResume.Handle(context.Background(), nil, &xhandler.BaseMetaData{
+		ChatID: "oc_chat",
+		OpenID: "ou_actor",
+	}, agentRuntimeResumeArgs{
+		RunID:       "run_100",
+		StepID:      "step_100",
+		Revision:    5,
+		Summary:     "定时触发日报续跑",
+		PayloadJSON: json.RawMessage(`{"task_id":"task_daily","trigger":"cron"}`),
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if fake.seen.RunID != "run_100" || fake.seen.StepID != "step_100" || fake.seen.Revision != 5 || fake.seen.Source != "schedule" || fake.seen.ActorOpenID != "ou_actor" {
+		t.Fatalf("unexpected resume event: %+v", fake.seen)
+	}
+	if fake.seen.Summary != "定时触发日报续跑" {
+		t.Fatalf("summary = %q, want %q", fake.seen.Summary, "定时触发日报续跑")
+	}
+	if string(fake.seen.PayloadJSON) != `{"task_id":"task_daily","trigger":"cron"}` {
+		t.Fatalf("payload json = %s, want %s", string(fake.seen.PayloadJSON), `{"task_id":"task_daily","trigger":"cron"}`)
+	}
+}
+
+func TestScheduleWriteToolsDeferApprovalWhenCollectorPresent(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	ins := tools.New[larkim.P2MessageReceiveV1]()
+	RegisterTools(ins)
+
+	cases := []struct {
+		name            string
+		raw             string
+		expectedResult  string
+		expectedTitle   string
+		expectedSummary string
+	}{
+		{
+			name:            "create_schedule",
+			raw:             `{"name":"晨会提醒","type":"once","run_at":"2026-03-19 09:00:00","message":"9点晨会","notify_result":true}`,
+			expectedResult:  "已发起审批，等待确认后创建 schedule。",
+			expectedTitle:   "审批创建 schedule",
+			expectedSummary: "将创建单次 schedule「晨会提醒」",
+		},
+		{
+			name:            "delete_schedule",
+			raw:             `{"id":"task_delete_1"}`,
+			expectedResult:  "已发起审批，等待确认后删除 schedule。",
+			expectedTitle:   "审批删除 schedule",
+			expectedSummary: "将删除 schedule `task_delete_1`",
+		},
+		{
+			name:            "pause_schedule",
+			raw:             `{"id":"task_pause_1"}`,
+			expectedResult:  "已发起审批，等待确认后暂停 schedule。",
+			expectedTitle:   "审批暂停 schedule",
+			expectedSummary: "将暂停 schedule `task_pause_1`",
+		},
+		{
+			name:            "resume_schedule",
+			raw:             `{"id":"task_resume_1"}`,
+			expectedResult:  "已发起审批，等待确认后恢复 schedule。",
+			expectedTitle:   "审批恢复 schedule",
+			expectedSummary: "将恢复 schedule `task_resume_1`",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unit, ok := ins.Get(tc.name)
+			if !ok {
+				t.Fatalf("expected %s tool", tc.name)
+			}
+
+			ctx := runtimecontext.WithDeferredToolCallCollector(context.Background(), runtimecontext.NewDeferredToolCallCollector())
+			result := unit.Function(ctx, tc.raw, tools.FCMeta[larkim.P2MessageReceiveV1]{
+				ChatID: "oc_chat",
+				OpenID: "ou_user",
+			})
+			if result.IsErr() {
+				t.Fatalf("tool returned error: %v", result.Err())
+			}
+			if result.Value() != tc.expectedResult {
+				t.Fatalf("result = %q, want %q", result.Value(), tc.expectedResult)
+			}
+
+			deferred, ok := runtimecontext.PopDeferredToolCall(ctx)
+			if !ok {
+				t.Fatal("expected deferred tool call to be recorded")
+			}
+			if deferred.ApprovalType != "capability" {
+				t.Fatalf("approval type = %q, want %q", deferred.ApprovalType, "capability")
+			}
+			if deferred.ApprovalTitle != tc.expectedTitle {
+				t.Fatalf("approval title = %q, want %q", deferred.ApprovalTitle, tc.expectedTitle)
+			}
+			if strings.TrimSpace(deferred.PlaceholderOutput) != tc.expectedResult {
+				t.Fatalf("placeholder output = %q, want %q", deferred.PlaceholderOutput, tc.expectedResult)
+			}
+			if deferred.ApprovalSummary != tc.expectedSummary {
+				t.Fatalf("approval summary = %q, want %q", deferred.ApprovalSummary, tc.expectedSummary)
+			}
+		})
 	}
 }

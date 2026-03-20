@@ -98,6 +98,21 @@ func (a *Accessor) IntentRecognitionEnabled() bool {
 	return a.manager.GetBool(a.ctx, KeyIntentRecognitionEnabled, a.chatID, a.openID)
 }
 
+// AgentRuntimeEnabled 检查是否启用 Agent Runtime
+func (a *Accessor) AgentRuntimeEnabled() bool {
+	return a.manager.GetBool(a.ctx, KeyAgentRuntimeEnabled, a.chatID, a.openID)
+}
+
+// AgentRuntimeShadowOnly 检查是否启用 Agent Runtime shadow only 模式
+func (a *Accessor) AgentRuntimeShadowOnly() bool {
+	return a.manager.GetBool(a.ctx, KeyAgentRuntimeShadowOnly, a.chatID, a.openID)
+}
+
+// AgentRuntimeChatCutover 检查是否启用 Agent Runtime 聊天接管
+func (a *Accessor) AgentRuntimeChatCutover() bool {
+	return a.manager.GetBool(a.ctx, KeyAgentRuntimeChatCutover, a.chatID, a.openID)
+}
+
 // MusicCardInThread 检查音乐卡片是否默认回帖中发送
 func (a *Accessor) MusicCardInThread() bool {
 	return a.manager.GetBool(a.ctx, KeyMusicCardInThread, a.chatID, a.openID)
@@ -106,6 +121,11 @@ func (a *Accessor) MusicCardInThread() bool {
 // WithDrawReplace 检查是否使用伪撤回替代真实撤回
 func (a *Accessor) WithDrawReplace() bool {
 	return a.manager.GetBool(a.ctx, KeyWithDrawReplace, a.chatID, a.openID)
+}
+
+// ChatReasoningModel 获取推理模型
+func (a *Accessor) ChatMode() ChatMode {
+	return ChatMode(a.manager.GetString(a.ctx, KeyChatMode, a.chatID, a.openID)).Normalize()
 }
 
 // ChatReasoningModel 获取推理模型
@@ -186,12 +206,28 @@ func IsIntentRecognitionEnabled(ctx context.Context, chatID, openID string) bool
 	return GetManager().GetBool(ctx, KeyIntentRecognitionEnabled, chatID, openID)
 }
 
+func GetAgentRuntimeEnabled(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyAgentRuntimeEnabled, chatID, openID)
+}
+
+func GetAgentRuntimeShadowOnly(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyAgentRuntimeShadowOnly, chatID, openID)
+}
+
+func GetAgentRuntimeChatCutover(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyAgentRuntimeChatCutover, chatID, openID)
+}
+
 func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyMusicCardInThread, chatID, openID)
 }
 
 func GetWithDrawReplace(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyWithDrawReplace, chatID, openID)
+}
+
+func GetChatMode(ctx context.Context, chatID, openID string) ChatMode {
+	return ChatMode(GetManager().GetString(ctx, KeyChatMode, chatID, openID)).Normalize()
 }
 
 func GetChatReasoningModel(ctx context.Context, chatID, openID string) string {
