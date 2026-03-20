@@ -203,6 +203,17 @@ BetaGo-Redefine/
 | dynamic_configs | 动态配置 |
 | cron_cmd_tasks | 定时任务 |
 
+## Agent 数据库变更约束
+
+凡是涉及新建表、改表、索引或约束变更，先遵循 `script/AGENT_DB_CHANGE_SOP.md`。
+
+硬约束：
+
+- 先生成 SQL，并保存到 `script/sql/`
+- 先等待用户执行 SQL
+- 再等待用户执行 `go run ./cmd/generate`
+- 用户确认前，不继续写依赖新 schema 的业务代码
+
 ## 本地开发
 
 ### 前置要求

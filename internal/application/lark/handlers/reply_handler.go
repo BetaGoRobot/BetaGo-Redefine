@@ -43,6 +43,8 @@ type replyGetHandler struct{}
 var ReplyAdd replyAddHandler
 var ReplyGet replyGetHandler
 
+const replyActionToolResultKey = "reply_action_result"
+
 func (replyAddHandler) ParseCLI(args []string) (ReplyAddArgs, error) {
 	argMap, _ := parseArgs(args...)
 	matchType, err := xcommand.ParseEnum[ReplyMatchType](argMap["type"])
@@ -120,6 +122,10 @@ func (replyAddHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddRequired("word").
 			AddRequired("type"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(replyActionToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -137,6 +143,12 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	}
 	if arg.Type != ReplyMatchTypeSubstr && arg.Type != ReplyMatchTypeRegex && arg.Type != ReplyMatchTypeFull {
 		return errors.New("type must be substr, regex or full")
+	}
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "reply_add",
+		ApprovalSummary: "将为关键词「" + arg.Word + "」添加 " + string(arg.Type) + " 匹配回复",
+	}) {
+		return nil
 	}
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
@@ -216,6 +228,7 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 		}); err != nil {
 		return err
 	}
+	metaData.SetExtra(replyActionToolResultKey, "回复语句添加成功")
 	return sendCompatibleText(ctx, data, metaData, "回复语句添加成功", "_replyAdd", false)
 }
 

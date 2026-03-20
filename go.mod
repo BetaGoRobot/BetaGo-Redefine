@@ -49,12 +49,16 @@ require (
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
 	golang.org/x/sync v0.20.0
 	gorm.io/driver/postgres v1.6.0
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gen v0.3.28-0.20251230105250-93ec9a609775
 	gorm.io/gorm v1.31.1
 	gorm.io/plugin/dbresolver v1.6.2
 )
 
-require github.com/oklog/ulid/v2 v2.1.1 // indirect
+require (
+	github.com/mattn/go-sqlite3 v1.14.22 // indirect
+	github.com/oklog/ulid/v2 v2.1.1 // indirect
+)
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect

@@ -4,11 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -69,15 +68,21 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 
-	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
+	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
 
 	msg := messageText(ctx, event)
 	msg = larkmsg.TrimAtMsg(ctx, msg)
+	observation, ok := observeRuntimeMessage(ctx, event, meta)
+	ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok,
+		agentruntime.TriggerTypeMention,
+		agentruntime.TriggerTypeReplyToBot,
+		agentruntime.TriggerTypeFollowUp,
+	)
 	// 记录回复
 	decider := ratelimit.GetDecider()
 	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
-	err = xcommand.BindCLI(handlers.Chat)(ctx, event, meta, strings.Split(msg, " ")...)
-	addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
+	err = runChatByMode(ctx, event, meta, strings.Split(msg, " ")...)
+	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
 
 	return
 }

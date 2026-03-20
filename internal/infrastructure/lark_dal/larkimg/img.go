@@ -317,21 +317,21 @@ func GetAllImgURLFromMsg(ctx context.Context, msgID string) (resSeq iter.Seq[str
 
 	resp := larkmsg.GetMsgFullByID(ctx, msgID)
 	if len(resp.Data.Items) == 0 {
-		return nil, nil
+		return utils.NilIter[string](), nil
 	}
 	msg := resp.Data.Items[0]
 	if msg == nil {
-		return nil, errors.New("no message found")
+		return utils.NilIter[string](), errors.New("no message found")
 	}
 	if msg.Sender.Id == nil {
-		return nil, errors.New("message is not sent by bot")
+		return utils.NilIter[string](), errors.New("message is not sent by bot")
 	}
 	seq, err := GetAllImgTagFromMsg(ctx, msg)
 	if err != nil {
-		return nil, err
+		return utils.NilIter[string](), err
 	}
 	if seq == nil {
-		return nil, err
+		return utils.NilIter[string](), err
 	}
 	return func(yield func(string) bool) {
 		ctx, span := otel.Start(ctx)
@@ -356,10 +356,10 @@ func GetAllImgURLFromParent(ctx context.Context, data *larkim.P2MessageReceiveV1
 		resp, err := lark_dal.Client().Im.Message.List(ctx,
 			larkim.NewListMessageReqBuilder().ContainerIdType("thread").ContainerId(*data.Event.Message.ThreadId).Build())
 		if err != nil {
-			return nil, err
+			return utils.NilIter[string](), err
 		}
 		if !resp.Success() {
-			return nil, errors.New(resp.Error())
+			return utils.NilIter[string](), errors.New(resp.Error())
 		}
 		return func(yield func(string) bool) {
 			for _, msg := range resp.Data.Items {
@@ -395,7 +395,7 @@ func GetAllImgURLFromParent(ctx context.Context, data *larkim.P2MessageReceiveV1
 			}
 		}, nil
 	}
-	return nil, nil
+	return utils.NilIter[string](), nil
 }
 
 func GetAndResizePicFromURL(ctx context.Context, imageURL string) (res []byte, err error) {

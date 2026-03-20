@@ -150,6 +150,7 @@ func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
 	expected := []ConfigKey{
 		KeyMusicCardInThread,
 		KeyWithDrawReplace,
+		KeyChatMode,
 		KeyChatReasoningModel,
 		KeyChatNormalModel,
 		KeyIntentLiteModel,
@@ -209,5 +210,20 @@ func TestGetConfigEnumOptionsBuildsCandidatesFromBaseConfig(t *testing.T) {
 	indexOptions := GetConfigEnumOptions(KeyLarkMsgIndex, "")
 	if len(indexOptions) != 2 {
 		t.Fatalf("expected 2 index options, got %+v", indexOptions)
+	}
+
+	modeOptions := GetConfigEnumOptions(KeyChatMode, "")
+	if len(modeOptions) != 2 {
+		t.Fatalf("expected 2 chat mode options, got %+v", modeOptions)
+	}
+	if modeOptions[0].Value != string(ChatModeStandard) || modeOptions[1].Value != string(ChatModeAgentic) {
+		t.Fatalf("unexpected chat mode options: %+v", modeOptions)
+	}
+}
+
+func TestGetStringFallsBackToDefaultForChatMode(t *testing.T) {
+	manager := NewManager()
+	if got := manager.GetString(context.Background(), KeyChatMode, "", ""); got != string(ChatModeStandard) {
+		t.Fatalf("GetString(chat mode) = %q, want %q", got, ChatModeStandard)
 	}
 }

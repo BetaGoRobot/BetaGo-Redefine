@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -21,7 +22,6 @@ import (
 
 var _ Op = &CommandOperator{}
 
-// CommandOperator Repeat
 type CommandOperator struct {
 	OpBase
 }
@@ -30,36 +30,19 @@ func (r *CommandOperator) Name() string {
 	return "CommandOperator"
 }
 
-// PreRun Music
-//
-//	@receiver r *MusicMsgOperator
-//	@param ctx context.Context
-//	@param event *larkim.P2MessageReceiveV1
-//	@return err error
-//	@author heyuhengmatt
-//	@update 2024-07-17 01:34:09
 func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
-
 	return requireCommand(ctx, r.Name(), event)
 }
 
-// Run  Repeat
-//
-//	@receiver r
-//	@param ctx
-//	@param event
-//	@return err
 func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
-	rawCommand := messageText(ctx, event)
-
-	return ExecuteFromRawCommand(ctx, event, meta, rawCommand)
+	return ExecuteFromRawCommand(ctx, event, meta, messageText(ctx, event))
 }
 
 func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
@@ -72,32 +55,43 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 	rawCommand = strings.ReplaceAll(rawCommand, "</b>", " ")
 	ctx = context.WithValue(ctx, consts.ContextVarSrcCmd, rawCommand)
 	commands := xcommand.GetCommand(ctx, rawCommand)
-	if len(commands) > 0 {
-		meta.SetIsCommand(true)
-		meta.SetMainCommand(commands[0])
-		defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
-		err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
-		if err != nil {
-			otel.RecordError(span, err)
-			if handled := trySendCommandForm(ctx, event, meta, rawCommand, err); handled {
-				return nil
-			}
-			if errors.Is(err, xerror.ErrCommandNotFound) {
-				meta.SetIsCommand(false)
-				meta.SetMainCommand("")
-				if larkmsg.IsMentioned(event.Event.Message.Mentions) {
-					sendCommandErrorCard(ctx, event, meta, err.Error())
-					return
-				}
-			} else {
-				sendCommandErrorCard(ctx, event, meta, err.Error())
-				logs.L().Ctx(ctx).Error("CommandOperator", zap.Error(err))
-				return
-			}
-		}
-		addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
+	if len(commands) == 0 {
+		return nil
 	}
-	return
+
+	meta.SetIsCommand(true)
+	meta.SetMainCommand(commands[0])
+	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
+		observation, ok := observeRuntimeMessage(ctx, event, meta)
+		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
+	}
+	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
+
+	err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
+	if err != nil {
+		otel.RecordError(span, err)
+		return handleCommandError(ctx, event, meta, rawCommand, err)
+	}
+	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
+	return nil
+}
+
+func handleCommandError(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string, err error) error {
+	if handled := trySendCommandForm(ctx, event, meta, rawCommand, err); handled {
+		return nil
+	}
+	if errors.Is(err, xerror.ErrCommandNotFound) {
+		meta.SetIsCommand(false)
+		meta.SetMainCommand("")
+		if larkmsg.IsMentioned(event.Event.Message.Mentions) {
+			sendCommandErrorCard(ctx, event, meta, err.Error())
+			return nil
+		}
+		return nil
+	}
+	sendCommandErrorCard(ctx, event, meta, err.Error())
+	logs.L().Ctx(ctx).Error("command execution failed", zap.Error(err))
+	return nil
 }
 
 func trySendCommandForm(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string, err error) bool {

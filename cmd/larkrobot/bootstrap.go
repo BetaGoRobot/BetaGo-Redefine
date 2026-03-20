@@ -6,6 +6,9 @@ import (
 	"fmt"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/runtimecutover"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/runtimewire"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
@@ -14,7 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/aktool"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
@@ -31,6 +34,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 type appComponents struct {
@@ -45,7 +49,23 @@ type appComponents struct {
 
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
-var scheduler *scheduleapp.Scheduler
+var (
+	scheduler                     *scheduleapp.Scheduler
+	resumeWorker                  workerHandle
+	buildAgentRuntimeResumeWorker = func(ctx context.Context) workerHandle {
+		return runtimewire.BuildResumeWorker(ctx)
+	}
+)
+
+func startAgentRuntimeResumeWorker(ctx context.Context) error {
+	worker := buildAgentRuntimeResumeWorker(ctx)
+	if worker == nil || !worker.Available() {
+		return fmt.Errorf("%w: agent runtime resume worker unavailable", appruntime.ErrDisabled)
+	}
+	resumeWorker = worker
+	resumeWorker.Start()
+	return nil
+}
 
 // buildApp 是当前单体进程的装配根。这里集中完成：
 // 1. 构造受控执行器和 handler 入口；
@@ -79,6 +99,13 @@ func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	chunkExecutor := appruntime.NewExecutor(executorConfigs["chunk"])
 	scheduleExecutor := appruntime.NewExecutor(executorConfigs["schedule"])
 
+	agentruntime.SetRuntimeAgenticCutoverBuilder(runtimecutover.BuildDefaultHandler)
+	// agentruntime.SetRuntimeStandardCutoverBuilder(runtimecutover.BuildDefaultStandardHandler)
+	agentruntime.SetDefaultChatToolProvider(handlers.BuildLarkTools)
+	agentruntime.SetChatGenerationPlanExecutor(agentruntime.NewDefaultChatGenerationPlanExecutor())
+	runtimewire.SetDefaultCapabilityProvider(func() []agentruntime.Capability {
+		return agentruntime.BuildToolCapabilities(handlers.BuildLarkTools(), nil, (*larkim.P2MessageReceiveV1)(nil))
+	})
 	messageProcessor := messages.NewMessageProcessor(appconfig.GetManager())
 	reactionProcessor := reaction.NewReactionProcessor()
 	handlerSet := larkiface.NewHandlerSet(larkiface.HandlerSetOptions{
@@ -173,10 +200,10 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 	}, func(context.Context) error {
 		return gotify.ErrUnavailable()
 	}))
-	app.AddModule(newOptionalModule("aktool", func() {
-		aktool.Init()
+	app.AddModule(newOptionalModule("akshareapi", func() {
+		akshareapi.Init()
 	}, func(context.Context) error {
-		if ok, reason := aktool.Status(); !ok {
+		if ok, reason := akshareapi.Status(); !ok {
 			return errors.New(reason)
 		}
 		return nil
@@ -276,11 +303,37 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		},
 		Stats: components.scheduleExecutor.Stats,
 	}))
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "agent_runtime_resume_worker",
+		Critical: false,
+		Start: func(ctx context.Context) error {
+			return startAgentRuntimeResumeWorker(ctx)
+		},
+		Stop: func(context.Context) error {
+			if resumeWorker != nil {
+				resumeWorker.Stop()
+			}
+			return nil
+		},
+		Stats: func() map[string]any {
+			if resumeWorker == nil {
+				return nil
+			}
+			return resumeWorker.Stats()
+		},
+	}))
 	app.AddModule(appruntime.NewLarkWSModule(
 		cfg.LarkConfig.AppID,
 		cfg.LarkConfig.AppSecret,
 		components.eventDispatcher,
 	))
+}
+
+type workerHandle interface {
+	Start()
+	Stop()
+	Stats() map[string]any
+	Available() bool
 }
 
 // newEventDispatcher 负责把运行时管理的 HandlerSet 绑定到当前订阅的

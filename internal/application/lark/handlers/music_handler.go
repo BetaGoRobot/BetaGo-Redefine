@@ -26,6 +26,8 @@ type musicSearchHandler struct{}
 
 var MusicSearch musicSearchHandler
 
+const musicSearchToolResultKey = "music_search_result"
+
 func (musicSearchHandler) ParseCLI(args []string) (MusicSearchArgs, error) {
 	argsMap, input := parseArgs(args...)
 	searchType, err := xcommand.ParseEnum[MusicSearchType](argsMap["type"])
@@ -71,6 +73,10 @@ func (musicSearchHandler) ToolSpec() xcommand.ToolSpec {
 				Desc: "搜索关键词；当 type=playlist 时传歌单 ID",
 			}).
 			AddRequired("keywords"),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(musicSearchToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -79,6 +85,12 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "music_search",
+		ApprovalSummary: resolveMusicSearchApprovalSummary(arg),
+	}) {
+		return nil
+	}
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
@@ -90,22 +102,35 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	}
 
 	if arg.Type == MusicSearchTypeAlbum {
-		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListSceneAlbumSearch,
 			Query: arg.Keywords,
 		}, send, patch)
 	} else if arg.Type == MusicSearchTypePlaylist {
-		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListScenePlaylistDetail,
 			Query: arg.Keywords,
 		}, send, patch)
 	} else if arg.Type == MusicSearchTypeSong {
-		return neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListSceneSongSearch,
 			Query: arg.Keywords,
 		}, send, patch)
+	} else {
+		err = errors.New("unknown search type")
 	}
-	return errors.New("unknown search type")
+	if err != nil {
+		return err
+	}
+	metaData.SetExtra(musicSearchToolResultKey, "音乐卡片已发送")
+	return nil
+}
+
+func resolveMusicSearchApprovalSummary(arg MusicSearchArgs) string {
+	if arg.Type == "" {
+		return "将根据关键词「" + arg.Keywords + "」发送音乐卡片"
+	}
+	return "将根据" + string(arg.Type) + "搜索「" + arg.Keywords + "」并发送音乐卡片"
 }
 
 func (musicSearchHandler) CommandDescription() string {

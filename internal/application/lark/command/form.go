@@ -218,7 +218,9 @@ func BuildCommandFormRawCommand(root *xcommand.Command[*larkim.P2MessageReceiveV
 }
 
 func resolveCommandFormState(root *xcommand.Command[*larkim.P2MessageReceiveV1], rawCommand string) (*commandFormState, error) {
-	root = defaultCommandRoot(root)
+	if root == nil {
+		root = LarkRootCommand
+	}
 	rawCommand = normalizeCommandInput(rawCommand)
 	if rawCommand == "" {
 		return nil, errors.New("empty command")
@@ -279,26 +281,13 @@ func resolveCommandTarget(root *xcommand.Command[*larkim.P2MessageReceiveV1], to
 		idx++
 	}
 	if cur != nil && cur.Func == nil && idx == len(tokens) {
-		if sub := defaultSubCommand(cur); sub != nil {
+		defaultSubCommandName := strings.TrimSpace(cur.DefaultSubCommand)
+		if sub := cur.SubCommands[defaultSubCommandName]; defaultSubCommandName != "" && sub != nil {
 			cur = sub
 			pathTokens = append(pathTokens, sub.Name)
 		}
 	}
 	return cur, pathTokens, idx
-}
-
-func defaultSubCommand(cmd *xcommand.Command[*larkim.P2MessageReceiveV1]) *xcommand.Command[*larkim.P2MessageReceiveV1] {
-	if cmd == nil || strings.TrimSpace(cmd.DefaultSubCommand) == "" {
-		return nil
-	}
-	return cmd.SubCommands[strings.TrimSpace(cmd.DefaultSubCommand)]
-}
-
-func defaultCommandRoot(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *xcommand.Command[*larkim.P2MessageReceiveV1] {
-	if root != nil {
-		return root
-	}
-	return LarkRootCommand
 }
 
 func normalizeCommandInput(raw string) string {

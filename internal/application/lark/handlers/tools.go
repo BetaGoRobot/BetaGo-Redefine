@@ -8,14 +8,20 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
+func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := buildTools(true, true, true, true)
 	xcommand.RegisterTool(ins, PermissionManage)
 	return ins
 }
 
+func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
+	return BuildLarkTools()
+}
+
 func BuildSchedulableTools() *tools.Impl[larkim.P2MessageReceiveV1] {
-	return buildTools(false, false, false, false)
+	ins := buildTools(false, false, false, false)
+	scheduleapp.RegisterRuntimeTools(ins)
+	return ins
 }
 
 func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools, allowTargetChatOverride bool) *tools.Impl[larkim.P2MessageReceiveV1] {

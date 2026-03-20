@@ -30,13 +30,17 @@ type taskSubmitter interface {
 	Submit(context.Context, string, func(context.Context) error) error
 }
 
+type messageRunner interface {
+	Run(context.Context, *larkim.P2MessageReceiveV1)
+}
+
 // HandlerSet 是当前服务消费的所有 Lark websocket / callback 事件的传输层入口。
 //
 // 这轮运行时改造里最关键的变化是：消息和 reaction 不再默认可以无限制
 // 起 goroutine，而是可以挂到有界执行器上，在入口边界统一施加队列上限
 // 和超时约束。
 type HandlerSet struct {
-	messageProcessor  *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	messageProcessor  messageRunner
 	reactionProcessor *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
 	messageExecutor   taskSubmitter
 	reactionExecutor  taskSubmitter
@@ -50,7 +54,7 @@ var (
 // HandlerSetOptions 允许测试代码和运行时装配代码注入实际要使用的
 // processor / executor 组合。
 type HandlerSetOptions struct {
-	MessageProcessor  *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	MessageProcessor  messageRunner
 	ReactionProcessor *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
 	MessageExecutor   taskSubmitter
 	ReactionExecutor  taskSubmitter
@@ -99,7 +103,7 @@ func (h *HandlerSet) submitMessageProcessor(ctx context.Context, msgID string, e
 		return nil
 	}
 	run := func(taskCtx context.Context) error {
-		h.messageProcessor.NewExecution().WithCtx(taskCtx).WithData(event).Run()
+		h.messageProcessor.Run(taskCtx, event)
 		return nil
 	}
 	if h.messageExecutor == nil {
@@ -204,7 +208,7 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 	resp, dispatchErr := appcardaction.Dispatch(ctx, cardAction, metaData)
 	if dispatchErr != nil {
 		logs.L().Ctx(ctx).Warn("dispatch card action failed", zap.Error(dispatchErr))
-		return nil, nil
+		return appcardaction.ErrorToast("卡片操作失败: " + dispatchErr.Error()), nil
 	}
 	return resp, nil
 }

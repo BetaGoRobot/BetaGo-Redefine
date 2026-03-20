@@ -22,6 +22,8 @@ type permissionManageHandler struct{}
 
 var PermissionManage permissionManageHandler
 
+const permissionManageToolResultKey = "permission_manage_result"
+
 func (permissionManageHandler) ParseCLI(args []string) (PermissionManageArgs, error) {
 	argMap, _ := parseArgs(args...)
 	return PermissionManageArgs{
@@ -49,6 +51,10 @@ func (permissionManageHandler) ToolSpec() xcommand.ToolSpec {
 				Type: "string",
 				Desc: "要查看或管理的目标用户 OpenID，不填则默认当前用户",
 			}),
+		Result: func(metaData *xhandler.BaseMetaData) string {
+			result, _ := metaData.GetExtra(permissionManageToolResultKey)
+			return result
+		},
 	}
 }
 
@@ -67,6 +73,12 @@ func (permissionManageHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	if targetOpenID == "" {
 		targetOpenID = actorOpenID
 	}
+	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
+		ToolName:        "permission_manage",
+		ApprovalSummary: resolvePermissionManageApprovalSummary(actorOpenID, targetOpenID),
+	}) {
+		return nil
+	}
 
 	cardData, err := apppermission.BuildPermissionCardJSONWithOptions(ctx, currentChatID(data, metaData), actorOpenID, targetOpenID, apppermission.PermissionCardViewOptions{
 		LastModifierOpenID: actorOpenID,
@@ -74,7 +86,18 @@ func (permissionManageHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	if err != nil {
 		return err
 	}
-	return sendCompatibleCardJSON(ctx, data, metaData, cardData, "_permissionManage", false)
+	if err := sendCompatibleCardJSON(ctx, data, metaData, cardData, "_permissionManage", false); err != nil {
+		return err
+	}
+	metaData.SetExtra(permissionManageToolResultKey, "权限管理卡片已发送")
+	return nil
+}
+
+func resolvePermissionManageApprovalSummary(actorOpenID, targetOpenID string) string {
+	if targetOpenID == "" || targetOpenID == actorOpenID {
+		return "将发送当前用户的权限管理卡片"
+	}
+	return "将发送目标用户的权限管理卡片"
 }
 
 func (permissionManageHandler) CommandDescription() string {

@@ -65,15 +65,19 @@ func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaD
 		return nil, err
 	}
 
-	handler, ok := defaultRegistry.handler(action.Name)
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnhandledAction, action.Name)
-	}
-
 	actionCtx := &Context{
 		Event:    event,
 		MetaData: metaData,
 		Action:   action,
+	}
+
+	if handled, resp, err := dispatchAgentRuntimeAction(ctx, actionCtx); handled {
+		return resp, err
+	}
+
+	handler, ok := defaultRegistry.handler(action.Name)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnhandledAction, action.Name)
 	}
 
 	switch handler.mode {

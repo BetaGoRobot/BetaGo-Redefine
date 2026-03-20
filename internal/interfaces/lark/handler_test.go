@@ -2,10 +2,12 @@ package lark
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +74,27 @@ type messageTestOperator struct {
 	runFn func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) error
 }
 
+type messageTestRunner struct {
+	runFn func(context.Context, *larkim.P2MessageReceiveV1)
+}
+
+func (r *messageTestRunner) Run(ctx context.Context, event *larkim.P2MessageReceiveV1) {
+	if r != nil && r.runFn != nil {
+		r.runFn(ctx, event)
+	}
+}
+
+type processorMessageRunner struct {
+	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+}
+
+func (r *processorMessageRunner) Run(ctx context.Context, event *larkim.P2MessageReceiveV1) {
+	if r == nil || r.processor == nil {
+		return
+	}
+	r.processor.NewExecution().WithCtx(ctx).WithData(event).Run()
+}
+
 func (o *messageTestOperator) Name() string {
 	return "message_test_operator"
 }
@@ -89,7 +112,7 @@ func TestMessageV2HandlerStartsNewRootTracePerCall(t *testing.T) {
 
 	submitter := &traceCaptureSubmitter{}
 	handlerSet := NewHandlerSet(HandlerSetOptions{
-		MessageProcessor: &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{},
+		MessageProcessor: &messageTestRunner{},
 		MessageExecutor:  submitter,
 	})
 
@@ -124,7 +147,7 @@ func TestMessageAndReactionHandlersUseIndependentRootTraces(t *testing.T) {
 	messageSubmitter := &traceCaptureSubmitter{}
 	reactionSubmitter := &traceCaptureSubmitter{}
 	handlerSet := NewHandlerSet(HandlerSetOptions{
-		MessageProcessor:  &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{},
+		MessageProcessor:  &messageTestRunner{},
 		ReactionProcessor: &xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]{},
 		MessageExecutor:   messageSubmitter,
 		ReactionExecutor:  reactionSubmitter,
@@ -208,6 +231,39 @@ func TestCardActionHandlerStartsNewRootTracePerCall(t *testing.T) {
 	}
 }
 
+func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	actionName := "test.error." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	appcardaction.RegisterSync(actionName, func(context.Context, *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+		return nil, errors.New("resume dispatcher unavailable")
+	})
+
+	handlerSet := NewHandlerSet(HandlerSetOptions{})
+	resp, err := handlerSet.CardActionHandler(context.Background(), newCardActionEvent("card-msg-error", actionName))
+	if err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if resp == nil || resp.Toast == nil {
+		t.Fatalf("expected error toast response, got %+v", resp)
+	}
+	if resp.Toast.Type != "error" {
+		t.Fatalf("toast type = %q, want %q", resp.Toast.Type, "error")
+	}
+	if !strings.Contains(resp.Toast.Content, "卡片操作失败") {
+		t.Fatalf("toast content = %q, want contain 卡片操作失败", resp.Toast.Content)
+	}
+}
+
 func TestMessageV2HandlerPreservesSameTraceAcrossEntryExecutorAndProcessor(t *testing.T) {
 	restore := installHandlerTestTracer(t)
 	defer restore()
@@ -261,7 +317,7 @@ func TestMessageV2HandlerPreservesSameTraceAcrossEntryExecutorAndProcessor(t *te
 		})
 
 	handlerSet := NewHandlerSet(HandlerSetOptions{
-		MessageProcessor: processor,
+		MessageProcessor: &processorMessageRunner{processor: processor},
 		MessageExecutor:  capturingExecutor,
 	})
 

@@ -7,6 +7,10 @@
 
 这份计划对应 `docs/architecture/agent-runtime-design.md`，目标是在不推翻当前 Lark runtime、typed command/tool、schedule、card callback 的前提下，渐进式引入一个可持续、可恢复、可审批、可观测的 `Agent Runtime`。
 
+当前已完成的落地进展见：
+
+- `docs/architecture/agent-runtime-progress.md`
+
 总原则：
 
 - 先收敛 runtime contract，再切真实流量。

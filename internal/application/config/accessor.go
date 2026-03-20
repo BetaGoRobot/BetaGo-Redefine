@@ -109,6 +109,11 @@ func (a *Accessor) WithDrawReplace() bool {
 }
 
 // ChatReasoningModel 获取推理模型
+func (a *Accessor) ChatMode() ChatMode {
+	return ChatMode(a.manager.GetString(a.ctx, KeyChatMode, a.chatID, a.openID)).Normalize()
+}
+
+// ChatReasoningModel 获取推理模型
 func (a *Accessor) ChatReasoningModel() string {
 	return a.manager.GetString(a.ctx, KeyChatReasoningModel, a.chatID, a.openID)
 }
@@ -192,6 +197,10 @@ func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {
 
 func GetWithDrawReplace(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyWithDrawReplace, chatID, openID)
+}
+
+func GetChatMode(ctx context.Context, chatID, openID string) ChatMode {
+	return ChatMode(GetManager().GetString(ctx, KeyChatMode, chatID, openID)).Normalize()
 }
 
 func GetChatReasoningModel(ctx context.Context, chatID, openID string) string {

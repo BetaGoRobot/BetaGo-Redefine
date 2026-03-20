@@ -21,6 +21,8 @@ Related docs:
 - `docs/architecture/runtime-governance.md`
 - `docs/adr/0004-scheduler-ha.md`
 - `docs/architecture/card-regression-debug-design.md`
+- `docs/architecture/agent-runtime-progress.md`
+- `docs/architecture/agent-runtime-next-steps-plan.md`
 
 ## Problem Statement
 

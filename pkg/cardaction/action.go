@@ -62,6 +62,14 @@ const (
 	ActionScheduleDelete         = "schedule.delete"
 	ActionWordChunksView         = "wordcount.chunks.view"
 	ActionWordChunkDetail        = "wordcount.chunk.detail"
+	ActionAgentRuntimeResume     = "agent.runtime.resume"
+	ActionAgentRuntimeReject     = "agent.runtime.reject"
+
+	RunIDField    = "run_id"
+	StepIDField   = "step_id"
+	RevisionField = "revision"
+	SourceField   = "source"
+	TokenField    = "token"
 )
 
 var (
@@ -240,6 +248,26 @@ func (b *Builder) WithValue(key, value string) *Builder {
 
 func (b *Builder) WithID(id string) *Builder {
 	return b.WithValue(IDField, id)
+}
+
+func (b *Builder) WithRunID(runID string) *Builder {
+	return b.WithValue(RunIDField, runID)
+}
+
+func (b *Builder) WithStepID(stepID string) *Builder {
+	return b.WithValue(StepIDField, stepID)
+}
+
+func (b *Builder) WithRevision(revision string) *Builder {
+	return b.WithValue(RevisionField, revision)
+}
+
+func (b *Builder) WithSource(source string) *Builder {
+	return b.WithValue(SourceField, source)
+}
+
+func (b *Builder) WithToken(token string) *Builder {
+	return b.WithValue(TokenField, token)
 }
 
 func (b *Builder) WithCommand(command string) *Builder {

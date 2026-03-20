@@ -5,8 +5,10 @@ import (
 	"errors"
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/gg/gresult"
+	"go.uber.org/zap"
 )
 
 type (
@@ -49,6 +51,7 @@ func BindCLI[TData, TArgs any](handler CLIArgHandler[TData, TArgs]) CommandFunc[
 
 func BindTool[TMeta, TArgs any](handler ToolArgHandler[TMeta, TArgs]) arktools.HandlerFunc[TMeta] {
 	return func(ctx context.Context, rawJSON string, meta arktools.FCMeta[TMeta]) gresult.R[string] {
+		logs.L().Ctx(ctx).Info("Call tool", zap.String("rawJSON", rawJSON), zap.Any("fc", handler.ToolSpec()))
 		if handler == nil {
 			return gresult.Err[string](errors.New("tool handler is nil"))
 		}

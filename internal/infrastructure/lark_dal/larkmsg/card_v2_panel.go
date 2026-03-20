@@ -24,7 +24,7 @@ func CollapsiblePanel(title string, elements []any, opts CollapsiblePanelOptions
 		"elements":         elements,
 		"header": map[string]any{
 			"title":          Markdown(title),
-			"width":          "auto_when_fold",
+			"width":          "full",
 			"vertical_align": "center",
 			"padding":        "4px 0px 4px 8px",
 			"icon": map[string]any{

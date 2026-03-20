@@ -114,6 +114,9 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 				Type: responses.TextType_json_object,
 			},
 		},
+		Reasoning: &responses.ResponsesReasoning{
+			Effort: responses.ReasoningEffort_low,
+		},
 	}
 
 	// 调用 LLM

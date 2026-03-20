@@ -15,17 +15,48 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-// Handler  消息处理器（保留用于向后兼容）
-var Handler *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+type MessageHandler struct {
+	manager   *appconfig.Manager
+	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+}
+
+// Handler 消息处理入口。它只在最前面做一次 standard / agentic 路由，后续各走各的 processor。
+var Handler *MessageHandler
 
 // ConfigManager 全局配置管理器（新代码应该使用依赖注入）
 var ConfigManager *appconfig.Manager
 
-// NewMessageProcessor 创建新的消息处理器（推荐使用）
-func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	processor := &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{}
+func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
+	if cfgManager == nil {
+		cfgManager = appconfig.GetManager()
+	}
+	handler := &MessageHandler{
+		manager: cfgManager,
+		processor: newMessageProcessorBase(cfgManager).
+			AddAsync(ops.NewAgentShadowOperator()).
+			AddAsync(&ops.ReplyChatOperator{}).
+			AddAsync(&ops.CommandOperator{}).
+			AddAsync(&ops.ChatMsgOperator{}),
+	}
+	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
+		return collectMessageFeatures(handler.processor)
+	})
+	return handler
+}
 
-	processor = processor.
+func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceiveV1) {
+	if h == nil {
+		return
+	}
+	processor := h.processor
+	if processor == nil {
+		return
+	}
+	processor.NewExecution().WithCtx(ctx).WithData(event).Run()
+}
+
+func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return (&xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{}).
 		OnPanic(func(ctx context.Context, err error, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
 			larkmsg.SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
 		}).
@@ -35,7 +66,7 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[lark
 		}).
 		WithDefer(recording.CollectMessage).
 		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {
-			if !meta.IsCommandMarked() { // 过滤Command
+			if !meta.IsCommandMarked() {
 				if privateModeEnabled, err := larkmsg.IsPrivateModeEnabled(ctx, *event.Event.Message.ChatId); err != nil {
 					return
 				} else if privateModeEnabled {
@@ -48,15 +79,21 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[lark
 		AddAsync(&ops.RecordMsgOperator{}).
 		AddAsync(&ops.RepeatMsgOperator{}).
 		AddAsync(&ops.ReactMsgOperator{}).
-		AddAsync(&ops.WordReplyMsgOperator{}).
-		AddAsync(&ops.ReplyChatOperator{}).
-		AddAsync(&ops.CommandOperator{}).
-		AddAsync(&ops.ChatMsgOperator{})
+		AddAsync(&ops.WordReplyMsgOperator{})
+}
 
-	// 设置获取功能列表的回调
-	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
-		features := make([]appconfig.Feature, 0)
+func collectMessageFeatures(processors ...*xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []appconfig.Feature {
+	features := make([]appconfig.Feature, 0)
+	seen := make(map[string]struct{})
+	for _, processor := range processors {
+		if processor == nil {
+			continue
+		}
 		for _, fi := range processor.ListFeatures() {
+			if _, ok := seen[fi.ID]; ok {
+				continue
+			}
+			seen[fi.ID] = struct{}{}
 			features = append(features, appconfig.Feature{
 				Name:           fi.ID,
 				Description:    fi.Description,
@@ -64,23 +101,19 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[lark
 				DefaultEnabled: fi.Default,
 			})
 		}
-		return features
-	})
-
-	return processor
+	}
+	return features
 }
 
 func init() {
-	// 向后兼容：初始化全局变量
 	ConfigManager = appconfig.NewManager()
 	Handler = NewMessageProcessor(ConfigManager)
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
-	meta := &xhandler.BaseMetaData{
+	return &xhandler.BaseMetaData{
 		ChatID: *event.Event.Message.ChatId,
 		IsP2P:  *event.Event.Message.ChatType == "p2p",
 		OpenID: botidentity.MessageSenderOpenID(event),
 	}
-	return meta
 }

@@ -82,6 +82,17 @@ var configDefinitions = []ConfigDefinition{
 		ValueType:   "bool",
 	},
 	{
+		Key:         KeyChatMode,
+		Description: "聊天模式，standard 为标准聊天，agentic 为 agentic 卡片聊天",
+		ValueType:   "string",
+		EnumOptionsFunc: func() []ConfigEnumOption {
+			return []ConfigEnumOption{
+				{Text: "standard | 标准聊天", Value: string(ChatModeStandard)},
+				{Text: "agentic | Agentic 卡片聊天", Value: string(ChatModeAgentic)},
+			}
+		},
+	},
+	{
 		Key:             KeyChatReasoningModel,
 		Description:     "推理模型 ID",
 		ValueType:       "string",
