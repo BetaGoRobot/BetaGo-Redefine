@@ -51,11 +51,9 @@ func (r *ResponsesImpl[T]) StreamTurn(
 					logs.L().Ctx(ctx).Error("manual response turn handle event error", zap.Error(handleErr))
 					return
 				}
-				for _, item := range r.drainPendingStreamItems() {
-					if !yield(item) {
-						cleanupResponsesStream(resp)
-						return
-					}
+				if !r.flushPendingStreamItems(ctx, yield) {
+					cleanupResponsesStream(resp)
+					return
 				}
 				if toolCall != nil {
 					callCopy := *toolCall

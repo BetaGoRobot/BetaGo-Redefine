@@ -21,7 +21,6 @@ import (
 	"github.com/bytedance/gg/gresult"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +39,7 @@ type (
 		functionInput          map[callID]any
 		functionResult         map[callID]gresult.R[string]
 		pendingCapabilityCalls []CapabilityCallTrace
+		ignoredEventCounts     map[string]int
 
 		lastRespID string
 		textOutput textOutput
@@ -150,6 +150,7 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		functionInput:          make(map[callID]any),
 		functionResult:         make(map[callID]gresult.R[string]),
 		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
+		ignoredEventCounts:     make(map[string]int),
 	}
 }
 
@@ -257,9 +258,9 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			// 		Type: responses.TextType_json_object,
 			// 	},
 			// },
-			Reasoning: &responses.ResponsesReasoning{
-				Effort: responses.ReasoningEffort_medium,
-			},
+			// Reasoning: &responses.ResponsesReasoning{
+			// 	Effort: responses.ReasoningEffort_medium,
+			// },
 			Stream: gptr.Of(true),
 		})
 		if err != nil {
@@ -294,10 +295,14 @@ func (r *ResponsesImpl[T]) OnNormalDelta(ctx context.Context, event *responses.E
 }
 
 func (r *ResponsesImpl[T]) OnOthers(ctx context.Context, event *responses.Event) {
-	trace.SpanFromContext(ctx).AddEvent(
-		"ignored_event",
-		trace.WithAttributes(attribute.String("event.type", event.GetEventType())),
-	)
+	if r == nil || event == nil {
+		return
+	}
+	eventType := strings.TrimSpace(event.GetEventType())
+	if eventType == "" {
+		eventType = "unknown"
+	}
+	r.ignoredEventCounts[eventType]++
 }
 
 func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event) (newRes *arkutils.ResponsesStreamReader, err error) {
@@ -348,6 +353,18 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 	if len(resultPreview) > 0 {
 		span.SetAttributes(attribute.StringSlice("function_results.preview", resultPreview))
 	}
+	if len(r.ignoredEventCounts) > 0 {
+		ignoredPreview := make([]string, 0, min(len(r.ignoredEventCounts), 10))
+		ignoredCount := 0
+		for eventType, count := range r.ignoredEventCounts {
+			ignoredCount += count
+			if len(ignoredPreview) < 10 {
+				ignoredPreview = append(ignoredPreview, fmt.Sprintf("%s:%d", eventType, count))
+			}
+		}
+		span.SetAttributes(attribute.Int("ignored_events.count", ignoredCount))
+		span.SetAttributes(attribute.StringSlice("ignored_events.preview", ignoredPreview))
+	}
 	outputText := utils.MustMarshalString(r.textOutput)
 	span.SetAttributes(otel.PreviewAttrs("output", outputText, 256)...)
 	logs.L().Ctx(ctx).Info("ResponsesCallResult", fields...)
@@ -372,6 +389,39 @@ func (r *ResponsesImpl[T]) drainPendingStreamItems() []*ModelStreamRespReasoning
 	}
 	r.pendingCapabilityCalls = r.pendingCapabilityCalls[:0]
 	return items
+}
+
+func (r *ResponsesImpl[T]) flushPendingStreamItems(ctx context.Context, yield func(*ModelStreamRespReasoning) bool) bool {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
+	if r == nil {
+		return true
+	}
+
+	reasoningDelta := r.textOutput.ReasoningTextDelta
+	normalDelta := r.textOutput.NormalTextDelta
+	r.textOutput.ReasoningTextDelta = ""
+	r.textOutput.NormalTextDelta = ""
+	if reasoningDelta != "" || normalDelta != "" {
+		if !yield(&ModelStreamRespReasoning{
+			ReasoningContent: reasoningDelta,
+			Content:          normalDelta,
+		}) {
+			return false
+		}
+	}
+
+	for i := range r.pendingCapabilityCalls {
+		traceCopy := r.pendingCapabilityCalls[i]
+		if !yield(&ModelStreamRespReasoning{
+			CapabilityCall: &traceCopy,
+		}) {
+			return false
+		}
+	}
+	r.pendingCapabilityCalls = r.pendingCapabilityCalls[:0]
+	return true
 }
 
 func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
@@ -423,7 +473,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		// 	},
 		// },
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_medium,
+			Effort: responses.ReasoningEffort_low,
 		},
 		Stream: gptr.Of(true),
 	}
@@ -463,10 +513,8 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 				continue
 			}
 
-			for _, item := range r.drainPendingStreamItems() {
-				if !yield(item) {
-					return
-				}
+			if !r.flushPendingStreamItems(ctx, yield) {
+				return
 			}
 		}
 	}, nil

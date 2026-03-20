@@ -16,7 +16,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -335,25 +334,15 @@ func (m *Manager) getConfigByFullKey(ctx context.Context, fullKey string) (strin
 }
 
 func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey string, options ConfigReadOptions) (string, bool) {
-	ctx, span := otel.StartNamed(ctx, "config.get")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("config.key.preview", otel.PreviewString(fullKey, 128)),
-		attribute.Int("config.key.len", len(fullKey)),
-		attribute.Bool("config.bypass_cache", options.BypassCache),
-	)
 	if !options.BypassCache {
 		m.mu.RLock()
 		if val, ok := m.cache[fullKey]; ok {
 			m.mu.RUnlock()
-			span.AddEvent("config.cache.hit")
 			return val, true
 		}
 		m.mu.RUnlock()
 	}
-	span.AddEvent("config.cache.miss")
 	if infraDB.DB() == nil {
-		span.AddEvent("config.db.unavailable")
 		return "", false
 	}
 
@@ -370,14 +359,11 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 
 	if err == nil && len(cfgs) > 0 {
 		cfg := cfgs[0]
-		span.SetAttributes(attribute.Bool("config.found", true))
 		m.mu.Lock()
 		m.cache[fullKey] = cfg.Value
 		m.mu.Unlock()
 		return cfg.Value, true
 	}
-	otel.RecordError(span, err)
-	span.SetAttributes(attribute.Bool("config.found", false))
 
 	return "", false
 }
@@ -698,18 +684,9 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // 优先级: chat_user > user > chat > global > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
 func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, openID string) bool {
-	ctx, span := otel.StartNamed(ctx, "config.feature_check")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("feature.name", feature),
-		attribute.Bool("feature.default_enabled", defaultEnabled),
-		attribute.String("feature.chat_id", chatID),
-		attribute.String("feature.user_id", openID),
-	)
 	// 1. 检查 chat_user 级别
 	if chatID != "" && openID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, openID, feature) {
-			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeUser))))
 			logs.L().Ctx(ctx).Debug("feature blocked at chat_user level",
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
@@ -722,7 +699,6 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 	// 2. 检查 user 级别
 	if openID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, "", openID, feature) {
-			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", "user")))
 			logs.L().Ctx(ctx).Debug("feature blocked at user level",
 				zap.String("feature", feature),
 				zap.String("user_id", openID),
@@ -734,7 +710,6 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 	// 3. 检查 chat 级别（使用 dynamic_configs）
 	if chatID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeChat, chatID, "", feature) {
-			span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeChat))))
 			logs.L().Ctx(ctx).Debug("feature blocked at chat level",
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
@@ -745,7 +720,6 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 
 	// 4. 检查 global 级别
 	if m.isFeatureBlockedAtScope(ctx, ScopeGlobal, "", "", feature) {
-		span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", string(ScopeGlobal))))
 		logs.L().Ctx(ctx).Debug("feature blocked at global level",
 			zap.String("feature", feature),
 		)
@@ -771,7 +745,6 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 			if err == nil && len(fcs) > 0 {
 				fc := fcs[0]
 				if fc.Disable {
-					span.AddEvent("feature.blocked", trace.WithAttributes(attribute.String("feature.scope", "legacy")))
 					logs.L().Ctx(ctx).Debug("feature disabled in legacy table",
 						zap.String("feature", feature),
 						zap.String("chat_id", chatID),
@@ -783,7 +756,6 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 	}
 
 	// 6. 返回功能的默认值
-	span.SetAttributes(attribute.Bool("feature.enabled", defaultEnabled))
 	return defaultEnabled
 }
 
