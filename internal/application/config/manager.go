@@ -207,12 +207,18 @@ func (m *Manager) SetGetFeaturesFunc(fn func() []Feature) {
 
 // GetInt 获取整数配置
 // 优先级: chat:user > user > chat > global > toml > default
-func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID string) int {
+func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID string) (result int) {
+	source := "toml"
+	defer func() {
+		RecordResolvedConfigValue(ctx, key, strconv.Itoa(result), source)
+	}()
 	// 1. 尝试 chat:user 级别
 	if chatID != "" && openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
 			if intVal, err := strconv.Atoi(val); err == nil {
-				return intVal
+				result = intVal
+				source = "chat_user"
+				return result
 			}
 		}
 	}
@@ -221,7 +227,9 @@ func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID stri
 	if openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
 			if intVal, err := strconv.Atoi(val); err == nil {
-				return intVal
+				result = intVal
+				source = "user"
+				return result
 			}
 		}
 	}
@@ -230,7 +238,9 @@ func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID stri
 	if chatID != "" {
 		if val, ok := m.getConfig(ctx, ScopeChat, chatID, "", key); ok {
 			if intVal, err := strconv.Atoi(val); err == nil {
-				return intVal
+				result = intVal
+				source = "chat"
+				return result
 			}
 		}
 	}
@@ -238,21 +248,30 @@ func (m *Manager) GetInt(ctx context.Context, key ConfigKey, chatID, openID stri
 	// 4. 尝试 global 级别
 	if val, ok := m.getConfig(ctx, ScopeGlobal, "", "", key); ok {
 		if intVal, err := strconv.Atoi(val); err == nil {
-			return intVal
+			result = intVal
+			source = "global"
+			return result
 		}
 	}
 
 	// 5. 回退到 TOML 配置
-	return m.getIntFromToml(key)
+	result = m.getIntFromToml(key)
+	return result
 }
 
 // GetBool 获取布尔配置
-func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID string) bool {
+func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID string) (result bool) {
+	source := "toml"
+	defer func() {
+		RecordResolvedConfigValue(ctx, key, strconv.FormatBool(result), source)
+	}()
 	// 1. 尝试 chat:user 级别
 	if chatID != "" && openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
 			if boolVal, err := strconv.ParseBool(val); err == nil {
-				return boolVal
+				result = boolVal
+				source = "chat_user"
+				return result
 			}
 		}
 	}
@@ -261,7 +280,9 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID str
 	if openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
 			if boolVal, err := strconv.ParseBool(val); err == nil {
-				return boolVal
+				result = boolVal
+				source = "user"
+				return result
 			}
 		}
 	}
@@ -270,7 +291,9 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID str
 	if chatID != "" {
 		if val, ok := m.getConfig(ctx, ScopeChat, chatID, "", key); ok {
 			if boolVal, err := strconv.ParseBool(val); err == nil {
-				return boolVal
+				result = boolVal
+				source = "chat"
+				return result
 			}
 		}
 	}
@@ -278,44 +301,60 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID str
 	// 4. 尝试 global 级别
 	if val, ok := m.getConfig(ctx, ScopeGlobal, "", "", key); ok {
 		if boolVal, err := strconv.ParseBool(val); err == nil {
-			return boolVal
+			result = boolVal
+			source = "global"
+			return result
 		}
 	}
 
 	// 5. 回退到 TOML 配置
-	return m.getBoolFromToml(key)
+	result = m.getBoolFromToml(key)
+	return result
 }
 
 // GetString 获取字符串配置
-func (m *Manager) GetString(ctx context.Context, key ConfigKey, chatID, openID string) string {
+func (m *Manager) GetString(ctx context.Context, key ConfigKey, chatID, openID string) (result string) {
+	source := "toml"
+	defer func() {
+		RecordResolvedConfigValue(ctx, key, result, source)
+	}()
 	// 1. 尝试 chat_user 级别（当同时有 chatID 和 openID 时）
 	if chatID != "" && openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, chatID, openID, key); ok {
-			return val
+			result = val
+			source = "chat_user"
+			return result
 		}
 	}
 
 	// 2. 尝试 user 级别
 	if openID != "" {
 		if val, ok := m.getConfig(ctx, ScopeUser, "", openID, key); ok {
-			return val
+			result = val
+			source = "user"
+			return result
 		}
 	}
 
 	// 3. 尝试 chat 级别
 	if chatID != "" {
 		if val, ok := m.getConfig(ctx, ScopeChat, chatID, "", key); ok {
-			return val
+			result = val
+			source = "chat"
+			return result
 		}
 	}
 
 	// 4. 尝试 global 级别
 	if val, ok := m.getConfig(ctx, ScopeGlobal, "", "", key); ok {
-		return val
+		result = val
+		source = "global"
+		return result
 	}
 
 	// 5. 回退到 TOML 配置
-	return m.getStringFromToml(key)
+	result = m.getStringFromToml(key)
+	return result
 }
 
 // getConfig 从数据库获取配置
@@ -335,14 +374,19 @@ func (m *Manager) getConfigByFullKey(ctx context.Context, fullKey string) (strin
 
 func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey string, options ConfigReadOptions) (string, bool) {
 	if !options.BypassCache {
+		if val, ok, hit := lookupConfigValueFromTraceCache(ctx, fullKey); hit {
+			return val, ok
+		}
 		m.mu.RLock()
 		if val, ok := m.cache[fullKey]; ok {
 			m.mu.RUnlock()
+			storeConfigValueInTraceCache(ctx, fullKey, val, true)
 			return val, true
 		}
 		m.mu.RUnlock()
 	}
 	if infraDB.DB() == nil {
+		storeConfigValueInTraceCache(ctx, fullKey, "", false)
 		return "", false
 	}
 
@@ -362,8 +406,10 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 		m.mu.Lock()
 		m.cache[fullKey] = cfg.Value
 		m.mu.Unlock()
+		storeConfigValueInTraceCache(ctx, fullKey, cfg.Value, true)
 		return cfg.Value, true
 	}
+	storeConfigValueInTraceCache(ctx, fullKey, "", false)
 
 	return "", false
 }
@@ -558,6 +604,7 @@ func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string)
 		m.mu.Lock()
 		m.cache[fullKey] = value
 		m.mu.Unlock()
+		storeConfigValueInTraceCache(ctx, fullKey, value, true)
 
 		return nil
 	})
@@ -587,6 +634,7 @@ func (m *Manager) deleteConfigByFullKey(ctx context.Context, fullKey string) (er
 		m.mu.Lock()
 		delete(m.cache, fullKey)
 		m.mu.Unlock()
+		storeConfigValueInTraceCache(ctx, fullKey, "", false)
 	}
 
 	return err
@@ -683,7 +731,12 @@ func parseConfigKey(fullKey, value string) (ConfigEntry, bool) {
 // IsFeatureEnabled 检查功能是否启用
 // 优先级: chat_user > user > chat > global > legacy function_enablings
 // 返回 true 表示启用，false 表示禁用
-func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, openID string) bool {
+func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultEnabled bool, chatID, openID string) (enabled bool) {
+	source := "default"
+	enabled = defaultEnabled
+	defer func() {
+		RecordFeatureCheckResult(ctx, feature, enabled, source)
+	}()
 	// 1. 检查 chat_user 级别
 	if chatID != "" && openID != "" {
 		if m.isFeatureBlockedAtScope(ctx, ScopeUser, chatID, openID, feature) {
@@ -692,7 +745,9 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 				zap.String("chat_id", chatID),
 				zap.String("user_id", openID),
 			)
-			return false
+			source = "chat_user"
+			enabled = false
+			return enabled
 		}
 	}
 
@@ -703,7 +758,9 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 				zap.String("feature", feature),
 				zap.String("user_id", openID),
 			)
-			return false
+			source = "user"
+			enabled = false
+			return enabled
 		}
 	}
 
@@ -714,7 +771,9 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 				zap.String("feature", feature),
 				zap.String("chat_id", chatID),
 			)
-			return false
+			source = "chat"
+			enabled = false
+			return enabled
 		}
 	}
 
@@ -723,7 +782,9 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 		logs.L().Ctx(ctx).Debug("feature blocked at global level",
 			zap.String("feature", feature),
 		)
-		return false
+		source = "global"
+		enabled = false
+		return enabled
 	}
 
 	// 5. 兼容检查旧的 function_enablings 表
@@ -749,14 +810,16 @@ func (m *Manager) IsFeatureEnabled(ctx context.Context, feature string, defaultE
 						zap.String("feature", feature),
 						zap.String("chat_id", chatID),
 					)
-					return false
+					source = "legacy"
+					enabled = false
+					return enabled
 				}
 			}
 		}
 	}
 
 	// 6. 返回功能的默认值
-	return defaultEnabled
+	return enabled
 }
 
 // FeatureCheckFunc 适配 xhandler.FeatureCheckFunc 的检查函数

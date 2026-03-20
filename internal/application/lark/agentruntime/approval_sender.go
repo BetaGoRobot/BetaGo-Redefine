@@ -34,22 +34,29 @@ const (
 type LarkApprovalSender struct {
 	replyCardJSON             func(context.Context, string, any, string, bool) error
 	createCardJSONByReceiveID func(context.Context, string, string, any, string, string) error
+	sendEphemeralCard         func(context.Context, string, string, any) error
 }
 
 func NewLarkApprovalSender() *LarkApprovalSender {
 	return &LarkApprovalSender{
 		replyCardJSON:             larkmsg.ReplyCardJSON,
 		createCardJSONByReceiveID: larkmsg.CreateCardJSONByReceiveID,
+		sendEphemeralCard: func(ctx context.Context, chatID, openID string, cardData any) error {
+			_, err := larkmsg.SendEphemeralCard(ctx, chatID, openID, cardData)
+			return err
+		},
 	}
 }
 
 func NewLarkApprovalSenderForTest(
 	reply func(context.Context, string, any, string, bool) error,
 	create func(context.Context, string, string, any, string, string) error,
+	sendEphemeral func(context.Context, string, string, any) error,
 ) *LarkApprovalSender {
 	return &LarkApprovalSender{
 		replyCardJSON:             reply,
 		createCardJSONByReceiveID: create,
+		sendEphemeralCard:         sendEphemeral,
 	}
 }
 
@@ -63,8 +70,8 @@ func (s *LarkApprovalSender) SendApprovalCard(ctx context.Context, target Approv
 
 	card := BuildApprovalCard(ctx, request, ApprovalCardStatePending)
 	if visibleOpenID := strings.TrimSpace(target.VisibleOpenID); visibleOpenID != "" {
-		if s.createCardJSONByReceiveID != nil {
-			if err := s.createCardJSONByReceiveID(ctx, larkim.ReceiveIdTypeOpenId, visibleOpenID, card, strings.TrimSpace(request.RunID), approvalCardSuffix); err == nil {
+		if s.sendEphemeralCard != nil && strings.TrimSpace(target.ChatID) != "" {
+			if err := s.sendEphemeralCard(ctx, strings.TrimSpace(target.ChatID), visibleOpenID, card); err == nil {
 				return nil
 			}
 		}

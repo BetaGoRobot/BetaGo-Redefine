@@ -44,6 +44,10 @@ func TestLarkApprovalSenderRepliesToTriggerMessage(t *testing.T) {
 			t.Fatal("create path should not be used when reply target exists")
 			return nil
 		},
+		func(context.Context, string, string, any) error {
+			t.Fatal("ephemeral path should not be used when reply target exists")
+			return nil
+		},
 	)
 
 	err := sender.SendApprovalCard(context.Background(), agentruntime.ApprovalCardTarget{
@@ -93,6 +97,10 @@ func TestLarkApprovalSenderCreatesCardWhenNoReplyTarget(t *testing.T) {
 			assertApprovalCardJSON(t, cardData)
 			return nil
 		},
+		func(context.Context, string, string, any) error {
+			t.Fatal("ephemeral path should not be used when visible target is absent")
+			return nil
+		},
 	)
 
 	err := sender.SendApprovalCard(context.Background(), agentruntime.ApprovalCardTarget{
@@ -106,7 +114,7 @@ func TestLarkApprovalSenderCreatesCardWhenNoReplyTarget(t *testing.T) {
 	}
 }
 
-func TestLarkApprovalSenderCreatesActorVisibleCardBeforeReplyTarget(t *testing.T) {
+func TestLarkApprovalSenderSendsActorVisibleEphemeralCardBeforeReplyTarget(t *testing.T) {
 	now := time.Now().UTC()
 	req := agentruntime.ApprovalRequest{
 		RunID:          "run_approval",
@@ -121,22 +129,23 @@ func TestLarkApprovalSenderCreatesActorVisibleCardBeforeReplyTarget(t *testing.T
 		ExpiresAt:      now.Add(30 * time.Minute),
 	}
 
-	var created bool
+	var sent bool
 	sender := agentruntime.NewLarkApprovalSenderForTest(
 		func(context.Context, string, any, string, bool) error {
 			t.Fatal("reply path should not be used when actor visible target exists")
 			return nil
 		},
 		func(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
-			created = true
-			if receiveIDType != "open_id" {
-				t.Fatalf("receive id type = %q, want open_id", receiveIDType)
+			t.Fatal("create path should not be used when actor visible target exists")
+			return nil
+		},
+		func(ctx context.Context, chatID, openID string, cardData any) error {
+			sent = true
+			if chatID != "oc_chat" {
+				t.Fatalf("chat id = %q, want oc_chat", chatID)
 			}
-			if receiveID != "ou_actor" {
-				t.Fatalf("receive id = %q, want ou_actor", receiveID)
-			}
-			if suffix != "_agent_runtime_approval" {
-				t.Fatalf("create suffix = %q", suffix)
+			if openID != "ou_actor" {
+				t.Fatalf("open id = %q, want ou_actor", openID)
 			}
 			assertApprovalCardJSON(t, cardData)
 			return nil
@@ -151,12 +160,12 @@ func TestLarkApprovalSenderCreatesActorVisibleCardBeforeReplyTarget(t *testing.T
 	if err != nil {
 		t.Fatalf("SendApprovalCard() error = %v", err)
 	}
-	if !created {
-		t.Fatal("expected actor-visible create path to be used")
+	if !sent {
+		t.Fatal("expected actor-visible ephemeral path to be used")
 	}
 }
 
-func TestLarkApprovalSenderFallsBackToReplyWhenActorVisibleCreateFails(t *testing.T) {
+func TestLarkApprovalSenderFallsBackToReplyWhenActorVisibleEphemeralFails(t *testing.T) {
 	now := time.Now().UTC()
 	req := agentruntime.ApprovalRequest{
 		RunID:          "run_approval",
@@ -182,9 +191,14 @@ func TestLarkApprovalSenderFallsBackToReplyWhenActorVisibleCreateFails(t *testin
 			return nil
 		},
 		func(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
-			if receiveIDType != "open_id" || receiveID != "ou_actor" {
-				t.Fatalf("unexpected actor-visible target: type=%q id=%q", receiveIDType, receiveID)
+			t.Fatal("create path should not be used for actor-visible target")
+			return nil
+		},
+		func(ctx context.Context, chatID, openID string, cardData any) error {
+			if chatID != "oc_chat" || openID != "ou_actor" {
+				t.Fatalf("unexpected actor-visible target: chat=%q open_id=%q", chatID, openID)
 			}
+			assertApprovalCardJSON(t, cardData)
 			return errors.New("cannot send actor-visible card")
 		},
 	)
