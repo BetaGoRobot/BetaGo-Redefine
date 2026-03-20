@@ -7,7 +7,6 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -16,26 +15,21 @@ import (
 )
 
 var (
-	runtimeMessageObservation = observeRuntimeMessage
-	standardChatInvoker       = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-		return xcommand.BindCLI(handlers.Chat)(ctx, event, meta, args...)
-	}
-	agenticChatInvoker = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-		return xcommand.BindCLI(handlers.AgenticChat)(ctx, event, meta, args...)
-	}
-	standardRootCommandExecutor = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, commands []string) error {
-		return command.LarkRootCommand.Execute(ctx, event, meta, commands)
-	}
-	agenticRootCommandExecutor = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, commands []string) error {
-		return command.AgenticLarkRootCommand.Execute(ctx, event, meta, commands)
-	}
 	progressReactionHandler = withProgressReaction
 	doneReactionHandler     = addDoneReactionIfNeeded
 )
 
+func chatMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) appconfig.ChatMode {
+	return messageConfigAccessor(ctx, event, meta).ChatMode().Normalize()
+}
+
+func runChatByMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
+	return xcommand.BindCLI(handlers.Chat)(ctx, event, meta, args...)
+}
+
 func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
 	accessor := messageConfigAccessor(ctx, event, meta)
-	if accessor == nil || !accessor.AgentRuntimeEnabled() || !accessor.AgentRuntimeChatCutover() {
+	if accessor == nil {
 		return agentruntime.ShadowObservation{}, false
 	}
 	if accessor.ChatMode().Normalize() != appconfig.ChatModeAgentic {
@@ -106,6 +100,19 @@ func runtimeOwnershipContext(ctx context.Context, observation agentruntime.Shado
 		AttachToRunID:  strings.TrimSpace(observation.AttachToRunID),
 		SupersedeRunID: strings.TrimSpace(observation.SupersedeRunID),
 	})
+}
+
+func runtimeContextForObservedMessage(
+	ctx context.Context,
+	mode appconfig.ChatMode,
+	observation agentruntime.ShadowObservation,
+	observed bool,
+	triggers ...agentruntime.TriggerType,
+) context.Context {
+	if mode.Normalize() != appconfig.ChatModeAgentic || !observed || !shouldDirectRouteRuntime(observation, triggers...) {
+		return ctx
+	}
+	return runtimeOwnershipContext(ctx, observation)
 }
 
 func shouldDirectRouteRuntime(observation agentruntime.ShadowObservation, triggers ...agentruntime.TriggerType) bool {

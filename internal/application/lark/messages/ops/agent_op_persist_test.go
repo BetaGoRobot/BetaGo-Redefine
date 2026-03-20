@@ -50,7 +50,7 @@ func TestAgentShadowOperatorPersistsRunIDsInMetaWhenCoordinatorIsPresent(t *test
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: true}
+			return fakeAgentRuntimeAccessor{shadowOnly: true}
 		},
 		observer:        observer,
 		coordinator:     coordinator,
@@ -107,7 +107,7 @@ func TestAgentShadowOperatorPersistsRunIDsViaCoordinatorLoader(t *testing.T) {
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: true}
+			return fakeAgentRuntimeAccessor{shadowOnly: true}
 		},
 		observer: observer,
 		coordinatorLoader: func(context.Context) agentruntime.ShadowRunStarter {
@@ -166,7 +166,7 @@ func TestNewAgentShadowOperatorAttachesFollowUpToActiveRun(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: true}
+		return fakeAgentRuntimeAccessor{shadowOnly: true}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return false }
@@ -215,7 +215,7 @@ func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: true}
+		return fakeAgentRuntimeAccessor{shadowOnly: true}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return true }

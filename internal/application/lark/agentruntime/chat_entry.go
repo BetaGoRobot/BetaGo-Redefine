@@ -16,142 +16,91 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-const chatEntryModelTypeReason = "reason"
+const agenticChatEntryModelTypeReason = "reason"
 
-type chatResponseMode string
-
-const (
-	chatResponseModeStandard chatResponseMode = "standard"
-	chatResponseModeAgentic  chatResponseMode = "agentic"
-)
-
-type chatEntryConfigAccessor interface {
-	ChatMode() appconfig.ChatMode
-	AgentRuntimeEnabled() bool
-	AgentRuntimeChatCutover() bool
+type agenticChatEntryConfigAccessor interface {
 	ChatReasoningModel() string
 	ChatNormalModel() string
 }
 
 type ChatResponseRequest struct {
-	Event          *larkim.P2MessageReceiveV1
-	Plan           ChatGenerationPlan
-	RuntimeEnabled bool
-	CutoverEnabled bool
-	StartedAt      time.Time
-	Ownership      InitialRunOwnership
+	Event     *larkim.P2MessageReceiveV1
+	Plan      ChatGenerationPlan
+	StartedAt time.Time
+	Ownership InitialRunOwnership
 }
 
-type ChatResponseDispatcher func(context.Context, ChatResponseRequest) error
-
-type ChatEntryHandlerOptions struct {
-	Now               func() time.Time
-	AccessorBuilder   func(context.Context, string, string) chatEntryConfigAccessor
-	MentionChecker    func(*larkim.P2MessageReceiveV1) bool
-	MuteChecker       func(context.Context, string) (bool, error)
-	FileCollector     func(context.Context, *larkim.P2MessageReceiveV1) ([]string, error)
-	AgenticResponder  ChatResponseDispatcher
-	StandardResponder ChatResponseDispatcher
+type AgenticChatEntryHandler struct {
+	now             func() time.Time
+	accessorBuilder func(context.Context, string, string) agenticChatEntryConfigAccessor
+	mentionChecker  func(*larkim.P2MessageReceiveV1) bool
+	muteChecker     func(context.Context, string) (bool, error)
+	fileCollector   func(context.Context, *larkim.P2MessageReceiveV1) ([]string, error)
 }
 
-type ChatEntryHandler struct {
-	now               func() time.Time
-	accessorBuilder   func(context.Context, string, string) chatEntryConfigAccessor
-	mentionChecker    func(*larkim.P2MessageReceiveV1) bool
-	muteChecker       func(context.Context, string) (bool, error)
-	fileCollector     func(context.Context, *larkim.P2MessageReceiveV1) ([]string, error)
-	agenticResponder  ChatResponseDispatcher
-	standardResponder ChatResponseDispatcher
-}
-
-func NewChatEntryHandler(opts ChatEntryHandlerOptions) *ChatEntryHandler {
-	handler := &ChatEntryHandler{
+func NewAgenticChatEntryHandler() *AgenticChatEntryHandler {
+	return &AgenticChatEntryHandler{
 		now: defaultChatEntryNow,
-		accessorBuilder: func(ctx context.Context, chatID, openID string) chatEntryConfigAccessor {
+		accessorBuilder: func(ctx context.Context, chatID, openID string) agenticChatEntryConfigAccessor {
 			return appconfig.NewAccessor(ctx, chatID, openID)
 		},
 		mentionChecker: defaultMentionChecker,
 		muteChecker:    defaultMuteChecker,
 		fileCollector:  defaultFileCollector,
 	}
-	if opts.Now != nil {
-		handler.now = opts.Now
-	}
-	if opts.AccessorBuilder != nil {
-		handler.accessorBuilder = opts.AccessorBuilder
-	}
-	if opts.MentionChecker != nil {
-		handler.mentionChecker = opts.MentionChecker
-	}
-	if opts.MuteChecker != nil {
-		handler.muteChecker = opts.MuteChecker
-	}
-	if opts.FileCollector != nil {
-		handler.fileCollector = opts.FileCollector
-	}
-	handler.agenticResponder = opts.AgenticResponder
-	handler.standardResponder = opts.StandardResponder
-	return handler
 }
 
-func (h *ChatEntryHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
+func (h *AgenticChatEntryHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
+	req, err := h.buildRequest(ctx, event, chatType, size, args...)
+	if err != nil || req == nil {
+		return err
+	}
+	return handleAgenticChatResponse(ctx, req.Event, req.Plan, req.StartedAt, req.Ownership)
+}
+
+func (h *AgenticChatEntryHandler) buildRequest(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (*ChatResponseRequest, error) {
 	if h == nil || h.accessorBuilder == nil {
-		return nil
+		return nil, nil
 	}
 
 	chatID := chatEntryChatID(event)
 	openID := chatEntryOpenID(event)
 	accessor := h.accessorBuilder(ctx, chatID, openID)
 	if accessor == nil {
-		return nil
+		return nil, nil
 	}
 
 	if h.mentionChecker != nil && !h.mentionChecker(event) {
 		muted, muteErr := h.muteChecker(ctx, chatID)
 		if muteErr != nil {
-			return muteErr
+			return nil, muteErr
 		}
 		if muted {
-			return nil
+			return nil, nil
 		}
 	}
 
 	files, err := h.fileCollector(ctx, event)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	responseMode := resolveChatResponseMode(accessor.ChatMode(), chatType)
-	runtimeEnabled := accessor.AgentRuntimeEnabled()
-	cutoverEnabled := accessor.AgentRuntimeChatCutover()
 	req := ChatResponseRequest{
-		Event:          event,
-		Plan:           buildChatGenerationPlan(resolveChatModelID(accessor, chatType), resolvePlanChatMode(responseMode), size, files, args, responseMode == chatResponseModeAgentic && runtimeEnabled && cutoverEnabled),
-		RuntimeEnabled: runtimeEnabled,
-		CutoverEnabled: cutoverEnabled,
-		StartedAt:      h.resolveStartedAt(),
+		Event:     event,
+		Plan:      buildChatGenerationPlan(resolveChatModelID(accessor, chatType), appconfig.ChatModeAgentic, size, files, args, true),
+		StartedAt: h.resolveStartedAt(),
 	}
 	if ownership, ok := InitialRunOwnershipFromContext(ctx); ok {
 		req.Ownership = ownership
 	}
-
-	if responseMode == chatResponseModeAgentic {
-		if h.agenticResponder == nil {
-			return nil
-		}
-		return h.agenticResponder(ctx, req)
-	}
-	if h.standardResponder == nil {
-		return nil
-	}
-	return h.standardResponder(ctx, req)
+	return &req, nil
 }
 
-func (h *ChatEntryHandler) resolveStartedAt() time.Time {
+func (h *AgenticChatEntryHandler) resolveStartedAt() time.Time {
 	if h != nil && h.now != nil {
 		return h.now().UTC()
 	}
@@ -173,30 +122,11 @@ func buildChatGenerationPlan(modelID string, mode appconfig.ChatMode, size *int,
 	return plan
 }
 
-func resolvePlanChatMode(mode chatResponseMode) appconfig.ChatMode {
-	switch mode {
-	case chatResponseModeAgentic:
-		return appconfig.ChatModeAgentic
-	default:
-		return appconfig.ChatModeStandard
-	}
-}
-
-func resolveChatResponseMode(mode appconfig.ChatMode, chatType string) chatResponseMode {
-	if strings.EqualFold(strings.TrimSpace(chatType), chatEntryModelTypeReason) {
-		return chatResponseModeAgentic
-	}
-	if mode.Normalize() == appconfig.ChatModeAgentic {
-		return chatResponseModeAgentic
-	}
-	return chatResponseModeStandard
-}
-
-func resolveChatModelID(accessor chatEntryConfigAccessor, chatType string) string {
+func resolveChatModelID(accessor agenticChatEntryConfigAccessor, chatType string) string {
 	if accessor == nil {
 		return ""
 	}
-	if strings.EqualFold(strings.TrimSpace(chatType), chatEntryModelTypeReason) {
+	if strings.EqualFold(strings.TrimSpace(chatType), agenticChatEntryModelTypeReason) {
 		return accessor.ChatReasoningModel()
 	}
 	return accessor.ChatNormalModel()

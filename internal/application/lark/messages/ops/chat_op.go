@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -81,6 +82,15 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 
 	chatID := *event.Event.Message.ChatId
 	decider := ratelimit.GetDecider()
+	observation, ok := observeRuntimeMessage(ctx, event, meta)
+	if ok && shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot) {
+		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeMention)
+		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok,
+			agentruntime.TriggerTypeFollowUp,
+			agentruntime.TriggerTypeReplyToBot,
+		)
+		return runChatByMode(ctx, event, meta)
+	}
 
 	// 优先尝试使用意图识别结果
 	if analysis, ok := GetIntentAnalysisFromMeta(meta); ok {
@@ -96,7 +106,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
-			err := standardChatInvoker(ctx, event, meta)
+			err := runChatByMode(ctx, event, meta)
 			if err != nil {
 				return err
 			}
@@ -151,7 +161,7 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 			zap.String("ratelimit_reason", decision.Reason),
 		)
 		// sendMsg
-		err := standardChatInvoker(ctx, event, meta)
+		err := runChatByMode(ctx, event, meta)
 		if err != nil {
 			return err
 		}

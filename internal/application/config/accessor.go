@@ -98,21 +98,6 @@ func (a *Accessor) IntentRecognitionEnabled() bool {
 	return a.manager.GetBool(a.ctx, KeyIntentRecognitionEnabled, a.chatID, a.openID)
 }
 
-// AgentRuntimeEnabled 检查是否启用 Agent Runtime
-func (a *Accessor) AgentRuntimeEnabled() bool {
-	return a.manager.GetBool(a.ctx, KeyAgentRuntimeEnabled, a.chatID, a.openID)
-}
-
-// AgentRuntimeShadowOnly 检查是否启用 Agent Runtime shadow only 模式
-func (a *Accessor) AgentRuntimeShadowOnly() bool {
-	return a.manager.GetBool(a.ctx, KeyAgentRuntimeShadowOnly, a.chatID, a.openID)
-}
-
-// AgentRuntimeChatCutover 检查是否启用 Agent Runtime 聊天接管
-func (a *Accessor) AgentRuntimeChatCutover() bool {
-	return a.manager.GetBool(a.ctx, KeyAgentRuntimeChatCutover, a.chatID, a.openID)
-}
-
 // MusicCardInThread 检查音乐卡片是否默认回帖中发送
 func (a *Accessor) MusicCardInThread() bool {
 	return a.manager.GetBool(a.ctx, KeyMusicCardInThread, a.chatID, a.openID)
@@ -204,18 +189,6 @@ func GetIntentReplyThreshold(ctx context.Context, chatID, openID string) int {
 // IsIntentRecognitionEnabled 检查是否启用意图识别
 func IsIntentRecognitionEnabled(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyIntentRecognitionEnabled, chatID, openID)
-}
-
-func GetAgentRuntimeEnabled(ctx context.Context, chatID, openID string) bool {
-	return GetManager().GetBool(ctx, KeyAgentRuntimeEnabled, chatID, openID)
-}
-
-func GetAgentRuntimeShadowOnly(ctx context.Context, chatID, openID string) bool {
-	return GetManager().GetBool(ctx, KeyAgentRuntimeShadowOnly, chatID, openID)
-}
-
-func GetAgentRuntimeChatCutover(ctx context.Context, chatID, openID string) bool {
-	return GetManager().GetBool(ctx, KeyAgentRuntimeChatCutover, chatID, openID)
 }
 
 func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {

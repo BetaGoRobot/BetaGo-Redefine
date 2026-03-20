@@ -49,11 +49,13 @@ type appComponents struct {
 
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
-var scheduler *scheduleapp.Scheduler
-var resumeWorker workerHandle
-var buildAgentRuntimeResumeWorker = func(ctx context.Context) workerHandle {
-	return runtimewire.BuildResumeWorker(ctx)
-}
+var (
+	scheduler                     *scheduleapp.Scheduler
+	resumeWorker                  workerHandle
+	buildAgentRuntimeResumeWorker = func(ctx context.Context) workerHandle {
+		return runtimewire.BuildResumeWorker(ctx)
+	}
+)
 
 func startAgentRuntimeResumeWorker(ctx context.Context) error {
 	worker := buildAgentRuntimeResumeWorker(ctx)
@@ -98,7 +100,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	scheduleExecutor := appruntime.NewExecutor(executorConfigs["schedule"])
 
 	agentruntime.SetRuntimeAgenticCutoverBuilder(runtimecutover.BuildDefaultHandler)
-	agentruntime.SetRuntimeStandardCutoverBuilder(runtimecutover.BuildDefaultStandardHandler)
+	// agentruntime.SetRuntimeStandardCutoverBuilder(runtimecutover.BuildDefaultStandardHandler)
 	agentruntime.SetDefaultChatToolProvider(handlers.BuildLarkTools)
 	agentruntime.SetChatGenerationPlanExecutor(agentruntime.NewDefaultChatGenerationPlanExecutor())
 	runtimewire.SetDefaultCapabilityProvider(func() []agentruntime.Capability {

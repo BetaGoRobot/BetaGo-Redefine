@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -48,234 +48,52 @@ func TestRuntimeIsMentionedOnlyTreatsBotMentionAsExplicit(t *testing.T) {
 	}
 }
 
-func TestReplyChatOperatorUsesStandardInvokerInStandardMode(t *testing.T) {
-	prevStandardInvoke := standardChatInvoker
-	prevAgenticInvoke := agenticChatInvoker
-	prevProgress := progressReactionHandler
-	prevDone := doneReactionHandler
-	defer func() {
-		standardChatInvoker = prevStandardInvoke
-		agenticChatInvoker = prevAgenticInvoke
-		progressReactionHandler = prevProgress
-		doneReactionHandler = prevDone
-	}()
-	progressReactionHandler = func(context.Context, string) func() { return func() {} }
-	doneReactionHandler = func(context.Context, string, *xhandler.BaseMetaData) {}
+func TestRuntimeContextForObservedMessageSkipsStandardMode(t *testing.T) {
+	ctx := context.Background()
+	ctx = runtimeContextForObservedMessage(ctx, appconfig.ChatModeStandard, agentruntime.ShadowObservation{
+		PolicyDecision: agentruntime.PolicyDecision{
+			EnterRuntime:   true,
+			TriggerType:    agentruntime.TriggerTypeMention,
+			SupersedeRunID: "run_active",
+		},
+	}, true, agentruntime.TriggerTypeMention)
 
-	invokeCount := 0
-	var seenArgs []string
-	standardChatInvoker = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-		invokeCount++
-		seenArgs = append([]string(nil), args...)
-		return nil
-	}
-	agenticChatInvoker = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, ...string) error {
-		t.Fatal("agentic invoker should not be called in standard mode")
-		return nil
-	}
-
-	event := testMessageEvent("p2p", "oc_chat", "ou_actor")
-	msgID := "om_reply_runtime"
-	event.Event.Message.MessageId = &msgID
-	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
-
-	op := &ReplyChatOperator{}
-	if err := op.PreRun(context.Background(), event, meta); err != nil {
-		t.Fatalf("PreRun() error = %v", err)
-	}
-	if err := op.Run(context.Background(), event, meta); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if invokeCount != 1 {
-		t.Fatalf("standard chat invoke count = %d, want 1", invokeCount)
-	}
-	if len(seenArgs) == 0 {
-		t.Fatal("expected trimmed reply args to be forwarded")
+	if _, ok := agentruntime.InitialRunOwnershipFromContext(ctx); ok {
+		t.Fatal("expected standard mode not to carry runtime ownership")
 	}
 }
 
-func TestAgenticReplyChatOperatorPassesRuntimeOwnershipToAgenticInvoker(t *testing.T) {
-	prevObserve := runtimeMessageObservation
-	prevStandardInvoke := standardChatInvoker
-	prevAgenticInvoke := agenticChatInvoker
-	prevProgress := progressReactionHandler
-	prevDone := doneReactionHandler
-	defer func() {
-		runtimeMessageObservation = prevObserve
-		standardChatInvoker = prevStandardInvoke
-		agenticChatInvoker = prevAgenticInvoke
-		progressReactionHandler = prevProgress
-		doneReactionHandler = prevDone
-	}()
-	runtimeMessageObservation = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-		return agentruntime.ShadowObservation{
-			PolicyDecision: agentruntime.PolicyDecision{
-				EnterRuntime:   true,
-				TriggerType:    agentruntime.TriggerTypeMention,
-				SupersedeRunID: "run_active",
-				Reason:         "supersede_active_run",
-			},
-		}, true
-	}
-	progressReactionHandler = func(context.Context, string) func() { return func() {} }
-	doneReactionHandler = func(context.Context, string, *xhandler.BaseMetaData) {}
-	standardChatInvoker = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, ...string) error {
-		t.Fatal("standard invoker should not be called in agentic mode")
-		return nil
-	}
+func TestRuntimeContextForObservedMessageAttachesOwnershipInAgenticMode(t *testing.T) {
+	ctx := runtimeContextForObservedMessage(context.Background(), appconfig.ChatModeAgentic, agentruntime.ShadowObservation{
+		PolicyDecision: agentruntime.PolicyDecision{
+			EnterRuntime:  true,
+			TriggerType:   agentruntime.TriggerTypeFollowUp,
+			AttachToRunID: "run_active",
+		},
+	}, true, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot)
 
-	var seenOwnership agentruntime.InitialRunOwnership
-	var seenOK bool
-	var seenArgs []string
-	agenticChatInvoker = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-		seenOwnership, seenOK = agentruntime.InitialRunOwnershipFromContext(ctx)
-		seenArgs = append([]string(nil), args...)
-		return nil
-	}
-
-	event := testMessageEvent("p2p", "oc_chat", "ou_actor")
-	msgID := "om_reply_runtime"
-	event.Event.Message.MessageId = &msgID
-	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
-
-	op := &AgenticReplyChatOperator{}
-	if err := op.PreRun(context.Background(), event, meta); err != nil {
-		t.Fatalf("PreRun() error = %v", err)
-	}
-	if err := op.Run(context.Background(), event, meta); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if !seenOK {
+	ownership, ok := agentruntime.InitialRunOwnershipFromContext(ctx)
+	if !ok {
 		t.Fatal("expected runtime ownership in context")
 	}
-	if seenOwnership.TriggerType != agentruntime.TriggerTypeMention {
-		t.Fatalf("trigger type = %q, want %q", seenOwnership.TriggerType, agentruntime.TriggerTypeMention)
+	if ownership.TriggerType != agentruntime.TriggerTypeFollowUp {
+		t.Fatalf("trigger type = %q, want %q", ownership.TriggerType, agentruntime.TriggerTypeFollowUp)
 	}
-	if seenOwnership.SupersedeRunID != "run_active" {
-		t.Fatalf("supersede run id = %q, want %q", seenOwnership.SupersedeRunID, "run_active")
-	}
-	if len(seenArgs) == 0 {
-		t.Fatal("expected trimmed reply args to be forwarded")
+	if ownership.AttachToRunID != "run_active" {
+		t.Fatalf("attach run id = %q, want %q", ownership.AttachToRunID, "run_active")
 	}
 }
 
-func TestAgenticChatMsgOperatorRoutesFollowUpMessagesIntoRuntime(t *testing.T) {
-	prevObserve := runtimeMessageObservation
-	prevStandardInvoke := standardChatInvoker
-	prevAgenticInvoke := agenticChatInvoker
-	defer func() {
-		runtimeMessageObservation = prevObserve
-		standardChatInvoker = prevStandardInvoke
-		agenticChatInvoker = prevAgenticInvoke
-	}()
-	runtimeMessageObservation = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-		return agentruntime.ShadowObservation{
-			PolicyDecision: agentruntime.PolicyDecision{
-				EnterRuntime:  true,
-				TriggerType:   agentruntime.TriggerTypeFollowUp,
-				AttachToRunID: "run_active",
-				Reason:        "attach_follow_up",
-			},
-		}, true
-	}
-	standardChatInvoker = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, ...string) error {
-		t.Fatal("standard invoker should not be called in agentic mode")
-		return nil
-	}
+func TestRuntimeContextForObservedMessageSkipsUnmatchedTrigger(t *testing.T) {
+	ctx := runtimeContextForObservedMessage(context.Background(), appconfig.ChatModeAgentic, agentruntime.ShadowObservation{
+		PolicyDecision: agentruntime.PolicyDecision{
+			EnterRuntime:   true,
+			TriggerType:    agentruntime.TriggerTypeMention,
+			SupersedeRunID: "run_active",
+		},
+	}, true, agentruntime.TriggerTypeCommandBridge)
 
-	invokeCount := 0
-	var seenOwnership agentruntime.InitialRunOwnership
-	var seenOK bool
-	agenticChatInvoker = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-		invokeCount++
-		seenOwnership, seenOK = agentruntime.InitialRunOwnershipFromContext(ctx)
-		return nil
-	}
-
-	event := testMessageEvent("group", "oc_chat", "ou_actor")
-	text := `{"text":"继续把刚才那个审批流程走完"}`
-	event.Event.Message.Content = &text
-	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
-
-	op := &AgenticChatMsgOperator{}
-	if err := op.PreRun(context.Background(), event, meta); err != nil {
-		t.Fatalf("PreRun() error = %v", err)
-	}
-	if err := op.Run(context.Background(), event, meta); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if invokeCount != 1 {
-		t.Fatalf("agentic chat invoke count = %d, want 1", invokeCount)
-	}
-	if !seenOK {
-		t.Fatal("expected runtime ownership in context")
-	}
-	if seenOwnership.TriggerType != agentruntime.TriggerTypeFollowUp {
-		t.Fatalf("trigger type = %q, want %q", seenOwnership.TriggerType, agentruntime.TriggerTypeFollowUp)
-	}
-	if seenOwnership.AttachToRunID != "run_active" {
-		t.Fatalf("attach run id = %q, want %q", seenOwnership.AttachToRunID, "run_active")
-	}
-}
-
-func TestExecuteFromRawCommandPassesRuntimeOwnershipToBBCommand(t *testing.T) {
-	prevObserve := runtimeMessageObservation
-	prevExecute := agenticRootCommandExecutor
-	prevProgress := progressReactionHandler
-	prevDone := doneReactionHandler
-	defer func() {
-		runtimeMessageObservation = prevObserve
-		agenticRootCommandExecutor = prevExecute
-		progressReactionHandler = prevProgress
-		doneReactionHandler = prevDone
-	}()
-
-	runtimeMessageObservation = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-		return agentruntime.ShadowObservation{
-			PolicyDecision: agentruntime.PolicyDecision{
-				EnterRuntime:   true,
-				TriggerType:    agentruntime.TriggerTypeCommandBridge,
-				SupersedeRunID: "run_active",
-				Reason:         "supersede_active_run",
-			},
-		}, true
-	}
-	progressReactionHandler = func(context.Context, string) func() { return func() {} }
-	doneReactionHandler = func(context.Context, string, *xhandler.BaseMetaData) {}
-
-	var seenOwnership agentruntime.InitialRunOwnership
-	var seenOK bool
-	var seenCommands []string
-	agenticRootCommandExecutor = func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, commands []string) error {
-		seenOwnership, seenOK = agentruntime.InitialRunOwnershipFromContext(ctx)
-		seenCommands = append([]string(nil), commands...)
-		return nil
-	}
-
-	event := testMessageEvent("group", "oc_chat", "ou_actor")
-	text := `{"text":"/bb 帮我总结"}`
-	event.Event.Message.Content = &text
-	msgID := "om_bb"
-	event.Event.Message.MessageId = &msgID
-	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
-
-	if err := executeAgenticRawCommand(context.Background(), event, meta, "/bb 帮我总结"); err != nil {
-		t.Fatalf("executeAgenticRawCommand() error = %v", err)
-	}
-
-	if !seenOK {
-		t.Fatal("expected runtime ownership in command context")
-	}
-	if seenOwnership.TriggerType != agentruntime.TriggerTypeCommandBridge {
-		t.Fatalf("trigger type = %q, want %q", seenOwnership.TriggerType, agentruntime.TriggerTypeCommandBridge)
-	}
-	if seenOwnership.SupersedeRunID != "run_active" {
-		t.Fatalf("supersede run id = %q, want %q", seenOwnership.SupersedeRunID, "run_active")
-	}
-	if len(seenCommands) == 0 || seenCommands[0] != "bb" {
-		t.Fatalf("commands = %+v, want bb command", seenCommands)
+	if _, ok := agentruntime.InitialRunOwnershipFromContext(ctx); ok {
+		t.Fatal("expected unmatched trigger not to carry runtime ownership")
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -24,9 +25,9 @@ func TestSendCompatibleTextSuppressesOutputDuringRuntimeCapabilityExecution(t *t
 		replyCalled = true
 		return "om_reply", nil
 	}
-	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) error {
+	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) (string, error) {
 		createCalled = true
-		return nil
+		return "", nil
 	}
 
 	msgID := "om_test"
@@ -74,9 +75,9 @@ func TestSendCompatibleTextUsesReplyPathOutsideRuntimeCapabilityExecution(t *tes
 		}
 		return "om_reply", nil
 	}
-	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) error {
+	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) (string, error) {
 		t.Fatal("create path should not be used when message id exists")
-		return nil
+		return "", nil
 	}
 
 	msgID := "om_test"
@@ -121,9 +122,9 @@ func TestSendCompatibleCardJSONAllowsOutputWhenRuntimeCapabilityExecutionDisable
 		}
 		return "om_reply", nil
 	}
-	scheduleCompatCreateCardJSON = func(ctx context.Context, chatID string, cardData any, msgID, suffix string) error {
+	scheduleCompatCreateCardJSON = func(ctx context.Context, chatID string, cardData any, msgID, suffix string) (string, error) {
 		t.Fatal("create path should not be used when message id exists")
-		return nil
+		return "", nil
 	}
 
 	msgID := "om_test"
@@ -198,5 +199,113 @@ func TestSendCompatibleCardWithMessageIDAllowsOutputWhenRuntimeCapabilityExecuti
 	}
 	if !replyCalled {
 		t.Fatal("expected reply card path to be used")
+	}
+}
+
+func TestSendCompatibleTextCreatePathRecordsServerMessageID(t *testing.T) {
+	originalReply := scheduleCompatReplyText
+	originalCreate := scheduleCompatCreateText
+	t.Cleanup(func() {
+		scheduleCompatReplyText = originalReply
+		scheduleCompatCreateText = originalCreate
+	})
+
+	scheduleCompatReplyText = func(ctx context.Context, text, msgID, suffix string, replyInThread bool) (string, error) {
+		t.Fatal("reply path should not be used without source message id")
+		return "", nil
+	}
+	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) (string, error) {
+		if chatID != "oc_test" {
+			t.Fatalf("chat id = %q, want %q", chatID, "oc_test")
+		}
+		return "om_created_text", nil
+	}
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc_test"}
+	ctx := runtimecontext.WithCompatibleReplyRecorder(context.Background(), runtimecontext.NewCompatibleReplyRecorder())
+	err := sendCompatibleText(ctx, nil, meta, "ok", "_test", false)
+	if err != nil {
+		t.Fatalf("sendCompatibleText() error = %v", err)
+	}
+
+	replyRef, ok := runtimecontext.LatestCompatibleReplyRef(ctx)
+	if !ok {
+		t.Fatal("expected compatible reply ref to be recorded")
+	}
+	if replyRef.MessageID != "om_created_text" {
+		t.Fatalf("compatible reply message id = %q, want %q", replyRef.MessageID, "om_created_text")
+	}
+	if messageID, kind := meta.LastReplyRef(); messageID != "om_created_text" || kind != "text" {
+		t.Fatalf("last reply ref = (%q,%q), want (%q,%q)", messageID, kind, "om_created_text", "text")
+	}
+}
+
+func TestSendCompatibleCardJSONCreatePathRecordsServerMessageID(t *testing.T) {
+	originalReply := scheduleCompatReplyCardJSON
+	originalCreate := scheduleCompatCreateCardJSON
+	t.Cleanup(func() {
+		scheduleCompatReplyCardJSON = originalReply
+		scheduleCompatCreateCardJSON = originalCreate
+	})
+
+	scheduleCompatReplyCardJSON = func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) (string, error) {
+		t.Fatal("reply path should not be used without source message id")
+		return "", nil
+	}
+	scheduleCompatCreateCardJSON = func(ctx context.Context, chatID string, cardData any, msgID, suffix string) (string, error) {
+		if chatID != "oc_test" {
+			t.Fatalf("chat id = %q, want %q", chatID, "oc_test")
+		}
+		return "om_created_card_json", nil
+	}
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc_test"}
+	ctx := runtimecontext.WithCompatibleReplyRecorder(context.Background(), runtimecontext.NewCompatibleReplyRecorder())
+	err := sendCompatibleCardJSON(ctx, nil, meta, map[string]any{"card": "ok"}, "_test", false)
+	if err != nil {
+		t.Fatalf("sendCompatibleCardJSON() error = %v", err)
+	}
+
+	replyRef, ok := runtimecontext.LatestCompatibleReplyRef(ctx)
+	if !ok {
+		t.Fatal("expected compatible reply ref to be recorded")
+	}
+	if replyRef.MessageID != "om_created_card_json" {
+		t.Fatalf("compatible reply message id = %q, want %q", replyRef.MessageID, "om_created_card_json")
+	}
+	if messageID, kind := meta.LastReplyRef(); messageID != "om_created_card_json" || kind != "card_json" {
+		t.Fatalf("last reply ref = (%q,%q), want (%q,%q)", messageID, kind, "om_created_card_json", "card_json")
+	}
+}
+
+func TestSendCompatibleRawCardCreatePathRecordsServerMessageID(t *testing.T) {
+	originalCreate := scheduleCompatCreateRawCard
+	t.Cleanup(func() {
+		scheduleCompatCreateRawCard = originalCreate
+	})
+
+	scheduleCompatCreateRawCard = func(ctx context.Context, chatID, content, msgID, suffix string) (string, error) {
+		if chatID != "oc_test" {
+			t.Fatalf("chat id = %q, want %q", chatID, "oc_test")
+		}
+		return "om_created_raw_card", nil
+	}
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc_test"}
+	ctx := runtimecontext.WithCompatibleReplyRecorder(context.Background(), runtimecontext.NewCompatibleReplyRecorder())
+	err := sendCompatibleRawCard(ctx, nil, meta, `{"type":"card"}`, "_test", false)
+	if err != nil {
+		t.Fatalf("sendCompatibleRawCard() error = %v", err)
+	}
+
+	replyRef, ok := runtimecontext.LatestCompatibleReplyRef(ctx)
+	if !ok {
+		t.Fatal("expected compatible reply ref to be recorded")
+	}
+	if replyRef.MessageID != "om_created_raw_card" {
+		t.Fatalf("compatible reply message id = %q, want %q", replyRef.MessageID, "om_created_raw_card")
+	}
+	if messageID, kind := meta.LastReplyRef(); messageID != "om_created_raw_card" || kind != "raw_card" {
+		t.Fatalf("last reply ref = (%q,%q), want (%q,%q)", messageID, kind, "om_created_raw_card", "raw_card")
 	}
 }

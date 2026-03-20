@@ -12,23 +12,6 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-func TestRuntimeChatCutoverRequiresBothFlags(t *testing.T) {
-	cases := []struct {
-		runtimeEnabled bool
-		cutoverEnabled bool
-		want           bool
-	}{
-		{runtimeEnabled: false, cutoverEnabled: false, want: false},
-		{runtimeEnabled: true, cutoverEnabled: false, want: false},
-		{runtimeEnabled: true, cutoverEnabled: true, want: true},
-	}
-	for _, tc := range cases {
-		if got := tc.runtimeEnabled && tc.cutoverEnabled; got != tc.want {
-			t.Fatalf("runtimeEnabled=%v cutoverEnabled=%v => %v, want %v", tc.runtimeEnabled, tc.cutoverEnabled, got, tc.want)
-		}
-	}
-}
-
 func TestHandleAgenticChatResponseDelegatesToRuntimeCutover(t *testing.T) {
 	originalCutoverBuilder := runtimeAgenticCutoverBuilder
 	originalCardSender := runtimeAgenticCardSender
@@ -64,68 +47,9 @@ func TestHandleAgenticChatResponseDelegatesToRuntimeCutover(t *testing.T) {
 		Args:                        []string{"帮我总结"},
 		EnableDeferredToolCollector: true,
 	}
-	err := handleAgenticChatResponse(context.Background(), event, plan, true, true, now, InitialRunOwnership{})
+	err := handleAgenticChatResponse(context.Background(), event, plan, now, InitialRunOwnership{})
 	if err != nil {
 		t.Fatalf("handleAgenticChatResponse() error = %v", err)
-	}
-
-	if fakeCutover.request == nil {
-		t.Fatal("expected runtime cutover handler to be called")
-	}
-	if !reflect.DeepEqual(fakeCutover.request.Plan, plan) {
-		t.Fatalf("unexpected plan: %+v", fakeCutover.request.Plan)
-	}
-	if fakeCutover.request.StartedAt != now {
-		t.Fatalf("started at = %v, want %v", fakeCutover.request.StartedAt, now)
-	}
-	if fakeExecutor.calls != 1 {
-		t.Fatalf("executor calls = %d, want 1", fakeExecutor.calls)
-	}
-	if !reflect.DeepEqual(fakeExecutor.lastPlan, plan) {
-		t.Fatalf("executor plan = %+v, want %+v", fakeExecutor.lastPlan, plan)
-	}
-	if fakeCutover.drainCount != 2 {
-		t.Fatalf("drain count = %d, want 2", fakeCutover.drainCount)
-	}
-}
-
-func TestHandleStandardChatResponseDelegatesToRuntimeCutover(t *testing.T) {
-	originalCutoverBuilder := runtimeStandardCutoverBuilder
-	originalReplySender := runtimeStandardReplySender
-	defer func() {
-		runtimeStandardCutoverBuilder = originalCutoverBuilder
-		runtimeStandardReplySender = originalReplySender
-		SetChatGenerationPlanExecutor(nil)
-	}()
-
-	fakeCutover := &fakeRuntimeStandardCutover{}
-	fakeExecutor := &fakeChatGenerationPlanExecutor{
-		result: seqFromItems(
-			&ark_dal.ModelStreamRespReasoning{ReasoningContent: "先读上下文"},
-			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Thought: "先读上下文", Reply: "这是最终回复"}},
-		),
-	}
-	runtimeStandardCutoverBuilder = func(context.Context) RuntimeStandardCutoverHandler {
-		return fakeCutover
-	}
-	SetChatGenerationPlanExecutor(fakeExecutor)
-	runtimeStandardReplySender = func(ctx context.Context, replyText string, msgID string) error {
-		t.Fatal("expected runtime cutover to bypass direct text sender")
-		return nil
-	}
-
-	event := testChatResponseEvent()
-	now := time.Date(2026, 3, 18, 15, 0, 0, 0, time.UTC)
-	plan := ChatGenerationPlan{
-		ModelID: "ep-test-standard",
-		Mode:    appconfig.ChatModeStandard,
-		Size:    20,
-		Files:   []string{"https://example.com/image.png"},
-		Args:    []string{"帮我总结"},
-	}
-	err := handleStandardChatResponse(context.Background(), event, plan, true, true, now, InitialRunOwnership{})
-	if err != nil {
-		t.Fatalf("handleStandardChatResponse() error = %v", err)
 	}
 
 	if fakeCutover.request == nil {
@@ -169,7 +93,7 @@ func TestHandleAgenticChatResponseDefersGenerationUntilRuntimeHandlerConsumesIt(
 		Mode:    appconfig.ChatModeAgentic,
 		Size:    20,
 		Args:    []string{"帮我总结"},
-	}, true, true, time.Date(2026, 3, 18, 14, 30, 0, 0, time.UTC), InitialRunOwnership{})
+	}, time.Date(2026, 3, 18, 14, 30, 0, 0, time.UTC), InitialRunOwnership{})
 	if err != nil {
 		t.Fatalf("handleAgenticChatResponse() error = %v", err)
 	}
@@ -200,41 +124,12 @@ func TestHandleAgenticChatResponseForcesAgenticPlanModeOnFallbackPath(t *testing
 
 	err := handleAgenticChatResponse(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test-agentic",
-	}, false, false, time.Date(2026, 3, 18, 14, 31, 0, 0, time.UTC), InitialRunOwnership{})
+	}, time.Date(2026, 3, 18, 14, 31, 0, 0, time.UTC), InitialRunOwnership{})
 	if err != nil {
 		t.Fatalf("handleAgenticChatResponse() error = %v", err)
 	}
 	if fakeExecutor.lastPlan.Mode != appconfig.ChatModeAgentic {
 		t.Fatalf("executor plan mode = %q, want %q", fakeExecutor.lastPlan.Mode, appconfig.ChatModeAgentic)
-	}
-}
-
-func TestHandleStandardChatResponseDefersGenerationUntilRuntimeHandlerConsumesIt(t *testing.T) {
-	originalCutoverBuilder := runtimeStandardCutoverBuilder
-	defer func() {
-		runtimeStandardCutoverBuilder = originalCutoverBuilder
-		SetChatGenerationPlanExecutor(nil)
-	}()
-
-	fakeCutover := &fakeRuntimeStandardCutover{skipGenerate: true}
-	fakeExecutor := &fakeChatGenerationPlanExecutor{
-		result: seqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "noop"}}),
-	}
-	runtimeStandardCutoverBuilder = func(context.Context) RuntimeStandardCutoverHandler {
-		return fakeCutover
-	}
-	SetChatGenerationPlanExecutor(fakeExecutor)
-
-	err := handleStandardChatResponse(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
-		ModelID: "ep-test-standard",
-		Size:    20,
-		Args:    []string{"帮我总结"},
-	}, true, true, time.Date(2026, 3, 18, 15, 30, 0, 0, time.UTC), InitialRunOwnership{})
-	if err != nil {
-		t.Fatalf("handleStandardChatResponse() error = %v", err)
-	}
-	if fakeExecutor.calls != 0 {
-		t.Fatalf("executor calls = %d, want 0", fakeExecutor.calls)
 	}
 }
 
@@ -245,30 +140,6 @@ type fakeRuntimeAgenticCutover struct {
 }
 
 func (f *fakeRuntimeAgenticCutover) Handle(ctx context.Context, req RuntimeAgenticCutoverRequest) error {
-	reqCopy := req
-	f.request = &reqCopy
-	if f.skipGenerate {
-		return nil
-	}
-	stream, err := req.Plan.Generate(ctx, req.Event)
-	if err != nil {
-		return err
-	}
-	for item := range stream {
-		if item != nil {
-			f.drainCount++
-		}
-	}
-	return nil
-}
-
-type fakeRuntimeStandardCutover struct {
-	request      *RuntimeStandardCutoverRequest
-	drainCount   int
-	skipGenerate bool
-}
-
-func (f *fakeRuntimeStandardCutover) Handle(ctx context.Context, req RuntimeStandardCutoverRequest) error {
 	reqCopy := req
 	f.request = &reqCopy
 	if f.skipGenerate {

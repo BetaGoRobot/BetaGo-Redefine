@@ -10,7 +10,6 @@ var larkCommandNilFunc xcommand.CommandFunc[*larkim.P2MessageReceiveV1]
 
 // LarkRootCommand lark root command node
 var LarkRootCommand = NewLarkRootCommand()
-var AgenticLarkRootCommand = NewAgenticLarkRootCommand()
 
 var newCmd = xcommand.NewCommand[*larkim.P2MessageReceiveV1]
 
@@ -19,20 +18,13 @@ func newTypedCmd[TArgs any](name string, handler xcommand.CLIArgHandler[*larkim.
 }
 
 func NewLarkRootCommand() *xcommand.Command[*larkim.P2MessageReceiveV1] {
-	root := RegisterLarkCommands(xcommand.NewRootCommand(larkCommandNilFunc), handlers.Chat)
+	root := RegisterLarkCommands(xcommand.NewRootCommand(larkCommandNilFunc))
 	root.AddSubCommand(newTypedCmd("help", newHelpHandler(root)))
 	root.BuildChain()
 	return root
 }
 
-func NewAgenticLarkRootCommand() *xcommand.Command[*larkim.P2MessageReceiveV1] {
-	root := RegisterLarkCommands(xcommand.NewRootCommand(larkCommandNilFunc), handlers.AgenticChat)
-	root.AddSubCommand(newTypedCmd("help", newHelpHandler(root)))
-	root.BuildChain()
-	return root
-}
-
-func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1], chatHandler xcommand.CLIArgHandler[*larkim.P2MessageReceiveV1, handlers.ChatArgs]) *xcommand.Command[*larkim.P2MessageReceiveV1] {
+func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *xcommand.Command[*larkim.P2MessageReceiveV1] {
 	return root.
 		AddSubCommand(
 			newCmd("debug", larkCommandNilFunc).
@@ -137,7 +129,7 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1], ch
 			newTypedCmd("oneword", handlers.OneWord),
 		).
 		AddSubCommand(
-			newTypedCmd("bb", chatHandler),
+			newTypedCmd("bb", handlers.Chat),
 		).
 		AddSubCommand(
 			newTypedCmd("mute", handlers.Mute),

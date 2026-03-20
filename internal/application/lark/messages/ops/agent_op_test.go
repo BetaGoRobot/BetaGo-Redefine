@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -13,11 +14,10 @@ import (
 )
 
 type fakeAgentRuntimeAccessor struct {
-	enabled    bool
 	shadowOnly bool
 }
 
-func (f fakeAgentRuntimeAccessor) AgentRuntimeEnabled() bool    { return f.enabled }
+func (f fakeAgentRuntimeAccessor) ChatMode() appconfig.ChatMode { return appconfig.ChatModeStandard }
 func (f fakeAgentRuntimeAccessor) AgentRuntimeShadowOnly() bool { return f.shadowOnly }
 
 type fakeShadowObserver struct {
@@ -33,7 +33,7 @@ func (f *fakeShadowObserver) Observe(ctx context.Context, input agentruntime.Sha
 func TestAgentShadowOperatorPreRunSkipsWithoutShadowFlag(t *testing.T) {
 	op := &AgentShadowOperator{
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: false}
+			return fakeAgentRuntimeAccessor{shadowOnly: false}
 		},
 	}
 
@@ -59,7 +59,7 @@ func TestAgentShadowOperatorRunStoresShadowDecisionInMeta(t *testing.T) {
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{enabled: true, shadowOnly: true}
+			return fakeAgentRuntimeAccessor{shadowOnly: true}
 		},
 		observer:        observer,
 		mentionDetector: func(*larkim.P2MessageReceiveV1) bool { return true },

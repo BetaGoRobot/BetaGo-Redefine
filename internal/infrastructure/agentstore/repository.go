@@ -354,20 +354,19 @@ func (r *RunRepository) FindByTriggerMessage(ctx context.Context, sessionID, tri
 	}
 
 	ins := r.q.AgentRun
-	entity, err := ins.WithContext(ctx).
+	entities, err := ins.WithContext(ctx).
 		Where(
 			ins.SessionID.Eq(strings.TrimSpace(sessionID)),
 			ins.TriggerMessageID.Eq(strings.TrimSpace(triggerMessageID)),
 		).
-		Take()
-	switch {
-	case err == nil:
-		return runFromModel(entity), nil
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		return nil, nil
-	default:
+		Find()
+	if err != nil {
 		return nil, err
 	}
+	if len(entities) == 0 {
+		return nil, nil
+	}
+	return runFromModel(entities[0]), nil
 }
 
 func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, fromRevision int64, mutate func(*agentruntime.AgentRun) error) (*agentruntime.AgentRun, error) {

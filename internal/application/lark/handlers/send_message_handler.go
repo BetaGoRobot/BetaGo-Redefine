@@ -85,11 +85,11 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 
 	if !h.allowTargetChatOverride {
 		if msgID := currentMessageID(data); msgID != "" {
-			if _, err := larkmsg.ReplyMsgText(ctx, content, msgID, "_sendMessage", false); err == nil {
+			if resp, err := larkmsg.ReplyMsgText(ctx, content, msgID, "_sendMessage", false); err == nil && resp.Success() {
 				if metaData != nil {
 					metaData.SetLastReplyRef(msgID, "text")
 				}
-				runtimecontext.RecordCompatibleReplyRef(ctx, msgID, "text")
+				runtimecontext.RecordCompatibleReplyRef(ctx, *resp.Data.MessageId, "text")
 				metaData.SetExtra("send_message_result", "消息发送成功")
 				return nil
 			}

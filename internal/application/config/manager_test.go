@@ -148,9 +148,6 @@ func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
 	}
 
 	expected := []ConfigKey{
-		KeyAgentRuntimeEnabled,
-		KeyAgentRuntimeShadowOnly,
-		KeyAgentRuntimeChatCutover,
 		KeyMusicCardInThread,
 		KeyWithDrawReplace,
 		KeyChatMode,
@@ -228,19 +225,5 @@ func TestGetStringFallsBackToDefaultForChatMode(t *testing.T) {
 	manager := NewManager()
 	if got := manager.GetString(context.Background(), KeyChatMode, "", ""); got != string(ChatModeStandard) {
 		t.Fatalf("GetString(chat mode) = %q, want %q", got, ChatModeStandard)
-	}
-}
-
-func TestGetBoolFallsBackToDefaultForAgentRuntimeFlags(t *testing.T) {
-	manager := NewManager()
-
-	if manager.GetBool(context.Background(), KeyAgentRuntimeEnabled, "", "") {
-		t.Fatal("expected agent_runtime_enabled to default to false")
-	}
-	if manager.GetBool(context.Background(), KeyAgentRuntimeShadowOnly, "", "") {
-		t.Fatal("expected agent_runtime_shadow_only to default to false")
-	}
-	if manager.GetBool(context.Background(), KeyAgentRuntimeChatCutover, "", "") {
-		t.Fatal("expected agent_runtime_chat_cutover to default to false")
 	}
 }

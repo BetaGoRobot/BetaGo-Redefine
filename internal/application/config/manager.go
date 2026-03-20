@@ -33,9 +33,6 @@ const (
 
 	// 开关配置
 	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
-	KeyAgentRuntimeEnabled      ConfigKey = "agent_runtime_enabled"
-	KeyAgentRuntimeShadowOnly   ConfigKey = "agent_runtime_shadow_only"
-	KeyAgentRuntimeChatCutover  ConfigKey = "agent_runtime_chat_cutover"
 
 	// 字符串配置
 	KeyChatMode           ConfigKey = "chat_mode"
@@ -531,8 +528,6 @@ func (m *Manager) getDefaultBool(key ConfigKey) bool {
 	switch key {
 	case KeyIntentRecognitionEnabled:
 		return true
-	case KeyAgentRuntimeEnabled, KeyAgentRuntimeShadowOnly, KeyAgentRuntimeChatCutover:
-		return false
 	default:
 		return false
 	}

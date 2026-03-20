@@ -4,9 +4,7 @@ import (
 	"context"
 	"strings"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -22,95 +20,32 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Op = &StandardCommandOperator{}
-var _ Op = &AgenticCommandOperator{}
+var _ Op = &CommandOperator{}
 
-type StandardCommandOperator struct {
+type CommandOperator struct {
 	OpBase
 }
 
-type AgenticCommandOperator struct {
-	OpBase
+func (r *CommandOperator) Name() string {
+	return "CommandOperator"
 }
 
-func (r *StandardCommandOperator) Name() string {
-	return "StandardCommandOperator"
-}
-
-func (r *AgenticCommandOperator) Name() string {
-	return "AgenticCommandOperator"
-}
-
-func (r *StandardCommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
+func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 	return requireCommand(ctx, r.Name(), event)
 }
 
-func (r *AgenticCommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer otel.RecordErrorPtr(span, &err)
-	return requireCommand(ctx, r.Name(), event)
-}
-
-func (r *StandardCommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
+func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
-	return executeStandardRawCommand(ctx, event, meta, messageText(ctx, event))
+	return ExecuteFromRawCommand(ctx, event, meta, messageText(ctx, event))
 }
 
-func (r *AgenticCommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
-	defer span.End()
-	defer otel.RecordErrorPtr(span, &err)
-	return executeAgenticRawCommand(ctx, event, meta, messageText(ctx, event))
-}
-
-func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) error {
-	chatID := messageChatID(event, meta)
-	openID := messageOpenID(event, meta)
-	if openID == "" {
-		openID = botidentity.MessageSenderOpenID(event)
-	}
-	if appconfig.NewAccessor(ctx, chatID, openID).ChatMode() == appconfig.ChatModeAgentic {
-		return executeAgenticRawCommand(ctx, event, meta, rawCommand)
-	}
-	return executeStandardRawCommand(ctx, event, meta, rawCommand)
-}
-
-func executeStandardRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
-	defer span.End()
-	defer otel.RecordErrorPtr(span, &err)
-
-	rawCommand = strings.ReplaceAll(rawCommand, "<b>", " ")
-	rawCommand = strings.ReplaceAll(rawCommand, "</b>", " ")
-	ctx = context.WithValue(ctx, consts.ContextVarSrcCmd, rawCommand)
-	commands := xcommand.GetCommand(ctx, rawCommand)
-	if len(commands) == 0 {
-		return nil
-	}
-
-	meta.SetIsCommand(true)
-	meta.SetMainCommand(commands[0])
-	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
-
-	err = standardRootCommandExecutor(ctx, event, meta, commands)
-	if err != nil {
-		otel.RecordError(span, err)
-		return handleCommandError(ctx, event, meta, rawCommand, err)
-	}
-	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
-	return nil
-}
-
-func executeAgenticRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
+func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
@@ -127,14 +62,12 @@ func executeAgenticRawCommand(ctx context.Context, event *larkim.P2MessageReceiv
 	meta.SetIsCommand(true)
 	meta.SetMainCommand(commands[0])
 	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
-		if observation, ok := runtimeMessageObservation(ctx, event, meta); ok &&
-			shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeCommandBridge) {
-			ctx = runtimeOwnershipContext(ctx, observation)
-		}
+		observation, ok := observeRuntimeMessage(ctx, event, meta)
+		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
 	}
 	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
 
-	err = agenticRootCommandExecutor(ctx, event, meta, commands)
+	err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
 	if err != nil {
 		otel.RecordError(span, err)
 		return handleCommandError(ctx, event, meta, rawCommand, err)

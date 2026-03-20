@@ -16,9 +16,8 @@ import (
 )
 
 type MessageHandler struct {
-	manager  *appconfig.Manager
-	standard *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
-	agentic  *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	manager   *appconfig.Manager
+	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 }
 
 // Handler 消息处理入口。它只在最前面做一次 standard / agentic 路由，后续各走各的 processor。
@@ -32,12 +31,15 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
 		cfgManager = appconfig.GetManager()
 	}
 	handler := &MessageHandler{
-		manager:  cfgManager,
-		standard: newStandardMessageProcessor(cfgManager),
-		agentic:  newAgenticMessageProcessor(cfgManager),
+		manager: cfgManager,
+		processor: newMessageProcessorBase(cfgManager).
+			AddAsync(ops.NewAgentShadowOperator()).
+			AddAsync(&ops.ReplyChatOperator{}).
+			AddAsync(&ops.CommandOperator{}).
+			AddAsync(&ops.ChatMsgOperator{}),
 	}
 	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
-		return collectMessageFeatures(handler.standard, handler.agentic)
+		return collectMessageFeatures(handler.processor)
 	})
 	return handler
 }
@@ -46,41 +48,11 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 	if h == nil {
 		return
 	}
-	processor := h.standard
-	if event != nil && event.Event != nil && event.Event.Message != nil {
-		chatID := utils.AddrOrNil(event.Event.Message.ChatId)
-		openID := botidentity.MessageSenderOpenID(event)
-		if appconfig.NewAccessorWithManager(ctx, chatID, openID, h.manager).ChatMode() == appconfig.ChatModeAgentic {
-			processor = h.agentic
-		}
-	}
+	processor := h.processor
 	if processor == nil {
 		return
 	}
 	processor.NewExecution().WithCtx(ctx).WithData(event).Run()
-}
-
-func newStandardMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	return newMessageProcessorBase(cfgManager).
-		AddAsync(&ops.RecordMsgOperator{}).
-		AddAsync(&ops.RepeatMsgOperator{}).
-		AddAsync(&ops.ReactMsgOperator{}).
-		AddAsync(&ops.WordReplyMsgOperator{}).
-		AddAsync(&ops.ReplyChatOperator{}).
-		AddAsync(&ops.StandardCommandOperator{}).
-		AddAsync(&ops.ChatMsgOperator{})
-}
-
-func newAgenticMessageProcessor(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	return newMessageProcessorBase(cfgManager).
-		AddAsync(&ops.RecordMsgOperator{}).
-		AddAsync(ops.NewAgentShadowOperator()).
-		AddAsync(&ops.RepeatMsgOperator{}).
-		AddAsync(&ops.ReactMsgOperator{}).
-		AddAsync(&ops.WordReplyMsgOperator{}).
-		AddAsync(&ops.AgenticReplyChatOperator{}).
-		AddAsync(&ops.AgenticCommandOperator{}).
-		AddAsync(&ops.AgenticChatMsgOperator{})
 }
 
 func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
@@ -103,7 +75,11 @@ func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[
 				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
 			}
 		}).
-		WithFeatureChecker(cfgManager.FeatureCheckFunc())
+		WithFeatureChecker(cfgManager.FeatureCheckFunc()).
+		AddAsync(&ops.RecordMsgOperator{}).
+		AddAsync(&ops.RepeatMsgOperator{}).
+		AddAsync(&ops.ReactMsgOperator{}).
+		AddAsync(&ops.WordReplyMsgOperator{})
 }
 
 func collectMessageFeatures(processors ...*xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []appconfig.Feature {

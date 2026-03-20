@@ -72,21 +72,6 @@ var configDefinitions = []ConfigDefinition{
 		ValueType:   "bool",
 	},
 	{
-		Key:         KeyAgentRuntimeEnabled,
-		Description: "是否启用 Agent Runtime 入口",
-		ValueType:   "bool",
-	},
-	{
-		Key:         KeyAgentRuntimeShadowOnly,
-		Description: "Agent Runtime 是否仅 shadow 观察，不接管用户可见回复",
-		ValueType:   "bool",
-	},
-	{
-		Key:         KeyAgentRuntimeChatCutover,
-		Description: "Agent Runtime 是否接管聊天主链路",
-		ValueType:   "bool",
-	},
-	{
 		Key:         KeyMusicCardInThread,
 		Description: "音乐卡片是否默认在话题内回复",
 		ValueType:   "bool",

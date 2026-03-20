@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -71,10 +72,16 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 
 	msg := messageText(ctx, event)
 	msg = larkmsg.TrimAtMsg(ctx, msg)
+	observation, ok := observeRuntimeMessage(ctx, event, meta)
+	ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok,
+		agentruntime.TriggerTypeMention,
+		agentruntime.TriggerTypeReplyToBot,
+		agentruntime.TriggerTypeFollowUp,
+	)
 	// 记录回复
 	decider := ratelimit.GetDecider()
 	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
-	err = standardChatInvoker(ctx, event, meta, strings.Split(msg, " ")...)
+	err = runChatByMode(ctx, event, meta, strings.Split(msg, " ")...)
 	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
 
 	return

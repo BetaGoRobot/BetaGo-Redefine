@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -28,8 +29,7 @@ const (
 )
 
 type agentRuntimeShadowConfig interface {
-	AgentRuntimeEnabled() bool
-	AgentRuntimeShadowOnly() bool
+	ChatMode() appconfig.ChatMode
 }
 
 type agentRuntimeShadowObserver interface {
@@ -105,10 +105,7 @@ func (r *AgentShadowOperator) PreRun(ctx context.Context, event *larkim.P2Messag
 	defer otel.RecordErrorPtr(span, &err)
 
 	accessor := r.runtimeConfigAccessor(ctx, event, meta)
-	if accessor == nil || !accessor.AgentRuntimeEnabled() {
-		return skipStage(r.Name(), "agent runtime disabled")
-	}
-	if !accessor.AgentRuntimeShadowOnly() {
+	if accessor == nil || accessor.ChatMode().Normalize() != appconfig.ChatModeStandard {
 		return skipStage(r.Name(), "agent runtime shadow disabled")
 	}
 	return nil
