@@ -4,10 +4,12 @@ import (
 	"context"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.uber.org/zap"
@@ -85,11 +87,11 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	observation, ok := observeRuntimeMessage(ctx, event, meta)
 	if ok && shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot) {
 		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeMention)
-		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok,
+		ctx = runtimeContextForObservedMessage(ctx, messageConfigAccessor(ctx, event, meta).ChatMode().Normalize(), observation, ok,
 			agentruntime.TriggerTypeFollowUp,
 			agentruntime.TriggerTypeReplyToBot,
 		)
-		return runChatByMode(ctx, event, meta)
+		return xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
 	}
 
 	// 优先尝试使用意图识别结果
@@ -106,7 +108,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
-			err := runChatByMode(ctx, event, meta)
+			err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
 			if err != nil {
 				return err
 			}
@@ -161,7 +163,7 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 			zap.String("ratelimit_reason", decision.Reason),
 		)
 		// sendMsg
-		err := runChatByMode(ctx, event, meta)
+		err := xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
 		if err != nil {
 			return err
 		}

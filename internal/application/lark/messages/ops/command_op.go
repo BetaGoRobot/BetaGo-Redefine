@@ -63,16 +63,16 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 	meta.SetMainCommand(commands[0])
 	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
 		observation, ok := observeRuntimeMessage(ctx, event, meta)
-		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
+		ctx = runtimeContextForObservedMessage(ctx, messageConfigAccessor(ctx, event, meta).ChatMode().Normalize(), observation, ok, agentruntime.TriggerTypeCommandBridge)
 	}
-	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
+	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
 	err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
 	if err != nil {
 		otel.RecordError(span, err)
 		return handleCommandError(ctx, event, meta, rawCommand, err)
 	}
-	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
+	addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
 	return nil
 }
 

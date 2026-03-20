@@ -7,25 +7,11 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
-
-var (
-	progressReactionHandler = withProgressReaction
-	doneReactionHandler     = addDoneReactionIfNeeded
-)
-
-func chatMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) appconfig.ChatMode {
-	return messageConfigAccessor(ctx, event, meta).ChatMode().Normalize()
-}
-
-func runChatByMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-	return xcommand.BindCLI(handlers.Chat)(ctx, event, meta, args...)
-}
 
 func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
 	accessor := messageConfigAccessor(ctx, event, meta)

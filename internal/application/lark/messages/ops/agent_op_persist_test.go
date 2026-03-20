@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -50,7 +51,7 @@ func TestAgentShadowOperatorPersistsRunIDsInMetaWhenCoordinatorIsPresent(t *test
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: true}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 		},
 		observer:        observer,
 		coordinator:     coordinator,
@@ -107,7 +108,7 @@ func TestAgentShadowOperatorPersistsRunIDsViaCoordinatorLoader(t *testing.T) {
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: true}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 		},
 		observer: observer,
 		coordinatorLoader: func(context.Context) agentruntime.ShadowRunStarter {
@@ -166,7 +167,7 @@ func TestNewAgentShadowOperatorAttachesFollowUpToActiveRun(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{shadowOnly: true}
+		return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return false }
@@ -215,7 +216,7 @@ func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{shadowOnly: true}
+		return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return true }
