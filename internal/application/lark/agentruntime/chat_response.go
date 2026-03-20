@@ -48,10 +48,6 @@ func SetRuntimeStandardCutoverBuilder(builder func(context.Context) RuntimeStand
 	runtimeStandardCutoverBuilder = builder
 }
 
-func shouldUseRuntimeChatCutover(runtimeEnabled, cutoverEnabled bool) bool {
-	return runtimeEnabled && cutoverEnabled
-}
-
 func handleAgenticChatResponse(
 	ctx context.Context,
 	event *larkim.P2MessageReceiveV1,
@@ -61,8 +57,8 @@ func handleAgenticChatResponse(
 	startedAt time.Time,
 	ownership InitialRunOwnership,
 ) error {
-	plan = withChatGenerationPlanMode(plan, appconfig.ChatModeAgentic)
-	if shouldUseRuntimeChatCutover(runtimeEnabled, cutoverEnabled) {
+	plan.Mode = appconfig.ChatModeAgentic.Normalize()
+	if runtimeEnabled && cutoverEnabled {
 		if runtimeHandler := runtimeAgenticCutoverBuilder(ctx); runtimeHandler != nil {
 			return runtimeHandler.Handle(ctx, RuntimeAgenticCutoverRequest{
 				Event:     event,
@@ -88,8 +84,8 @@ func handleStandardChatResponse(
 	startedAt time.Time,
 	ownership InitialRunOwnership,
 ) error {
-	plan = withChatGenerationPlanMode(plan, appconfig.ChatModeStandard)
-	if shouldUseRuntimeChatCutover(runtimeEnabled, cutoverEnabled) {
+	plan.Mode = appconfig.ChatModeStandard.Normalize()
+	if runtimeEnabled && cutoverEnabled {
 		if runtimeHandler := runtimeStandardCutoverBuilder(ctx); runtimeHandler != nil {
 			return runtimeHandler.Handle(ctx, RuntimeStandardCutoverRequest{
 				Event:     event,
@@ -114,11 +110,6 @@ func handleStandardChatResponse(
 func cloneChatGenerationPlan(plan ChatGenerationPlan) ChatGenerationPlan {
 	plan.Files = append([]string(nil), plan.Files...)
 	plan.Args = append([]string(nil), plan.Args...)
-	return plan
-}
-
-func withChatGenerationPlanMode(plan ChatGenerationPlan, mode appconfig.ChatMode) ChatGenerationPlan {
-	plan.Mode = mode.Normalize()
 	return plan
 }
 

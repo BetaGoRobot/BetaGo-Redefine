@@ -9,6 +9,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -69,7 +70,7 @@ func runtimeIsMentioned(event *larkim.P2MessageReceiveV1) bool {
 	if event == nil || event.Event == nil || event.Event.Message == nil {
 		return false
 	}
-	return len(event.Event.Message.Mentions) > 0
+	return larkmsg.IsMentioned(event.Event.Message.Mentions)
 }
 
 func runtimeCommandName(ctx context.Context, event *larkim.P2MessageReceiveV1) string {

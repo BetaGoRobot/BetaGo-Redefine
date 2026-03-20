@@ -14,8 +14,10 @@ type fakeResumeQueueStore struct {
 	mu           sync.Mutex
 	events       chan agentruntime.ResumeEvent
 	acquireOK    bool
+	acquireSeq   []bool
 	acquireCalls []string
 	releaseCalls []string
+	requeueCalls []agentruntime.ResumeEvent
 }
 
 func newFakeResumeQueueStore() *fakeResumeQueueStore {
@@ -27,6 +29,14 @@ func newFakeResumeQueueStore() *fakeResumeQueueStore {
 
 func (s *fakeResumeQueueStore) Enqueue(event agentruntime.ResumeEvent) {
 	s.events <- event
+}
+
+func (s *fakeResumeQueueStore) EnqueueResumeEvent(ctx context.Context, event agentruntime.ResumeEvent) error {
+	s.mu.Lock()
+	s.requeueCalls = append(s.requeueCalls, event)
+	s.mu.Unlock()
+	s.events <- event
+	return nil
 }
 
 func (s *fakeResumeQueueStore) DequeueResumeEvent(ctx context.Context, timeout time.Duration) (*agentruntime.ResumeEvent, error) {
@@ -44,6 +54,11 @@ func (s *fakeResumeQueueStore) AcquireRunLock(ctx context.Context, runID, owner 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.acquireCalls = append(s.acquireCalls, runID)
+	if len(s.acquireSeq) > 0 {
+		acquired := s.acquireSeq[0]
+		s.acquireSeq = s.acquireSeq[1:]
+		return acquired, nil
+	}
 	return s.acquireOK, nil
 }
 
@@ -54,10 +69,10 @@ func (s *fakeResumeQueueStore) ReleaseRunLock(ctx context.Context, runID, owner 
 	return true, nil
 }
 
-func (s *fakeResumeQueueStore) snapshot() (acquireCalls []string, releaseCalls []string) {
+func (s *fakeResumeQueueStore) snapshot() (acquireCalls []string, releaseCalls []string, requeueCalls []agentruntime.ResumeEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string(nil), s.acquireCalls...), append([]string(nil), s.releaseCalls...)
+	return append([]string(nil), s.acquireCalls...), append([]string(nil), s.releaseCalls...), append([]agentruntime.ResumeEvent(nil), s.requeueCalls...)
 }
 
 type fakeRunProcessor struct {
@@ -96,7 +111,7 @@ func TestResumeWorkerProcessesQueuedEventWithRunLock(t *testing.T) {
 
 	waitForResumeWorkerRelease(t, store, "run_01")
 
-	acquireCalls, releaseCalls := store.snapshot()
+	acquireCalls, releaseCalls, _ := store.snapshot()
 	if len(acquireCalls) != 1 || acquireCalls[0] != "run_01" {
 		t.Fatalf("AcquireRunLock() calls = %+v, want [run_01]", acquireCalls)
 	}
@@ -109,33 +124,42 @@ func TestResumeWorkerProcessesQueuedEventWithRunLock(t *testing.T) {
 	}
 }
 
-func TestResumeWorkerSkipsWhenRunLockIsHeld(t *testing.T) {
+func TestResumeWorkerRequeuesWhenRunLockIsHeld(t *testing.T) {
 	store := newFakeResumeQueueStore()
-	store.acquireOK = false
+	store.acquireSeq = []bool{false, true}
 	processor := &fakeRunProcessor{handled: make(chan agentruntime.RunProcessorInput, 1)}
 	worker := agentruntime.NewResumeWorker(store, processor)
 
-	store.Enqueue(agentruntime.ResumeEvent{
+	event := agentruntime.ResumeEvent{
 		RunID:    "run_02",
 		Revision: 4,
 		Source:   agentruntime.ResumeSourceSchedule,
-	})
+	}
+	store.Enqueue(event)
 
 	worker.Start()
 	defer worker.Stop()
 
 	select {
 	case handled := <-processor.handled:
-		t.Fatalf("expected event to be skipped when lock is held, got %+v", handled)
-	case <-time.After(200 * time.Millisecond):
+		if handled.Resume == nil || !reflect.DeepEqual(*handled.Resume, event) {
+			t.Fatalf("handled input = %+v, want resume %+v", handled, event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected requeued event to be processed after lock becomes available")
 	}
 
-	acquireCalls, releaseCalls := store.snapshot()
-	if len(acquireCalls) != 1 || acquireCalls[0] != "run_02" {
-		t.Fatalf("AcquireRunLock() calls = %+v, want [run_02]", acquireCalls)
+	waitForResumeWorkerRelease(t, store, "run_02")
+
+	acquireCalls, releaseCalls, requeueCalls := store.snapshot()
+	if len(acquireCalls) != 2 || acquireCalls[0] != "run_02" || acquireCalls[1] != "run_02" {
+		t.Fatalf("AcquireRunLock() calls = %+v, want [run_02 run_02]", acquireCalls)
 	}
-	if len(releaseCalls) != 0 {
-		t.Fatalf("ReleaseRunLock() calls = %+v, want none", releaseCalls)
+	if len(releaseCalls) != 1 || releaseCalls[0] != "run_02" {
+		t.Fatalf("ReleaseRunLock() calls = %+v, want [run_02]", releaseCalls)
+	}
+	if len(requeueCalls) != 1 || !reflect.DeepEqual(requeueCalls[0], event) {
+		t.Fatalf("EnqueueResumeEvent() calls = %+v, want [%+v]", requeueCalls, event)
 	}
 	stats := worker.Stats()
 	if stats["skipped_locked"] != int64(1) {
@@ -148,7 +172,7 @@ func waitForResumeWorkerRelease(t *testing.T, store *fakeResumeQueueStore, runID
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		_, releaseCalls := store.snapshot()
+		_, releaseCalls, _ := store.snapshot()
 		for _, call := range releaseCalls {
 			if call == runID {
 				return
@@ -156,6 +180,6 @@ func waitForResumeWorkerRelease(t *testing.T, store *fakeResumeQueueStore, runID
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	_, releaseCalls := store.snapshot()
+	_, releaseCalls, _ := store.snapshot()
 	t.Fatalf("ReleaseRunLock() calls = %+v, want contain %q", releaseCalls, runID)
 }

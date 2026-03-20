@@ -14,6 +14,7 @@ import (
 const (
 	defaultResumePollTimeout = time.Second
 	defaultResumeRunLockTTL  = 30 * time.Second
+	defaultResumeRetryDelay  = 200 * time.Millisecond
 )
 
 type ResumeProcessor interface {
@@ -27,6 +28,7 @@ func (f ResumeProcessorFunc) ProcessResume(ctx context.Context, event ResumeEven
 }
 
 type resumeQueueStore interface {
+	EnqueueResumeEvent(context.Context, ResumeEvent) error
 	DequeueResumeEvent(context.Context, time.Duration) (*ResumeEvent, error)
 	AcquireRunLock(context.Context, string, string, time.Duration) (bool, error)
 	ReleaseRunLock(context.Context, string, string) (bool, error)
@@ -38,6 +40,7 @@ type ResumeWorker struct {
 	lockOwner   string
 	pollTimeout time.Duration
 	lockTTL     time.Duration
+	retryDelay  time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -61,6 +64,7 @@ func NewResumeWorker(store resumeQueueStore, processor RunProcessor) *ResumeWork
 		lockOwner:   "resume_worker_" + uuid.NewV4().String(),
 		pollTimeout: defaultResumePollTimeout,
 		lockTTL:     defaultResumeRunLockTTL,
+		retryDelay:  defaultResumeRetryDelay,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -161,7 +165,21 @@ func (w *ResumeWorker) handleEvent(event ResumeEvent) {
 		return
 	}
 	if !acquired {
+		if err := w.store.EnqueueResumeEvent(w.ctx, event); err != nil {
+			w.recordError(err)
+			logs.L().Ctx(w.ctx).Warn("agent runtime resume worker requeue failed",
+				zap.Error(err),
+				zap.String("run_id", event.RunID),
+			)
+			return
+		}
 		w.recordSkipped(event.RunID)
+		timer := time.NewTimer(w.retryDelay)
+		defer timer.Stop()
+		select {
+		case <-w.ctx.Done():
+		case <-timer.C:
+		}
 		return
 	}
 

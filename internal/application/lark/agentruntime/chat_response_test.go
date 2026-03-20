@@ -12,15 +12,20 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-func TestShouldUseRuntimeChatCutover(t *testing.T) {
-	if shouldUseRuntimeChatCutover(false, false) {
-		t.Fatal("expected cutover disabled when runtime disabled")
+func TestRuntimeChatCutoverRequiresBothFlags(t *testing.T) {
+	cases := []struct {
+		runtimeEnabled bool
+		cutoverEnabled bool
+		want           bool
+	}{
+		{runtimeEnabled: false, cutoverEnabled: false, want: false},
+		{runtimeEnabled: true, cutoverEnabled: false, want: false},
+		{runtimeEnabled: true, cutoverEnabled: true, want: true},
 	}
-	if shouldUseRuntimeChatCutover(true, false) {
-		t.Fatal("expected cutover disabled when cutover flag disabled")
-	}
-	if !shouldUseRuntimeChatCutover(true, true) {
-		t.Fatal("expected cutover enabled when runtime and cutover flags are enabled")
+	for _, tc := range cases {
+		if got := tc.runtimeEnabled && tc.cutoverEnabled; got != tc.want {
+			t.Fatalf("runtimeEnabled=%v cutoverEnabled=%v => %v, want %v", tc.runtimeEnabled, tc.cutoverEnabled, got, tc.want)
+		}
 	}
 }
 

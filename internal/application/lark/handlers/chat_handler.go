@@ -117,7 +117,7 @@ func (standardChatHandler) Handle(ctx context.Context, event *larkim.P2MessageRe
 	if arg.NoContext {
 		size = 0
 	}
-	return ChatHandlerInner(ctx, event, chatType, &size, arg.Input)
+	return runStandardChat(ctx, event, chatType, &size, arg.Input)
 }
 
 func (agenticChatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg ChatArgs) error {
@@ -132,10 +132,6 @@ func (agenticChatHandler) Handle(ctx context.Context, event *larkim.P2MessageRec
 		size = 0
 	}
 	return runAgenticChat(ctx, event, chatType, &size, arg.Input)
-}
-
-func ChatHandlerInner(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
-	return runStandardChat(ctx, event, chatType, size, args...)
 }
 
 func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {

@@ -191,6 +191,23 @@ type resumeWorkerQueueAdapter struct {
 	store *redis_dal.AgentRuntimeStore
 }
 
+func (a *resumeWorkerQueueAdapter) EnqueueResumeEvent(ctx context.Context, event agentruntime.ResumeEvent) error {
+	if a == nil || a.store == nil {
+		return nil
+	}
+	return a.store.EnqueueResumeEvent(ctx, redis_dal.ResumeEvent{
+		RunID:       event.RunID,
+		StepID:      event.StepID,
+		Revision:    event.Revision,
+		Source:      string(event.Source),
+		Token:       event.Token,
+		Summary:     event.Summary,
+		PayloadJSON: append([]byte(nil), event.PayloadJSON...),
+		ActorOpenID: event.ActorOpenID,
+		OccurredAt:  event.OccurredAt,
+	})
+}
+
 func (a *resumeWorkerQueueAdapter) DequeueResumeEvent(ctx context.Context, timeout time.Duration) (*agentruntime.ResumeEvent, error) {
 	if a == nil || a.store == nil {
 		return nil, nil
