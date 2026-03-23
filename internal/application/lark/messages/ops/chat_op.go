@@ -87,7 +87,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	observation, ok := observeRuntimeMessage(ctx, event, meta)
 	if ok && shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot) {
 		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeMention)
-		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(ctx, event, meta), observation, ok,
+		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok,
 			agentruntime.TriggerTypeFollowUp,
 			agentruntime.TriggerTypeReplyToBot,
 		)

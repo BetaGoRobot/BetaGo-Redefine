@@ -267,7 +267,7 @@ func compatibleCardReplyInThread(metaData *xhandler.BaseMetaData, replyInThread 
 	if metaData == nil || metaData.IsP2P {
 		return false
 	}
-	if mode, ok := metaData.GetExtra(intent.MetaKeyInteractionMode); ok && mode == string(intent.InteractionModeAgentic) {
+	if mode, ok := metaData.IntentInteractionMode(); ok && mode == intent.InteractionModeAgentic {
 		return true
 	}
 	return replyInThread

@@ -69,7 +69,7 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 	meta.SetMainCommand(commands[0])
 	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
 		observation, ok := observeRuntimeMessage(ctx, event, meta)
-		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(ctx, event, meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
+		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
 	}
 	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 

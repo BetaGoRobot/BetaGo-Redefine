@@ -6,63 +6,44 @@ import (
 	"errors"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
-// IntentType 定义意图类型
-type IntentType string
+var responseTextWithCacheFn = ark_dal.ResponseTextWithCache
+
+type IntentType = intentmeta.IntentType
 
 const (
-	IntentTypeQuestion IntentType = "question" // 询问：用户在提问，需要回答
-	IntentTypeChat     IntentType = "chat"     // 聊天：日常对话，可以回复
-	IntentTypeShare    IntentType = "share"    // 分享：用户在分享内容，可以互动
-	IntentTypeCommand  IntentType = "command"  // 命令：用户在使用命令
-	IntentTypeIgnore   IntentType = "ignore"   // 忽略：不需要回复
+	IntentTypeQuestion = intentmeta.IntentTypeQuestion
+	IntentTypeChat     = intentmeta.IntentTypeChat
+	IntentTypeShare    = intentmeta.IntentTypeShare
+	IntentTypeCommand  = intentmeta.IntentTypeCommand
+	IntentTypeIgnore   = intentmeta.IntentTypeIgnore
 )
 
-// SuggestAction 建议动作
-type SuggestAction string
+type SuggestAction = intentmeta.SuggestAction
 
 const (
-	SuggestActionChat   SuggestAction = "chat"   // 聊天回复
-	SuggestActionReact  SuggestAction = "react"  // 发送表情反应
-	SuggestActionRepeat SuggestAction = "repeat" // 重复消息
-	SuggestActionIgnore SuggestAction = "ignore" // 忽略
+	SuggestActionChat   = intentmeta.SuggestActionChat
+	SuggestActionReact  = intentmeta.SuggestActionReact
+	SuggestActionRepeat = intentmeta.SuggestActionRepeat
+	SuggestActionIgnore = intentmeta.SuggestActionIgnore
 )
 
-type InteractionMode string
+type InteractionMode = intentmeta.InteractionMode
 
 const (
-	InteractionModeStandard InteractionMode = "standard"
-	InteractionModeAgentic  InteractionMode = "agentic"
+	InteractionModeStandard = intentmeta.InteractionModeStandard
+	InteractionModeAgentic  = intentmeta.InteractionModeAgentic
 )
 
-const MetaKeyInteractionMode = "interaction_mode"
-
-func (m InteractionMode) Normalize() InteractionMode {
-	switch m {
-	case InteractionModeAgentic:
-		return InteractionModeAgentic
-	default:
-		return InteractionModeStandard
-	}
-}
-
-// IntentAnalysis 意图分析结果
-type IntentAnalysis struct {
-	IntentType      IntentType      `json:"intent_type"`      // 意图类型
-	NeedReply       bool            `json:"need_reply"`       // 是否需要回复
-	ReplyConfidence int             `json:"reply_confidence"` // 回复置信度 0-100
-	Reason          string          `json:"reason"`           // 判断理由
-	SuggestAction   SuggestAction   `json:"suggest_action"`   // 建议动作
-	InteractionMode InteractionMode `json:"interaction_mode"` // standard 或 agentic
-}
+type IntentAnalysis = intentmeta.IntentAnalysis
 
 // 系统提示词
 const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的任务是分析用户的消息，判断机器人是否应该主动回复。
@@ -91,9 +72,28 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
    - ignore: 忽略
 
 5. interaction_mode 用于决定消息应该走哪条回复链路：
-   - standard: 单轮问答、寒暄、解释、轻聊天、简单追问。即使被 @ 机器人，只要不需要 durable run/审批/恢复，也优先 standard
    - agentic: 明确要完成任务、需要多步规划或能力编排、很可能触发审批/等待回调/等待 schedule/持续跟进
-   - 默认尽量保守，只有在明显属于复杂任务时才选择 agentic
+	- 分析类任务不是单点事实问答。如果用户要求你综合多方信息、资料、上下文、历史数据、公开信息或工具结果，再去分析原因、研判趋势、给出归因/框架/结论，这类请求优先判定为 agentic
+	- 即使用户只发来一句话，只要任务本质上是研究、调查、归因、比较多个因素、汇总多来源信息后再回答，也应该判定为 agentic
+	- 判断 interaction_mode 时，重点看下面 3 个维度：
+		1) 是否需要综合多来源信息，而不是回答单点事实
+		2) 是否需要归因、比较多个因素、形成分析框架或结论
+		3) 是否预期会触发工具检索、持续跟进、或多步执行
+	- 正反例：
+		- “金价今天多少”更接近 standard
+		- “为什么今天金价涨了这么多，简单说下”通常更接近 standard
+		- “综合各方信息资源，帮我分析金价剧烈波动的主要原因”更接近 agentic
+		- “结合历史和最新信息，研判后续走势并说明主要驱动因素”更接近 agentic
+   - standard: 单轮问答、寒暄、解释、轻聊天、简单追问、单点事实查询。
+   
+
+6. reasoning_effort 用于给后续 agentic 对话提供思考深度建议：
+   - minimal: 几乎不需要推理，简单接话或直接执行单步任务
+   - low: 需要少量分析，任务较明确
+   - medium: 需要多步分析或权衡，是默认的 agentic 深度
+   - high: 明显要求深入分析、复杂规划、强约束推演
+   - 如果 interaction_mode=standard，通常返回 minimal
+   - 如果 interaction_mode=agentic，请务必给出最合适的 reasoning_effort
 
 请以JSON格式返回分析结果，格式如下：
 {
@@ -102,11 +102,16 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
   "reply_confidence": 85,
   "reason": "用户在提问，需要回答",
   "suggest_action": "chat|react|repeat|ignore",
-  "interaction_mode": "standard|agentic"
+  "interaction_mode": "standard|agentic",
+  "reasoning_effort": "minimal|low|medium|high"
 }`
 
 // AnalyzeMessage 分析消息意图
 func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalysis, err error) {
+	return analyzeMessage(ctx, message, appconfig.NewAccessor(ctx, "", "").IntentLiteModel())
+}
+
+func analyzeMessage(ctx context.Context, message, modelID string) (analysis *IntentAnalysis, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -114,52 +119,30 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 	span.SetAttributes(
 		attribute.Key("message.len").Int(len(message)),
 		attribute.Key("message.preview").String(message),
+		attribute.Key("reasoning_effort").String(responses.ReasoningEffort_minimal.String()),
 	)
 
 	if message == "" {
 		return nil, errors.New("empty message")
 	}
 
-	// 构建请求
-	items := buildInputItems(intentSystemPrompt, message)
-	input := &responses.ResponsesInput{
-		Union: &responses.ResponsesInput_ListValue{
-			ListValue: &responses.InputItemList{
-				ListValue: items,
-			},
-		},
-	}
-
-	req := &responses.ResponsesRequest{
-		Model: appconfig.NewAccessor(ctx, "", "").IntentLiteModel(),
-		Input: input,
-		Store: gptr.Of(true),
+	responseText, err := responseTextWithCacheFn(ctx, ark_dal.CachedResponseRequest{
+		CacheScene:   "intent",
+		SystemPrompt: intentSystemPrompt,
+		UserPrompt:   message,
+		ModelID:      modelID,
 		Text: &responses.ResponsesText{
 			Format: &responses.TextFormat{
 				Type: responses.TextType_json_object,
 			},
 		},
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_low,
+			Effort: responses.ReasoningEffort_minimal,
 		},
-	}
-
-	// 调用 LLM
-	resp, err := ark_dal.CreateResponses(ctx, req)
+	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses for intent analysis", zap.Error(err))
 		return nil, err
-	}
-
-	// 解析响应
-	var responseText string
-	for _, output := range resp.GetOutput() {
-		if msg := output.GetOutputMessage(); msg != nil {
-			if content := msg.GetContent(); len(content) > 0 {
-				responseText = content[0].GetText().GetText()
-				break
-			}
-		}
 	}
 
 	if responseText == "" {
@@ -174,7 +157,7 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 	}
 
 	// 校验并设置默认值
-	analysis.sanitize()
+	analysis.Sanitize()
 
 	span.SetAttributes(
 		attribute.Key("intent_type").String(string(analysis.IntentType)),
@@ -182,6 +165,7 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 		attribute.Key("reply_confidence").Int(analysis.ReplyConfidence),
 		attribute.Key("suggest_action").String(string(analysis.SuggestAction)),
 		attribute.Key("interaction_mode").String(string(analysis.InteractionMode)),
+		attribute.Key("recommended_reasoning_effort").String(analysis.ReasoningEffort.String()),
 	)
 
 	logs.L().Ctx(ctx).Info("intent analysis completed",
@@ -190,87 +174,21 @@ func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalys
 		zap.Int("confidence", analysis.ReplyConfidence),
 		zap.String("reason", analysis.Reason),
 		zap.String("interaction_mode", string(analysis.InteractionMode)),
+		zap.String("reasoning_effort", analysis.ReasoningEffort.String()),
 	)
 
 	return analysis, nil
 }
 
-// sanitize 校验并设置默认值
-func (a *IntentAnalysis) sanitize() {
-	// 验证意图类型
-	switch a.IntentType {
-	case IntentTypeQuestion, IntentTypeChat, IntentTypeShare, IntentTypeCommand, IntentTypeIgnore:
-	// 有效类型
-	default:
-		a.IntentType = IntentTypeChat
-	}
-
-	// 验证建议动作
-	switch a.SuggestAction {
-	case SuggestActionChat, SuggestActionReact, SuggestActionRepeat, SuggestActionIgnore:
-	// 有效动作
-	default:
-		a.SuggestAction = SuggestActionIgnore
-	}
-
-	a.InteractionMode = a.InteractionMode.Normalize()
-
-	// 确保置信度在 0-100 范围内
-	if a.ReplyConfidence < 0 {
-		a.ReplyConfidence = 0
-	}
-	if a.ReplyConfidence > 100 {
-		a.ReplyConfidence = 100
-	}
-
-	// 根据意图类型自动设置 NeedReply
-	if a.IntentType == IntentTypeQuestion {
-		a.NeedReply = true
-	} else if a.IntentType == IntentTypeIgnore {
-		a.NeedReply = false
-	}
+// DefaultReasoningEffort returns the fallback reasoning depth for the given interaction mode.
+func DefaultReasoningEffort(mode InteractionMode) responses.ReasoningEffort_Enum {
+	return intentmeta.DefaultReasoningEffort(mode)
 }
 
-// buildInputItems 构建输入项
-func buildInputItems(sysPrompt, userPrompt string) []*responses.InputItem {
-	res := make([]*responses.InputItem, 0)
-	if sysPrompt != "" {
-		res = append(res, &responses.InputItem{
-			Union: &responses.InputItem_InputMessage{
-				InputMessage: &responses.ItemInputMessage{
-					Role: responses.MessageRole_system,
-					Content: []*responses.ContentItem{
-						{
-							Union: &responses.ContentItem_Text{
-								Text: &responses.ContentItemText{
-									Type: responses.ContentItemType_input_text,
-									Text: sysPrompt,
-								},
-							},
-						},
-					},
-				},
-			},
-		})
-	}
-	if userPrompt != "" {
-		res = append(res, &responses.InputItem{
-			Union: &responses.InputItem_InputMessage{
-				InputMessage: &responses.ItemInputMessage{
-					Role: responses.MessageRole_user,
-					Content: []*responses.ContentItem{
-						{
-							Union: &responses.ContentItem_Text{
-								Text: &responses.ContentItemText{
-									Type: responses.ContentItemType_input_text,
-									Text: userPrompt,
-								},
-							},
-						},
-					},
-				},
-			},
-		})
-	}
-	return res
+// NormalizeReasoningEffort validates a model-returned effort and falls back by interaction mode.
+func NormalizeReasoningEffort(
+	effort responses.ReasoningEffort_Enum,
+	mode InteractionMode,
+) responses.ReasoningEffort_Enum {
+	return intentmeta.NormalizeReasoningEffort(effort, mode)
 }

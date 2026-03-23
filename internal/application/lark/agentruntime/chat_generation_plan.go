@@ -8,15 +8,17 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 type ChatGenerationPlan struct {
-	ModelID                     string             `json:"model_id,omitempty"`
-	Mode                        appconfig.ChatMode `json:"mode,omitempty"`
-	Size                        int                `json:"size,omitempty"`
-	Files                       []string           `json:"files,omitempty"`
-	Args                        []string           `json:"args,omitempty"`
-	EnableDeferredToolCollector bool               `json:"enable_deferred_tool_collector,omitempty"`
+	ModelID                     string                         `json:"model_id,omitempty"`
+	Mode                        appconfig.ChatMode             `json:"mode,omitempty"`
+	ReasoningEffort             responses.ReasoningEffort_Enum `json:"reasoning_effort,omitempty"`
+	Size                        int                            `json:"size,omitempty"`
+	Files                       []string                       `json:"files,omitempty"`
+	Args                        []string                       `json:"args,omitempty"`
+	EnableDeferredToolCollector bool                           `json:"enable_deferred_tool_collector,omitempty"`
 }
 
 type ChatGenerationPlanGenerator func(context.Context, *larkim.P2MessageReceiveV1, ChatGenerationPlan) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error)

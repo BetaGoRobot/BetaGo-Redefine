@@ -64,6 +64,7 @@ func ExecuteInitialChatTurn(ctx context.Context, req InitialChatTurnRequest) (In
 		ModelID:            strings.TrimSpace(plan.ModelID),
 		SystemPrompt:       plan.Prompt,
 		UserPrompt:         plan.UserInput,
+		ReasoningEffort:    plan.ReasoningEffort,
 		Files:              append([]string(nil), plan.Files...),
 		PreviousResponseID: strings.TrimSpace(req.PreviousResponseID),
 		ToolOutput:         mapInitialChatToolOutput(req.ToolOutput),

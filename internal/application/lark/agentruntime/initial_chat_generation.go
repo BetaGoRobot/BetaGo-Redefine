@@ -27,29 +27,32 @@ import (
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type InitialChatGenerationRequest struct {
-	Event   *larkim.P2MessageReceiveV1
-	ModelID string
-	Size    int
-	Files   []string
-	Input   []string
-	Tools   *arktools.Impl[larkim.P2MessageReceiveV1]
+	Event           *larkim.P2MessageReceiveV1
+	ModelID         string
+	ReasoningEffort responses.ReasoningEffort_Enum
+	Size            int
+	Files           []string
+	Input           []string
+	Tools           *arktools.Impl[larkim.P2MessageReceiveV1]
 }
 
 type InitialChatExecutionPlan struct {
-	Event       *larkim.P2MessageReceiveV1
-	ModelID     string
-	ChatID      string
-	OpenID      string
-	Prompt      string
-	UserInput   string
-	Files       []string
-	Tools       *arktools.Impl[larkim.P2MessageReceiveV1]
-	MessageList history.OpensearchMsgLogList
+	Event           *larkim.P2MessageReceiveV1
+	ModelID         string
+	ReasoningEffort responses.ReasoningEffort_Enum
+	ChatID          string
+	OpenID          string
+	Prompt          string
+	UserInput       string
+	Files           []string
+	Tools           *arktools.Impl[larkim.P2MessageReceiveV1]
+	MessageList     history.OpensearchMsgLogList
 }
 
 var (
@@ -187,15 +190,16 @@ func BuildInitialChatExecutionPlan(ctx context.Context, req InitialChatGeneratio
 	}
 
 	return InitialChatExecutionPlan{
-		Event:       req.Event,
-		ModelID:     strings.TrimSpace(req.ModelID),
-		ChatID:      chatID,
-		OpenID:      openID,
-		Prompt:      b.String(),
-		UserInput:   strings.Join(fullTpl.UserInput, "\n"),
-		Files:       append([]string(nil), req.Files...),
-		Tools:       req.Tools,
-		MessageList: messageList,
+		Event:           req.Event,
+		ModelID:         strings.TrimSpace(req.ModelID),
+		ReasoningEffort: req.ReasoningEffort,
+		ChatID:          chatID,
+		OpenID:          openID,
+		Prompt:          b.String(),
+		UserInput:       strings.Join(fullTpl.UserInput, "\n"),
+		Files:           append([]string(nil), req.Files...),
+		Tools:           req.Tools,
+		MessageList:     messageList,
 	}, nil
 }
 

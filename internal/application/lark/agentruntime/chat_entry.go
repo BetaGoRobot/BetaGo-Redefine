@@ -8,12 +8,15 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mutestate"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 const agenticChatEntryModelTypeReason = "reason"
@@ -50,19 +53,33 @@ func NewAgenticChatEntryHandler() *AgenticChatEntryHandler {
 	}
 }
 
-func (h *AgenticChatEntryHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
+func (h *AgenticChatEntryHandler) Handle(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	meta *xhandler.BaseMetaData,
+	chatType string,
+	size *int,
+	args ...string,
+) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	req, err := h.buildRequest(ctx, event, chatType, size, args...)
+	req, err := h.buildRequest(ctx, event, meta, chatType, size, args...)
 	if err != nil || req == nil {
 		return err
 	}
 	return handleAgenticChatResponse(ctx, req.Event, req.Plan, req.StartedAt, req.Ownership)
 }
 
-func (h *AgenticChatEntryHandler) buildRequest(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (*ChatResponseRequest, error) {
+func (h *AgenticChatEntryHandler) buildRequest(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	meta *xhandler.BaseMetaData,
+	chatType string,
+	size *int,
+	args ...string,
+) (*ChatResponseRequest, error) {
 	if h == nil || h.accessorBuilder == nil {
 		return nil, nil
 	}
@@ -91,7 +108,7 @@ func (h *AgenticChatEntryHandler) buildRequest(ctx context.Context, event *larki
 
 	req := ChatResponseRequest{
 		Event:     event,
-		Plan:      buildChatGenerationPlan(resolveChatModelID(accessor, chatType), appconfig.ChatModeAgentic, size, files, args, true),
+		Plan:      buildChatGenerationPlan(resolveChatModelID(accessor, chatType), appconfig.ChatModeAgentic, resolveAgenticReasoningEffort(meta), size, files, args, true),
 		StartedAt: h.resolveStartedAt(),
 	}
 	if ownership, ok := InitialRunOwnershipFromContext(ctx); ok {
@@ -107,10 +124,19 @@ func (h *AgenticChatEntryHandler) resolveStartedAt() time.Time {
 	return defaultChatEntryNow()
 }
 
-func buildChatGenerationPlan(modelID string, mode appconfig.ChatMode, size *int, files []string, args []string, enableDeferredToolCollector bool) ChatGenerationPlan {
+func buildChatGenerationPlan(
+	modelID string,
+	mode appconfig.ChatMode,
+	reasoningEffort responses.ReasoningEffort_Enum,
+	size *int,
+	files []string,
+	args []string,
+	enableDeferredToolCollector bool,
+) ChatGenerationPlan {
 	plan := ChatGenerationPlan{
 		ModelID:                     modelID,
 		Mode:                        mode.Normalize(),
+		ReasoningEffort:             reasoningEffort,
 		Size:                        20,
 		Files:                       append([]string(nil), files...),
 		Args:                        append([]string(nil), args...),
@@ -120,6 +146,15 @@ func buildChatGenerationPlan(modelID string, mode appconfig.ChatMode, size *int,
 		plan.Size = *size
 	}
 	return plan
+}
+
+func resolveAgenticReasoningEffort(meta *xhandler.BaseMetaData) responses.ReasoningEffort_Enum {
+	if meta != nil {
+		if analysis, ok := meta.GetIntentAnalysis(); ok && analysis != nil {
+			return intent.NormalizeReasoningEffort(analysis.ReasoningEffort, analysis.InteractionMode)
+		}
+	}
+	return intent.DefaultReasoningEffort(intent.InteractionModeAgentic)
 }
 
 func resolveChatModelID(accessor agenticChatEntryConfigAccessor, chatType string) string {

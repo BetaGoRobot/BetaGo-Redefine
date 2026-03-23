@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -25,20 +24,20 @@ func TestChatGenerationPlanGenerateReturnsNotConfiguredWithoutRegisteredExecutor
 
 func TestResolveChatExecutionModeUsesInteractionModeOverride(t *testing.T) {
 	meta := &xhandler.BaseMetaData{}
-	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeStandard))
+	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeStandard})
 
-	if got := resolveChatExecutionMode(meta, appconfig.ChatModeAgentic); got != appconfig.ChatModeStandard {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, appconfig.ChatModeStandard)
+	if got := resolveChatExecutionMode(meta); got != intent.InteractionModeStandard {
+		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeStandard)
 	}
 
-	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeAgentic))
-	if got := resolveChatExecutionMode(meta, appconfig.ChatModeStandard); got != appconfig.ChatModeAgentic {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, appconfig.ChatModeAgentic)
+	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeAgentic})
+	if got := resolveChatExecutionMode(meta); got != intent.InteractionModeAgentic {
+		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeAgentic)
 	}
 }
 
-func TestResolveChatExecutionModeFallsBackToConfiguredMode(t *testing.T) {
-	if got := resolveChatExecutionMode(&xhandler.BaseMetaData{}, appconfig.ChatModeAgentic); got != appconfig.ChatModeAgentic {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, appconfig.ChatModeAgentic)
+func TestResolveChatExecutionModeDefaultsToStandardWithoutDecision(t *testing.T) {
+	if got := resolveChatExecutionMode(&xhandler.BaseMetaData{}); got != intent.InteractionModeStandard {
+		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeStandard)
 	}
 }

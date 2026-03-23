@@ -8,7 +8,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 )
 
-func TestResolveInteractionModeKeepsStandardChatStandard(t *testing.T) {
+func TestResolveInteractionModeUsesPredictedAgenticEvenWhenConfiguredStandard(t *testing.T) {
 	got := resolveInteractionMode(
 		appconfig.ChatModeStandard,
 		intent.InteractionModeAgentic,
@@ -16,8 +16,8 @@ func TestResolveInteractionModeKeepsStandardChatStandard(t *testing.T) {
 		false,
 		true,
 	)
-	if got != intent.InteractionModeStandard {
-		t.Fatalf("resolveInteractionMode() = %q, want %q", got, intent.InteractionModeStandard)
+	if got != intent.InteractionModeAgentic {
+		t.Fatalf("resolveInteractionMode() = %q, want %q", got, intent.InteractionModeAgentic)
 	}
 }
 

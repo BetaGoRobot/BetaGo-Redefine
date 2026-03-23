@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
@@ -19,17 +20,49 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	runtimeClientFn   = runtimeClient
+	createResponsesFn = CreateResponses
+)
+
+type CachedResponseRequest struct {
+	CacheScene   string
+	SystemPrompt string
+	UserPrompt   string
+	ModelID      string
+	Text         *responses.ResponsesText
+	Reasoning    *responses.ResponsesReasoning
+}
+
 func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string) (res string, err error) {
-	if _, _, err := runtimeClient(); err != nil {
+	return ResponseTextWithCache(ctx, CachedResponseRequest{
+		CacheScene:   "chunking",
+		SystemPrompt: sysPrompt,
+		UserPrompt:   userPrompt,
+		ModelID:      modelID,
+	})
+}
+
+func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res string, err error) {
+	if _, _, err := runtimeClientFn(); err != nil {
 		return "", err
 	}
 	ctx, span := otel.StartNamed(ctx, "ark.responses.cache")
-	span.SetAttributes(attribute.String("model.id", modelID))
-	span.SetAttributes(otel.PreviewAttrs("sys_prompt", sysPrompt, 256)...)
-	span.SetAttributes(otel.PreviewAttrs("user_prompt", userPrompt, 256)...)
+	span.SetAttributes(attribute.String("model.id", req.ModelID))
+	span.SetAttributes(attribute.String("cache.scene", cacheScene(req.CacheScene)))
+	span.SetAttributes(otel.PreviewAttrs("sys_prompt", req.SystemPrompt, 256)...)
+	span.SetAttributes(otel.PreviewAttrs("user_prompt", req.UserPrompt, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	key := botidentity.Current().NamespaceKey("ark", "response", "cache", "chunking", modelID, hashChunkingCacheInput(sysPrompt, userPrompt))
+
+	key := botidentity.Current().NamespaceKey(
+		"ark",
+		"response",
+		"cache",
+		cacheScene(req.CacheScene),
+		req.ModelID,
+		hashResponseCacheInput(req.SystemPrompt),
+	)
 	span.SetAttributes(
 		attribute.String("cache.key.preview", otel.PreviewString(key, 128)),
 		attribute.Int("cache.key.len", len(key)),
@@ -41,7 +74,7 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 	redisGetSpan.End()
 	if err != nil && err != redis.Nil {
 		logs.L().Ctx(ctx).Error("get cache error", zap.Error(err))
-		return
+		return "", err
 	}
 	if respID == "" {
 		span.AddEvent(
@@ -52,34 +85,17 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 			),
 		)
 		exp := time.Now().Add(time.Hour).Unix()
-		req := &responses.ResponsesRequest{
-			Model: modelID,
-			Input: &responses.ResponsesInput{
-				Union: &responses.ResponsesInput_ListValue{
-					ListValue: &responses.InputItemList{
-						ListValue: []*responses.InputItem{
-							{
-								Union: &responses.InputItem_InputMessage{InputMessage: &responses.ItemInputMessage{
-									Role: responses.MessageRole_system,
-									Content: []*responses.ContentItem{
-										{
-											Union: &responses.ContentItem_Text{Text: &responses.ContentItemText{Type: responses.ContentItemType_input_text, Text: sysPrompt}},
-										},
-									},
-								}},
-							},
-						},
-					},
-				},
-			},
+		cacheReq := &responses.ResponsesRequest{
+			Model: req.ModelID,
+			Input: singleTextInput(responses.MessageRole_system, req.SystemPrompt),
 			Store: gptr.Of(true),
 			Caching: &responses.ResponsesCaching{
-				Type: responses.CacheType_enabled.Enum(),
+				Type:   responses.CacheType_enabled.Enum(),
+				Prefix: gptr.Of(true),
 			},
 			ExpireAt: gptr.Of(exp),
 		}
-		// 先创建cache
-		resp, err := CreateResponses(ctx, req)
+		resp, err := createResponsesFn(ctx, cacheReq)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
 			return "", err
@@ -111,31 +127,15 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 		)
 	}
 
-	previousResponseID := respID
 	secondReq := &responses.ResponsesRequest{
-		Model: modelID,
-		Input: &responses.ResponsesInput{
-			Union: &responses.ResponsesInput_ListValue{
-				ListValue: &responses.InputItemList{
-					ListValue: []*responses.InputItem{
-						{
-							Union: &responses.InputItem_InputMessage{InputMessage: &responses.ItemInputMessage{
-								Role: responses.MessageRole_user,
-								Content: []*responses.ContentItem{
-									{
-										Union: &responses.ContentItem_Text{Text: &responses.ContentItemText{Type: responses.ContentItemType_input_text, Text: userPrompt}},
-									},
-								},
-							}},
-						},
-					},
-				},
-			},
-		},
-		PreviousResponseId: &previousResponseID,
+		Model:              req.ModelID,
+		Input:              singleTextInput(responses.MessageRole_user, req.UserPrompt),
+		PreviousResponseId: gptr.Of(respID),
+		Text:               req.Text,
+		Reasoning:          req.Reasoning,
 	}
 
-	resp, err := CreateResponses(ctx, secondReq)
+	resp, err := createResponsesFn(ctx, secondReq)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
 		return "", err
@@ -151,7 +151,43 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 	return "", errors.New("text is nil")
 }
 
-func hashChunkingCacheInput(sysPrompt, userPrompt string) string {
-	sum := sha256.Sum256([]byte(sysPrompt + "\x00" + userPrompt))
+func singleTextInput(role responses.MessageRole_Enum, text string) *responses.ResponsesInput {
+	return &responses.ResponsesInput{
+		Union: &responses.ResponsesInput_ListValue{
+			ListValue: &responses.InputItemList{
+				ListValue: []*responses.InputItem{
+					{
+						Union: &responses.InputItem_InputMessage{
+							InputMessage: &responses.ItemInputMessage{
+								Role: role,
+								Content: []*responses.ContentItem{
+									{
+										Union: &responses.ContentItem_Text{
+											Text: &responses.ContentItemText{
+												Type: responses.ContentItemType_input_text,
+												Text: text,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func cacheScene(scene string) string {
+	scene = strings.TrimSpace(scene)
+	if scene == "" {
+		return "default"
+	}
+	return scene
+}
+
+func hashResponseCacheInput(sysPrompt string) string {
+	sum := sha256.Sum256([]byte(sysPrompt))
 	return hex.EncodeToString(sum[:])
 }

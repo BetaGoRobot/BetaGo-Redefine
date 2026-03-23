@@ -1,5 +1,15 @@
 # BetaGo-Redefine 项目指南
 
+### Compact Instructions 如何保留关键信息
+
+保留优先级：
+
+1. 架构决策，不得摘要
+2. 已修改文件和关键变更
+3. 验证状态，pass/fail
+4. 未解决的 TODO 和回滚笔记
+5. 工具输出，可删，只保留 pass/fail 结论
+
 ## 项目概述
 
 BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言开发，目前主要针对飞书 (Lark) 平台。项目采用清晰的分层架构，集成了多种 AI 能力和实用工具。

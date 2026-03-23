@@ -9,6 +9,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
@@ -21,6 +22,7 @@ import (
 	"github.com/defensestation/osquery"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -89,16 +91,21 @@ func BuildAgenticChatExecutionPlan(ctx context.Context, req InitialChatGeneratio
 	}
 
 	return InitialChatExecutionPlan{
-		Event:       req.Event,
-		ModelID:     strings.TrimSpace(req.ModelID),
-		ChatID:      chatID,
-		OpenID:      openID,
-		Prompt:      agenticChatSystemPrompt(),
-		UserInput:   buildAgenticChatUserPrompt(promptCtx),
-		Files:       append([]string(nil), req.Files...),
-		Tools:       req.Tools,
-		MessageList: messageList,
+		Event:           req.Event,
+		ModelID:         strings.TrimSpace(req.ModelID),
+		ReasoningEffort: normalizeAgenticPlanReasoningEffort(req.ReasoningEffort),
+		ChatID:          chatID,
+		OpenID:          openID,
+		Prompt:          agenticChatSystemPrompt(),
+		UserInput:       buildAgenticChatUserPrompt(promptCtx),
+		Files:           append([]string(nil), req.Files...),
+		Tools:           req.Tools,
+		MessageList:     messageList,
 	}, nil
+}
+
+func normalizeAgenticPlanReasoningEffort(effort responses.ReasoningEffort_Enum) responses.ReasoningEffort_Enum {
+	return intent.NormalizeReasoningEffort(effort, intent.InteractionModeAgentic)
 }
 
 func buildAgenticChatPromptContext(

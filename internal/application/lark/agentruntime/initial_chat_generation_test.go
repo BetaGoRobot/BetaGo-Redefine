@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 func TestBuildInitialChatExecutionPlanUsesReplyScopedContext(t *testing.T) {
@@ -85,10 +86,11 @@ func TestBuildInitialChatExecutionPlanUsesReplyScopedContext(t *testing.T) {
 	}
 
 	plan, err := BuildInitialChatExecutionPlan(context.Background(), InitialChatGenerationRequest{
-		Event:   testAgenticReplyEvent("oc_chat", "ou_actor", "om_parent", "这里展开一下"),
-		ModelID: "ep-test",
-		Size:    20,
-		Tools:   &arktools.Impl[larkim.P2MessageReceiveV1]{},
+		Event:           testAgenticReplyEvent("oc_chat", "ou_actor", "om_parent", "这里展开一下"),
+		ModelID:         "ep-test",
+		Size:            20,
+		ReasoningEffort: responses.ReasoningEffort_high,
+		Tools:           &arktools.Impl[larkim.P2MessageReceiveV1]{},
 	})
 	if err != nil {
 		t.Fatalf("BuildInitialChatExecutionPlan() error = %v", err)
@@ -104,5 +106,8 @@ func TestBuildInitialChatExecutionPlanUsesReplyScopedContext(t *testing.T) {
 	}
 	if !strings.Contains(plan.Prompt, "reply scoped standard context") {
 		t.Fatalf("prompt = %q, want contain recalled scoped context", plan.Prompt)
+	}
+	if plan.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("ReasoningEffort = %v, want %v", plan.ReasoningEffort, responses.ReasoningEffort_high)
 	}
 }

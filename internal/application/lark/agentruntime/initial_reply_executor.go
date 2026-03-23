@@ -20,11 +20,11 @@ const (
 )
 
 type CapturedInitialPendingCapability struct {
-	CallID             string                  `json:"call_id,omitempty"`
-	CapabilityName     string                  `json:"capability_name,omitempty"`
-	Arguments          string                  `json:"arguments,omitempty"`
-	PreviousResponseID string                  `json:"previous_response_id,omitempty"`
-	Approval           *CapabilityApprovalSpec `json:"approval,omitempty"`
+	CallID             string                             `json:"call_id,omitempty"`
+	CapabilityName     string                             `json:"capability_name,omitempty"`
+	Arguments          string                             `json:"arguments,omitempty"`
+	PreviousResponseID string                             `json:"previous_response_id,omitempty"`
+	Approval           *CapabilityApprovalSpec            `json:"approval,omitempty"`
 	QueueTail          []CapturedInitialPendingCapability `json:"queue_tail,omitempty"`
 }
 
@@ -228,12 +228,13 @@ func GenerateAgenticInitialReplyStream(
 		builder = BuildAgenticChatExecutionPlan
 	}
 	initialPlan, err := builder(ctx, InitialChatGenerationRequest{
-		Event:   event,
-		ModelID: plan.ModelID,
-		Size:    plan.Size,
-		Files:   append([]string(nil), plan.Files...),
-		Input:   append([]string(nil), plan.Args...),
-		Tools:   tools,
+		Event:           event,
+		ModelID:         plan.ModelID,
+		ReasoningEffort: plan.ReasoningEffort,
+		Size:            plan.Size,
+		Files:           append([]string(nil), plan.Files...),
+		Input:           append([]string(nil), plan.Args...),
+		Tools:           tools,
 	})
 	if err != nil {
 		return nil, err

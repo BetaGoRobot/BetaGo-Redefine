@@ -108,6 +108,7 @@ type ResponseTurnRequest struct {
 	ModelID            string
 	SystemPrompt       string
 	UserPrompt         string
+	ReasoningEffort    responses.ReasoningEffort_Enum
 	Files              []string
 	PreviousResponseID string
 	ToolOutput         *ToolOutputInput

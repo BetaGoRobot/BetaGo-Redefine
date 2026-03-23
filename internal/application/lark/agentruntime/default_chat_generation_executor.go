@@ -108,12 +108,13 @@ func generateChatPlanWithVariant(
 	}
 
 	initialPlan, err := builder(ctx, InitialChatGenerationRequest{
-		Event:   event,
-		ModelID: plan.ModelID,
-		Size:    plan.Size,
-		Files:   append([]string(nil), plan.Files...),
-		Input:   append([]string(nil), plan.Args...),
-		Tools:   tools,
+		Event:           event,
+		ModelID:         plan.ModelID,
+		ReasoningEffort: plan.ReasoningEffort,
+		Size:            plan.Size,
+		Files:           append([]string(nil), plan.Files...),
+		Input:           append([]string(nil), plan.Args...),
+		Tools:           tools,
 	})
 	if err != nil {
 		return nil, err

@@ -12,6 +12,7 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/bytedance/gg/gresult"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.T) {
@@ -47,14 +48,15 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 		capturedReq = req
 		collectorInitialized = runtimecontext.CollectorFromContext(ctx) != nil
 		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "system prompt",
-			UserInput: "formatted user input",
-			Files:     append([]string(nil), req.Files...),
-			Tools:     req.Tools,
+			Event:           req.Event,
+			ModelID:         req.ModelID,
+			ReasoningEffort: req.ReasoningEffort,
+			ChatID:          "oc_chat",
+			OpenID:          "ou_actor",
+			Prompt:          "system prompt",
+			UserInput:       "formatted user input",
+			Files:           append([]string(nil), req.Files...),
+			Tools:           req.Tools,
 		}, nil
 	}
 	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
@@ -78,6 +80,7 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 		Size:                        12,
 		Files:                       []string{"https://example.com/a.png"},
 		Args:                        []string{"帮我总结"},
+		ReasoningEffort:             responses.ReasoningEffort_high,
 		EnableDeferredToolCollector: true,
 	})
 	if err != nil {
@@ -112,6 +115,9 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 	if capturedReq.Tools == toolset {
 		t.Fatal("expected runtime to decorate toolset before forwarding")
 	}
+	if capturedReq.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("builder reasoning effort = %v, want %v", capturedReq.ReasoningEffort, responses.ReasoningEffort_high)
+	}
 	if capturedTurnReq.Plan.ChatID != "oc_chat" {
 		t.Fatalf("turn plan chat id = %q, want %q", capturedTurnReq.Plan.ChatID, "oc_chat")
 	}
@@ -129,6 +135,9 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 	}
 	if capturedTurnReq.Plan.Tools == nil {
 		t.Fatal("expected builder output toolset to reach turn executor")
+	}
+	if capturedTurnReq.Plan.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("turn reasoning effort = %v, want %v", capturedTurnReq.Plan.ReasoningEffort, responses.ReasoningEffort_high)
 	}
 	if !collectorInitialized {
 		t.Fatal("expected deferred tool collector to be initialized")

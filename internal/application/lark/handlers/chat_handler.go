@@ -91,25 +91,20 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if arg.NoContext {
 		size = 0
 	}
-	accessor := appconfig.NewAccessor(ctx, currentChatID(event, nil), currentOpenID(event, nil))
-	if resolveChatExecutionMode(metaData, accessor.ChatMode()) == appconfig.ChatModeAgentic {
-		return runAgenticChat(ctx, event, chatType, &size, arg.Input)
+	if resolveChatExecutionMode(metaData) == intent.InteractionModeAgentic {
+		return runAgenticChat(ctx, event, metaData, chatType, &size, arg.Input)
 	}
 	return runStandardChat(ctx, event, chatType, &size, arg.Input)
 }
 
-func resolveChatExecutionMode(meta *xhandler.BaseMetaData, fallback appconfig.ChatMode) appconfig.ChatMode {
+// resolveChatExecutionMode consumes the mode decided earlier in the message pipeline.
+func resolveChatExecutionMode(meta *xhandler.BaseMetaData) intent.InteractionMode {
 	if meta != nil {
-		if mode, ok := meta.GetExtra(intent.MetaKeyInteractionMode); ok {
-			switch intent.InteractionMode(mode).Normalize() {
-			case intent.InteractionModeAgentic:
-				return appconfig.ChatModeAgentic
-			default:
-				return appconfig.ChatModeStandard
-			}
+		if mode, ok := meta.IntentInteractionMode(); ok {
+			return mode
 		}
 	}
-	return fallback.Normalize()
+	return intent.InteractionModeStandard
 }
 
 func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
@@ -190,8 +185,8 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chat
 	return nil
 }
 
-func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
-	return agentruntime.NewAgenticChatEntryHandler().Handle(ctx, event, chatType, size, args...)
+func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
+	return agentruntime.NewAgenticChatEntryHandler().Handle(ctx, event, meta, chatType, size, args...)
 }
 
 func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
@@ -238,7 +233,7 @@ func generateStandardChatSeq(ctx context.Context, event *larkim.P2MessageReceive
 	if err != nil {
 		return
 	}
-	
+
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
 	fullTpl.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())}
 	fullTpl.HistoryRecords = messageList.ToLines()

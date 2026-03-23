@@ -225,7 +225,7 @@ func TestSendCompatibleCardJSONForcesReplyInThreadInAgenticMode(t *testing.T) {
 	msgID := "om_test"
 	chatID := "oc_test"
 	meta := &xhandler.BaseMetaData{}
-	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeAgentic))
+	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeAgentic})
 	err := sendCompatibleCardJSON(
 		context.Background(),
 		&larkim.P2MessageReceiveV1{
@@ -268,7 +268,7 @@ func TestSendCompatibleCardWithMessageIDKeepsCallerThreadFlagInStandardMode(t *t
 	msgID := "om_test"
 	chatID := "oc_test"
 	meta := &xhandler.BaseMetaData{}
-	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeStandard))
+	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeStandard})
 	_, err := sendCompatibleCardWithMessageID(
 		context.Background(),
 		&larkim.P2MessageReceiveV1{

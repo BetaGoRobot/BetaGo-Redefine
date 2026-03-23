@@ -7,7 +7,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -15,10 +15,13 @@ import (
 )
 
 func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-	if resolvedChatMode(ctx, event, meta) != appconfig.ChatModeAgentic {
+	if resolvedChatMode(meta) != appconfig.ChatModeAgentic {
 		return agentruntime.ShadowObservation{}, false
 	}
+	return observePotentialRuntimeMessage(ctx, event, meta)
+}
 
+func observePotentialRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
 	observer := agentruntime.NewShadowObserver(
 		agentruntime.NewDefaultGroupPolicy(agentruntime.DefaultGroupPolicyConfig{}),
 		nil,
@@ -43,18 +46,17 @@ func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1
 	return observation, true
 }
 
-func resolvedChatMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) appconfig.ChatMode {
+// resolvedChatMode reads the interaction mode that was decided at the fetch stage.
+func resolvedChatMode(meta *xhandler.BaseMetaData) appconfig.ChatMode {
 	if meta != nil {
-		if mode, ok := meta.GetExtra(intent.MetaKeyInteractionMode); ok {
-			switch intent.InteractionMode(mode).Normalize() {
-			case intent.InteractionModeAgentic:
+		if mode, ok := meta.IntentInteractionMode(); ok {
+			if mode == intentmeta.InteractionModeAgentic {
 				return appconfig.ChatModeAgentic
-			default:
-				return appconfig.ChatModeStandard
 			}
+			return appconfig.ChatModeStandard
 		}
 	}
-	return messageConfigAccessor(ctx, event, meta).ChatMode().Normalize()
+	return appconfig.ChatModeStandard
 }
 
 func runtimeIsMentioned(event *larkim.P2MessageReceiveV1) bool {

@@ -6,7 +6,10 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 func TestAgenticChatEntryBuildRequestUsesReasoningModel(t *testing.T) {
@@ -26,7 +29,12 @@ func TestAgenticChatEntryBuildRequestUsesReasoningModel(t *testing.T) {
 	}
 
 	size := 18
-	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), "reason", &size, "帮我总结")
+	meta := &xhandler.BaseMetaData{}
+	meta.SetIntentAnalysis(&intent.IntentAnalysis{
+		InteractionMode: intent.InteractionModeAgentic,
+		ReasoningEffort: responses.ReasoningEffort_high,
+	})
+	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), meta, "reason", &size, "帮我总结")
 	if err != nil {
 		t.Fatalf("buildRequest() error = %v", err)
 	}
@@ -51,6 +59,9 @@ func TestAgenticChatEntryBuildRequestUsesReasoningModel(t *testing.T) {
 	if !req.Plan.EnableDeferredToolCollector {
 		t.Fatal("expected deferred tool collector to be enabled")
 	}
+	if req.Plan.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("reasoning effort = %v, want %v", req.Plan.ReasoningEffort, responses.ReasoningEffort_high)
+	}
 	if req.StartedAt != now {
 		t.Fatalf("started at = %v, want %v", req.StartedAt, now)
 	}
@@ -68,7 +79,7 @@ func TestAgenticChatEntryBuildRequestSkipsMutedNonMentionMessage(t *testing.T) {
 		return nil, nil
 	}
 
-	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), "normal", nil, "帮我总结")
+	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), nil, "normal", nil, "帮我总结")
 	if err != nil {
 		t.Fatalf("buildRequest() error = %v", err)
 	}
@@ -92,7 +103,7 @@ func TestAgenticChatEntryBuildRequestAllowsMentionedMessageWithoutMuteCheck(t *t
 		return nil, nil
 	}
 
-	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), "normal", nil, "帮我总结")
+	req, err := handler.buildRequest(context.Background(), testChatEntryEvent(), nil, "normal", nil, "帮我总结")
 	if err != nil {
 		t.Fatalf("buildRequest() error = %v", err)
 	}
@@ -121,7 +132,7 @@ func TestAgenticChatEntryBuildRequestForwardsInitialRunOwnership(t *testing.T) {
 		TriggerType:   TriggerTypeFollowUp,
 		AttachToRunID: "run_active",
 	})
-	req, err := handler.buildRequest(ctx, testChatEntryEvent(), "reason", nil, "继续")
+	req, err := handler.buildRequest(ctx, testChatEntryEvent(), nil, "reason", nil, "继续")
 	if err != nil {
 		t.Fatalf("buildRequest() error = %v", err)
 	}
@@ -133,6 +144,9 @@ func TestAgenticChatEntryBuildRequestForwardsInitialRunOwnership(t *testing.T) {
 	}
 	if req.Ownership.AttachToRunID != "run_active" {
 		t.Fatalf("attach run id = %q, want %q", req.Ownership.AttachToRunID, "run_active")
+	}
+	if req.Plan.ReasoningEffort != responses.ReasoningEffort_medium {
+		t.Fatalf("reasoning effort = %v, want %v", req.Plan.ReasoningEffort, responses.ReasoningEffort_medium)
 	}
 }
 

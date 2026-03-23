@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
@@ -71,6 +72,8 @@ type (
 		Extra              map[string]string
 		LastReplyMessageID string
 		LastReplyKind      string
+		intentAnalysis     *intentmeta.IntentAnalysis
+		interactionMode    *intentmeta.InteractionMode
 
 		// TODO: 暂时没有用上，后续改造替换掉st、et的反复解析，搞成通用参数
 		StartTime string
@@ -95,6 +98,57 @@ func (m *BaseMetaData) SetExtra(key string, val string) {
 		m.Extra = make(map[string]string)
 	}
 	m.Extra[key] = val
+}
+
+// SetIntentAnalysis stores the typed intent result and synchronizes the derived interaction mode.
+func (m *BaseMetaData) SetIntentAnalysis(analysis *intentmeta.IntentAnalysis) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.intentAnalysis = cloneIntentAnalysis(analysis)
+	if m.intentAnalysis == nil {
+		return
+	}
+	mode := m.intentAnalysis.InteractionMode.Normalize()
+	m.interactionMode = &mode
+}
+
+// GetIntentAnalysis returns a defensive copy of the stored intent result.
+func (m *BaseMetaData) GetIntentAnalysis() (*intentmeta.IntentAnalysis, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.intentAnalysis == nil {
+		return nil, false
+	}
+	return cloneIntentAnalysis(m.intentAnalysis), true
+}
+
+// SetIntentInteractionMode stores the already-decided chat interaction mode for downstream consumers.
+func (m *BaseMetaData) SetIntentInteractionMode(mode intentmeta.InteractionMode) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	normalized := mode.Normalize()
+	m.interactionMode = &normalized
+}
+
+// IntentInteractionMode returns the precomputed interaction mode, preferring the explicit override.
+func (m *BaseMetaData) IntentInteractionMode() (intentmeta.InteractionMode, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.interactionMode != nil {
+		return m.interactionMode.Normalize(), true
+	}
+	if m.intentAnalysis == nil {
+		return intentmeta.InteractionModeStandard, false
+	}
+	return m.intentAnalysis.InteractionMode.Normalize(), true
+}
+
+func cloneIntentAnalysis(src *intentmeta.IntentAnalysis) *intentmeta.IntentAnalysis {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	return &cloned
 }
 
 func (m *BaseMetaData) SetIsCommand(v bool) {
