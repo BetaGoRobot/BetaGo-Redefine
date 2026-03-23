@@ -77,15 +77,11 @@ func buildLineCommon(
 	if currentBot.AppID != "" && *senderID == currentBot.AppID {
 		userName = "机器人"
 	} else {
-		userInfo, err := larkuser.GetUserInfoCache(ctx, *chatID, *senderID)
+		userInfo, err := larkuser.GetUserNameCache(ctx, *chatID, *senderID)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("got error openID", zap.Error(err))
 		}
-		if userInfo == nil {
-			userName = "NULL"
-		} else {
-			userName = *userInfo.Name
-		}
+		userName = userInfo
 	}
 
 	createTime := time.UnixMilli(timestamp).In(utils.UTC8Loc()).Format(time.DateTime)

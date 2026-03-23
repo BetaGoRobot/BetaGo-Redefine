@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
@@ -164,6 +165,7 @@ func sendCompatibleCardWithMessageID(ctx context.Context, data *larkim.P2Message
 	if runtimecontext.ShouldSuppressCompatibleOutput(ctx) {
 		return "", nil
 	}
+	replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
 	msgID := currentMessageID(data)
 	if msgID != "" {
 		if metaData != nil && metaData.Refresh {
@@ -195,6 +197,7 @@ func sendCompatibleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1,
 	if runtimecontext.ShouldSuppressCompatibleOutput(ctx) {
 		return nil
 	}
+	replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
 	msgID := currentMessageID(data)
 	if msgID != "" {
 		if metaData != nil && metaData.Refresh {
@@ -231,6 +234,7 @@ func sendCompatibleCardJSON(ctx context.Context, data *larkim.P2MessageReceiveV1
 	if runtimecontext.ShouldSuppressCompatibleOutput(ctx) {
 		return nil
 	}
+	replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
 	msgID := currentMessageID(data)
 	if msgID != "" {
 		if metaData != nil && metaData.Refresh {
@@ -257,4 +261,14 @@ func sendCompatibleCardJSON(ctx context.Context, data *larkim.P2MessageReceiveV1
 	}
 	recordCompatibleReply(ctx, metaData, replyMsgID, "card_json")
 	return nil
+}
+
+func compatibleCardReplyInThread(metaData *xhandler.BaseMetaData, replyInThread bool) bool {
+	if metaData == nil || metaData.IsP2P {
+		return false
+	}
+	if mode, ok := metaData.GetExtra(intent.MetaKeyInteractionMode); ok && mode == string(intent.InteractionModeAgentic) {
+		return true
+	}
+	return replyInThread
 }

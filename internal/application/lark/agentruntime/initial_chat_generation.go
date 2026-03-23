@@ -212,14 +212,14 @@ func defaultInitialChatPromptTemplateLoader(ctx context.Context) (*model.PromptT
 }
 
 func defaultInitialChatUserNameLoader(ctx context.Context, chatID, openID string) (string, error) {
-	userInfo, err := larkuser.GetUserInfoCache(ctx, chatID, openID)
+	userName, err := larkuser.GetUserNameCache(ctx, chatID, openID)
 	if err != nil {
 		return "", err
 	}
-	if userInfo == nil || userInfo.Name == nil || strings.TrimSpace(*userInfo.Name) == "" {
+	if userName == "" {
 		return "NULL", nil
 	}
-	return *userInfo.Name, nil
+	return userName, nil
 }
 
 func ExecuteInitialChatExecutionPlan(ctx context.Context, plan InitialChatExecutionPlan) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {

@@ -47,7 +47,7 @@ func getBackgroundSubmitter() taskSubmitter {
 }
 
 func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
-	recordFunc := func(taskCtx context.Context) error {
+	recordFunc := func(taskCtx context.Context) (err error) {
 		ctx = taskCtx
 		ctx, span := otel.Start(ctx)
 		defer span.End()
@@ -72,14 +72,9 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 		}
 		userName := ""
 		if openID != "" {
-			userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, openID)
+			userName, err = larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, openID)
 			if err != nil {
 				return err
-			}
-			if userInfo == nil {
-				userName = "NULL"
-			} else {
-				userName = *userInfo.Name
 			}
 		} else {
 			userName = "NULL"

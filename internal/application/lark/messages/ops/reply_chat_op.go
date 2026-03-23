@@ -39,6 +39,12 @@ func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
 	}
 }
 
+func (r *ReplyChatOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
+		IntentRecognizeFetcher,
+	}
+}
+
 // PreRun Music
 //
 //	@receiver r *MusicMsgOperator
@@ -75,7 +81,7 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	msg := messageText(ctx, event)
 	msg = larkmsg.TrimAtMsg(ctx, msg)
 	observation, ok := observeRuntimeMessage(ctx, event, meta)
-	ctx = runtimeContextForObservedMessage(ctx, messageConfigAccessor(ctx, event, meta).ChatMode().Normalize(), observation, ok,
+	ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(ctx, event, meta), observation, ok,
 		agentruntime.TriggerTypeMention,
 		agentruntime.TriggerTypeReplyToBot,
 		agentruntime.TriggerTypeFollowUp,

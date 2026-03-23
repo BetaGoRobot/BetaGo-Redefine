@@ -3,7 +3,10 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
@@ -57,29 +60,49 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 
+	accessor := messageConfigAccessor(ctx, event, meta)
+
 	// 检查是否启用了意图识别（TOML 配置的总开关）
-	if !messageConfigAccessor(ctx, event, meta).IntentRecognitionEnabled() {
+	if !accessor.IntentRecognitionEnabled() {
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}
 
-	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
-		return err
+	if isCommandMessage(ctx, event) && !strings.EqualFold(runtimeCommandName(ctx, event), "bb") {
+		meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeStandard))
+		return nil
 	}
 
 	text := messageText(ctx, event)
-
 	if text == "" {
 		logs.L().Ctx(ctx).Warn("empty message, skip intent recognition")
 		return nil
 	}
 
+	configMode := accessor.ChatMode().Normalize()
+	observation, observed := observeRuntimeMessage(ctx, event, meta)
+	eligible := shouldUseIntentDrivenInteractionMode(ctx, event, observation, observed)
+
 	// 调用意图识别
 	analysis, err := intent.AnalyzeMessage(ctx, text)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("intent analysis failed", zap.Error(err))
-		// 不返回错误，让后续流程继续使用回退机制
+		meta.SetExtra(intent.MetaKeyInteractionMode, string(resolveInteractionMode(
+			configMode,
+			intent.InteractionModeStandard,
+			observation,
+			observed,
+			eligible,
+		)))
 		return nil
 	}
+
+	analysis.InteractionMode = resolveInteractionMode(
+		configMode,
+		analysis.InteractionMode,
+		observation,
+		observed,
+		eligible,
+	)
 
 	// 将结果序列化为 JSON 存入 meta.Extra
 	analysisJSON, err := json.Marshal(analysis)
@@ -89,11 +112,13 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 	}
 
 	meta.SetExtra(MetaKeyIntentAnalysis, string(analysisJSON))
+	meta.SetExtra(intent.MetaKeyInteractionMode, string(analysis.InteractionMode))
 
 	logs.L().Ctx(ctx).Info("intent recognition completed",
 		zap.String("intent_type", string(analysis.IntentType)),
 		zap.Bool("need_reply", analysis.NeedReply),
 		zap.Int("confidence", analysis.ReplyConfidence),
+		zap.String("interaction_mode", string(analysis.InteractionMode)),
 	)
 
 	return nil
@@ -128,4 +153,41 @@ func GetIntentAnalysisFromMeta(meta *xhandler.BaseMetaData) (*intent.IntentAnaly
 	}
 
 	return &analysis, true
+}
+
+func resolveInteractionMode(
+	configMode appconfig.ChatMode,
+	predicted intent.InteractionMode,
+	observation agentruntime.ShadowObservation,
+	observed bool,
+	eligible bool,
+) intent.InteractionMode {
+	if configMode.Normalize() != appconfig.ChatModeAgentic {
+		return intent.InteractionModeStandard
+	}
+	if observed && (strings.TrimSpace(observation.AttachToRunID) != "" || strings.TrimSpace(observation.SupersedeRunID) != "") {
+		return intent.InteractionModeAgentic
+	}
+	if !eligible {
+		return intent.InteractionModeStandard
+	}
+	return predicted.Normalize()
+}
+
+func shouldUseIntentDrivenInteractionMode(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	observation agentruntime.ShadowObservation,
+	observed bool,
+) bool {
+	if strings.EqualFold(currentChatType(event), "p2p") {
+		return true
+	}
+	if runtimeIsMentioned(event) {
+		return true
+	}
+	if isCommandMessage(ctx, event) {
+		return strings.EqualFold(runtimeCommandName(ctx, event), "bb")
+	}
+	return observed && observation.TriggerType == agentruntime.TriggerTypeReplyToBot
 }

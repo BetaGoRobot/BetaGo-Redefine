@@ -7,6 +7,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -14,11 +15,7 @@ import (
 )
 
 func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-	accessor := messageConfigAccessor(ctx, event, meta)
-	if accessor == nil {
-		return agentruntime.ShadowObservation{}, false
-	}
-	if accessor.ChatMode().Normalize() != appconfig.ChatModeAgentic {
+	if resolvedChatMode(ctx, event, meta) != appconfig.ChatModeAgentic {
 		return agentruntime.ShadowObservation{}, false
 	}
 
@@ -44,6 +41,20 @@ func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1
 		return observation, false
 	}
 	return observation, true
+}
+
+func resolvedChatMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) appconfig.ChatMode {
+	if meta != nil {
+		if mode, ok := meta.GetExtra(intent.MetaKeyInteractionMode); ok {
+			switch intent.InteractionMode(mode).Normalize() {
+			case intent.InteractionModeAgentic:
+				return appconfig.ChatModeAgentic
+			default:
+				return appconfig.ChatModeStandard
+			}
+		}
+	}
+	return messageConfigAccessor(ctx, event, meta).ChatMode().Normalize()
 }
 
 func runtimeIsMentioned(event *larkim.P2MessageReceiveV1) bool {

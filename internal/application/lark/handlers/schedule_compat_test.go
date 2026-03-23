@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -199,6 +200,92 @@ func TestSendCompatibleCardWithMessageIDAllowsOutputWhenRuntimeCapabilityExecuti
 	}
 	if !replyCalled {
 		t.Fatal("expected reply card path to be used")
+	}
+}
+
+func TestSendCompatibleCardJSONForcesReplyInThreadInAgenticMode(t *testing.T) {
+	originalReply := scheduleCompatReplyCardJSON
+	originalCreate := scheduleCompatCreateCardJSON
+	t.Cleanup(func() {
+		scheduleCompatReplyCardJSON = originalReply
+		scheduleCompatCreateCardJSON = originalCreate
+	})
+
+	scheduleCompatReplyCardJSON = func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) (string, error) {
+		if !replyInThread {
+			t.Fatal("expected agentic compatible card json reply to force in-thread reply")
+		}
+		return "om_reply", nil
+	}
+	scheduleCompatCreateCardJSON = func(ctx context.Context, chatID string, cardData any, msgID, suffix string) (string, error) {
+		t.Fatal("create path should not be used when message id exists")
+		return "", nil
+	}
+
+	msgID := "om_test"
+	chatID := "oc_test"
+	meta := &xhandler.BaseMetaData{}
+	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeAgentic))
+	err := sendCompatibleCardJSON(
+		context.Background(),
+		&larkim.P2MessageReceiveV1{
+			Event: &larkim.P2MessageReceiveV1Data{
+				Message: &larkim.EventMessage{
+					MessageId: &msgID,
+					ChatId:    &chatID,
+				},
+			},
+		},
+		meta,
+		map[string]any{"card": "ok"},
+		"_test",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("sendCompatibleCardJSON() error = %v", err)
+	}
+}
+
+func TestSendCompatibleCardWithMessageIDKeepsCallerThreadFlagInStandardMode(t *testing.T) {
+	originalReply := scheduleCompatReplyCardWithMessageID
+	originalCreate := scheduleCompatCreateCardWithMessageID
+	t.Cleanup(func() {
+		scheduleCompatReplyCardWithMessageID = originalReply
+		scheduleCompatCreateCardWithMessageID = originalCreate
+	})
+
+	scheduleCompatReplyCardWithMessageID = func(ctx context.Context, msgID string, cardContent *larktpl.TemplateCardContent, suffix string, replyInThread bool) (string, error) {
+		if replyInThread {
+			t.Fatal("expected standard compatible card reply to preserve caller thread flag")
+		}
+		return "om_reply", nil
+	}
+	scheduleCompatCreateCardWithMessageID = func(ctx context.Context, chatID string, cardContent *larktpl.TemplateCardContent) (string, error) {
+		t.Fatal("create path should not be used when message id exists")
+		return "", nil
+	}
+
+	msgID := "om_test"
+	chatID := "oc_test"
+	meta := &xhandler.BaseMetaData{}
+	meta.SetExtra(intent.MetaKeyInteractionMode, string(intent.InteractionModeStandard))
+	_, err := sendCompatibleCardWithMessageID(
+		context.Background(),
+		&larkim.P2MessageReceiveV1{
+			Event: &larkim.P2MessageReceiveV1Data{
+				Message: &larkim.EventMessage{
+					MessageId: &msgID,
+					ChatId:    &chatID,
+				},
+			},
+		},
+		meta,
+		nil,
+		"_test",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("sendCompatibleCardWithMessageID() error = %v", err)
 	}
 }
 
