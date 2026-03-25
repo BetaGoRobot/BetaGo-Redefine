@@ -8,6 +8,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	capdef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/capability"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -37,7 +38,7 @@ type agentRuntimeShadowObserver interface {
 }
 
 type agentRuntimeActiveRunProvider interface {
-	ActiveRunSnapshot(context.Context, string) (*agentruntime.ActiveRunSnapshot, error)
+	ActiveRunSnapshot(context.Context, string, string) (*agentruntime.ActiveRunSnapshot, error)
 }
 
 type AgentShadowOperator struct {
@@ -55,7 +56,7 @@ type AgentShadowOperator struct {
 
 func NewAgentShadowOperator() *AgentShadowOperator {
 	registry := agentruntime.NewCapabilityRegistry()
-	for _, capability := range agentruntime.BuildDefaultCommandBridgeCapabilities() {
+	for _, capability := range capdef.BuildDefaultCommandBridgeCapabilities() {
 		if err := registry.Register(capability); err != nil {
 			logs.L().Warn("register default command bridge capability failed", zap.Error(err))
 		}
@@ -88,8 +89,8 @@ func NewAgentShadowOperator() *AgentShadowOperator {
 	op.observer = agentruntime.NewShadowObserver(
 		agentruntime.NewDefaultGroupPolicy(agentruntime.DefaultGroupPolicyConfig{}),
 		registry,
-		func(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
-			return op.activeRunSnapshot(ctx, chatID)
+		func(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
+			return op.activeRunSnapshot(ctx, chatID, actorOpenID)
 		},
 	)
 	return op
@@ -305,7 +306,7 @@ func (r *AgentShadowOperator) runtimeCoordinator(ctx context.Context) agentrunti
 	return r.coordinator
 }
 
-func (r *AgentShadowOperator) activeRunSnapshot(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
+func (r *AgentShadowOperator) activeRunSnapshot(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
 	coordinator := r.runtimeCoordinator(ctx)
 	if coordinator == nil {
 		return nil
@@ -314,11 +315,12 @@ func (r *AgentShadowOperator) activeRunSnapshot(ctx context.Context, chatID stri
 	if !ok || provider == nil {
 		return nil
 	}
-	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID))
+	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID), strings.TrimSpace(actorOpenID))
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("agent runtime active run snapshot lookup failed",
 			zap.Error(err),
 			zap.String("chat_id", strings.TrimSpace(chatID)),
+			zap.String("actor_open_id", strings.TrimSpace(actorOpenID)),
 		)
 		return nil
 	}

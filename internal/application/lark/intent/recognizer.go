@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -136,8 +137,11 @@ func analyzeMessage(ctx context.Context, message, modelID string) (analysis *Int
 				Type: responses.TextType_json_object,
 			},
 		},
-		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_minimal,
+		// Reasoning: &responses.ResponsesReasoning{
+		// 	Effort: responses.ReasoningEffort_minimal,
+		// },
+		Thinking: &responses.ResponsesThinking{
+			Type: gptr.Of(responses.ThinkingType_disabled),
 		},
 	})
 	if err != nil {

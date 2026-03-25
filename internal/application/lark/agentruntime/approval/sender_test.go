@@ -1,0 +1,340 @@
+package approval_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	approvaldef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/approval"
+	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+)
+
+func TestLarkApprovalSenderRepliesToTriggerMessage(t *testing.T) {
+	now := time.Now().UTC()
+	req := approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+
+	var replied bool
+	sender := approvaldef.NewLarkApprovalSenderForTest(
+		func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) error {
+			replied = true
+			if msgID != "om_trigger" {
+				t.Fatalf("reply msg id = %q, want om_trigger", msgID)
+			}
+			if suffix != "_agent_runtime_approval" {
+				t.Fatalf("reply suffix = %q", suffix)
+			}
+			assertApprovalCardJSON(t, cardData)
+			return nil
+		},
+		func(context.Context, string, string, any, string, string) error {
+			t.Fatal("create path should not be used when reply target exists")
+			return nil
+		},
+		func(context.Context, string, string, any) error {
+			t.Fatal("ephemeral path should not be used when reply target exists")
+			return nil
+		},
+	)
+
+	err := sender.SendApprovalCard(context.Background(), approvaldef.ApprovalCardTarget{
+		ChatID:           "oc_chat",
+		ReplyToMessageID: "om_trigger",
+	}, req)
+	if err != nil {
+		t.Fatalf("SendApprovalCard() error = %v", err)
+	}
+	if !replied {
+		t.Fatal("expected reply path to be used")
+	}
+}
+
+func TestLarkApprovalSenderCreatesCardWhenNoReplyTarget(t *testing.T) {
+	now := time.Now().UTC()
+	req := approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+
+	var created bool
+	sender := approvaldef.NewLarkApprovalSenderForTest(
+		func(context.Context, string, any, string, bool) error {
+			t.Fatal("reply path should not be used when trigger message is absent")
+			return nil
+		},
+		func(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
+			created = true
+			if receiveIDType != "chat_id" {
+				t.Fatalf("receive id type = %q, want chat_id", receiveIDType)
+			}
+			if receiveID != "oc_chat" {
+				t.Fatalf("receive id = %q, want oc_chat", receiveID)
+			}
+			if suffix != "_agent_runtime_approval" {
+				t.Fatalf("create suffix = %q", suffix)
+			}
+			assertApprovalCardJSON(t, cardData)
+			return nil
+		},
+		func(context.Context, string, string, any) error {
+			t.Fatal("ephemeral path should not be used when visible target is absent")
+			return nil
+		},
+	)
+
+	err := sender.SendApprovalCard(context.Background(), approvaldef.ApprovalCardTarget{
+		ChatID: "oc_chat",
+	}, req)
+	if err != nil {
+		t.Fatalf("SendApprovalCard() error = %v", err)
+	}
+	if !created {
+		t.Fatal("expected create path to be used")
+	}
+}
+
+func TestLarkApprovalSenderSendsActorVisibleEphemeralCardBeforeReplyTarget(t *testing.T) {
+	now := time.Now().UTC()
+	req := approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+
+	var sent bool
+	sender := approvaldef.NewLarkApprovalSenderForTest(
+		func(context.Context, string, any, string, bool) error {
+			t.Fatal("reply path should not be used when actor visible target exists")
+			return nil
+		},
+		func(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
+			t.Fatal("create path should not be used when actor visible target exists")
+			return nil
+		},
+		func(ctx context.Context, chatID, openID string, cardData any) error {
+			sent = true
+			if chatID != "oc_chat" {
+				t.Fatalf("chat id = %q, want oc_chat", chatID)
+			}
+			if openID != "ou_actor" {
+				t.Fatalf("open id = %q, want ou_actor", openID)
+			}
+			assertApprovalCardJSON(t, cardData)
+			assertApprovalCardDelivery(t, cardData, approvaldef.ApprovalCardDeliveryEphemeral)
+			assertApprovalCardCompact(t, cardData)
+			return nil
+		},
+	)
+
+	err := sender.SendApprovalCard(context.Background(), approvaldef.ApprovalCardTarget{
+		ChatID:           "oc_chat",
+		ReplyToMessageID: "om_trigger",
+		VisibleOpenID:    "ou_actor",
+	}, req)
+	if err != nil {
+		t.Fatalf("SendApprovalCard() error = %v", err)
+	}
+	if !sent {
+		t.Fatal("expected actor-visible ephemeral path to be used")
+	}
+}
+
+func TestLarkApprovalSenderFallsBackToReplyWhenActorVisibleEphemeralFails(t *testing.T) {
+	now := time.Now().UTC()
+	req := approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+
+	var replied bool
+	sender := approvaldef.NewLarkApprovalSenderForTest(
+		func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) error {
+			replied = true
+			if msgID != "om_trigger" {
+				t.Fatalf("reply msg id = %q, want om_trigger", msgID)
+			}
+			assertApprovalCardJSON(t, cardData)
+			assertApprovalCardDelivery(t, cardData, approvaldef.ApprovalCardDeliveryMessage)
+			return nil
+		},
+		func(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
+			t.Fatal("create path should not be used for actor-visible target")
+			return nil
+		},
+		func(ctx context.Context, chatID, openID string, cardData any) error {
+			if chatID != "oc_chat" || openID != "ou_actor" {
+				t.Fatalf("unexpected actor-visible target: chat=%q open_id=%q", chatID, openID)
+			}
+			assertApprovalCardJSON(t, cardData)
+			assertApprovalCardDelivery(t, cardData, approvaldef.ApprovalCardDeliveryEphemeral)
+			assertApprovalCardCompact(t, cardData)
+			return errors.New("cannot send actor-visible card")
+		},
+	)
+
+	err := sender.SendApprovalCard(context.Background(), approvaldef.ApprovalCardTarget{
+		ChatID:           "oc_chat",
+		ReplyToMessageID: "om_trigger",
+		VisibleOpenID:    "ou_actor",
+	}, req)
+	if err != nil {
+		t.Fatalf("SendApprovalCard() error = %v", err)
+	}
+	if !replied {
+		t.Fatal("expected reply fallback after actor-visible failure")
+	}
+}
+
+func TestLarkApprovalSenderIncludesActorMentionWhenVisibleTargetExists(t *testing.T) {
+	now := time.Now().UTC()
+	req := approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+
+	var replied bool
+	sender := approvaldef.NewLarkApprovalSenderForTest(
+		func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) error {
+			replied = true
+			assertApprovalCardJSON(t, cardData)
+			assertApprovalCardCompact(t, cardData)
+			return nil
+		},
+		func(context.Context, string, string, any, string, string) error {
+			t.Fatal("create path should not be used when reply target exists")
+			return nil
+		},
+		func(context.Context, string, string, any) error {
+			return errors.New("force reply fallback")
+		},
+	)
+
+	err := sender.SendApprovalCard(context.Background(), approvaldef.ApprovalCardTarget{
+		ChatID:           "oc_chat",
+		ReplyToMessageID: "om_trigger",
+		ReplyInThread:    true,
+		VisibleOpenID:    "ou_actor",
+	}, req)
+	if err != nil {
+		t.Fatalf("SendApprovalCard() error = %v", err)
+	}
+	if !replied {
+		t.Fatal("expected reply fallback to be used")
+	}
+}
+
+func TestBuildApprovalCardUsesCompactCollapsedLayout(t *testing.T) {
+	now := time.Now().UTC()
+	card := approvaldef.BuildApprovalCard(context.Background(), approvaldef.ApprovalRequest{
+		RunID:          "run_approval",
+		StepID:         "step_approval",
+		Revision:       4,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		Token:          "approval_token",
+		RequestedAt:    now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}, approvaldef.ApprovalCardStatePending)
+
+	assertApprovalCardJSON(t, card)
+	assertApprovalCardCompact(t, card)
+}
+
+func assertApprovalCardJSON(t *testing.T, cardData any) {
+	t.Helper()
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+
+	if !strings.Contains(jsonStr, "审批发送消息") || !strings.Contains(jsonStr, "send_message") {
+		t.Fatalf("expected approval title and capability in card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, cardactionproto.ActionAgentRuntimeResume) {
+		t.Fatalf("expected approve action in card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, cardactionproto.ActionAgentRuntimeReject) {
+		t.Fatalf("expected reject action in card: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"source":"approval"`) {
+		t.Fatalf("expected approval source in card payload: %s", jsonStr)
+	}
+}
+
+func assertApprovalCardCompact(t *testing.T, cardData any) {
+	t.Helper()
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"collapsible_panel"`) {
+		t.Fatalf("expected compact collapsible panel in approval card: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `user_id=\"`) {
+		t.Fatalf("approval card should not contain @ mention markup: %s", jsonStr)
+	}
+}
+
+func assertApprovalCardDelivery(t *testing.T, cardData any, delivery approvaldef.ApprovalCardDelivery) {
+	t.Helper()
+
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	want := `"` + cardactionproto.ApprovalDeliveryField + `":"` + string(delivery) + `"`
+	if !strings.Contains(jsonStr, want) {
+		t.Fatalf("expected approval delivery %q in card payload: %s", delivery, jsonStr)
+	}
+}

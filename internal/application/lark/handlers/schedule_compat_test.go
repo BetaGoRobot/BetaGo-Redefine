@@ -365,6 +365,88 @@ func TestSendCompatibleCardJSONCreatePathRecordsServerMessageID(t *testing.T) {
 	}
 }
 
+func TestSendCompatibleTextRepliesToRootAgenticCardThreadWhenPresent(t *testing.T) {
+	originalReply := scheduleCompatReplyText
+	originalCreate := scheduleCompatCreateText
+	t.Cleanup(func() {
+		scheduleCompatReplyText = originalReply
+		scheduleCompatCreateText = originalCreate
+	})
+
+	scheduleCompatReplyText = func(ctx context.Context, text, msgID, suffix string, replyInThread bool) (string, error) {
+		if msgID != "om_agentic_root" {
+			t.Fatalf("reply msg id = %q, want %q", msgID, "om_agentic_root")
+		}
+		if !replyInThread {
+			t.Fatal("expected agentic compatible text reply to use thread mode when root target exists")
+		}
+		return "om_thread_reply_text", nil
+	}
+	scheduleCompatCreateText = func(ctx context.Context, text, msgID, chatID string) (string, error) {
+		t.Fatal("create path should not be used when root agentic reply target exists")
+		return "", nil
+	}
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc_test"}
+	ctx := runtimecontext.WithCompatibleReplyRecorder(context.Background(), runtimecontext.NewCompatibleReplyRecorder())
+	ctx = runtimecontext.WithAgenticReplyTargetState(ctx, runtimecontext.NewAgenticReplyTargetState())
+	runtimecontext.SeedRootAgenticReplyTarget(ctx, "om_agentic_root", "card_agentic_root")
+	runtimecontext.RecordActiveAgenticReplyTarget(ctx, "om_agentic_active", "card_agentic_active")
+
+	err := sendCompatibleText(ctx, nil, meta, "ok", "_test", false)
+	if err != nil {
+		t.Fatalf("sendCompatibleText() error = %v", err)
+	}
+	replyRef, ok := runtimecontext.LatestCompatibleReplyRef(ctx)
+	if !ok {
+		t.Fatal("expected compatible reply ref to be recorded")
+	}
+	if replyRef.MessageID != "om_thread_reply_text" {
+		t.Fatalf("compatible reply message id = %q, want %q", replyRef.MessageID, "om_thread_reply_text")
+	}
+}
+
+func TestSendCompatibleCardJSONRepliesToRootAgenticCardThreadWhenPresent(t *testing.T) {
+	originalReply := scheduleCompatReplyCardJSON
+	originalCreate := scheduleCompatCreateCardJSON
+	t.Cleanup(func() {
+		scheduleCompatReplyCardJSON = originalReply
+		scheduleCompatCreateCardJSON = originalCreate
+	})
+
+	scheduleCompatReplyCardJSON = func(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) (string, error) {
+		if msgID != "om_agentic_root" {
+			t.Fatalf("reply msg id = %q, want %q", msgID, "om_agentic_root")
+		}
+		if !replyInThread {
+			t.Fatal("expected agentic compatible card json reply to use thread mode when root target exists")
+		}
+		return "om_thread_reply_card", nil
+	}
+	scheduleCompatCreateCardJSON = func(ctx context.Context, chatID string, cardData any, msgID, suffix string) (string, error) {
+		t.Fatal("create path should not be used when root agentic reply target exists")
+		return "", nil
+	}
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc_test"}
+	ctx := runtimecontext.WithCompatibleReplyRecorder(context.Background(), runtimecontext.NewCompatibleReplyRecorder())
+	ctx = runtimecontext.WithAgenticReplyTargetState(ctx, runtimecontext.NewAgenticReplyTargetState())
+	runtimecontext.SeedRootAgenticReplyTarget(ctx, "om_agentic_root", "card_agentic_root")
+	runtimecontext.RecordActiveAgenticReplyTarget(ctx, "om_agentic_active", "card_agentic_active")
+
+	err := sendCompatibleCardJSON(ctx, nil, meta, map[string]any{"card": "ok"}, "_test", false)
+	if err != nil {
+		t.Fatalf("sendCompatibleCardJSON() error = %v", err)
+	}
+	replyRef, ok := runtimecontext.LatestCompatibleReplyRef(ctx)
+	if !ok {
+		t.Fatal("expected compatible reply ref to be recorded")
+	}
+	if replyRef.MessageID != "om_thread_reply_card" {
+		t.Fatalf("compatible reply message id = %q, want %q", replyRef.MessageID, "om_thread_reply_card")
+	}
+}
+
 func TestSendCompatibleRawCardCreatePathRecordsServerMessageID(t *testing.T) {
 	originalCreate := scheduleCompatCreateRawCard
 	t.Cleanup(func() {

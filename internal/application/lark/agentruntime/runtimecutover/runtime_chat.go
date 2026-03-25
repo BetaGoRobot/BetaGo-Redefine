@@ -2,12 +2,14 @@ package runtimecutover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	initialcore "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/initial"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/runtimewire"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -18,6 +20,12 @@ import (
 type runProcessor interface {
 	ProcessRun(context.Context, agentruntime.RunProcessorInput) error
 }
+
+type pendingInitialRunQueue interface {
+	EnqueuePendingInitialRun(context.Context, initialcore.PendingRun) (int64, error)
+}
+
+type outstandingTaskCounter func(context.Context, string, string) (int64, int64, error)
 
 type capturedPendingCapability struct {
 	CallID             string
@@ -35,27 +43,37 @@ type capturedRuntimeReply struct {
 	ReplyText         string
 }
 
+// Handler carries runtime cutover state.
 type Handler struct {
-	now              func() time.Time
-	processorBuilder func(context.Context, agentruntime.InitialReplyEmitter) runProcessor
-	output           *replyOrchestrator
-	cardSender       func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error)
+	now                func() time.Time
+	processorBuilder   func(context.Context, agentruntime.InitialReplyEmitter) runProcessor
+	outstandingCounter outstandingTaskCounter
+	pendingQueue       pendingInitialRunQueue
+	maxPendingRuns     int64
+	output             *replyOrchestrator
+	cardSender         func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error)
 }
 
-func BuildDefaultHandler(context.Context) agentruntime.RuntimeAgenticCutoverHandler {
+// BuildDefaultHandler builds the default agentic runtime cutover handler for production wiring.
+func BuildDefaultHandler(ctx context.Context) agentruntime.RuntimeAgenticCutoverHandler {
 	return &Handler{
 		now: func() time.Time { return time.Now().UTC() },
 		processorBuilder: func(ctx context.Context, emitter agentruntime.InitialReplyEmitter) runProcessor {
 			return runtimewire.BuildRunProcessor(ctx, emitter)
 		},
+		outstandingCounter: runtimewire.BuildOutstandingTaskCounter(ctx),
+		pendingQueue:       runtimewire.BuildPendingInitialRunEnqueuer(ctx),
+		maxPendingRuns:     agentruntime.DefaultMaxPendingInitialRunsPerActorChat,
 		output: &replyOrchestrator{
 			agenticSender:  larkmsg.SendAndUpdateStreamingCardWithRefs,
+			agenticReplier: larkmsg.SendAndReplyStreamingCardWithRefs,
 			agenticPatcher: larkmsg.PatchAgentStreamingCardWithRefs,
 		},
 		cardSender: larkmsg.SendAndUpdateStreamingCardWithRefs,
 	}
 }
 
+// Handle implements runtime cutover behavior.
 func (h *Handler) Handle(ctx context.Context, req agentruntime.RuntimeAgenticCutoverRequest) error {
 	if req.Event == nil || req.Event.Event == nil || req.Event.Event.Message == nil {
 		return fmt.Errorf("runtime agentic cutover event is required")
@@ -82,16 +100,26 @@ func (h *Handler) Handle(ctx context.Context, req agentruntime.RuntimeAgenticCut
 		OutputMode: agentruntime.InitialReplyOutputModeAgentic,
 	}
 	if processor == nil {
-		executor, err := initial.BuildExecutor(output)
+		executor, err := initial.BuildExecutor(output, nil)
 		if err != nil {
 			return err
 		}
 		_, err = executor.ProduceInitialReply(ctx)
 		return err
 	}
-	return processor.ProcessRun(ctx, agentruntime.RunProcessorInput{
+	if err := h.ensureOutstandingCapacity(ctx, output, initial); err != nil {
+		return err
+	}
+	err := processor.ProcessRun(ctx, agentruntime.RunProcessorInput{
 		Initial: &initial,
 	})
+	if errors.Is(err, agentruntime.ErrRunSlotOccupied) {
+		return h.enqueuePendingInitialRun(ctx, output, initial)
+	}
+	if errors.Is(err, agentruntime.ErrActiveRunLimitExceeded) {
+		return h.ensureOutstandingCapacity(ctx, output, initial)
+	}
+	return err
 }
 
 func (h *Handler) buildProcessor(ctx context.Context, emitter agentruntime.InitialReplyEmitter) runProcessor {
@@ -118,10 +146,147 @@ func (h *Handler) outputOrchestrator() *replyOrchestrator {
 	if h != nil && h.cardSender != nil {
 		return &replyOrchestrator{
 			agenticSender:  h.cardSender,
+			agenticReplier: larkmsg.SendAndReplyStreamingCardWithRefs,
 			agenticPatcher: larkmsg.PatchAgentStreamingCardWithRefs,
 		}
 	}
 	return nil
+}
+
+func (h *Handler) ensureOutstandingCapacity(ctx context.Context, output *replyOrchestrator, initial agentruntime.InitialRunInput) error {
+	if h == nil || h.outstandingCounter == nil || output == nil {
+		return nil
+	}
+	if strings.TrimSpace(initial.Start.AttachToRunID) != "" {
+		return nil
+	}
+	activeCount, pendingCount, err := h.outstandingCounter(ctx, strings.TrimSpace(initial.Start.ChatID), strings.TrimSpace(initial.Start.ActorOpenID))
+	if err != nil {
+		return nil
+	}
+	limit := h.maxPendingRuns
+	if limit <= 0 {
+		limit = agentruntime.DefaultMaxActiveRunsPerActorChat
+	}
+	if activeCount+pendingCount < limit {
+		return nil
+	}
+	_, emitErr := output.EmitInitialReply(ctx, agentruntime.InitialReplyEmissionRequest{
+		OutputKind:      agentruntime.AgenticOutputKindModelReply,
+		Mode:            agentruntime.InitialReplyOutputModeAgentic,
+		MentionOpenID:   strings.TrimSpace(initial.Start.ActorOpenID),
+		Message:         initialReplyMessage(initial.Event),
+		TargetMode:      agentruntime.InitialReplyTargetModeReply,
+		TargetMessageID: strings.TrimSpace(initial.Start.TriggerMessageID),
+		ReplyInThread:   true,
+		Stream: pendingReplySeq(
+			"当前任务数量已达上限。",
+			fmt.Sprintf("当前你在这个群里的进行中或排队中任务已达到上限（%d），请稍后再试。", limit),
+		),
+	})
+	return emitErr
+}
+
+func (h *Handler) enqueuePendingInitialRun(ctx context.Context, output *replyOrchestrator, initial agentruntime.InitialRunInput) error {
+	if h == nil || output == nil || h.pendingQueue == nil {
+		return agentruntime.ErrRunSlotOccupied
+	}
+
+	pendingThought, pendingReply := queuePendingTexts(1)
+	result, err := output.EmitInitialReply(ctx, agentruntime.InitialReplyEmissionRequest{
+		OutputKind:      agentruntime.AgenticOutputKindModelReply,
+		Mode:            agentruntime.InitialReplyOutputModeAgentic,
+		MentionOpenID:   strings.TrimSpace(initial.Start.ActorOpenID),
+		Message:         initialReplyMessage(initial.Event),
+		TargetMode:      agentruntime.InitialReplyTargetModeReply,
+		TargetMessageID: strings.TrimSpace(initial.Start.TriggerMessageID),
+		ReplyInThread:   false,
+		Stream:          pendingReplySeq(pendingThought, pendingReply),
+	})
+	if err != nil {
+		return err
+	}
+
+	item, err := initialcore.NewPendingRun(initial, initialcore.RootTarget{
+		MessageID: strings.TrimSpace(result.ResponseMessageID),
+		CardID:    strings.TrimSpace(result.ResponseCardID),
+	})
+	if err != nil {
+		return err
+	}
+
+	position, err := h.pendingQueue.EnqueuePendingInitialRun(ctx, item)
+	if err != nil {
+		if errors.Is(err, agentruntime.ErrPendingInitialRunQueueFull) {
+			_, patchErr := output.emit(ctx, replyOutputRequest{
+				OutputKind:      agentruntime.AgenticOutputKindModelReply,
+				Mode:            replyOutputModeAgentic,
+				MentionOpenID:   strings.TrimSpace(initial.Start.ActorOpenID),
+				Message:         initialReplyMessage(initial.Event),
+				TargetMode:      agentruntime.InitialReplyTargetModePatch,
+				TargetMessageID: strings.TrimSpace(result.ResponseMessageID),
+				TargetCardID:    strings.TrimSpace(result.ResponseCardID),
+				Stream:          pendingReplySeq("当前队列已满。", "当前你在这个群里的待执行任务已达到上限，请稍后再试。"),
+			})
+			if patchErr != nil {
+				return patchErr
+			}
+			return nil
+		}
+		_, _ = output.emit(ctx, replyOutputRequest{
+			OutputKind:      agentruntime.AgenticOutputKindModelReply,
+			Mode:            replyOutputModeAgentic,
+			MentionOpenID:   strings.TrimSpace(initial.Start.ActorOpenID),
+			Message:         initialReplyMessage(initial.Event),
+			TargetMode:      agentruntime.InitialReplyTargetModePatch,
+			TargetMessageID: strings.TrimSpace(result.ResponseMessageID),
+			TargetCardID:    strings.TrimSpace(result.ResponseCardID),
+			Stream:          pendingReplySeq("排队失败。", "当前无法加入等待队列，请稍后重试。"),
+		})
+		return err
+	}
+
+	if position > 1 {
+		thoughtText, replyText := queuePendingTexts(position)
+		if _, err := output.emit(ctx, replyOutputRequest{
+			OutputKind:      agentruntime.AgenticOutputKindModelReply,
+			Mode:            replyOutputModeAgentic,
+			MentionOpenID:   strings.TrimSpace(initial.Start.ActorOpenID),
+			Message:         initialReplyMessage(initial.Event),
+			TargetMode:      agentruntime.InitialReplyTargetModePatch,
+			TargetMessageID: strings.TrimSpace(result.ResponseMessageID),
+			TargetCardID:    strings.TrimSpace(result.ResponseCardID),
+			Stream:          pendingReplySeq(thoughtText, replyText),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func queuePendingTexts(position int64) (string, string) {
+	if position <= 1 {
+		return "当前有任务正在执行。", "已加入等待队列，slot 释放后会自动开始。"
+	}
+	return "当前有任务正在执行。", fmt.Sprintf("已加入等待队列，前方还有 %d 个任务，slot 释放后会自动开始。", position-1)
+}
+
+func initialReplyMessage(event *larkim.P2MessageReceiveV1) *larkim.EventMessage {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	return event.Event.Message
+}
+
+func pendingReplySeq(thoughtText, replyText string) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
+	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
+		yield(&ark_dal.ModelStreamRespReasoning{
+			ContentStruct: ark_dal.ContentStruct{
+				Thought: strings.TrimSpace(thoughtText),
+				Reply:   strings.TrimSpace(replyText),
+			},
+		})
+	}
 }
 
 func captureRuntimeReplyStream(seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (iter.Seq[*ark_dal.ModelStreamRespReasoning], func() capturedRuntimeReply) {
@@ -147,12 +312,16 @@ func captureRuntimeReplyStream(seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) 
 							if title := strings.TrimSpace(item.CapabilityCall.ApprovalTitle); title != "" ||
 								strings.TrimSpace(item.CapabilityCall.ApprovalSummary) != "" ||
 								strings.TrimSpace(item.CapabilityCall.ApprovalType) != "" ||
-								!item.CapabilityCall.ApprovalExpiresAt.IsZero() {
+								!item.CapabilityCall.ApprovalExpiresAt.IsZero() ||
+								strings.TrimSpace(item.CapabilityCall.ApprovalStepID) != "" ||
+								strings.TrimSpace(item.CapabilityCall.ApprovalToken) != "" {
 								result.PendingCapability.Approval = &agentruntime.CapabilityApprovalSpec{
-									Type:      strings.TrimSpace(item.CapabilityCall.ApprovalType),
-									Title:     strings.TrimSpace(item.CapabilityCall.ApprovalTitle),
-									Summary:   strings.TrimSpace(item.CapabilityCall.ApprovalSummary),
-									ExpiresAt: item.CapabilityCall.ApprovalExpiresAt.UTC(),
+									Type:              strings.TrimSpace(item.CapabilityCall.ApprovalType),
+									Title:             strings.TrimSpace(item.CapabilityCall.ApprovalTitle),
+									Summary:           strings.TrimSpace(item.CapabilityCall.ApprovalSummary),
+									ExpiresAt:         item.CapabilityCall.ApprovalExpiresAt.UTC(),
+									ReservationStepID: strings.TrimSpace(item.CapabilityCall.ApprovalStepID),
+									ReservationToken:  strings.TrimSpace(item.CapabilityCall.ApprovalToken),
 								}
 							}
 						} else {
@@ -287,14 +456,18 @@ func buildCapturedPendingApproval(trace *ark_dal.CapabilityCallTrace) *agentrunt
 	if strings.TrimSpace(trace.ApprovalTitle) == "" &&
 		strings.TrimSpace(trace.ApprovalSummary) == "" &&
 		strings.TrimSpace(trace.ApprovalType) == "" &&
-		trace.ApprovalExpiresAt.IsZero() {
+		trace.ApprovalExpiresAt.IsZero() &&
+		strings.TrimSpace(trace.ApprovalStepID) == "" &&
+		strings.TrimSpace(trace.ApprovalToken) == "" {
 		return nil
 	}
 	return &agentruntime.CapabilityApprovalSpec{
-		Type:      strings.TrimSpace(trace.ApprovalType),
-		Title:     strings.TrimSpace(trace.ApprovalTitle),
-		Summary:   strings.TrimSpace(trace.ApprovalSummary),
-		ExpiresAt: trace.ApprovalExpiresAt.UTC(),
+		Type:              strings.TrimSpace(trace.ApprovalType),
+		Title:             strings.TrimSpace(trace.ApprovalTitle),
+		Summary:           strings.TrimSpace(trace.ApprovalSummary),
+		ExpiresAt:         trace.ApprovalExpiresAt.UTC(),
+		ReservationStepID: strings.TrimSpace(trace.ApprovalStepID),
+		ReservationToken:  strings.TrimSpace(trace.ApprovalToken),
 	}
 }
 
@@ -352,7 +525,7 @@ func resolveTriggerType(ctx context.Context, event *larkim.P2MessageReceiveV1) a
 
 func resolveInitialTriggerType(ctx context.Context, event *larkim.P2MessageReceiveV1, ownership agentruntime.InitialRunOwnership) agentruntime.TriggerType {
 	if ownership.TriggerType != "" {
-		return ownership.TriggerType
+		return agentruntime.TriggerType(ownership.TriggerType)
 	}
 	return resolveTriggerType(ctx, event)
 }

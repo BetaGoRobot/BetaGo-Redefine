@@ -19,6 +19,10 @@ func AtUser(openID, userName string) string {
 	return fmt.Sprintf("<at user_id=\"%s\">%s</at>", openID, userName)
 }
 
+func AtUserMD(openID ...string) string {
+	return fmt.Sprintf("<at ids=\"%s\"></at>", strings.Join(openID, ","))
+}
+
 // TrimAtMsg trim掉at的消息
 //
 //	@param ctx context.Context

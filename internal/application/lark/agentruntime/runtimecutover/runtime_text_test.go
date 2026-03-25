@@ -23,8 +23,6 @@ func TestStandardHandlerStartsRunRepliesTextAndCompletesReply(t *testing.T) {
 			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Thought: "先读上下文", Reply: "这是最终回复"}},
 		),
 	}
-	setTestChatGenerationPlanExecutor(fakeExecutor)
-	defer resetTestChatGenerationPlanExecutor()
 
 	now := time.Date(2026, 3, 18, 15, 10, 0, 0, time.UTC)
 	chatID := "oc_chat"
@@ -46,7 +44,7 @@ func TestStandardHandlerStartsRunRepliesTextAndCompletesReply(t *testing.T) {
 		},
 	}
 
-	processor := &fakeRunProcessor{}
+	processor := &fakeRunProcessor{executorFactory: newTestInitialReplyExecutorFactory(fakeExecutor)}
 	sent := struct {
 		replyText string
 		msgID     string
@@ -120,8 +118,6 @@ func TestStandardHandlerSkipsSendingWhenReplyIsEmpty(t *testing.T) {
 			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Decision: "skip"}},
 		),
 	}
-	setTestChatGenerationPlanExecutor(fakeExecutor)
-	defer resetTestChatGenerationPlanExecutor()
 
 	now := time.Date(2026, 3, 18, 15, 11, 0, 0, time.UTC)
 	chatID := "oc_chat"
@@ -143,7 +139,7 @@ func TestStandardHandlerSkipsSendingWhenReplyIsEmpty(t *testing.T) {
 		},
 	}
 
-	processor := &fakeRunProcessor{}
+	processor := &fakeRunProcessor{executorFactory: newTestInitialReplyExecutorFactory(fakeExecutor)}
 	replySent := false
 	handler := &StandardHandler{
 		now: func() time.Time { return now },

@@ -15,10 +15,13 @@ import (
 func TestLarkReplyEmitterUsesAgenticSenderInAgenticMode(t *testing.T) {
 	emitter := agentruntime.NewLarkReplyEmitterForTest(
 		func(context.Context, string, string) appconfig.ChatMode { return appconfig.ChatModeAgentic },
-		func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+		func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], opts ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
 			items := make([]*ark_dal.ModelStreamRespReasoning, 0)
 			for item := range seq {
 				items = append(items, item)
+			}
+			if len(opts) != 1 || opts[0].MentionOpenID != "ou_actor" {
+				t.Fatalf("agentic sender options = %+v, want mention open id ou_actor", opts)
 			}
 			if len(items) != 1 {
 				t.Fatalf("item count = %d, want 1", len(items))
@@ -33,6 +36,10 @@ func TestLarkReplyEmitterUsesAgenticSenderInAgenticMode(t *testing.T) {
 				MessageID: "om_agentic_reply",
 				CardID:    "card_agentic_reply",
 			}, nil
+		},
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool, ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("reply path should not be used without target message")
+			return larkmsg.AgentStreamingCardRefs{}, nil
 		},
 		func(context.Context, larkmsg.AgentStreamingCardRefs, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
 			t.Fatal("patch path should not be used without target card")
@@ -72,8 +79,12 @@ func TestLarkReplyEmitterUsesAgenticSenderInAgenticMode(t *testing.T) {
 func TestLarkReplyEmitterUsesTextReplyInStandardMode(t *testing.T) {
 	emitter := agentruntime.NewLarkReplyEmitterForTest(
 		func(context.Context, string, string) appconfig.ChatMode { return appconfig.ChatModeStandard },
-		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
 			t.Fatal("agentic path should not be used in standard mode")
+			return larkmsg.AgentStreamingCardRefs{}, nil
+		},
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool, ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("agentic reply path should not be used in standard mode")
 			return larkmsg.AgentStreamingCardRefs{}, nil
 		},
 		func(context.Context, larkmsg.AgentStreamingCardRefs, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
@@ -118,8 +129,12 @@ func TestLarkReplyEmitterUsesTextReplyInStandardMode(t *testing.T) {
 func TestLarkReplyEmitterPatchesExistingAgenticCardWhenTargetCardProvided(t *testing.T) {
 	emitter := agentruntime.NewLarkReplyEmitterForTest(
 		func(context.Context, string, string) appconfig.ChatMode { return appconfig.ChatModeAgentic },
-		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
 			t.Fatal("create sender should not be used when target card exists")
+			return larkmsg.AgentStreamingCardRefs{}, nil
+		},
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool, ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("reply path should not be used when patch target exists")
 			return larkmsg.AgentStreamingCardRefs{}, nil
 		},
 		func(ctx context.Context, refs larkmsg.AgentStreamingCardRefs, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
@@ -180,8 +195,12 @@ func TestLarkReplyEmitterPatchesExistingAgenticCardWhenTargetCardProvided(t *tes
 func TestLarkReplyEmitterPatchesExistingStandardMessageWhenTargetMessageProvided(t *testing.T) {
 	emitter := agentruntime.NewLarkReplyEmitterForTest(
 		func(context.Context, string, string) appconfig.ChatMode { return appconfig.ChatModeStandard },
-		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
 			t.Fatal("agentic create path should not be used in standard mode")
+			return larkmsg.AgentStreamingCardRefs{}, nil
+		},
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool, ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("agentic reply path should not be used in standard mode")
 			return larkmsg.AgentStreamingCardRefs{}, nil
 		},
 		func(context.Context, larkmsg.AgentStreamingCardRefs, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
@@ -221,5 +240,78 @@ func TestLarkReplyEmitterPatchesExistingStandardMessageWhenTargetMessageProvided
 	}
 	if result.DeliveryMode != agentruntime.ReplyDeliveryModePatch {
 		t.Fatalf("delivery mode = %q, want %q", result.DeliveryMode, agentruntime.ReplyDeliveryModePatch)
+	}
+}
+
+func TestLarkReplyEmitterRepliesInThreadForAgenticSideEffect(t *testing.T) {
+	replyCalled := false
+	replyInThread := false
+	replyMsgID := ""
+
+	emitter := agentruntime.NewLarkReplyEmitterForTest(
+		func(context.Context, string, string) appconfig.ChatMode { return appconfig.ChatModeAgentic },
+		func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("create sender should not be used when follow-up thread target exists")
+			return larkmsg.AgentStreamingCardRefs{}, nil
+		},
+		func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool, opts ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			replyCalled = true
+			replyInThread = inThread
+			if msg == nil || msg.MessageId == nil {
+				t.Fatal("expected reply message")
+			}
+			replyMsgID = *msg.MessageId
+			for range seq {
+			}
+			return larkmsg.AgentStreamingCardRefs{
+				MessageID: "om_followup_reply",
+				CardID:    "card_followup_reply",
+			}, nil
+		},
+		func(context.Context, larkmsg.AgentStreamingCardRefs, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+			t.Fatal("patch path should not be used for follow-up thread reply")
+			return larkmsg.AgentStreamingCardRefs{}, nil
+		},
+		func(context.Context, string, string, string, bool) (string, error) {
+			t.Fatal("text reply path should not be used in agentic mode")
+			return "", nil
+		},
+		func(context.Context, string, string, string, string) (string, error) {
+			t.Fatal("text create path should not be used in agentic mode")
+			return "", nil
+		},
+		func(context.Context, string, string) error {
+			t.Fatal("text patch path should not be used in agentic mode")
+			return nil
+		},
+	)
+
+	result, err := emitter.EmitReply(context.Background(), agentruntime.ReplyEmissionRequest{
+		Session:         &agentruntime.AgentSession{ChatID: "oc_chat"},
+		Run:             &agentruntime.AgentRun{ID: "run_agentic_followup", TriggerMessageID: "om_trigger", ActorOpenID: "ou_actor"},
+		OutputKind:      agentruntime.AgenticOutputKindSideEffect,
+		ThoughtText:     "继续处理",
+		ReplyText:       "这是线程续写",
+		TargetMessageID: "om_root_agentic",
+		TargetCardID:    "card_root_agentic",
+		ReplyInThread:   true,
+	})
+	if err != nil {
+		t.Fatalf("EmitReply() error = %v", err)
+	}
+	if !replyCalled {
+		t.Fatal("expected agentic reply path to be used")
+	}
+	if !replyInThread {
+		t.Fatal("expected follow-up reply to force in-thread delivery")
+	}
+	if replyMsgID != "om_root_agentic" {
+		t.Fatalf("reply target message id = %q, want %q", replyMsgID, "om_root_agentic")
+	}
+	if result.MessageID != "om_followup_reply" || result.CardID != "card_followup_reply" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.DeliveryMode != agentruntime.ReplyDeliveryModeReply {
+		t.Fatalf("delivery mode = %q, want %q", result.DeliveryMode, agentruntime.ReplyDeliveryModeReply)
 	}
 }

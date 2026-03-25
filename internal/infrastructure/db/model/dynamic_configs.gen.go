@@ -9,7 +9,7 @@ const TableNameDynamicConfig = "dynamic_configs"
 // DynamicConfig mapped from table <dynamic_configs>
 type DynamicConfig struct {
 	Key   string `gorm:"column:key;primaryKey" json:"key"`
-	Value string `gorm:"column:value;primaryKey" json:"value"`
+	Value string `gorm:"column:value;not null" json:"value"`
 }
 
 // TableName DynamicConfig's table name

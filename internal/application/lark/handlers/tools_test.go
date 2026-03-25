@@ -87,6 +87,28 @@ func TestBuildSchedulableToolsIncludesAgentRuntimeResumeOnlyForScheduler(t *test
 	}
 }
 
+func TestLarkToolsIncludeResearchHelpers(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	allTools := larktools()
+	schedulable := BuildSchedulableTools()
+
+	for _, name := range []string{
+		"research_read_url",
+		"research_extract_evidence",
+		"research_source_ledger",
+	} {
+		if _, ok := allTools.FunctionCallMap[name]; !ok {
+			t.Fatalf("lark tools missing %q", name)
+		}
+		if _, ok := schedulable.FunctionCallMap[name]; !ok {
+			t.Fatalf("schedulable tools missing %q", name)
+		}
+	}
+	if allTools.WebsearchTool == nil {
+		t.Fatal("expected lark tools to keep builtin web_search enabled")
+	}
+}
+
 func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {

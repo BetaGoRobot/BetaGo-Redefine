@@ -25,8 +25,8 @@ func observePotentialRuntimeMessage(ctx context.Context, event *larkim.P2Message
 	observer := agentruntime.NewShadowObserver(
 		agentruntime.NewDefaultGroupPolicy(agentruntime.DefaultGroupPolicyConfig{}),
 		nil,
-		func(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
-			return runtimeActiveRunSnapshot(ctx, chatID)
+		func(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
+			return runtimeActiveRunSnapshot(ctx, chatID, actorOpenID)
 		},
 	)
 	observation := observer.Observe(ctx, agentruntime.ShadowObserveInput{
@@ -77,7 +77,7 @@ func runtimeCommandName(ctx context.Context, event *larkim.P2MessageReceiveV1) s
 	return strings.TrimSpace(parts[0])
 }
 
-func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
+func runtimeActiveRunSnapshot(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
 	coordinator := buildDefaultShadowRunCoordinator(ctx)
 	if coordinator == nil {
 		return nil
@@ -86,7 +86,7 @@ func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.
 	if !ok || provider == nil {
 		return nil
 	}
-	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID))
+	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID), strings.TrimSpace(actorOpenID))
 	if err != nil {
 		return nil
 	}
@@ -95,7 +95,7 @@ func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.
 
 func runtimeOwnershipContext(ctx context.Context, observation agentruntime.ShadowObservation) context.Context {
 	return agentruntime.WithInitialRunOwnership(ctx, agentruntime.InitialRunOwnership{
-		TriggerType:    observation.TriggerType,
+		TriggerType:    string(observation.TriggerType),
 		AttachToRunID:  strings.TrimSpace(observation.AttachToRunID),
 		SupersedeRunID: strings.TrimSpace(observation.SupersedeRunID),
 	})

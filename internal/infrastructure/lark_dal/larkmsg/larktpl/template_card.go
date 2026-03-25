@@ -65,6 +65,8 @@ type MusicListCardItem struct {
 	ButtonInfo  string            `json:"button_info,omitempty"`
 	ElementID   string            `json:"element_id,omitempty"`
 	ButtonVal   map[string]string `json:"button_val,omitempty"`
+
+	Filled bool `json:"-"`
 }
 
 type SingleSongDetailCardVars struct {

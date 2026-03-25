@@ -12,6 +12,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+// StandardHandler carries runtime cutover state.
 type StandardHandler struct {
 	now              func() time.Time
 	processorBuilder func(context.Context, agentruntime.InitialReplyEmitter) runProcessor
@@ -19,6 +20,7 @@ type StandardHandler struct {
 	replySender      func(context.Context, *larkim.EventMessage, string) (string, error)
 }
 
+// BuildDefaultStandardHandler builds the default standard-mode cutover handler for production wiring.
 func BuildDefaultStandardHandler(context.Context) agentruntime.RuntimeStandardCutoverHandler {
 	return &StandardHandler{
 		now: func() time.Time { return time.Now().UTC() },
@@ -33,6 +35,7 @@ func BuildDefaultStandardHandler(context.Context) agentruntime.RuntimeStandardCu
 	}
 }
 
+// Handle implements runtime cutover behavior.
 func (h *StandardHandler) Handle(ctx context.Context, req agentruntime.RuntimeStandardCutoverRequest) error {
 	if req.Event == nil || req.Event.Event == nil || req.Event.Event.Message == nil {
 		return fmt.Errorf("runtime standard cutover event is required")
@@ -59,7 +62,7 @@ func (h *StandardHandler) Handle(ctx context.Context, req agentruntime.RuntimeSt
 		OutputMode: agentruntime.InitialReplyOutputModeStandard,
 	}
 	if processor == nil {
-		executor, err := initial.BuildExecutor(output)
+		executor, err := initial.BuildExecutor(output, nil)
 		if err != nil {
 			return err
 		}

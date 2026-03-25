@@ -7,22 +7,33 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
+	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
+	agentMentionElementID      = "agt_root_mention"
 	agentThoughtPanelElementID = "agt_thought_panel"
 	agentThoughtElementID      = "agt_thought"
 	agentReplyElementID        = "agt_reply"
 
 	agentThoughtPlaceholder = "<font color='grey'>思考中...</font>"
 	agentReplyPlaceholder   = "<font color='grey'>生成中...</font>"
+
+	cardStreamingSequenceTTL = 24 * time.Hour
 )
 
 type AgentStreamingCardRefs struct {
@@ -30,12 +41,25 @@ type AgentStreamingCardRefs struct {
 	CardID    string
 }
 
-var sendAgentStreamingCreateCardFunc = sendAgentStreamingCreateCard
-var patchAgentStreamingCardFunc = patchAgentStreamingCard
-var updateAgentCardElementFunc = updateAgentCardElement
+type AgentStreamingCardOptions struct {
+	MentionOpenID string
+}
 
-func newAgentStreamingCard() RawCard {
-	elements := []any{
+var (
+	sendAgentStreamingCreateCardFunc = sendAgentStreamingCreateCard
+	patchAgentStreamingCardFunc      = patchAgentStreamingCard
+	updateAgentCardElementFunc       = updateAgentCardElement
+
+	localCardStreamingSequences sync.Map
+)
+
+func newAgentStreamingCard(opts AgentStreamingCardOptions) RawCard {
+	elements := make([]any, 0, 5)
+	if mentionOpenID := strings.TrimSpace(opts.MentionOpenID); mentionOpenID != "" {
+		elements = append(elements, agentStreamingMarkdown(AtUserMD(mentionOpenID), agentMentionElementID))
+		elements = append(elements, Divider())
+	}
+	elements = append(elements,
 		CollapsiblePanel(
 			"思考过程",
 			[]any{agentStreamingMarkdown(agentThoughtPlaceholder, agentThoughtElementID)},
@@ -48,7 +72,7 @@ func newAgentStreamingCard() RawCard {
 		),
 		Divider(),
 		agentStreamingMarkdown(agentReplyPlaceholder, agentReplyElementID),
-	}
+	)
 	return NewCardV2("BetaGo", elements, CardV2Options{
 		HeaderTemplate:  "wathet",
 		VerticalSpacing: "8px",
@@ -97,8 +121,9 @@ func sendAgentStreamingReplyCard(
 	msg *larkim.EventMessage,
 	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
 	replyInThread bool,
+	options ...AgentStreamingCardOptions,
 ) (AgentStreamingCardRefs, error) {
-	cardID, err := createAgentStreamingCardEntity(ctx)
+	cardID, err := createAgentStreamingCardEntity(ctx, mergeAgentStreamingCardOptions(options...))
 	if err != nil {
 		return AgentStreamingCardRefs{}, err
 	}
@@ -124,6 +149,7 @@ func sendAgentStreamingReplyCard(
 	if resp.Data != nil && resp.Data.MessageId != nil {
 		refs.MessageID = *resp.Data.MessageId
 	}
+	runtimecontext.RecordActiveAgenticReplyTarget(ctx, refs.MessageID, refs.CardID)
 	if err := streamAgentCardContent(ctx, cardID, msgSeq); err != nil {
 		return refs, err
 	}
@@ -134,8 +160,9 @@ func sendAgentStreamingCreateCard(
 	ctx context.Context,
 	msg *larkim.EventMessage,
 	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
+	options ...AgentStreamingCardOptions,
 ) (AgentStreamingCardRefs, error) {
-	cardID, err := createAgentStreamingCardEntity(ctx)
+	cardID, err := createAgentStreamingCardEntity(ctx, mergeAgentStreamingCardOptions(options...))
 	if err != nil {
 		return AgentStreamingCardRefs{}, err
 	}
@@ -161,6 +188,7 @@ func sendAgentStreamingCreateCard(
 	if resp.Data != nil && resp.Data.MessageId != nil {
 		refs.MessageID = *resp.Data.MessageId
 	}
+	runtimecontext.RecordActiveAgenticReplyTarget(ctx, refs.MessageID, refs.CardID)
 	if err := streamAgentCardContent(ctx, cardID, msgSeq); err != nil {
 		return refs, err
 	}
@@ -183,31 +211,54 @@ func patchAgentStreamingCard(
 	if strings.TrimSpace(refs.CardID) == "" {
 		return refs, errors.New("card id is required")
 	}
+	runtimecontext.RecordActiveAgenticReplyTarget(ctx, refs.MessageID, refs.CardID)
 	if err := streamAgentCardContent(ctx, strings.TrimSpace(refs.CardID), msgSeq); err != nil {
 		return refs, err
 	}
 	return refs, nil
 }
 
-func createAgentStreamingCardEntity(ctx context.Context) (string, error) {
-	raw, err := json.Marshal(newAgentStreamingCard())
+func createAgentStreamingCardEntity(ctx context.Context, opts AgentStreamingCardOptions) (string, error) {
+	raw, err := json.Marshal(newAgentStreamingCard(opts))
 	if err != nil {
 		return "", err
 	}
 	return createCardEntity(ctx, cardKitTypeCardJSON, string(raw))
 }
 
+func mergeAgentStreamingCardOptions(options ...AgentStreamingCardOptions) AgentStreamingCardOptions {
+	merged := AgentStreamingCardOptions{}
+	for _, option := range options {
+		if strings.TrimSpace(merged.MentionOpenID) == "" {
+			merged.MentionOpenID = strings.TrimSpace(option.MentionOpenID)
+		}
+	}
+	return merged
+}
+
 func streamAgentCardContent(ctx context.Context, cardID string, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
-	const initialSequence = 1
+	initialSequence, err := nextCardStreamingSequence(ctx, cardID)
+	if err != nil {
+		return err
+	}
 	if err := setCardStreamingMode(ctx, cardID, true, initialSequence); err != nil {
 		return err
 	}
 
-	lastSequence, err := updateAgentStreamingCard(ctx, cardID, msgSeq, initialSequence)
+	lastSequence, err := updateAgentStreamingCardWithSource(ctx, cardID, msgSeq, initialSequence, func() (int, error) {
+		return nextCardStreamingSequence(ctx, cardID)
+	})
 	if err != nil {
 		return err
 	}
-	return setCardStreamingMode(ctx, cardID, false, lastSequence+1)
+	finalSequence, err := nextCardStreamingSequence(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if finalSequence <= lastSequence {
+		finalSequence = lastSequence + 1
+	}
+	return setCardStreamingMode(ctx, cardID, false, finalSequence)
 }
 
 func setCardStreamingMode(ctx context.Context, cardID string, enabled bool, sequence int) error {
@@ -241,6 +292,20 @@ func updateAgentStreamingCard(
 	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
 	startSequence int,
 ) (int, error) {
+	nextSequenceValue := startSequence
+	return updateAgentStreamingCardWithSource(ctx, cardID, msgSeq, startSequence, func() (int, error) {
+		nextSequenceValue++
+		return nextSequenceValue, nil
+	})
+}
+
+func updateAgentStreamingCardWithSource(
+	ctx context.Context,
+	cardID string,
+	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
+	startSequence int,
+	nextSequence func() (int, error),
+) (int, error) {
 	sequence := startSequence
 	lastFlush := time.Now()
 	pending := map[string]string{}
@@ -254,7 +319,11 @@ func updateAgentStreamingCard(
 			if !ok || strings.TrimSpace(content) == "" {
 				continue
 			}
-			sequence++
+			next, err := nextSequence()
+			if err != nil {
+				return err
+			}
+			sequence = next
 			if err := updateAgentCardElementFunc(ctx, cardID, elementID, content, sequence); err != nil {
 				return err
 			}
@@ -323,4 +392,53 @@ func updateAgentCardElement(ctx context.Context, cardID, elementID, content stri
 
 func cardStreamingUUID(cardID, elementID string, sequence int) string {
 	return fmt.Sprintf("%s-%s-%d", cardID, elementID, sequence)
+}
+
+func nextCardStreamingSequence(ctx context.Context, cardID string) (int, error) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0, errors.New("card id is required")
+	}
+
+	client := redis_dal.GetRedisClient()
+	if client != nil {
+		key := cardStreamingSequenceRedisKey(cardID)
+		next, err := client.Incr(ctx, key).Result()
+		if err == nil {
+			if expireErr := client.Expire(ctx, key, cardStreamingSequenceTTL).Err(); expireErr != nil && !errors.Is(expireErr, redis.Nil) {
+				logs.L().Ctx(ctx).Warn("extend card streaming sequence ttl failed",
+					zap.String("card_id", cardID),
+					zap.Error(expireErr),
+				)
+			}
+			return int(next), nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, ctxErr
+		}
+		logs.L().Ctx(ctx).Warn("allocate card streaming sequence from redis failed; falling back to local state",
+			zap.String("card_id", cardID),
+			zap.Error(err),
+		)
+	}
+
+	return nextLocalCardStreamingSequence(cardID), nil
+}
+
+func cardStreamingSequenceRedisKey(cardID string) string {
+	return botidentity.Current().NamespaceKey("larkmsg", "agent_stream_sequence", strings.TrimSpace(cardID))
+}
+
+func nextLocalCardStreamingSequence(cardID string) int {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return 0
+	}
+	value, _ := localCardStreamingSequences.LoadOrStore(cardID, &atomic.Int64{})
+	counter, _ := value.(*atomic.Int64)
+	if counter == nil {
+		counter = &atomic.Int64{}
+		localCardStreamingSequences.Store(cardID, counter)
+	}
+	return int(counter.Add(1))
 }

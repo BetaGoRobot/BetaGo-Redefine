@@ -3,16 +3,20 @@ package larkmsg
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	. "github.com/bytedance/mockey"
+	. "github.com/smartystreets/goconvey/convey"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestBuildAgentStreamingCardPlacesThoughtPanelBeforeReply(t *testing.T) {
-	card := newAgentStreamingCard()
+	card := newAgentStreamingCard(AgentStreamingCardOptions{})
 	raw, err := json.Marshal(card)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -35,6 +39,22 @@ func TestBuildAgentStreamingCardPlacesThoughtPanelBeforeReply(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"element_id":"agt_thought"`) {
 		t.Fatalf("expected thought content element id in card json: %s", jsonStr)
+	}
+}
+
+func TestBuildAgentStreamingCardIncludesMentionBlockWhenConfigured(t *testing.T) {
+	card := newAgentStreamingCard(AgentStreamingCardOptions{MentionOpenID: "ou_actor"})
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	jsonStr := string(raw)
+	if !strings.Contains(jsonStr, `"element_id":"agt_root_mention"`) {
+		t.Fatalf("expected mention element id in card json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `\u003cat ids=\"ou_actor\"\u003e\u003c/at\u003e`) {
+		t.Fatalf("expected mention markup in card json: %s", jsonStr)
 	}
 }
 
@@ -111,7 +131,7 @@ func TestSendAndUpdateStreamingCardPreservesRefsFromWithRefsVariant(t *testing.T
 		sendAgentStreamingCreateCardFunc = original
 	}()
 
-	sendAgentStreamingCreateCardFunc = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (AgentStreamingCardRefs, error) {
+	sendAgentStreamingCreateCardFunc = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], opts ...AgentStreamingCardOptions) (AgentStreamingCardRefs, error) {
 		return AgentStreamingCardRefs{
 			MessageID: "om_runtime_reply",
 			CardID:    "card_runtime_reply",
@@ -130,4 +150,49 @@ func TestSendAndUpdateStreamingCardPreservesRefsFromWithRefsVariant(t *testing.T
 	if err := SendAndUpdateStreamingCard(context.Background(), msg, func(func(*ark_dal.ModelStreamRespReasoning) bool) {}); err != nil {
 		t.Fatalf("SendAndUpdateStreamingCard() error = %v", err)
 	}
+}
+
+func TestPatchAgentStreamingCardWithRefsPreservesMonotonicSequenceAcrossPatchRounds(t *testing.T) {
+	PatchConvey("same card patch rounds should keep sequence increasing", t, func() {
+		var settings []int
+		var updates []int
+
+		Mock(setCardStreamingMode).To(func(ctx context.Context, cardID string, enabled bool, sequence int) error {
+			settings = append(settings, sequence)
+			return nil
+		}).Build()
+		Mock(updateAgentCardElement).To(func(ctx context.Context, cardID, elementID, content string, sequence int) error {
+			updates = append(updates, sequence)
+			return nil
+		}).Build()
+
+		refs := AgentStreamingCardRefs{
+			MessageID: "om_pending_root",
+			CardID:    fmt.Sprintf("card_pending_root_%d", time.Now().UnixNano()),
+		}
+		firstRound := func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
+			yield(&ark_dal.ModelStreamRespReasoning{
+				ReasoningContent: "排队中",
+				ContentStruct: ark_dal.ContentStruct{
+					Reply: "等待前一个任务完成",
+				},
+			})
+		}
+		secondRound := func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
+			yield(&ark_dal.ModelStreamRespReasoning{
+				ReasoningContent: "开始执行",
+				ContentStruct: ark_dal.ContentStruct{
+					Reply: "任务已恢复",
+				},
+			})
+		}
+
+		_, err := PatchAgentStreamingCardWithRefs(context.Background(), refs, firstRound)
+		So(err, ShouldBeNil)
+		_, err = PatchAgentStreamingCardWithRefs(context.Background(), refs, secondRound)
+		So(err, ShouldBeNil)
+
+		So(settings, ShouldResemble, []int{1, 4, 5, 8})
+		So(updates, ShouldResemble, []int{2, 3, 6, 7})
+	})
 }

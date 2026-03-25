@@ -224,6 +224,12 @@ BetaGo-Redefine/
 - 再等待用户执行 `go run ./cmd/generate`
 - 用户确认前，不继续写依赖新 schema 的业务代码
 
+## 测试与 Mock 约束
+
+- 单测不得通过包级函数变量、函数 alias、运行时重赋值函数入口的方式做 mock。
+- 单测中的替身必须使用显式依赖注入后的 fake / stub，或 `goconvey` 一类正式测试框架组织场景与断言。
+- 如果生产代码当前不可测试，应先把依赖收敛到构造参数、deps struct、接口或明确的 context-scoped seam，再写测试；不要为了测试新增可变全局函数 alias。
+
 ## 本地开发
 
 ### 前置要求

@@ -6,6 +6,11 @@ import (
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 )
 
+type AgentRuntimeWorkerSettings struct {
+	ResumeWorkers            int
+	PendingInitialRunWorkers int
+}
+
 // ShutdownTimeout 返回 App.Stop 的总优雅关闭时间。默认值故意保守一些，
 // 让工作池有机会把已接收任务尽量处理完。
 func ShutdownTimeout(cfg *infraConfig.BaseConfig) time.Duration {
@@ -22,6 +27,17 @@ func ManagementShutdownTimeout(cfg *infraConfig.BaseConfig) time.Duration {
 		return time.Duration(cfg.ManagementHTTPConfig.ShutdownTimeoutSeconds) * time.Second
 	}
 	return 10 * time.Second
+}
+
+func AgentRuntimeWorkerConfigs(cfg *infraConfig.BaseConfig) AgentRuntimeWorkerSettings {
+	runtimeCfg := &infraConfig.RuntimeConfig{}
+	if cfg != nil && cfg.RuntimeConfig != nil {
+		runtimeCfg = cfg.RuntimeConfig
+	}
+	return AgentRuntimeWorkerSettings{
+		ResumeWorkers:            defaultInt(runtimeCfg.AgentRuntimeResumeWorkers, 1),
+		PendingInitialRunWorkers: defaultInt(runtimeCfg.AgentRuntimePendingInitialWorkers, 1),
+	}
 }
 
 // ExecutorConfigs 把 runtime TOML 中的配置转换成实际执行器参数。不同工作

@@ -2,6 +2,203 @@
 
 持续记录 `docs/architecture/agent-runtime-design.md` 与 `docs/architecture/agent-runtime-plan.md` 的落地结果，避免“设计在文档里、实现散落在提交里”。
 
+## 2026-03-25 · Milestone X · Run Liveness / Stale Repair / Pending Expiry
+
+### 目标
+
+- 把之前“前序 run 卡死时排队链没有自愈”的架构缺口补成真实运行机制。
+- 让 `heartbeat_at / lease_expires_at` 不再只是 schema 字段，而是能被创建、续约、扫描和修复路径消费。
+- 给 pending initial queue 增加最保守可用的最大等待时间兜底，避免无限排队。
+
+### 已落地的运行语义
+
+- `AgentRun` 现在正式承载 run liveness 字段：
+  - `worker_id`
+  - `heartbeat_at`
+  - `lease_expires_at`
+  - `repair_attempts`
+- `queued` run 在以下路径都会至少写入一次 liveness：
+  - `StartShadowRun`
+  - attach 回到 `queued`
+  - `ResumeRun`
+  - continuation 再次把 run 推回 `queued`
+- 真正进入执行临界区后：
+  - `startRunExecution(...)` 会补上 `worker_id`
+  - `renewRunExecutionHeartbeat(...)` 会周期续约 run heartbeat
+- 进入 `waiting_*` 或终态时，会清掉旧 liveness，避免把“暂停/已结束”误当成仍在执行。
+
+### Stale Run Repair
+
+- 新增后台 [`StaleRunSweeper`](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/stale_run_sweeper.go)
+  - 周期扫描 stale `queued/running` run
+  - 判定优先用 `lease_expires_at`
+  - 老数据没有 lease 时回退到 `updated_at` cutoff
+- repair 通过 [`RunCoordinator.RepairStaleRun`](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/stale_run_sweeper.go) 完成
+  - `queued/running -> failed`
+  - `error_text = stale_run_timeout`
+  - 清 `worker_id / heartbeat_at / lease_expires_at`
+  - 清 session active / actor slot
+  - `NotifyPendingInitialRun(...)` 唤醒后续 scope
+- 当前仍然刻意不自动处理：
+  - `waiting_approval`
+  - `waiting_schedule`
+  - `waiting_callback`
+
+### Pending Queue 治理
+
+- pending worker 现在会检查 `PendingRun.RequestedAt`
+- 仅当该字段存在，且排队超过 `48h` 时：
+  - patch 原排队卡片为“排队超时”
+  - 停止继续排队
+  - 让 scope 清理链自然收尾
+- `ErrRunSlotOccupied` 仍然保留为 retryable，不会因为这次治理把正常短时拥塞误判为失败。
+
+### 文档修正点
+
+- [`ARCHITECTURE.md`](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/ARCHITECTURE.md)
+  - 第 25 节已从“缺口审计”改成“当前自愈设计”
+  - 补充 `run_liveness.go` / `stale_run_sweeper.go` 到模块图、分层表和阅读顺序
+- 这轮文档明确了当前边界：
+  - execution lease 负责并发互斥
+  - run heartbeat + stale sweeper 负责 DB active run 自愈
+  - pending expiry 只是 fallback，不是完整的队列 SLA
+
+### 验证
+
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOMODCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gomodcache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime/...`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOMODCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gomodcache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./cmd/larkrobot ./internal/infrastructure/agentstore`
+
+## 2026-03-24 · Milestone W · Agent Runtime 入口收口与状态机治理
+
+### 目标
+
+- 优先做 agent runtime 的架构治理，而不是继续在碎文件和局部状态机里补洞。
+- 把当前实现收口成少数几个稳定入口文件，让后续修改时能先看入口，再顺着 lane 往下读。
+- 去掉测试里靠 package-level `default_xx` / `SetXxx(...)` 替换的“函数锚点”做法，改为显式依赖注入。
+
+### 当前骨架
+
+当前 `internal/application/lark/agentruntime` 的核心入口已经进一步收口到下列 4 个主文件：
+
+- [initial.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial.go)
+  - initial lane 的 plan builder
+  - initial turn request/result
+  - initial turn 执行与 stream finalizer
+  - initial reply executor / emitter
+  - initial pending approval dispatch
+  - initial capability trace record
+  - pending initial queue item、marshal/unmarshal、worker 消费
+- [reply_turn.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/reply_turn.go)
+  - default runtime executor deps
+  - default chat generation entry
+  - capability / continuation reply turn 请求类型
+  - capability / continuation reply turn 默认执行器
+  - runtime tool decoration 与 reply-turn runtime 装配
+  - shared initial/reply turn loop
+- [run_projection.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/run_projection.go)
+  - run + steps 的只读投影
+  - current/previous step
+  - root/latest/latest-model reply target
+  - replayable capability step
+  - continuation context
+### 现在的 4 条 Lane
+
+1. `initial lane`
+   - `InitialRunInput -> BuildExecutor -> InitialReplyExecutor`
+   - 负责首轮模型 turn、首轮工具循环、首轮消息发送/patch/reply
+2. `pending-initial queue lane`
+   - `PendingInitialRun -> PendingInitialRunWorker`
+   - 负责 slot 被占用时的排队、重试、root target 保留
+3. `reply-turn lane`
+   - `CapabilityReplyTurnExecutor / ContinuationReplyTurnExecutor -> ExecuteReplyTurnLoop`
+   - 负责 capability 后续写和 resume 后续写
+4. `continuation projection lane`
+   - `RunProjection`
+   - 负责把 durable step log 转成执行器需要的只读上下文
+
+### 已完成的结构治理
+
+- 新增 [run_projection.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/run_projection.go)
+  - 把 step 扫描读逻辑从 `ContinuationProcessor` 里迁出。
+- 新增 [turn_loop.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/turn_loop.go)
+  - 把 initial/reply turn 的同构 loop 收成共享骨架。
+- 收口默认执行器到 [default_reply_turn_executors.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/default_reply_turn_executors.go)
+  - 删除旧的：
+    - `default_capability_reply_turn_executor.go`
+    - `default_chat_generation_executor.go`
+    - `default_continuation_reply_turn_executor.go`
+- 把薄文件并回主入口：
+  - 并回 [run_processor.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/run_processor.go)
+    - `initial_reply_target.go`
+    - `initial_run_ownership.go`
+  - 并回 [initial_reply_executor.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_reply_executor.go)
+    - `initial_capability_trace_recorder.go`
+    - `initial_pending_approval_dispatcher.go`
+    - `initial_reply_lark.go`
+  - 并回 [initial_run_worker.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_run_worker.go)
+    - `initial_run_queue.go`
+  - 并回 [initial_chat_generation.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_chat_generation.go)
+    - `initial_chat_turn.go`
+  - 并回 [default_reply_turn_executors.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/default_reply_turn_executors.go)
+    - `capability_reply_turn.go`
+    - `continuation_reply_turn.go`
+- 二次聚合 lane 主入口：
+  - 收口到 [initial.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial.go)
+    - `initial_chat_generation.go`
+    - `initial_reply_executor.go`
+    - `initial_run_worker.go`
+  - 收口到 [reply_turn.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/reply_turn.go)
+    - `default_reply_turn_executors.go`
+    - `turn_loop.go`
+
+### 已完成的测试治理
+
+- default / initial executor 测试已从“替换包级默认函数”改为显式依赖注入：
+  - [default_chat_generation_executor_test.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/default_chat_generation_executor_test.go)
+  - [initial_reply_executor_test.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_reply_executor_test.go)
+  - [default_capability_reply_turn_executor_test.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/default_capability_reply_turn_executor_test.go)
+  - [default_continuation_reply_turn_executor_test.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/default_continuation_reply_turn_executor_test.go)
+- `run_processor` 增加 `InitialReplyExecutorFactory` 注入点：
+  - [run_processor.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/run_processor.go)
+  - [run_processor_test.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/run_processor_test.go)
+  - 不再通过 `SetAgenticInitialReplyStreamGenerator(...)` 篡改全局默认流生成器。
+
+### 当前高层抽象复用方案
+
+当前代码已经适合围绕以下抽象继续复用，而不是再长出新的 `default_xx` / `initial_xx` 文件：
+
+- `RunProjection`
+  - 统一读取 durable state
+  - 后续所有 reply target / previous step / replayable capability 推导优先放这里
+- `reply_turn.go` 内的 turn loop 骨架
+  - 统一模型 turn + tool turn 的循环骨架
+  - 后续新增 lane 优先复用 loop，而不是复制 `for turn := 0; ...`
+- `defaultRuntimeExecutorDeps`
+  - 统一默认执行器的依赖装配
+  - 测试和 runtime wiring 都优先走 deps / factory 注入
+- `InitialReplyExecutorFactory`
+  - 统一首轮 executor 的测试替身和后续可插拔实现
+  - 避免再出现测试通过全局函数替换来控制行为
+
+### 后续治理约束
+
+- 不再新增纯壳文件来放：
+  - 单个 request/result struct
+  - 单个 option helper
+  - 单个 default executor 包装
+- 新逻辑优先落到对应 lane 的主入口文件：
+  - initial / pending-initial queue -> `initial.go`
+  - reply turn / shared loop -> `reply_turn.go`
+  - projection -> `run_projection.go`
+  - 其他 runtime 汇总入口 -> `run_processor.go`
+- 若未来 `initial.go` 或 `reply_turn.go` 再继续增大，优先做“文件内分层整理”：
+  - 先加清晰 section 和 lane 内部抽象
+  - 不优先重新拆回多个 `default_*` / `initial_*` 文件
+
+### 验证
+
+- `env GOCACHE=/tmp/go-build-cache BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime/... ./internal/application/lark/agentruntime/runtimecutover/... -run 'TestLarkInitialReplyEmitter.*|TestPendingInitialRunWorker.*|TestDefaultChatGenerationPlanExecutor.*|TestDefaultInitialReplyExecutor.*|TestGenerateAgenticInitialReplyStream.*|TestRunProjection|Test.*Reply.*|Test.*Approval.*|Test.*Resume.*|Test.*Pending.*|Test.*Queue.*|Test.*Continuation.*|Test.*CapabilityReplyTurn.*|TestContinuationProcessorProcessRun.*|TestExecuteInitialChatTurn.*|TestBuildInitialChatExecutionPlan.*'`
+
 ## 2026-03-20 · Milestone V · Chat / Agentic 前门硬分流
 
 ### 方案
@@ -3285,6 +3482,140 @@
 
 - `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime -run 'Test(ContinuationProcessorProcessRunPersistsCompletedCapabilityPreviousResponseID|ContinuationProcessorQueuesFollowUpPendingCapabilityFromContinuationReplyTurnExecutor)'`
 - `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/messages/ops ./internal/application/lark/agentruntime ./internal/application/lark/agentruntime/runtimecutover ./internal/application/lark/handlers ./internal/application/lark/schedule ./internal/application/lark/cardaction ./internal/infrastructure/ark_dal ./internal/infrastructure/redis ./cmd/larkrobot`
+
+## 2026-03-24 · Milestone P · `chat + actor` 并发隔离与 pending 初始队列
+
+### 方案
+
+- 现有 runtime 的 active ownership 是 `chat` 单槽：
+  - 同一群里不同用户会互相 cancel / supersede
+  - 同一用户连续触发第二个 agentic 任务时，也会直接打断第一个 run
+  - 审批 reservation 在 run 被抢占后会命中 `run unavailable for reservation`
+- 这一轮改为：
+  - active slot 下沉到 `chat_id + actor_open_id`
+  - `mention` / `/bb` 不再默认 supersede 当前 active run
+  - 同一用户在同一 chat 触发第二个 agentic 任务时，改走 pending 队列
+  - slot 释放后由独立 worker 自动拉起 queued initial run
+
+### 修改
+
+- 修改 [policy.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/policy.go)
+  - `mention` / `command_bridge` 不再返回 `supersede_active_run`
+  - follow-up / reply-to-bot 仍然 attach 到同 actor 的 active run
+- 修改 [shadow.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/shadow.go)
+- 修改 [agent_op.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/agent_op.go)
+- 修改 [runtime_route.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/messages/ops/runtime_route.go)
+  - active snapshot provider 改为 actor-scoped，而不是 chat-scoped
+- 修改 [coordinator.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/coordinator.go)
+- 修改 [reply_completion.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/reply_completion.go)
+- 修改 [continuation_processor.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/continuation_processor.go)
+  - `RunCoordinator` 改为抢占/刷新 `chat + actor` slot
+  - 同 actor 的第二个 active run 直接返回 `ErrRunSlotOccupied`
+  - run 完成 / 取消 /清理 active slot 后，会通知 pending initial queue
+- 修改 [repository.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/agentstore/repository.go)
+  - `RunRepository` 新增 `FindLatestActiveBySessionActor(...)`
+  - 在 Redis 不可用时，DB fallback 也能按 actor 维度找 active run
+- 修改 [agentruntime.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/redis/agentruntime.go)
+  - 新增 actor-scoped active slot
+  - 新增 pending initial run list
+  - 新增 pending initial scope wakeup queue
+  - 新增 pending initial scope lock
+- 新增 [initial_run_queue.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_run_queue.go)
+  - 定义 queued initial run payload、root target 与 event snapshot
+- 新增 [initial_run_worker.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_run_worker.go)
+  - 持续消费 pending initial scope queue
+  - 在 slot 空闲时恢复 queued initial run，并 seed pending root card 作为 root target
+- 修改 [runtime_chat.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/runtimecutover/runtime_chat.go)
+  - busy actor slot 时，不再直接报错
+  - 先 reply 一张紧凑 pending root agentic 卡
+  - 再把 initial request 入队
+  - 如果命中队列上限，会 patch 同一张 root 卡提示“队列已满”
+- 修改 [runtimewire.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/runtimewire/runtimewire.go)
+- 修改 [bootstrap.go](/mnt/RapidPool/workspace/BetaGo_v2/cmd/larkrobot/bootstrap.go)
+  - runtimewire 新增 pending queue adapter 与 worker 装配
+  - 进程启动时额外拉起 `agent_runtime_pending_initial_worker`
+
+### 决策
+
+- 当前仍然限制为：
+  - 每个 `chat + actor` 最多 `1` 个 active run
+  - 额外 `3` 个 pending initial run
+- pending 队列的 user-visible root 语义是：
+  - queued 时立即 reply 一张 root agentic 卡
+  - 真正开始执行后 patch 这张 root 卡，而不是新发 root
+- 这一步没有引入更重的 DB schema 变更；
+  - actor-scoped active ownership 主要靠 Redis
+  - DB fallback 只补 actor 维度的 active run 查询
+- agentic streaming card 的 `sequence` 约束是按同一张 `card_id` 生效，不是整个 chat / run / 会话共享，也不该按 `message_id` 理解：
+  - 同一个 root agentic 卡如果后续继续 patch，必须沿用同一条单调递增 sequence
+  - 不同 `card_id` 之间的 sequence 彼此独立
+  - 因此“queued 时先发 pending root，slot 释放后再 patch 同一张 root 卡”的路径，必须把 sequence state 也视为 root card 的持久状态之一
+
+### 补充修复
+
+- 在 pending initial run 恢复链路里，出现过 Feishu `300317 sequence number compare failed`：
+  - 现象上看像是 pending 队列没有恢复
+  - 实际上是 queued run 已经恢复，但在 patch 既有 root agentic 卡时，把 card streaming sequence 又从 `1` 开始发送
+  - 由于 Feishu 对同一 `card_id` 的 streaming update 要求 sequence 单调递增，第二轮 patch 会被直接拒绝
+- 修复落在 [streaming_agentic.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/lark_dal/larkmsg/streaming_agentic.go)：
+  - `streamAgentCardContent(...)` 不再对每轮 patch 固定从 `1` 起步
+  - 改为按 `card_id` 分配连续 sequence
+  - 优先使用 Redis 维护 card-scoped counter
+  - Redis 不可用时退回进程内 card-scoped counter
+- 这条修复的边界是：
+  - 目标不是让整个 runtime 共用一条 sequence
+  - 而是保证“同一张被复用的 root card”在多轮 patch 之间 sequence 连续
+- 另一个会让用户感觉“slot 明明释放了，但 pending 还是没自动开始”的竞态在 pending initial worker：
+  - worker 收到 scope wakeup 后，如果 `ProcessRun(...)` 再次命中 `ErrRunSlotOccupied`
+  - 旧逻辑只会把 pending item `prepend` 回队头
+  - 但不会再次发送 scope wakeup
+  - 结果就是这条 pending item 仍在 list 里，却没有新的 worker 消费机会
+- 修复落在 [initial_run_worker.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_run_worker.go)：
+  - `ErrRunSlotOccupied` 分支在 requeue 后不会直接丢回 idle
+  - 而是在释放 scope lock 之后重新 `NotifyPendingInitialRun(chat_id, actor_open_id)`
+  - 这样后续 slot 真正可用时，worker 能再次自动拉起这条 pending run
+- 继续向前收口后，pending initial queue 的正确性语义也从“纯事件驱动”改成“list + scope index 的 level-driven backstop”：
+  - 旧模型里 `pending_initial_scope_queue` 只是一个 wakeup hint
+  - 一旦 wakeup 被过早消费，或者 worker 消费时 scope 仍 busy，就可能出现 list 里还有 pending item，但之后再也没人触发恢复
+  - 用户侧感知就是“slot 释放了，但 queued run 没自动开始”
+- 本轮新增的事实来源与恢复路径是：
+  - [agentruntime.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/infrastructure/redis/agentruntime.go)
+    - 新增 `pending_initial_scope_index`
+    - enqueue / prepend pending item 时，会同时把 `chat_id + actor_open_id` 写入 scope index
+    - worker / sweeper 在确认 scope queue 为空时，才会清理这条 index
+  - [initial_run_worker.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/initial_run_worker.go)
+    - 成功消费最后一条 pending item 后，会清理 scope index
+    - 收到陈旧 wakeup 且 scope queue 已空时，也会清理陈旧 index
+  - [pending_scope_sweeper.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/pending_scope_sweeper.go)
+    - 新增后台 sweeper，周期性扫描 indexed scope
+    - `pending_initial_scope_queue` 仍保留为低时延 fast path
+    - sweep 只负责：
+      - queue 空了就清陈旧 index
+      - slot 仍 busy 就跳过
+      - slot 空闲且 queue 非空就重新 `NotifyPendingInitialRun(...)`
+    - sweep 不直接 `ProcessRun(...)`，因此不会绕过既有 scope lock / slot guard
+- 这一步之后，pending initial 恢复的边界明确成：
+  - `pending_initial_run_list` 才是 source of truth
+  - `BLPop pending_initial_scope_queue` 只是低时延 hint
+  - scope index + periodic sweep 才是“slot 释放后最终一定会恢复”的 correctness backstop
+- 同时补了最小可观测性：
+  - [metrics.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/application/lark/agentruntime/metrics.go)
+    - 记录 enqueue / wakeup / worker / sweep 计数
+    - 暴露 pending scope 数、pending run 数，以及 worker wait time 汇总
+  - [health_http.go](/mnt/RapidPool/workspace/BetaGo_v2/internal/runtime/health_http.go)
+    - 管理面新增 `/metrics`
+    - 除了 runtime live / ready / degraded 外，也会输出 pending initial metrics
+  - [bootstrap.go](/mnt/RapidPool/workspace/BetaGo_v2/cmd/larkrobot/bootstrap.go)
+    - 进程启动时额外拉起 `agent_runtime_pending_scope_sweeper`
+
+### 验证
+
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime -run 'Test(RunCoordinatorStartShadowRunAllowsDifferentActorsInSameChat|RunCoordinatorStartShadowRunRejectsSecondActiveRunForSameActor|PendingInitialRunWorkerProcessesQueuedInitialRun|PendingInitialRunWorkerRequeuesWhenProcessorReportsSlotOccupied)'`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime -run 'Test(PendingInitialRunWorkerRetriesAfterSlotBecomesAvailable|RunCoordinatorCompleteRunWithReplyNotifiesPendingInitialWorker)'`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/runtime ./internal/application/lark/agentruntime -run 'Test(HealthHTTPModuleHandleMetrics.*|PendingScopeSweeper.*|PendingInitialMetricsProviderPrometheusMetricsIncludesCountersAndBacklog)'`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/infrastructure/redis ./internal/application/lark/agentruntime ./internal/application/lark/agentruntime/runtimecutover ./internal/application/lark/messages/ops ./internal/application/lark/agentruntime/runtimewire -run 'Test(AgentRuntimeActiveActorChatSlotIsIsolatedByActor|AgentRuntimePendingInitialRunQueueIsScopedAndFIFO|RunCoordinatorStartShadowRunAllowsDifferentActorsInSameChat|RunCoordinatorStartShadowRunRejectsSecondActiveRunForSameActor|HandlerQueuesInitialRunWhenSameActorSlotIsBusy)'`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml go test ./internal/application/lark/agentruntime/... ./internal/application/lark/messages/ops/... ./internal/infrastructure/redis/... ./cmd/larkrobot/...`
+- `env GOCACHE=/mnt/RapidPool/workspace/BetaGo_v2/.codex-gocache GOTMPDIR=/mnt/RapidPool/workspace/BetaGo_v2/.cache/gotmp BETAGO_CONFIG_PATH=/mnt/RapidPool/workspace/BetaGo_v2/.dev/config.toml MOCKEY_CHECK_GCFLAGS=false go test ./internal/infrastructure/lark_dal/larkmsg -count=1`
 
 ## 当前边界
 

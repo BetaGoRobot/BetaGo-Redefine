@@ -78,12 +78,26 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 	return sendCreateMessage(ctx, req, recordContents...)
 }
 
-func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
+func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool, options ...AgentStreamingCardOptions) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	_, err = sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread)
+	_, err = sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread, options...)
 	return err
+}
+
+// SendAndReplyStreamingCardWithRefs replies with an agentic streaming card and returns both message/card refs.
+func SendAndReplyStreamingCardWithRefs(
+	ctx context.Context,
+	msg *larkim.EventMessage,
+	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
+	inThread bool,
+	options ...AgentStreamingCardOptions,
+) (refs AgentStreamingCardRefs, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+	return sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread, options...)
 }
 
 // SendRecoveredMsg  SendRecoveredMsg
@@ -111,19 +125,19 @@ func SendRecoveredMsg(ctx context.Context, err any, msgID string) {
 	}
 }
 
-func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (err error) {
+func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], options ...AgentStreamingCardOptions) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	_, err = SendAndUpdateStreamingCardWithRefs(ctx, msg, msgSeq)
+	_, err = SendAndUpdateStreamingCardWithRefs(ctx, msg, msgSeq, options...)
 	return err
 }
 
-func SendAndUpdateStreamingCardWithRefs(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (refs AgentStreamingCardRefs, err error) {
+func SendAndUpdateStreamingCardWithRefs(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], options ...AgentStreamingCardOptions) (refs AgentStreamingCardRefs, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	return sendAgentStreamingCreateCardFunc(ctx, msg, msgSeq)
+	return sendAgentStreamingCreateCardFunc(ctx, msg, msgSeq, options...)
 }
 
 func RecoverMsg(ctx context.Context, msgID string) {

@@ -34,9 +34,11 @@ func (f *fakeWorkerHandle) Available() bool {
 func TestStartAgentRuntimeResumeWorkerStartsAvailableWorkerWithoutGlobalConfigGate(t *testing.T) {
 	originalBuilder := buildAgentRuntimeResumeWorker
 	originalResumeWorker := resumeWorker
+	originalPendingScopeSweeper := pendingScopeSweeper
 	defer func() {
 		buildAgentRuntimeResumeWorker = originalBuilder
 		resumeWorker = originalResumeWorker
+		pendingScopeSweeper = originalPendingScopeSweeper
 	}()
 
 	fake := &fakeWorkerHandle{available: true}
@@ -59,9 +61,11 @@ func TestStartAgentRuntimeResumeWorkerStartsAvailableWorkerWithoutGlobalConfigGa
 func TestStartAgentRuntimeResumeWorkerReturnsDisabledWhenUnavailable(t *testing.T) {
 	originalBuilder := buildAgentRuntimeResumeWorker
 	originalResumeWorker := resumeWorker
+	originalPendingScopeSweeper := pendingScopeSweeper
 	defer func() {
 		buildAgentRuntimeResumeWorker = originalBuilder
 		resumeWorker = originalResumeWorker
+		pendingScopeSweeper = originalPendingScopeSweeper
 	}()
 
 	buildAgentRuntimeResumeWorker = func(context.Context) workerHandle {
@@ -72,6 +76,50 @@ func TestStartAgentRuntimeResumeWorkerReturnsDisabledWhenUnavailable(t *testing.
 	err := startAgentRuntimeResumeWorker(context.Background())
 	if !errors.Is(err, appruntime.ErrDisabled) {
 		t.Fatalf("startAgentRuntimeResumeWorker() error = %v, want %v", err, appruntime.ErrDisabled)
+	}
+}
+
+func TestStartPendingScopeSweeperStartsAvailableWorker(t *testing.T) {
+	originalBuilder := buildPendingScopeSweeper
+	originalPendingScopeSweeper := pendingScopeSweeper
+	defer func() {
+		buildPendingScopeSweeper = originalBuilder
+		pendingScopeSweeper = originalPendingScopeSweeper
+	}()
+
+	fake := &fakeWorkerHandle{available: true}
+	buildPendingScopeSweeper = func(context.Context) workerHandle {
+		return fake
+	}
+	pendingScopeSweeper = nil
+
+	if err := startPendingScopeSweeper(context.Background()); err != nil {
+		t.Fatalf("startPendingScopeSweeper() error = %v", err)
+	}
+	if !fake.started {
+		t.Fatal("expected pending scope sweeper to be started")
+	}
+	if pendingScopeSweeper != fake {
+		t.Fatal("expected started pending scope sweeper to be stored globally")
+	}
+}
+
+func TestStartPendingScopeSweeperReturnsDisabledWhenUnavailable(t *testing.T) {
+	originalBuilder := buildPendingScopeSweeper
+	originalPendingScopeSweeper := pendingScopeSweeper
+	defer func() {
+		buildPendingScopeSweeper = originalBuilder
+		pendingScopeSweeper = originalPendingScopeSweeper
+	}()
+
+	buildPendingScopeSweeper = func(context.Context) workerHandle {
+		return &fakeWorkerHandle{available: false}
+	}
+	pendingScopeSweeper = nil
+
+	err := startPendingScopeSweeper(context.Background())
+	if !errors.Is(err, appruntime.ErrDisabled) {
+		t.Fatalf("startPendingScopeSweeper() error = %v, want %v", err, appruntime.ErrDisabled)
 	}
 }
 

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	initialcore "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/initial"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/testsupport/pgtest"
@@ -17,6 +21,40 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
+
+type observingPendingInitialRunProcessor struct {
+	mu      sync.Mutex
+	results []error
+	handled chan agentruntime.RunProcessorInput
+	roots   chan runtimecontext.AgenticReplyTarget
+}
+
+func (p *observingPendingInitialRunProcessor) ProcessRun(ctx context.Context, input agentruntime.RunProcessorInput) error {
+	if p.handled != nil {
+		p.handled <- input
+	}
+	if p.roots != nil {
+		root, _ := runtimecontext.RootAgenticReplyTarget(ctx)
+		p.roots <- root
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.results) == 0 {
+		return nil
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	return result
+}
+
+func mustMarshalPendingInitialRun(t *testing.T, item initialcore.PendingRun) []byte {
+	t.Helper()
+	raw, err := initialcore.MarshalPendingRun(item)
+	if err != nil {
+		t.Fatalf("MarshalPendingRun() error = %v", err)
+	}
+	return raw
+}
 
 func TestRunCoordinatorStartShadowRunCreatesRunAndInitialStep(t *testing.T) {
 	db := openCoordinatorTestDB(t)
@@ -29,13 +67,14 @@ func TestRunCoordinatorStartShadowRunCreatesRunAndInitialStep(t *testing.T) {
 		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
 	)
 
+	startedAt := time.Date(2026, 3, 18, 13, 0, 0, 0, time.UTC)
 	run, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
 		ChatID:           "oc_chat",
 		ActorOpenID:      "ou_actor",
 		TriggerType:      agentruntime.TriggerTypeMention,
 		TriggerMessageID: "om_message_01",
 		InputText:        "@bot 帮我总结一下",
-		Now:              time.Date(2026, 3, 18, 13, 0, 0, 0, time.UTC),
+		Now:              startedAt,
 	})
 	if err != nil {
 		t.Fatalf("StartShadowRun() error = %v", err)
@@ -45,6 +84,15 @@ func TestRunCoordinatorStartShadowRunCreatesRunAndInitialStep(t *testing.T) {
 	}
 	if run.Status != agentruntime.RunStatusQueued {
 		t.Fatalf("run status = %q, want %q", run.Status, agentruntime.RunStatusQueued)
+	}
+	if run.WorkerID != "" {
+		t.Fatalf("worker id = %q, want empty for freshly queued run", run.WorkerID)
+	}
+	if run.HeartbeatAt == nil || !run.HeartbeatAt.Equal(startedAt) {
+		t.Fatalf("heartbeat_at = %+v, want %s", run.HeartbeatAt, startedAt)
+	}
+	if run.LeaseExpiresAt == nil || !run.LeaseExpiresAt.After(*run.HeartbeatAt) {
+		t.Fatalf("lease_expires_at = %+v, want after heartbeat_at %s", run.LeaseExpiresAt, startedAt)
 	}
 }
 
@@ -77,6 +125,96 @@ func TestRunCoordinatorStartShadowRunIsIdempotentByTriggerMessage(t *testing.T) 
 	}
 	if first.ID != second.ID {
 		t.Fatalf("StartShadowRun() created duplicate run: %q vs %q", first.ID, second.ID)
+	}
+}
+
+func TestRunCoordinatorStartShadowRunAllowsDifferentActorsInSameChat(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	first, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor_a",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_message_actor_a",
+		InputText:        "@bot actor a",
+		Now:              time.Date(2026, 3, 24, 2, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("StartShadowRun() actor_a error = %v", err)
+	}
+
+	second, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor_b",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_message_actor_b",
+		InputText:        "@bot actor b",
+		Now:              time.Date(2026, 3, 24, 2, 0, 1, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("StartShadowRun() actor_b error = %v", err)
+	}
+
+	reloadedFirst, err := agentstore.NewRunRepository(db).GetByID(context.Background(), first.ID)
+	if err != nil {
+		t.Fatalf("GetByID() first error = %v", err)
+	}
+	if reloadedFirst.Status != agentruntime.RunStatusQueued {
+		t.Fatalf("first run status = %q, want %q", reloadedFirst.Status, agentruntime.RunStatusQueued)
+	}
+
+	reloadedSecond, err := agentstore.NewRunRepository(db).GetByID(context.Background(), second.ID)
+	if err != nil {
+		t.Fatalf("GetByID() second error = %v", err)
+	}
+	if reloadedSecond.Status != agentruntime.RunStatusQueued {
+		t.Fatalf("second run status = %q, want %q", reloadedSecond.Status, agentruntime.RunStatusQueued)
+	}
+}
+
+func TestRunCoordinatorStartShadowRunRejectsWhenActiveRunLimitExceededForSameActor(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	for i := int64(0); i < agentruntime.DefaultMaxActiveRunsPerActorChat; i++ {
+		_, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+			ChatID:           "oc_chat",
+			ActorOpenID:      "ou_actor",
+			TriggerType:      agentruntime.TriggerTypeMention,
+			TriggerMessageID: fmt.Sprintf("om_message_actor_%d", i+1),
+			InputText:        "@bot active run",
+			Now:              time.Date(2026, 3, 24, 2, 1, int(i), 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("StartShadowRun() seed[%d] error = %v", i, err)
+		}
+	}
+
+	_, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_message_actor_overflow",
+		InputText:        "@bot overflow",
+		Now:              time.Date(2026, 3, 24, 2, 1, 59, 0, time.UTC),
+	})
+	if !errors.Is(err, agentruntime.ErrActiveRunLimitExceeded) {
+		t.Fatalf("StartShadowRun() overflow error = %v, want ErrActiveRunLimitExceeded", err)
 	}
 }
 
@@ -210,12 +348,107 @@ func TestRunCoordinatorCompleteRunWithReplyAppendsReplyStepAndClearsActiveSlot(t
 		t.Fatalf("session active run = %q, want empty", session.ActiveRunID)
 	}
 
-	activeRunID, err := store.ActiveChatRun(context.Background(), "oc_chat")
+}
+
+func TestRunCoordinatorCompleteRunWithReplyNotifiesPendingInitialWorker(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	activeRun, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_message_active",
+		InputText:        "@bot 任务一",
+		Now:              time.Date(2026, 3, 24, 6, 0, 0, 0, time.UTC),
+	})
 	if err != nil {
-		t.Fatalf("ActiveChatRun() error = %v", err)
+		t.Fatalf("StartShadowRun() active error = %v", err)
 	}
-	if activeRunID != "" {
-		t.Fatalf("ActiveChatRun() = %q, want empty", activeRunID)
+
+	raw := mustMarshalPendingInitialRun(t, initialcore.PendingRun{
+		Start: agentruntime.StartShadowRunRequest{
+			ChatID:           "oc_chat",
+			ActorOpenID:      "ou_actor",
+			TriggerType:      agentruntime.TriggerTypeMention,
+			TriggerMessageID: "om_message_pending",
+			InputText:        "@bot 任务二",
+			Now:              time.Date(2026, 3, 24, 6, 0, 5, 0, time.UTC),
+		},
+		Plan: agentruntime.ChatGenerationPlan{
+			ModelID: "ep-test-agentic",
+			Args:    []string{"任务二"},
+		},
+		OutputMode: agentruntime.InitialReplyOutputModeAgentic,
+		Event: initialcore.Event{
+			ChatID:      "oc_chat",
+			MessageID:   "om_message_pending",
+			ChatType:    "group",
+			ActorOpenID: "ou_actor",
+		},
+		RootTarget: initialcore.RootTarget{
+			MessageID: "om_pending_root",
+			CardID:    "card_pending_root",
+		},
+		RequestedAt: time.Date(2026, 3, 24, 6, 0, 5, 0, time.UTC),
+	})
+	if _, err := store.EnqueuePendingInitialRun(context.Background(), "oc_chat", "ou_actor", raw, agentruntime.DefaultMaxPendingInitialRunsPerActorChat); err != nil {
+		t.Fatalf("EnqueuePendingInitialRun() error = %v", err)
+	}
+	processor := &observingPendingInitialRunProcessor{
+		handled: make(chan agentruntime.RunProcessorInput, 1),
+		roots:   make(chan runtimecontext.AgenticReplyTarget, 1),
+	}
+	worker := initialcore.NewRunWorker(store, processor)
+	worker.Start()
+	defer worker.Stop()
+
+	select {
+	case handled := <-processor.handled:
+		t.Fatalf("pending run started before completion-triggered notify: %+v", handled)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	_, err = coordinator.CompleteRunWithReply(context.Background(), agentruntime.CompleteRunWithReplyInput{
+		RunID:             activeRun.ID,
+		Revision:          activeRun.Revision,
+		ThoughtText:       "任务一完成",
+		ReplyText:         "done",
+		ResponseMessageID: "om_runtime_reply_done",
+		ResponseCardID:    "card_runtime_reply_done",
+		DeliveryMode:      agentruntime.ReplyDeliveryModeCreate,
+		CompletedAt:       time.Date(2026, 3, 24, 6, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CompleteRunWithReply() error = %v", err)
+	}
+
+	select {
+	case handled := <-processor.handled:
+		if handled.Initial == nil {
+			t.Fatalf("handled input = %+v, want initial run", handled)
+		}
+		if handled.Initial.Start.TriggerMessageID != "om_message_pending" {
+			t.Fatalf("initial trigger message = %q, want %q", handled.Initial.Start.TriggerMessageID, "om_message_pending")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected pending initial worker to start queued run after active run completion")
+	}
+
+	select {
+	case root := <-processor.roots:
+		if root.MessageID != "om_pending_root" || root.CardID != "card_pending_root" {
+			t.Fatalf("root target = %+v, want message=%q card=%q", root, "om_pending_root", "card_pending_root")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected pending initial worker to preserve pending root target")
 	}
 }
 
@@ -512,13 +745,6 @@ func TestRunCoordinatorContinueRunWithReplyQueuesPendingCapabilityAfterReply(t *
 		t.Fatalf("session active run = %q, want %q", session.ActiveRunID, continuedRun.ID)
 	}
 
-	activeRunID, err := store.ActiveChatRun(context.Background(), "oc_chat")
-	if err != nil {
-		t.Fatalf("ActiveChatRun() error = %v", err)
-	}
-	if activeRunID != continuedRun.ID {
-		t.Fatalf("ActiveChatRun() = %q, want %q", activeRunID, continuedRun.ID)
-	}
 }
 
 func TestRunCoordinatorStartShadowRunAttachReopensExistingRunWithNewDecideStep(t *testing.T) {
@@ -567,6 +793,12 @@ func TestRunCoordinatorStartShadowRunAttachReopensExistingRunWithNewDecideStep(t
 	if attachedRun.InputText != "继续刚才的话题" {
 		t.Fatalf("input text = %q, want %q", attachedRun.InputText, "继续刚才的话题")
 	}
+	if attachedRun.HeartbeatAt == nil || !attachedRun.HeartbeatAt.Equal(attachedAt) {
+		t.Fatalf("heartbeat_at = %+v, want %s", attachedRun.HeartbeatAt, attachedAt)
+	}
+	if attachedRun.LeaseExpiresAt == nil || !attachedRun.LeaseExpiresAt.After(*attachedRun.HeartbeatAt) {
+		t.Fatalf("lease_expires_at = %+v, want after heartbeat_at %s", attachedRun.LeaseExpiresAt, attachedAt)
+	}
 
 	steps, err := agentstore.NewStepRepository(db).ListByRun(context.Background(), waitingRun.ID)
 	if err != nil {
@@ -600,13 +832,6 @@ func TestRunCoordinatorStartShadowRunAttachReopensExistingRunWithNewDecideStep(t
 		t.Fatalf("session last actor open id = %q, want %q", session.LastActorOpenID, "ou_actor")
 	}
 
-	activeRunID, err := store.ActiveChatRun(context.Background(), "oc_chat")
-	if err != nil {
-		t.Fatalf("ActiveChatRun() error = %v", err)
-	}
-	if activeRunID != waitingRun.ID {
-		t.Fatalf("ActiveChatRun() = %q, want %q", activeRunID, waitingRun.ID)
-	}
 }
 
 func TestRunCoordinatorStartShadowRunAttachIsIdempotentByLastMessage(t *testing.T) {
@@ -796,6 +1021,12 @@ func TestRunCoordinatorResumeRunQueuesWaitingCallbackRun(t *testing.T) {
 	if updated.CurrentStepIndex != 1 {
 		t.Fatalf("current step index = %d, want 1", updated.CurrentStepIndex)
 	}
+	if updated.HeartbeatAt == nil || !updated.HeartbeatAt.Equal(time.Date(2026, 3, 18, 13, 20, 0, 0, time.UTC)) {
+		t.Fatalf("heartbeat_at = %+v, want resume occurred_at", updated.HeartbeatAt)
+	}
+	if updated.LeaseExpiresAt == nil || !updated.LeaseExpiresAt.After(*updated.HeartbeatAt) {
+		t.Fatalf("lease_expires_at = %+v, want after heartbeat_at %s", updated.LeaseExpiresAt, updated.HeartbeatAt)
+	}
 
 	steps, err := agentstore.NewStepRepository(db).ListByRun(context.Background(), run.ID)
 	if err != nil {
@@ -886,6 +1117,9 @@ func createWaitingRun(t *testing.T, db *gorm.DB, coordinator *agentruntime.RunCo
 		current.Status = status
 		current.WaitingReason = waitingReason
 		current.WaitingToken = waitingToken
+		current.WorkerID = ""
+		current.HeartbeatAt = nil
+		current.LeaseExpiresAt = nil
 		current.UpdatedAt = time.Date(2026, 3, 18, 13, 16, 0, 0, time.UTC)
 		return nil
 	})

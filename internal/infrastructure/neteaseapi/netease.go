@@ -37,7 +37,7 @@ const (
 	CommentTypeSong  CommentType = "0"
 	CommentTypeAlbum CommentType = "3"
 
-	defaultMusicURLBatchSize   = 5
+	defaultMusicURLBatchSize   = 1
 	defaultMusicURLConcurrency = 4
 	defaultPictureConcurrency  = 4
 )
@@ -238,7 +238,6 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicURLConcurrencyFor(len(batches)))
 	for _, batch := range batches {
-		batch := batch
 		group.Go(func() error {
 			rawItems, err := fetchMusicURLBatch(groupCtx, neteaseCtx.cookies, batch)
 			if err != nil {

@@ -70,6 +70,8 @@ const (
 	RevisionField = "revision"
 	SourceField   = "source"
 	TokenField    = "token"
+
+	ApprovalDeliveryField = "approval_delivery"
 )
 
 var (

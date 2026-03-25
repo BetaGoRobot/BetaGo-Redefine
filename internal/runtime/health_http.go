@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,17 +18,19 @@ type HealthHTTPModule struct {
 	addr            string
 	shutdownTimeout time.Duration
 	registry        *Registry
+	metrics         []MetricsProvider
 	server          *http.Server
 	listener        net.Listener
 }
 
 // NewHealthHTTPModule 构造一个可选的管理面 HTTP 模块，用来输出
 // liveness、readiness 和完整组件快照。
-func NewHealthHTTPModule(addr string, shutdownTimeout time.Duration, registry *Registry) *HealthHTTPModule {
+func NewHealthHTTPModule(addr string, shutdownTimeout time.Duration, registry *Registry, metricsProviders ...MetricsProvider) *HealthHTTPModule {
 	return &HealthHTTPModule{
 		addr:            addr,
 		shutdownTimeout: shutdownTimeout,
 		registry:        registry,
+		metrics:         append([]MetricsProvider(nil), metricsProviders...),
 	}
 }
 
@@ -62,6 +67,7 @@ func (m *HealthHTTPModule) Start(context.Context) error {
 	mux.HandleFunc("/readyz", m.handleReady)
 	mux.HandleFunc("/healthz", m.handleHealth)
 	mux.HandleFunc("/statusz", m.handleHealth)
+	mux.HandleFunc("/metrics", m.handleMetrics)
 	m.server = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -142,6 +148,19 @@ func (m *HealthHTTPModule) handleHealth(w http.ResponseWriter, _ *http.Request) 
 	writeJSON(w, statusCode, snapshot)
 }
 
+func (m *HealthHTTPModule) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	payload, err := m.metricsPayload(r.Context())
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(err.Error()))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(payload))
+}
+
 // snapshot 对 nil registry 做保护，避免测试接线错误时管理面直接 panic。
 func (m *HealthHTTPModule) snapshot() Snapshot {
 	if m == nil || m.registry == nil {
@@ -155,4 +174,59 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (m *HealthHTTPModule) metricsPayload(ctx context.Context) (string, error) {
+	var builder strings.Builder
+	snapshot := m.snapshot()
+
+	writePrometheusGauge(&builder, "betago_runtime_live", boolToFloat(snapshot.Live))
+	writePrometheusGauge(&builder, "betago_runtime_ready", boolToFloat(snapshot.Ready))
+	writePrometheusGauge(&builder, "betago_runtime_degraded", boolToFloat(snapshot.Degraded))
+	for _, component := range snapshot.Components {
+		fmt.Fprintf(
+			&builder,
+			"betago_runtime_component_state{name=%q,state=%q,critical=%q} 1\n",
+			prometheusLabelValue(component.Name),
+			prometheusLabelValue(string(component.State)),
+			prometheusLabelValue(strconv.FormatBool(component.Critical)),
+		)
+	}
+
+	for _, provider := range m.metrics {
+		if provider == nil {
+			continue
+		}
+		payload, err := provider.PrometheusMetrics(ctx)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(payload) == "" {
+			continue
+		}
+		builder.WriteString(payload)
+		if !strings.HasSuffix(payload, "\n") {
+			builder.WriteString("\n")
+		}
+	}
+
+	return builder.String(), nil
+}
+
+func writePrometheusGauge(builder *strings.Builder, name string, value float64) {
+	builder.WriteString(name)
+	builder.WriteByte(' ')
+	builder.WriteString(strconv.FormatFloat(value, 'f', -1, 64))
+	builder.WriteByte('\n')
+}
+
+func boolToFloat(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func prometheusLabelValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, "\n", `\n`, `"`, `\"`).Replace(value)
 }

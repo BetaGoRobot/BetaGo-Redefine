@@ -7,12 +7,15 @@ import (
 	"strings"
 	"time"
 
+	approvaldef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/approval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	uuid "github.com/satori/go.uuid"
 )
 
 const defaultActiveRunTTL = 30 * time.Minute
 
+// StartShadowRunRequest describes the observed message that should create a new
+// runtime run or attach to an existing one.
 type StartShadowRunRequest struct {
 	ChatID           string      `json:"chat_id"`
 	ActorOpenID      string      `json:"actor_open_id,omitempty"`
@@ -26,6 +29,8 @@ type StartShadowRunRequest struct {
 	Now              time.Time   `json:"now"`
 }
 
+// ShadowRunStarter is implemented by components that can create the initial run
+// record for an observed message.
 type ShadowRunStarter interface {
 	StartShadowRun(context.Context, StartShadowRunRequest) (*AgentRun, error)
 }
@@ -40,6 +45,8 @@ type runRepository interface {
 	Create(ctx context.Context, run *AgentRun) error
 	GetByID(ctx context.Context, id string) (*AgentRun, error)
 	FindByTriggerMessage(ctx context.Context, sessionID, triggerMessageID string) (*AgentRun, error)
+	FindLatestActiveBySessionActor(ctx context.Context, sessionID, actorOpenID string) (*AgentRun, error)
+	CountActiveBySessionActor(ctx context.Context, sessionID, actorOpenID string) (int64, error)
 	UpdateStatus(ctx context.Context, runID string, fromRevision int64, mutate func(*AgentRun) error) (*AgentRun, error)
 }
 
@@ -52,29 +59,43 @@ type stepRepository interface {
 type coordinationStore interface {
 	ActiveChatRun(ctx context.Context, chatID string) (string, error)
 	SwapActiveChatRun(ctx context.Context, chatID, expectedRunID, newRunID string, ttl time.Duration) (bool, error)
+	ActiveActorChatRun(ctx context.Context, chatID, actorOpenID string) (string, error)
+	SwapActiveActorChatRun(ctx context.Context, chatID, actorOpenID, expectedRunID, newRunID string, ttl time.Duration) (bool, error)
 	NextCancelGeneration(ctx context.Context, runID string) (int64, error)
+	NotifyPendingInitialRun(ctx context.Context, chatID, actorOpenID string) error
+	SaveApprovalReservation(ctx context.Context, stepID, token string, payload []byte, ttl time.Duration) error
+	LoadApprovalReservation(ctx context.Context, stepID, token string) ([]byte, error)
+	RecordApprovalReservationDecision(ctx context.Context, stepID, token string, decisionPayload []byte) ([]byte, error)
+	ConsumeApprovalReservation(ctx context.Context, stepID, token string) ([]byte, error)
 }
 
+// RunCoordinator is the persistence-facing runtime coordinator. It owns session
+// lookup, run creation, status transitions, approval lifecycle persistence, and
+// active-slot bookkeeping in the coordination store.
 type RunCoordinator struct {
-	sessionRepo  sessionRepository
-	runRepo      runRepository
-	stepRepo     stepRepository
-	runtimeStore coordinationStore
-	identity     botidentity.Identity
-	activeRunTTL time.Duration
+	sessionRepo               sessionRepository
+	runRepo                   runRepository
+	stepRepo                  stepRepository
+	runtimeStore              coordinationStore
+	identity                  botidentity.Identity
+	activeRunTTL              time.Duration
+	maxActiveRunsPerActorChat int64
 }
 
+// NewRunCoordinator constructs the central runtime coordinator that owns run/session persistence, approval transitions, and slot bookkeeping.
 func NewRunCoordinator(sessionRepo sessionRepository, runRepo runRepository, stepRepo stepRepository, runtimeStore coordinationStore, identity botidentity.Identity) *RunCoordinator {
 	return &RunCoordinator{
-		sessionRepo:  sessionRepo,
-		runRepo:      runRepo,
-		stepRepo:     stepRepo,
-		runtimeStore: runtimeStore,
-		identity:     identity,
-		activeRunTTL: defaultActiveRunTTL,
+		sessionRepo:               sessionRepo,
+		runRepo:                   runRepo,
+		stepRepo:                  stepRepo,
+		runtimeStore:              runtimeStore,
+		identity:                  identity,
+		activeRunTTL:              defaultActiveRunTTL,
+		maxActiveRunsPerActorChat: DefaultMaxActiveRunsPerActorChat,
 	}
 }
 
+// StartShadowRun creates or reuses a queued runtime run for an observed message and seeds the initial decide step that will drive later processing.
 func (c *RunCoordinator) StartShadowRun(ctx context.Context, req StartShadowRunRequest) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -99,16 +120,13 @@ func (c *RunCoordinator) StartShadowRun(ctx context.Context, req StartShadowRunR
 	}
 
 	supersedeRunID := strings.TrimSpace(req.SupersedeRunID)
-	if supersedeRunID == "" {
-		supersedeRunID, err = c.currentActiveRunID(ctx, session, req.ChatID)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if supersedeRunID != "" {
 		if err := c.CancelRun(ctx, supersedeRunID, "superseded"); err != nil {
 			return nil, err
 		}
+	}
+	if err := c.ensureActiveRunCapacity(ctx, session, req.ActorOpenID); err != nil {
+		return nil, err
 	}
 
 	run := &AgentRun{
@@ -126,6 +144,7 @@ func (c *RunCoordinator) StartShadowRun(ctx context.Context, req StartShadowRunR
 		CreatedAt:        req.Now,
 		UpdatedAt:        req.Now,
 	}
+	seedQueuedRunLiveness(run, req.Now, DefaultRunLeasePolicy())
 	if err := c.runRepo.Create(ctx, run); err != nil {
 		if existing, findErr := c.runRepo.FindByTriggerMessage(ctx, session.ID, req.TriggerMessageID); findErr == nil && existing != nil {
 			return existing, nil
@@ -147,22 +166,6 @@ func (c *RunCoordinator) StartShadowRun(ctx context.Context, req StartShadowRunR
 
 	if err := c.sessionRepo.SetActiveRun(ctx, session.ID, run.ID, req.TriggerMessageID, req.ActorOpenID, req.Now); err != nil {
 		return nil, err
-	}
-
-	if c.runtimeStore != nil && strings.TrimSpace(req.ChatID) != "" {
-		swapped, err := c.runtimeStore.SwapActiveChatRun(ctx, req.ChatID, "", run.ID, c.activeRunTTL)
-		if err != nil {
-			return nil, err
-		}
-		if !swapped {
-			current, err := c.runtimeStore.ActiveChatRun(ctx, req.ChatID)
-			if err != nil {
-				return nil, err
-			}
-			if current != run.ID {
-				return nil, fmt.Errorf("active chat slot already occupied: chat_id=%s run_id=%s", req.ChatID, current)
-			}
-		}
 	}
 
 	return run, nil
@@ -230,6 +233,7 @@ func (c *RunCoordinator) attachShadowRun(ctx context.Context, runID string, req 
 		}
 		current.ErrorText = ""
 		current.UpdatedAt = req.Now
+		seedQueuedRunLiveness(current, req.Now, DefaultRunLeasePolicy())
 		return nil
 	})
 	if err != nil {
@@ -253,13 +257,11 @@ func (c *RunCoordinator) attachShadowRun(ctx context.Context, runID string, req 
 			return nil, err
 		}
 	}
-	if err := c.refreshActiveRunSlot(ctx, coalesceChatID(strings.TrimSpace(req.ChatID), sessionChatID(session)), updated.ID); err != nil {
-		return nil, err
-	}
 
 	return updated, nil
 }
 
+// CancelRun cancels an existing run, clears any active slot state, and preserves a terminal cancellation reason for later inspection.
 func (c *RunCoordinator) CancelRun(ctx context.Context, runID, reason string) error {
 	if c == nil || strings.TrimSpace(runID) == "" {
 		return nil
@@ -281,14 +283,16 @@ func (c *RunCoordinator) CancelRun(ctx context.Context, runID, reason string) er
 		current.ErrorText = strings.TrimSpace(reason)
 		current.FinishedAt = &now
 		current.UpdatedAt = now
+		clearRunExecutionLiveness(current)
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	return c.clearCancelledRunState(ctx, run.ID, run.SessionID, now)
+	return c.clearCancelledRunState(ctx, run.ID, run.SessionID, run.ActorOpenID, now)
 }
 
+// RequestApproval persists an approval-request step, moves the run into waiting-approval state, and returns the rendered approval request payload.
 func (c *RunCoordinator) RequestApproval(ctx context.Context, input RequestApprovalInput) (*ApprovalRequest, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -300,7 +304,7 @@ func (c *RunCoordinator) RequestApproval(ctx context.Context, input RequestAppro
 	} else {
 		requestedAt = requestedAt.UTC()
 	}
-	if err := validateRequestApprovalInput(input, requestedAt); err != nil {
+	if err := input.Validate(requestedAt); err != nil {
 		return nil, err
 	}
 
@@ -311,41 +315,19 @@ func (c *RunCoordinator) RequestApproval(ctx context.Context, input RequestAppro
 	token := newRuntimeID("approval")
 	stepID := newRuntimeID("step")
 
-	updated, err := c.runRepo.UpdateStatus(ctx, run.ID, run.Revision, func(current *AgentRun) error {
-		if current.Status != RunStatusRunning {
-			return fmt.Errorf("%w: run status=%s", ErrApprovalStateConflict, current.Status)
-		}
-		current.Status = RunStatusWaitingApproval
-		current.WaitingReason = WaitingReasonApproval
-		current.WaitingToken = token
-		current.CurrentStepIndex++
-		current.UpdatedAt = requestedAt
-		return nil
-	})
+	updated, err := c.moveRunToWaitingApproval(ctx, run, run.Revision, token, requestedAt)
 	if err != nil {
 		return nil, err
 	}
 
-	request := approvalRequestFromInput(input, stepID, token, updated.Revision, requestedAt)
+	request := approvaldef.BuildApprovalRequest(input, stepID, token, updated.Revision, requestedAt)
 	if err := request.Validate(requestedAt); err != nil {
 		return nil, err
 	}
 
-	stepInput, err := marshalApprovalStepState(request)
+	step, err := newCompletedApprovalStep(updated.ID, stepID, updated.CurrentStepIndex, token, request, requestedAt)
 	if err != nil {
 		return nil, err
-	}
-	step := &AgentStep{
-		ID:          stepID,
-		RunID:       updated.ID,
-		Index:       updated.CurrentStepIndex,
-		Kind:        StepKindApprovalRequest,
-		Status:      StepStatusCompleted,
-		InputJSON:   stepInput,
-		ExternalRef: token,
-		CreatedAt:   requestedAt,
-		StartedAt:   &requestedAt,
-		FinishedAt:  &requestedAt,
 	}
 	if err := c.stepRepo.Append(ctx, step); err != nil {
 		return nil, err
@@ -354,6 +336,7 @@ func (c *RunCoordinator) RequestApproval(ctx context.Context, input RequestAppro
 	return &request, nil
 }
 
+// RejectApproval records an approval rejection and cancels the waiting run so no further continuation work is scheduled.
 func (c *RunCoordinator) RejectApproval(ctx context.Context, event ResumeEvent) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -376,11 +359,20 @@ func (c *RunCoordinator) RejectApproval(ctx context.Context, event ResumeEvent) 
 	if err != nil {
 		return nil, err
 	}
+	if run != nil && !run.Status.IsTerminal() && run.Status != RunStatusWaitingApproval {
+		recorded, err := c.recordReservedApprovalDecision(ctx, run, event, ApprovalReservationDecisionRejected, now)
+		if err != nil {
+			return nil, err
+		}
+		if recorded != nil {
+			return nil, nil
+		}
+	}
 	if err := c.validateApprovalResume(ctx, run, event, now); err != nil {
 		return nil, err
 	}
 
-	updated, err := c.runRepo.UpdateStatus(ctx, strings.TrimSpace(event.RunID), event.Revision, func(current *AgentRun) error {
+	updated, err := c.runRepo.UpdateStatus(ctx, strings.TrimSpace(event.RunID), c.resumeRevisionForEvent(run, event), func(current *AgentRun) error {
 		if current.Status.IsTerminal() {
 			return fmt.Errorf("%w: run status=%s", ErrApprovalStateConflict, current.Status)
 		}
@@ -408,12 +400,13 @@ func (c *RunCoordinator) RejectApproval(ctx context.Context, event ResumeEvent) 
 	if err != nil {
 		return nil, err
 	}
-	if err := c.clearCancelledRunState(ctx, updated.ID, updated.SessionID, now); err != nil {
+	if err := c.clearCancelledRunState(ctx, updated.ID, updated.SessionID, updated.ActorOpenID, now); err != nil {
 		return nil, err
 	}
 	return updated, nil
 }
 
+// LoadApprovalRequest implements agent runtime behavior.
 func (c *RunCoordinator) LoadApprovalRequest(ctx context.Context, runID, stepID string) (*ApprovalRequest, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -422,6 +415,9 @@ func (c *RunCoordinator) LoadApprovalRequest(ctx context.Context, runID, stepID 
 	run, err := c.runRepo.GetByID(ctx, strings.TrimSpace(runID))
 	if err != nil {
 		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("%w: approval run not found", ErrApprovalStateConflict)
 	}
 	steps, err := c.stepRepo.ListByRun(ctx, run.ID)
 	if err != nil {
@@ -439,27 +435,25 @@ func (c *RunCoordinator) LoadApprovalRequest(ctx context.Context, runID, stepID 
 		}
 	}
 	if approvalStep == nil {
-		return nil, fmt.Errorf("%w: approval step not found", ErrApprovalStateConflict)
+		reservation, err := c.loadApprovalReservation(ctx, strings.TrimSpace(stepID), "")
+		if err != nil {
+			return nil, err
+		}
+		if reservation == nil {
+			return nil, fmt.Errorf("%w: approval step not found", ErrApprovalStateConflict)
+		}
+		request := reservation.ApprovalRequest(run.Revision)
+		return &request, nil
 	}
 
-	state, err := unmarshalApprovalStepState(approvalStep.InputJSON)
+	request, err := approvaldef.DecodeApprovalRequest(run.ID, approvalStep.ID, run.Revision, approvalStep.ExternalRef, approvalStep.InputJSON)
 	if err != nil {
 		return nil, fmt.Errorf("decode approval step state: %w", err)
 	}
-	return &ApprovalRequest{
-		RunID:          run.ID,
-		StepID:         approvalStep.ID,
-		Revision:       run.Revision,
-		ApprovalType:   state.ApprovalType,
-		Title:          state.Title,
-		Summary:        state.Summary,
-		CapabilityName: state.CapabilityName,
-		Token:          approvalStep.ExternalRef,
-		RequestedAt:    state.RequestedAt,
-		ExpiresAt:      state.ExpiresAt,
-	}, nil
+	return &request, nil
 }
 
+// ResumeRun validates a resume event, updates the waiting run back into queued execution, and returns the run when execution should continue immediately.
 func (c *RunCoordinator) ResumeRun(ctx context.Context, event ResumeEvent) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -480,12 +474,21 @@ func (c *RunCoordinator) ResumeRun(ctx context.Context, event ResumeEvent) (*Age
 		return nil, err
 	}
 	if event.Source == ResumeSourceApproval {
+		if run != nil && !run.Status.IsTerminal() && run.Status != RunStatusWaitingApproval {
+			recorded, err := c.recordReservedApprovalDecision(ctx, run, event, ApprovalReservationDecisionApproved, now)
+			if err != nil {
+				return nil, err
+			}
+			if recorded != nil {
+				return nil, nil
+			}
+		}
 		if err := c.validateApprovalResume(ctx, run, event, now); err != nil {
 			return nil, err
 		}
 	}
 
-	updated, err := c.runRepo.UpdateStatus(ctx, strings.TrimSpace(event.RunID), event.Revision, func(current *AgentRun) error {
+	updated, err := c.runRepo.UpdateStatus(ctx, strings.TrimSpace(event.RunID), c.resumeRevisionForEvent(run, event), func(current *AgentRun) error {
 		if current.Status.IsTerminal() {
 			return fmt.Errorf("%w: run status=%s", ErrResumeStateConflict, current.Status)
 		}
@@ -513,6 +516,7 @@ func (c *RunCoordinator) ResumeRun(ctx context.Context, event ResumeEvent) (*Age
 		current.WaitingToken = ""
 		current.CurrentStepIndex++
 		current.UpdatedAt = now
+		seedQueuedRunLiveness(current, now, DefaultRunLeasePolicy())
 		return nil
 	})
 	if err != nil {
@@ -552,17 +556,92 @@ func (c *RunCoordinator) validateApprovalResume(ctx context.Context, run *AgentR
 		return fmt.Errorf("%w: approval step_id=%s event_step_id=%s", ErrResumeStateConflict, currentStep.ID, stepID)
 	}
 
-	state, err := unmarshalApprovalStepState(currentStep.InputJSON)
+	request, err := approvaldef.DecodeApprovalRequest(run.ID, currentStep.ID, run.Revision, currentStep.ExternalRef, currentStep.InputJSON)
 	if err != nil {
 		return fmt.Errorf("decode approval step state: %w", err)
 	}
-	if !state.ExpiresAt.IsZero() && !state.ExpiresAt.UTC().After(now.UTC()) {
+	if !request.ExpiresAt.IsZero() && !request.ExpiresAt.UTC().After(now.UTC()) {
 		return ErrApprovalExpired
 	}
 	return nil
 }
 
-func (c *RunCoordinator) clearCancelledRunState(ctx context.Context, runID, sessionID string, now time.Time) error {
+func (c *RunCoordinator) resumeRevisionForEvent(run *AgentRun, event ResumeEvent) int64 {
+	if event.Source == ResumeSourceApproval && run != nil {
+		return run.Revision
+	}
+	return event.Revision
+}
+
+func (c *RunCoordinator) loadApprovalReservation(ctx context.Context, stepID, token string) (*ApprovalReservation, error) {
+	if c == nil || c.runtimeStore == nil {
+		return nil, nil
+	}
+	raw, err := c.runtimeStore.LoadApprovalReservation(ctx, strings.TrimSpace(stepID), strings.TrimSpace(token))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	reservation, err := approvaldef.DecodeApprovalReservation(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode approval reservation: %w", err)
+	}
+	return &reservation, nil
+}
+
+func (c *RunCoordinator) recordReservedApprovalDecision(
+	ctx context.Context,
+	run *AgentRun,
+	event ResumeEvent,
+	outcome ApprovalReservationDecisionOutcome,
+	now time.Time,
+) (*ApprovalReservation, error) {
+	if c == nil || c.runtimeStore == nil || run == nil || event.Source != ResumeSourceApproval {
+		return nil, nil
+	}
+
+	reservation, err := c.loadApprovalReservation(ctx, strings.TrimSpace(event.StepID), strings.TrimSpace(event.Token))
+	if err != nil {
+		return nil, err
+	}
+	if reservation == nil {
+		return nil, nil
+	}
+	if reservation.RunID != strings.TrimSpace(run.ID) {
+		return nil, fmt.Errorf("%w: approval reservation run mismatch", ErrApprovalStateConflict)
+	}
+	if err := reservation.Validate(now); err != nil {
+		return nil, err
+	}
+
+	decision := approvaldef.NewApprovalReservationDecision(outcome, strings.TrimSpace(event.ActorOpenID), now)
+	if err := decision.Validate(); err != nil {
+		return nil, err
+	}
+	rawDecision, err := json.Marshal(decision)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.runtimeStore.RecordApprovalReservationDecision(ctx, strings.TrimSpace(event.StepID), strings.TrimSpace(event.Token), rawDecision)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	recorded, err := approvaldef.DecodeApprovalReservation(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode recorded approval reservation: %w", err)
+	}
+	if recorded.Decision != nil && recorded.Decision.Outcome != outcome {
+		return nil, fmt.Errorf("%w: approval reservation already decided as %s", ErrApprovalStateConflict, recorded.Decision.Outcome)
+	}
+	return &recorded, nil
+}
+
+func (c *RunCoordinator) clearCancelledRunState(ctx context.Context, runID, sessionID, actorOpenID string, now time.Time) error {
 	if c == nil {
 		return nil
 	}
@@ -581,80 +660,36 @@ func (c *RunCoordinator) clearCancelledRunState(ctx context.Context, runID, sess
 		if _, err := c.runtimeStore.NextCancelGeneration(ctx, runID); err != nil {
 			return err
 		}
-		if session != nil && strings.TrimSpace(session.ChatID) != "" {
-			swapped, err := c.runtimeStore.SwapActiveChatRun(ctx, session.ChatID, runID, "", c.activeRunTTL)
+		if session != nil && strings.TrimSpace(session.ChatID) != "" && strings.TrimSpace(actorOpenID) != "" {
+			swapped, err := c.runtimeStore.SwapActiveActorChatRun(ctx, session.ChatID, actorOpenID, runID, "", c.activeRunTTL)
 			if err != nil {
 				return err
 			}
 			if !swapped {
-				current, err := c.runtimeStore.ActiveChatRun(ctx, session.ChatID)
+				current, err := c.runtimeStore.ActiveActorChatRun(ctx, session.ChatID, actorOpenID)
 				if err != nil {
 					return err
 				}
 				if current == runID {
-					return fmt.Errorf("active chat slot still points to cancelled run: chat_id=%s run_id=%s", session.ChatID, runID)
+					return fmt.Errorf("active actor chat slot still points to cancelled run: chat_id=%s actor_open_id=%s run_id=%s", session.ChatID, actorOpenID, runID)
 				}
 			}
+			_ = c.runtimeStore.NotifyPendingInitialRun(ctx, session.ChatID, actorOpenID)
+			TriggerPendingScopeSweep()
 		}
 	}
 	return nil
 }
 
-func (c *RunCoordinator) currentActiveRunID(ctx context.Context, session *AgentSession, chatID string) (string, error) {
-	if c.runtimeStore != nil && strings.TrimSpace(chatID) != "" {
-		activeRunID, err := c.runtimeStore.ActiveChatRun(ctx, chatID)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(activeRunID) != "" {
-			return activeRunID, nil
-		}
-	}
-	if session == nil {
+func (c *RunCoordinator) currentActiveRunID(ctx context.Context, session *AgentSession, chatID, actorOpenID string) (string, error) {
+	if session == nil || strings.TrimSpace(actorOpenID) == "" {
 		return "", nil
 	}
-	return strings.TrimSpace(session.ActiveRunID), nil
-}
-
-func (c *RunCoordinator) refreshActiveRunSlot(ctx context.Context, chatID, runID string) error {
-	if c == nil || c.runtimeStore == nil || strings.TrimSpace(chatID) == "" || strings.TrimSpace(runID) == "" {
-		return nil
+	activeRun, err := c.runRepo.FindLatestActiveBySessionActor(ctx, session.ID, actorOpenID)
+	if err != nil || activeRun == nil {
+		return "", err
 	}
-
-	swapped, err := c.runtimeStore.SwapActiveChatRun(ctx, chatID, runID, runID, c.activeRunTTL)
-	if err != nil {
-		return err
-	}
-	if swapped {
-		return nil
-	}
-
-	current, err := c.runtimeStore.ActiveChatRun(ctx, chatID)
-	if err != nil {
-		return err
-	}
-	current = strings.TrimSpace(current)
-	switch current {
-	case runID:
-		return nil
-	case "":
-		swapped, err = c.runtimeStore.SwapActiveChatRun(ctx, chatID, "", runID, c.activeRunTTL)
-		if err != nil {
-			return err
-		}
-		if swapped {
-			return nil
-		}
-		current, err = c.runtimeStore.ActiveChatRun(ctx, chatID)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(current) == runID {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("active chat slot mismatch during attach: chat_id=%s current=%s expected=%s", chatID, current, runID)
+	return strings.TrimSpace(activeRun.ID), nil
 }
 
 func sessionChatID(session *AgentSession) string {
@@ -673,11 +708,12 @@ func coalesceChatID(values ...string) string {
 	return ""
 }
 
-func (c *RunCoordinator) ActiveRunSnapshot(ctx context.Context, chatID string) (*ActiveRunSnapshot, error) {
+// ActiveRunSnapshot implements agent runtime behavior.
+func (c *RunCoordinator) ActiveRunSnapshot(ctx context.Context, chatID, actorOpenID string) (*ActiveRunSnapshot, error) {
 	if c == nil {
 		return nil, nil
 	}
-	runID, err := c.currentActiveRunID(ctx, nil, chatID)
+	runID, err := c.currentActiveRunID(ctx, nil, chatID, actorOpenID)
 	if err != nil {
 		return nil, err
 	}
@@ -698,6 +734,24 @@ func (c *RunCoordinator) ActiveRunSnapshot(ctx context.Context, chatID string) (
 		Status:       run.Status,
 		LastActiveAt: run.UpdatedAt,
 	}, nil
+}
+
+func (c *RunCoordinator) ensureActiveRunCapacity(ctx context.Context, session *AgentSession, actorOpenID string) error {
+	if c == nil || c.runRepo == nil || session == nil {
+		return nil
+	}
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	if actorOpenID == "" || c.maxActiveRunsPerActorChat <= 0 {
+		return nil
+	}
+	count, err := c.runRepo.CountActiveBySessionActor(ctx, session.ID, actorOpenID)
+	if err != nil {
+		return err
+	}
+	if count >= c.maxActiveRunsPerActorChat {
+		return ErrActiveRunLimitExceeded
+	}
+	return nil
 }
 
 func newRuntimeID(prefix string) string {

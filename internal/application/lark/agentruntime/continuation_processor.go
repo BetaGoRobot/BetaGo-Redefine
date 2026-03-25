@@ -7,17 +7,39 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	approvaldef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/approval"
+	capdef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/capability"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"go.uber.org/zap"
 )
 
+const (
+	defaultExecutionLeaseTTL           = 60 * time.Second
+	defaultExecutionLeaseRenewInterval = 15 * time.Second
+)
+
+type executionLeaseStore interface {
+	AcquireExecutionLease(context.Context, string, string, string, time.Duration, int64) (bool, error)
+	RenewExecutionLease(context.Context, string, string, string, time.Duration) (bool, error)
+	ReleaseExecutionLease(context.Context, string, string, string) (bool, error)
+}
+
+// ContinuationProcessor is the runtime execution engine that resumes queued,
+// approval-gated, and callback-driven runs. It owns capability execution,
+// continuation reply planning, reply emission, and initial-run processing.
 type ContinuationProcessor struct {
 	coordinator                   *RunCoordinator
 	registry                      *CapabilityRegistry
 	capabilityReplyTurnExecutor   CapabilityReplyTurnExecutor
 	continuationReplyTurnExecutor ContinuationReplyTurnExecutor
 	capabilityReplyPlanner        CapabilityReplyPlanner
+	initialReplyExecutorFactory   InitialReplyExecutorFactory
 	initialReplyEmitter           InitialReplyEmitter
 	replyEmitter                  ReplyEmitter
 	approvalSender                ApprovalSender
+	runLeasePolicy                RunLeasePolicy
 }
 
 type continuationObservation struct {
@@ -90,8 +112,12 @@ type replyTarget struct {
 	StepID    string
 }
 
+// NewContinuationProcessor constructs a continuation processor with default reply, approval, and continuation executors wired around the provided coordinator.
 func NewContinuationProcessor(coordinator *RunCoordinator, opts ...ContinuationProcessorOption) *ContinuationProcessor {
-	processor := &ContinuationProcessor{coordinator: coordinator}
+	processor := &ContinuationProcessor{
+		coordinator:    coordinator,
+		runLeasePolicy: DefaultRunLeasePolicy(),
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(processor)
@@ -100,6 +126,8 @@ func NewContinuationProcessor(coordinator *RunCoordinator, opts ...ContinuationP
 	return processor
 }
 
+// WithApprovalSender injects the approval card sender used when continuation
+// logic needs to surface a pending approval request.
 func WithApprovalSender(sender ApprovalSender) ContinuationProcessorOption {
 	return func(p *ContinuationProcessor) {
 		if p != nil {
@@ -108,12 +136,13 @@ func WithApprovalSender(sender ApprovalSender) ContinuationProcessorOption {
 	}
 }
 
+// ProcessResume loads the current run projection for a resume event, advances the run state machine, and emits any follow-up reply required by the resumed flow.
 func (p *ContinuationProcessor) ProcessResume(ctx context.Context, event ResumeEvent) (err error) {
 	if p == nil || p.coordinator == nil {
 		return nil
 	}
 	defer func() {
-		if err == nil {
+		if err == nil || errors.Is(err, ErrResumeDeferred) {
 			return
 		}
 		if failErr := p.failRunIfStillRunning(ctx, strings.TrimSpace(event.RunID), err); failErr != nil {
@@ -131,14 +160,44 @@ func (p *ContinuationProcessor) ProcessResume(ctx context.Context, event ResumeE
 	if run == nil || run.Status.IsTerminal() {
 		return nil
 	}
-
-	steps, err := p.loadSteps(ctx, run.ID)
+	session, err := p.coordinator.sessionRepo.GetByID(ctx, run.SessionID)
 	if err != nil {
 		return err
 	}
-	currentStep := findStepByIndex(steps, run.CurrentStepIndex)
+	if err := p.withExecutionLease(ctx, sessionChatID(session), run.ActorOpenID, executionLeaseHolderForResume(event), func() error {
+		return p.processResumedRun(ctx, run, event)
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// processResumedRun is the durable resume lane:
+// 1. rebuild the run projection
+// 2. choose capability-replay vs normal continuation
+// 3. emit the next reply / queue follow-up work
+func (p *ContinuationProcessor) processResumedRun(ctx context.Context, run *AgentRun, event ResumeEvent) error {
+	if p == nil || p.coordinator == nil || run == nil {
+		return nil
+	}
+	deferred, err := p.shouldDeferApprovalResume(ctx, run, event)
+	if err != nil {
+		return err
+	}
+	if deferred {
+		return ErrResumeDeferred
+	}
+	projection, err := p.loadProjection(ctx, run)
+	if err != nil {
+		return err
+	}
+	ctx, err = p.withAgenticReplyTargetState(ctx, projection)
+	if err != nil {
+		return err
+	}
+	currentStep := projection.CurrentStep()
 	if currentStep != nil && currentStep.Kind == StepKindResume {
-		if capabilityStep := findReplayableCapabilityStep(steps, currentStep.Index, event.Source); capabilityStep != nil {
+		if capabilityStep := projection.ReplayableCapabilityStepBefore(currentStep.Index, event.Source); capabilityStep != nil {
 			return p.processCapabilityResume(ctx, run, currentStep, capabilityStep, event)
 		}
 	}
@@ -146,11 +205,11 @@ func (p *ContinuationProcessor) ProcessResume(ctx context.Context, event ResumeE
 		return p.processCapabilityCall(ctx, run, currentStep, event)
 	}
 
-	plan, err := p.plan(run, steps, currentStep, event)
+	plan, err := p.buildContinuationPlan(run, projection.steps, currentStep, event)
 	if err != nil {
 		return err
 	}
-	return p.execute(ctx, run, plan)
+	return p.executeContinuationPlan(ctx, run, plan)
 }
 
 func (p *ContinuationProcessor) failRunIfStillRunning(ctx context.Context, runID string, cause error) error {
@@ -172,6 +231,7 @@ func (p *ContinuationProcessor) failRunIfStillRunning(ctx context.Context, runID
 		if current.StartedAt == nil {
 			current.StartedAt = &failedAt
 		}
+		clearRunExecutionLiveness(current)
 		return nil
 	})
 	if err != nil {
@@ -185,12 +245,74 @@ func (p *ContinuationProcessor) loadSteps(ctx context.Context, runID string) ([]
 	return p.coordinator.stepRepo.ListByRun(ctx, runID)
 }
 
+func (p *ContinuationProcessor) loadProjection(ctx context.Context, run *AgentRun) (RunProjection, error) {
+	if p == nil || p.coordinator == nil || run == nil {
+		return RunProjection{}, nil
+	}
+	steps, err := p.loadSteps(ctx, run.ID)
+	if err != nil {
+		return RunProjection{}, err
+	}
+	return NewRunProjection(run, steps), nil
+}
+
 func (p *ContinuationProcessor) loadCurrentStep(ctx context.Context, runID string, index int) (*AgentStep, error) {
 	steps, err := p.loadSteps(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
 	return findStepByIndex(steps, index), nil
+}
+
+func (p *ContinuationProcessor) withAgenticReplyTargetState(ctx context.Context, projection RunProjection) (context.Context, error) {
+	state := runtimecontext.AgenticReplyTargetStateFromContext(ctx)
+	if state == nil {
+		state = runtimecontext.NewAgenticReplyTargetState()
+		ctx = runtimecontext.WithAgenticReplyTargetState(ctx, state)
+	}
+	if p == nil || p.coordinator == nil || projection.run == nil {
+		return ctx, nil
+	}
+
+	root := projection.RootReplyTarget()
+	runtimecontext.SeedRootAgenticReplyTarget(ctx, root.MessageID, root.CardID)
+
+	if current, ok := runtimecontext.ActiveAgenticReplyTarget(ctx); !ok || (current.MessageID == "" && current.CardID == "") {
+		active := projection.LatestReplyTarget()
+		runtimecontext.RecordActiveAgenticReplyTarget(ctx, active.MessageID, active.CardID)
+	}
+	return ctx, nil
+}
+
+func (p *ContinuationProcessor) shouldDeferApprovalResume(ctx context.Context, run *AgentRun, event ResumeEvent) (bool, error) {
+	if p == nil || p.coordinator == nil || run == nil || event.Source != ResumeSourceApproval {
+		return false, nil
+	}
+
+	stepID := strings.TrimSpace(event.StepID)
+	token := strings.TrimSpace(event.Token)
+	if stepID == "" && token == "" {
+		return false, nil
+	}
+
+	steps, err := p.coordinator.stepRepo.ListByRun(ctx, run.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, step := range steps {
+		if step == nil || step.Kind != StepKindApprovalRequest {
+			continue
+		}
+		if stepID == "" || strings.TrimSpace(step.ID) == stepID {
+			return false, nil
+		}
+	}
+
+	reservation, err := p.coordinator.loadApprovalReservation(ctx, stepID, token)
+	if err != nil {
+		return false, err
+	}
+	return reservation != nil, nil
 }
 
 func (p *ContinuationProcessor) ensureQueuedRun(ctx context.Context, event ResumeEvent) (*AgentRun, error) {
@@ -207,7 +329,7 @@ func (p *ContinuationProcessor) ensureQueuedRun(ctx context.Context, event Resum
 	return p.coordinator.ResumeRun(ctx, event)
 }
 
-func (p *ContinuationProcessor) plan(run *AgentRun, steps []*AgentStep, currentStep *AgentStep, event ResumeEvent) (continuationPlan, error) {
+func (p *ContinuationProcessor) buildContinuationPlan(run *AgentRun, steps []*AgentStep, currentStep *AgentStep, event ResumeEvent) (continuationPlan, error) {
 	observedAt := event.OccurredAt.UTC()
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
@@ -307,40 +429,7 @@ func resolveContinuationReplyText(source ResumeSource, ctx continuationContext) 
 }
 
 func buildContinuationContext(run *AgentRun, steps []*AgentStep, currentStep *AgentStep, event ResumeEvent) continuationContext {
-	ctx := continuationContext{
-		Source:        event.Source,
-		WaitingReason: event.WaitingReason(),
-		ResumeSummary: strings.TrimSpace(event.Summary),
-	}
-	if len(event.PayloadJSON) > 0 {
-		ctx.ResumePayloadJSON = append(json.RawMessage(nil), event.PayloadJSON...)
-	}
-	if run != nil {
-		if run.WaitingReason != WaitingReasonNone {
-			ctx.WaitingReason = run.WaitingReason
-		}
-		ctx.TriggerType = run.TriggerType
-	}
-
-	if currentStep == nil && run != nil {
-		currentStep = findStepByIndex(steps, run.CurrentStepIndex)
-	}
-	if currentStep == nil {
-		return ctx
-	}
-
-	ctx.ResumeStepID = strings.TrimSpace(currentStep.ID)
-	ctx.ResumeStepExternalRef = strings.TrimSpace(currentStep.ExternalRef)
-	if previousStep := findPreviousStepBeforeIndex(steps, currentStep.Index); previousStep != nil {
-		ctx.PreviousStepKind = previousStep.Kind
-		ctx.PreviousStepExternalRef = strings.TrimSpace(previousStep.ExternalRef)
-		ctx.PreviousStepTitle = continuationPreviousStepTitle(previousStep)
-	}
-	if target := findLatestReplyTargetBeforeIndex(steps, currentStep.Index); target.MessageID != "" || target.CardID != "" {
-		ctx.LatestReplyMessageID = target.MessageID
-		ctx.LatestReplyCardID = target.CardID
-	}
-	return ctx
+	return NewRunProjection(run, steps).ContinuationContext(currentStep, event)
 }
 
 func resolveContinuationThoughtText(run *AgentRun, ctx continuationContext) string {
@@ -423,11 +512,11 @@ func continuationPreviousStepTitle(step *AgentStep) string {
 	}
 	switch step.Kind {
 	case StepKindApprovalRequest:
-		state, err := unmarshalApprovalStepState(step.OutputJSON)
+		request, err := approvaldef.DecodeApprovalRequest("", "", 0, "", step.OutputJSON)
 		if err != nil {
 			return ""
 		}
-		return strings.TrimSpace(state.Title)
+		return strings.TrimSpace(request.Title)
 	case StepKindWait:
 		var state struct {
 			Title string `json:"title,omitempty"`
@@ -486,7 +575,7 @@ func (p *ContinuationProcessor) processCapabilityCall(ctx context.Context, run *
 		observedAt = time.Now().UTC()
 	}
 
-	input, err := decodeCapabilityCallInput(step.InputJSON)
+	input, err := capdef.DecodeCallInput(step.InputJSON)
 	if err != nil {
 		return err
 	}
@@ -497,15 +586,186 @@ func (p *ContinuationProcessor) processCapabilityCall(ctx context.Context, run *
 		return err
 	}
 
-	currentRun, err := p.moveRunToRunning(ctx, run, observedAt)
+	return p.withRunExecutionHeartbeat(ctx, run, observedAt, func(currentRun *AgentRun) error {
+		if meta.RequiresApproval || input.Approval != nil {
+			return p.requestCapabilityApproval(ctx, currentRun, step, meta, input, observedAt)
+		}
+		return p.executeCapabilityCall(ctx, currentRun, step, capability, input, meta, step.Index+1, observedAt)
+	})
+}
+
+func (p *ContinuationProcessor) withExecutionLease(ctx context.Context, chatID, actorOpenID, holder string, run func() error) error {
+	if run == nil {
+		return nil
+	}
+	chatID = strings.TrimSpace(chatID)
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	holder = strings.TrimSpace(holder)
+	store := p.executionLeaseStore()
+	if store == nil || chatID == "" || actorOpenID == "" || holder == "" {
+		return run()
+	}
+	acquired, err := store.AcquireExecutionLease(ctx, chatID, actorOpenID, holder, defaultExecutionLeaseTTL, DefaultMaxExecutionLeasesPerActorChat)
 	if err != nil {
 		return err
 	}
-	if meta.RequiresApproval || input.Approval != nil {
-		return p.requestCapabilityApproval(ctx, currentRun, step, meta, input, observedAt)
+	if !acquired {
+		return ErrRunSlotOccupied
 	}
 
-	return p.executeCapabilityCall(ctx, currentRun, step, capability, input, meta, step.Index+1, observedAt)
+	ctx = withExecutionWorkerID(ctx, holder)
+	stopRenew := make(chan struct{})
+	doneRenew := make(chan struct{})
+	go p.renewExecutionLease(ctx, store, chatID, actorOpenID, holder, stopRenew, doneRenew)
+	defer func() {
+		close(stopRenew)
+		<-doneRenew
+		if _, err := store.ReleaseExecutionLease(ctx, chatID, actorOpenID, holder); err != nil && !errors.Is(err, context.Canceled) {
+			logs.L().Ctx(ctx).Warn("agent runtime execution lease release failed",
+				zap.Error(err),
+				zap.String("chat_id", chatID),
+				zap.String("actor_open_id", actorOpenID),
+				zap.String("holder", holder),
+			)
+		}
+	}()
+	return run()
+}
+
+func (p *ContinuationProcessor) renewExecutionLease(
+	ctx context.Context,
+	store executionLeaseStore,
+	chatID, actorOpenID, holder string,
+	stop <-chan struct{},
+	done chan<- struct{},
+) {
+	defer close(done)
+	ticker := time.NewTicker(defaultExecutionLeaseRenewInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewed, err := store.RenewExecutionLease(ctx, chatID, actorOpenID, holder, defaultExecutionLeaseTTL)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				logs.L().Ctx(ctx).Warn("agent runtime execution lease renew failed",
+					zap.Error(err),
+					zap.String("chat_id", chatID),
+					zap.String("actor_open_id", actorOpenID),
+					zap.String("holder", holder),
+				)
+				continue
+			}
+			if !renewed {
+				logs.L().Ctx(ctx).Warn("agent runtime execution lease missing during renew",
+					zap.String("chat_id", chatID),
+					zap.String("actor_open_id", actorOpenID),
+					zap.String("holder", holder),
+				)
+			}
+		}
+	}
+}
+
+func (p *ContinuationProcessor) executionLeaseStore() executionLeaseStore {
+	if p == nil || p.coordinator == nil || p.coordinator.runtimeStore == nil {
+		return nil
+	}
+	store, _ := p.coordinator.runtimeStore.(executionLeaseStore)
+	return store
+}
+
+func (p *ContinuationProcessor) normalizedRunLeasePolicy() RunLeasePolicy {
+	if p == nil {
+		return DefaultRunLeasePolicy()
+	}
+	return p.runLeasePolicy.Normalize()
+}
+
+func (p *ContinuationProcessor) withRunExecutionHeartbeat(
+	ctx context.Context,
+	run *AgentRun,
+	startedAt time.Time,
+	execute func(*AgentRun) error,
+) error {
+	if execute == nil {
+		return nil
+	}
+	if p == nil || p.coordinator == nil || run == nil {
+		return execute(run)
+	}
+
+	workerID := executionWorkerIDFromContext(ctx)
+	currentRun, err := p.coordinator.startRunExecution(ctx, run, workerID, startedAt, p.normalizedRunLeasePolicy())
+	if err != nil {
+		return err
+	}
+	if workerID == "" {
+		return execute(currentRun)
+	}
+
+	stopRenew := make(chan struct{})
+	doneRenew := make(chan struct{})
+	go p.renewRunExecutionHeartbeat(ctx, currentRun.ID, workerID, stopRenew, doneRenew)
+	defer func() {
+		close(stopRenew)
+		<-doneRenew
+	}()
+	return execute(currentRun)
+}
+
+func (p *ContinuationProcessor) renewRunExecutionHeartbeat(
+	ctx context.Context,
+	runID string,
+	workerID string,
+	stop <-chan struct{},
+	done chan<- struct{},
+) {
+	defer close(done)
+	policy := p.normalizedRunLeasePolicy()
+	ticker := time.NewTicker(policy.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			updated, err := p.coordinator.refreshRunExecutionLiveness(ctx, runID, workerID, time.Now().UTC(), policy)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				logs.L().Ctx(ctx).Warn("agent runtime run heartbeat renew failed",
+					zap.Error(err),
+					zap.String("run_id", runID),
+					zap.String("worker_id", workerID),
+				)
+				continue
+			}
+			if updated == nil {
+				return
+			}
+		}
+	}
+}
+
+func executionLeaseHolderForInitial(input InitialRunInput) string {
+	if triggerMessageID := strings.TrimSpace(input.Start.TriggerMessageID); triggerMessageID != "" {
+		return "initial:" + triggerMessageID
+	}
+	if event := strings.TrimSpace(input.Start.TriggerEventID); event != "" {
+		return "initial_event:" + event
+	}
+	return ""
+}
+
+func executionLeaseHolderForResume(event ResumeEvent) string {
+	if runID := strings.TrimSpace(event.RunID); runID != "" {
+		return "resume:" + runID
+	}
+	return ""
 }
 
 func (p *ContinuationProcessor) processCapabilityResume(
@@ -518,32 +778,28 @@ func (p *ContinuationProcessor) processCapabilityResume(
 	if resumeStep == nil || capabilityStep == nil {
 		return fmt.Errorf("agent runtime capability replay steps missing: run_id=%s", run.ID)
 	}
+	return p.withRunExecutionHeartbeat(ctx, run, normalizeObservedAt(event.OccurredAt), func(currentRun *AgentRun) error {
+		plan, err := p.buildContinuationPlan(currentRun, []*AgentStep{capabilityStep, resumeStep}, resumeStep, event)
+		if err != nil {
+			return err
+		}
+		if err := p.completeResumeStep(ctx, currentRun, plan); err != nil {
+			return err
+		}
 
-	currentRun, err := p.moveRunToRunning(ctx, run, normalizeObservedAt(event.OccurredAt))
-	if err != nil {
-		return err
-	}
+		input, err := capdef.DecodeCallInput(capabilityStep.InputJSON)
+		if err != nil {
+			return err
+		}
+		input.Request = hydrateCapabilityRequest(currentRun, capabilityStep, input.Request)
 
-	plan, err := p.plan(currentRun, []*AgentStep{capabilityStep, resumeStep}, resumeStep, event)
-	if err != nil {
-		return err
-	}
-	if err := p.completeResumeStep(ctx, currentRun, plan); err != nil {
-		return err
-	}
+		capability, meta, err := p.lookupCapability(capabilityStep.CapabilityName, input.Request.Scope)
+		if err != nil {
+			return err
+		}
 
-	input, err := decodeCapabilityCallInput(capabilityStep.InputJSON)
-	if err != nil {
-		return err
-	}
-	input.Request = hydrateCapabilityRequest(currentRun, capabilityStep, input.Request)
-
-	capability, meta, err := p.lookupCapability(capabilityStep.CapabilityName, input.Request.Scope)
-	if err != nil {
-		return err
-	}
-
-	return p.executeCapabilityCall(ctx, currentRun, capabilityStep, capability, input, meta, resumeStep.Index+1, plan.ObservedAt)
+		return p.executeCapabilityCall(ctx, currentRun, capabilityStep, capability, input, meta, resumeStep.Index+1, plan.ObservedAt)
+	})
 }
 
 func (p *ContinuationProcessor) lookupCapability(name string, scope CapabilityScope) (Capability, CapabilityMeta, error) {
@@ -598,6 +854,45 @@ func (p *ContinuationProcessor) requestCapabilityApproval(
 	requestedAt time.Time,
 ) error {
 	spec := resolveCapabilityApprovalSpec(step, meta, input, requestedAt)
+	if strings.TrimSpace(spec.ReservationStepID) != "" || strings.TrimSpace(spec.ReservationToken) != "" {
+		request, decision, err := p.coordinator.ActivateReservedApproval(ctx, ActivateReservedApprovalInput{
+			RunID:       run.ID,
+			StepID:      spec.ReservationStepID,
+			Token:       spec.ReservationToken,
+			RequestedAt: requestedAt,
+		})
+		switch {
+		case err == nil:
+			if decision == nil || request == nil {
+				return nil
+			}
+			event := ResumeEvent{
+				RunID:       request.RunID,
+				StepID:      request.StepID,
+				Revision:    request.Revision,
+				Source:      ResumeSourceApproval,
+				Token:       request.Token,
+				ActorOpenID: decision.ActorOpenID,
+				OccurredAt:  decision.OccurredAt,
+			}
+			switch decision.Outcome {
+			case ApprovalReservationDecisionApproved:
+				// The approval click path has already enqueued the async resume event.
+				// Stop here and let that queued resume own the post-approval continuation,
+				// otherwise the current execution path and the resume worker can both
+				// continue the same capability and emit duplicate side effects.
+				return nil
+			case ApprovalReservationDecisionRejected:
+				_, err := p.coordinator.RejectApproval(ctx, event)
+				return err
+			default:
+				return fmt.Errorf("unsupported approval reservation decision outcome: %q", decision.Outcome)
+			}
+		case errors.Is(err, ErrApprovalReservationNotFound):
+		default:
+			return err
+		}
+	}
 	request, err := p.coordinator.RequestApproval(ctx, RequestApprovalInput{
 		RunID:          run.ID,
 		ApprovalType:   spec.Type,
@@ -626,6 +921,10 @@ func (p *ContinuationProcessor) requestCapabilityApproval(
 	if session != nil {
 		target.ChatID = strings.TrimSpace(session.ChatID)
 	}
+	if root, ok := runtimecontext.RootAgenticReplyTarget(ctx); ok && strings.TrimSpace(root.MessageID) != "" {
+		target.ReplyToMessageID = strings.TrimSpace(root.MessageID)
+		target.ReplyInThread = true
+	}
 
 	return p.approvalSender.SendApprovalCard(ctx, target, *request)
 }
@@ -653,7 +952,7 @@ func (p *ContinuationProcessor) executeCapabilityCall(
 
 	if _, err := p.coordinator.stepRepo.UpdateStatus(ctx, activeStep.ID, activeStep.Status, func(current *AgentStep) error {
 		current.Status = StepStatusCompleted
-		current.OutputJSON = encodeCapabilityResult(result)
+		current.OutputJSON = capdef.EncodeResult(result)
 		current.ExternalRef = strings.TrimSpace(result.ExternalRef)
 		current.FinishedAt = &observedAt
 		if current.StartedAt == nil {
@@ -722,13 +1021,12 @@ func (p *ContinuationProcessor) executeCapabilityReplyTurn(
 	}
 	recorder := newRunCapabilityTraceRecorder(p.coordinator, run.ID, nextIndex, recordedAt)
 	turnResult, err := p.capabilityReplyTurnExecutor.ExecuteCapabilityReplyTurn(ctx, CapabilityReplyTurnRequest{
-		Session:      session,
-		Run:          run,
-		Step:         step,
-		Input:        input,
-		Result:       result,
-		Recorder:     recorder,
-		PlanRecorder: recorder,
+		Session:  session,
+		Run:      run,
+		Step:     step,
+		Input:    input,
+		Result:   result,
+		Recorder: recorder,
 	})
 	if err != nil {
 		return CapabilityReplyTurnResult{}, false, err
@@ -863,6 +1161,7 @@ func (p *ContinuationProcessor) failCapabilityRun(
 		if current.StartedAt == nil {
 			current.StartedAt = &failedAt
 		}
+		clearRunExecutionLiveness(current)
 		return nil
 	})
 	if err != nil {
@@ -873,96 +1172,6 @@ func (p *ContinuationProcessor) failCapabilityRun(
 		return clearErr
 	}
 	return execErr
-}
-
-func newCapabilityObserveStep(runID string, index int, capabilityName string, result CapabilityResult, observedAt time.Time) (*AgentStep, error) {
-	output, err := json.Marshal(capabilityObservation{
-		CapabilityName: strings.TrimSpace(capabilityName),
-		OutputText:     result.OutputText,
-		OutputJSON:     json.RawMessage(result.OutputJSON),
-		ExternalRef:    strings.TrimSpace(result.ExternalRef),
-		OccurredAt:     observedAt,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &AgentStep{
-		ID:          newRuntimeID("step"),
-		RunID:       runID,
-		Index:       index,
-		Kind:        StepKindObserve,
-		Status:      StepStatusCompleted,
-		OutputJSON:  output,
-		ExternalRef: strings.TrimSpace(result.ExternalRef),
-		CreatedAt:   observedAt,
-		StartedAt:   &observedAt,
-		FinishedAt:  &observedAt,
-	}, nil
-}
-
-func newCapabilityReplyStep(runID string, index int, capabilityName string, plan CapabilityReplyPlan, refs ReplyEmissionResult, observedAt time.Time) (*AgentStep, error) {
-	output, err := json.Marshal(capabilityReply{
-		CapabilityName:    strings.TrimSpace(capabilityName),
-		ThoughtText:       strings.TrimSpace(plan.ThoughtText),
-		ReplyText:         strings.TrimSpace(plan.ReplyText),
-		Text:              strings.TrimSpace(plan.ReplyText),
-		ResponseMessageID: strings.TrimSpace(refs.MessageID),
-		ResponseCardID:    strings.TrimSpace(refs.CardID),
-		DeliveryMode:      refs.DeliveryMode,
-		LifecycleState:    ReplyLifecycleStateActive,
-		TargetMessageID:   strings.TrimSpace(refs.TargetMessageID),
-		TargetCardID:      strings.TrimSpace(refs.TargetCardID),
-		TargetStepID:      strings.TrimSpace(refs.TargetStepID),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	externalRef := strings.TrimSpace(refs.CardID)
-	if externalRef == "" {
-		externalRef = strings.TrimSpace(refs.MessageID)
-	}
-
-	return &AgentStep{
-		ID:          newRuntimeID("step"),
-		RunID:       runID,
-		Index:       index,
-		Kind:        StepKindReply,
-		Status:      StepStatusCompleted,
-		OutputJSON:  output,
-		ExternalRef: externalRef,
-		CreatedAt:   observedAt,
-		StartedAt:   &observedAt,
-		FinishedAt:  &observedAt,
-	}, nil
-}
-
-func (p *ContinuationProcessor) emitCapabilityReply(ctx context.Context, run *AgentRun, plan CapabilityReplyPlan) (ReplyEmissionResult, error) {
-	if p == nil || p.replyEmitter == nil || run == nil {
-		return ReplyEmissionResult{}, nil
-	}
-	session, err := p.coordinator.sessionRepo.GetByID(ctx, run.SessionID)
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	target, err := p.resolveReplyTarget(ctx, run)
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	replyResult, err := p.replyEmitter.EmitReply(ctx, ReplyEmissionRequest{
-		Session:         session,
-		Run:             run,
-		ThoughtText:     strings.TrimSpace(plan.ThoughtText),
-		ReplyText:       strings.TrimSpace(plan.ReplyText),
-		TargetMessageID: target.MessageID,
-		TargetCardID:    target.CardID,
-	})
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	replyResult.TargetStepID = target.StepID
-	return replyResult, nil
 }
 
 func (p *ContinuationProcessor) planCapabilityReply(
@@ -982,9 +1191,9 @@ func (p *ContinuationProcessor) planCapabilityReply(
 		return CapabilityReplyPlan{}, err
 	}
 	plan, err := p.capabilityReplyPlanner.PlanCapabilityReply(ctx, CapabilityReplyPlanningRequest{
-		Session:        session,
-		Run:            run,
-		Step:           step,
+		ChatID:         session.ChatID,
+		OpenID:         run.ActorOpenID,
+		InputText:      run.InputText,
 		CapabilityName: strings.TrimSpace(step.CapabilityName),
 		Result:         result,
 	})
@@ -992,74 +1201,6 @@ func (p *ContinuationProcessor) planCapabilityReply(
 		return CapabilityReplyPlan{}, err
 	}
 	return normalizeCapabilityReplyPlan(plan, fallback), nil
-}
-
-func hydrateQueuedCapabilityCall(call *QueuedCapabilityCall, run *AgentRun, request CapabilityRequest) *QueuedCapabilityCall {
-	if call == nil {
-		return nil
-	}
-
-	copied := *call
-	copied.Input = call.Input
-	copied.Input.Request = call.Input.Request
-
-	if strings.TrimSpace(copied.Input.Request.SessionID) == "" && run != nil {
-		copied.Input.Request.SessionID = run.SessionID
-	}
-	if strings.TrimSpace(copied.Input.Request.RunID) == "" && run != nil {
-		copied.Input.Request.RunID = run.ID
-	}
-	if strings.TrimSpace(string(copied.Input.Request.Scope)) == "" {
-		copied.Input.Request.Scope = request.Scope
-	}
-	if strings.TrimSpace(copied.Input.Request.ChatID) == "" {
-		copied.Input.Request.ChatID = request.ChatID
-	}
-	if strings.TrimSpace(copied.Input.Request.ActorOpenID) == "" {
-		copied.Input.Request.ActorOpenID = coalesceString(request.ActorOpenID, func() string {
-			if run == nil {
-				return ""
-			}
-			return run.ActorOpenID
-		}())
-	}
-	if strings.TrimSpace(copied.Input.Request.InputText) == "" {
-		copied.Input.Request.InputText = coalesceString(request.InputText, func() string {
-			if run == nil {
-				return ""
-			}
-			return run.InputText
-		}())
-	}
-	copied.Input.QueueTail = hydrateQueuedCapabilityQueue(copied.Input.QueueTail, run, request)
-	return &copied
-}
-
-func hydrateQueuedCapabilityQueue(queue []QueuedCapabilityCall, run *AgentRun, request CapabilityRequest) []QueuedCapabilityCall {
-	if len(queue) == 0 {
-		return nil
-	}
-	result := make([]QueuedCapabilityCall, 0, len(queue))
-	for _, item := range queue {
-		call := hydrateQueuedCapabilityCall(&item, run, request)
-		if call == nil {
-			continue
-		}
-		result = append(result, *call)
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
-
-func coalesceString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func (p *ContinuationProcessor) executeContinuationReplyTurn(
@@ -1089,7 +1230,6 @@ func (p *ContinuationProcessor) executeContinuationReplyTurn(
 		ThoughtFallback:         plan.ThoughtText,
 		ReplyFallback:           plan.ReplyText,
 		Recorder:                recorder,
-		PlanRecorder:            recorder,
 	})
 	if err != nil {
 		return ContinuationReplyTurnResult{}, false, err
@@ -1158,146 +1298,32 @@ func (p *ContinuationProcessor) completeContinuationReplyTurn(
 	return p.completeQueuedReplyPlan(ctx, plannedRun, planStepIndex, turnResult.Plan.ThoughtText, turnResult.Plan.ReplyText, replyRefs, resultSummary, plan.ObservedAt)
 }
 
-func (p *ContinuationProcessor) continueQueuedCapabilityTail(
-	ctx context.Context,
-	run *AgentRun,
-	queue []QueuedCapabilityCall,
-	queuedAt time.Time,
-) error {
-	if p == nil || p.coordinator == nil || run == nil || len(queue) == 0 {
-		return nil
-	}
-
-	nextCall := queue[0]
-	if len(queue) > 1 {
-		nextCall.Input.QueueTail = mergeQueuedCapabilityQueue(nextCall.Input.QueueTail, queue[1:])
-	}
-
-	steps, err := p.coordinator.stepRepo.ListByRun(ctx, run.ID)
-	if err != nil {
-		return err
-	}
-	nextStepIndex := nextAvailableStepIndex(steps, run.CurrentStepIndex)
-	queuedStep, err := newQueuedCapabilityStep(run.ID, nextStepIndex, nextCall, queuedAt)
-	if err != nil {
-		return err
-	}
-	if err := p.coordinator.stepRepo.Append(ctx, queuedStep); err != nil {
-		return err
-	}
-
-	queuedRun, err := p.coordinator.runRepo.UpdateStatus(ctx, run.ID, run.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusQueued
-		current.CurrentStepIndex = queuedStep.Index
-		current.UpdatedAt = queuedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &queuedAt
+// executeContinuationPlan owns the normal continuation lane after replay checks:
+// complete the durable resume step, run one continuation turn, then persist the
+// emitted reply as either a completed run or a continued queued capability.
+func (p *ContinuationProcessor) executeContinuationPlan(ctx context.Context, run *AgentRun, plan continuationPlan) error {
+	return p.withRunExecutionHeartbeat(ctx, run, plan.ObservedAt, func(currentRun *AgentRun) error {
+		if err := p.completeResumeStep(ctx, currentRun, plan); err != nil {
+			return err
 		}
-		return nil
+		if err := p.coordinator.stepRepo.Append(ctx, &plan.ObserveStep); err != nil {
+			return err
+		}
+
+		turnResult, handled, err := p.executeContinuationReplyTurn(ctx, currentRun, plan)
+		if err != nil {
+			return err
+		}
+		if handled {
+			return p.completeContinuationReplyTurn(ctx, currentRun, plan, turnResult)
+		}
+
+		return p.finalizeContinuationPlan(ctx, currentRun, plan)
 	})
-	if err != nil {
-		return err
-	}
-	return p.processQueuedRun(ctx, queuedRun.ID, queuedAt)
 }
 
-func mergeQueuedCapabilityQueue(head []QueuedCapabilityCall, tail []QueuedCapabilityCall) []QueuedCapabilityCall {
-	if len(head) == 0 && len(tail) == 0 {
-		return nil
-	}
-	merged := make([]QueuedCapabilityCall, 0, len(head)+len(tail))
-	for _, item := range head {
-		merged = append(merged, cloneQueuedCapabilityCall(item))
-	}
-	for _, item := range tail {
-		merged = append(merged, cloneQueuedCapabilityCall(item))
-	}
-	return merged
-}
-
-func cloneQueuedCapabilityCall(src QueuedCapabilityCall) QueuedCapabilityCall {
-	copied := src
-	copied.Input = src.Input
-	copied.Input.Request = src.Input.Request
-	if src.Input.Approval != nil {
-		approval := *src.Input.Approval
-		copied.Input.Approval = &approval
-	}
-	if src.Input.Continuation != nil {
-		continuation := *src.Input.Continuation
-		copied.Input.Continuation = &continuation
-	}
-	if len(src.Input.Request.PayloadJSON) > 0 {
-		copied.Input.Request.PayloadJSON = append([]byte(nil), src.Input.Request.PayloadJSON...)
-	}
-	if len(src.Input.QueueTail) > 0 {
-		copied.Input.QueueTail = mergeQueuedCapabilityQueue(nil, src.Input.QueueTail)
-	}
-	return copied
-}
-
-func resolveCapabilityResultSummary(capabilityName string, result CapabilityResult) string {
-	if text := strings.TrimSpace(result.OutputText); text != "" {
-		return text
-	}
-	if raw := strings.TrimSpace(string(result.OutputJSON)); raw != "" {
-		return raw
-	}
-	if name := strings.TrimSpace(capabilityName); name != "" {
-		return fmt.Sprintf("capability %s executed", name)
-	}
-	return "capability executed"
-}
-
-func normalizeObservedAt(observedAt time.Time) time.Time {
-	if observedAt.IsZero() {
-		return time.Now().UTC()
-	}
-	return observedAt.UTC()
-}
-
-func findReplayableCapabilityStep(steps []*AgentStep, currentIndex int, source ResumeSource) *AgentStep {
-	if source != ResumeSourceApproval {
-		return nil
-	}
-
-	for i := len(steps) - 1; i >= 0; i-- {
-		step := steps[i]
-		if step == nil || step.Index >= currentIndex {
-			continue
-		}
-		if step.Kind != StepKindCapabilityCall {
-			continue
-		}
-		switch step.Status {
-		case StepStatusQueued, StepStatusRunning:
-			return step
-		}
-	}
-	return nil
-}
-
-func (p *ContinuationProcessor) execute(ctx context.Context, run *AgentRun, plan continuationPlan) error {
-	currentRun, err := p.moveRunToRunning(ctx, run, plan.ObservedAt)
-	if err != nil {
-		return err
-	}
-	if err := p.completeResumeStep(ctx, currentRun, plan); err != nil {
-		return err
-	}
-	if err := p.coordinator.stepRepo.Append(ctx, &plan.ObserveStep); err != nil {
-		return err
-	}
-
-	turnResult, handled, err := p.executeContinuationReplyTurn(ctx, currentRun, plan)
-	if err != nil {
-		return err
-	}
-	if handled {
-		return p.completeContinuationReplyTurn(ctx, currentRun, plan, turnResult)
-	}
-
-	plannedRun, planStepIndex, err := p.queueReplyPlanStep(ctx, currentRun, plan.ObserveStep.Index, plan.ThoughtText, plan.ReplyText, nil, plan.ObservedAt)
+func (p *ContinuationProcessor) finalizeContinuationPlan(ctx context.Context, run *AgentRun, plan continuationPlan) error {
+	plannedRun, planStepIndex, err := p.queueReplyPlanStep(ctx, run, plan.ObserveStep.Index, plan.ThoughtText, plan.ReplyText, nil, plan.ObservedAt)
 	if err != nil {
 		return err
 	}
@@ -1306,88 +1332,6 @@ func (p *ContinuationProcessor) execute(ctx context.Context, run *AgentRun, plan
 		return err
 	}
 	return p.completeQueuedReplyPlan(ctx, plannedRun, planStepIndex, plan.ThoughtText, plan.ReplyText, replyRefs, plan.ResultSummary, plan.ObservedAt)
-}
-
-func newContinuationReplyStep(runID string, index int, thoughtText, replyText string, refs ReplyEmissionResult, observedAt time.Time) (*AgentStep, error) {
-	output, err := json.Marshal(capabilityReply{
-		ThoughtText:       strings.TrimSpace(thoughtText),
-		ReplyText:         strings.TrimSpace(replyText),
-		Text:              strings.TrimSpace(replyText),
-		ResponseMessageID: strings.TrimSpace(refs.MessageID),
-		ResponseCardID:    strings.TrimSpace(refs.CardID),
-		DeliveryMode:      refs.DeliveryMode,
-		LifecycleState:    ReplyLifecycleStateActive,
-		TargetMessageID:   strings.TrimSpace(refs.TargetMessageID),
-		TargetCardID:      strings.TrimSpace(refs.TargetCardID),
-		TargetStepID:      strings.TrimSpace(refs.TargetStepID),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	externalRef := strings.TrimSpace(refs.CardID)
-	if externalRef == "" {
-		externalRef = strings.TrimSpace(refs.MessageID)
-	}
-
-	return &AgentStep{
-		ID:          newRuntimeID("step"),
-		RunID:       runID,
-		Index:       index,
-		Kind:        StepKindReply,
-		Status:      StepStatusCompleted,
-		OutputJSON:  output,
-		ExternalRef: externalRef,
-		CreatedAt:   observedAt,
-		StartedAt:   &observedAt,
-		FinishedAt:  &observedAt,
-	}, nil
-}
-
-func (p *ContinuationProcessor) emitContinuationReply(ctx context.Context, run *AgentRun, plan continuationPlan) (ReplyEmissionResult, error) {
-	if p == nil || p.replyEmitter == nil || run == nil || strings.TrimSpace(plan.ReplyText) == "" {
-		return ReplyEmissionResult{}, nil
-	}
-	session, err := p.coordinator.sessionRepo.GetByID(ctx, run.SessionID)
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	target, err := p.resolveReplyTarget(ctx, run)
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	replyResult, err := p.replyEmitter.EmitReply(ctx, ReplyEmissionRequest{
-		Session:         session,
-		Run:             run,
-		ThoughtText:     strings.TrimSpace(plan.ThoughtText),
-		ReplyText:       strings.TrimSpace(plan.ReplyText),
-		TargetMessageID: target.MessageID,
-		TargetCardID:    target.CardID,
-	})
-	if err != nil {
-		return ReplyEmissionResult{}, err
-	}
-	replyResult.TargetStepID = target.StepID
-	return replyResult, nil
-}
-
-func (p *ContinuationProcessor) moveRunToRunning(ctx context.Context, run *AgentRun, startedAt time.Time) (*AgentRun, error) {
-	if run.Status == RunStatusRunning {
-		if run.StartedAt == nil {
-			run.StartedAt = &startedAt
-		}
-		return run, nil
-	}
-	return p.coordinator.runRepo.UpdateStatus(ctx, run.ID, run.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusRunning
-		current.WaitingReason = WaitingReasonNone
-		current.WaitingToken = ""
-		current.UpdatedAt = startedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &startedAt
-		}
-		return nil
-	})
 }
 
 func (p *ContinuationProcessor) completeResumeStep(ctx context.Context, run *AgentRun, plan continuationPlan) error {
@@ -1428,228 +1372,59 @@ func (p *ContinuationProcessor) completeResumeStep(ctx context.Context, run *Age
 	return err
 }
 
-func (p *ContinuationProcessor) queueReplyPlanStep(
-	ctx context.Context,
-	run *AgentRun,
-	fromStepIndex int,
-	thoughtText string,
-	replyText string,
-	pending *QueuedCapabilityCall,
-	plannedAt time.Time,
-) (*AgentRun, int, error) {
-	if p == nil || p.coordinator == nil {
-		return run, 0, nil
-	}
-	if run == nil {
-		return nil, 0, fmt.Errorf("agent runtime run is nil")
-	}
-
-	plannedRun, err := p.coordinator.QueuePlanStep(ctx, QueuePlanStepInput{
-		RunID:             run.ID,
-		Revision:          run.Revision,
-		FromStepIndex:     fromStepIndex,
-		ThoughtText:       strings.TrimSpace(thoughtText),
-		ReplyText:         strings.TrimSpace(replyText),
-		PendingCapability: buildPlanPendingCapability(pending),
-		PlannedAt:         plannedAt,
-	})
-	if err != nil {
-		return nil, 0, err
-	}
-	if plannedRun == nil {
-		return run, run.CurrentStepIndex, nil
-	}
-	return plannedRun, plannedRun.CurrentStepIndex, nil
-}
-
-func (p *ContinuationProcessor) completeQueuedReplyPlan(
-	ctx context.Context,
-	run *AgentRun,
-	planStepIndex int,
-	thoughtText string,
-	replyText string,
-	replyRefs ReplyEmissionResult,
-	resultSummary string,
-	completedAt time.Time,
-) error {
-	if p == nil || p.coordinator == nil {
-		return nil
-	}
-	if run == nil {
-		return fmt.Errorf("agent runtime run is nil")
-	}
-
-	completedRun, err := p.coordinator.CompleteRunWithReply(ctx, CompleteRunWithReplyInput{
-		RunID:             run.ID,
-		Revision:          run.Revision,
-		ThoughtText:       strings.TrimSpace(thoughtText),
-		ReplyText:         strings.TrimSpace(replyText),
-		ResponseMessageID: strings.TrimSpace(replyRefs.MessageID),
-		ResponseCardID:    strings.TrimSpace(replyRefs.CardID),
-		DeliveryMode:      replyRefs.DeliveryMode,
-		TargetMessageID:   strings.TrimSpace(replyRefs.TargetMessageID),
-		TargetCardID:      strings.TrimSpace(replyRefs.TargetCardID),
-		TargetStepID:      strings.TrimSpace(replyRefs.TargetStepID),
-		CompletedAt:       completedAt,
-	})
-	if err != nil {
-		return err
-	}
-	completedRun, err = p.overrideRunResultSummary(ctx, completedRun, resultSummary, completedAt)
-	if err != nil {
-		return err
-	}
-	if err := p.linkReplyPlanStep(ctx, completedRun.ID, planStepIndex+1, replyRefs); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (p *ContinuationProcessor) continueQueuedReplyPlan(
-	ctx context.Context,
-	run *AgentRun,
-	planStepIndex int,
-	thoughtText string,
-	replyText string,
-	queuedCapability QueuedCapabilityCall,
-	replyRefs ReplyEmissionResult,
-	resultSummary string,
-	continuedAt time.Time,
-) error {
-	if p == nil || p.coordinator == nil {
-		return nil
-	}
-	if run == nil {
-		return fmt.Errorf("agent runtime run is nil")
-	}
-
-	continuedRun, err := p.coordinator.ContinueRunWithReply(ctx, ContinueRunWithReplyInput{
-		RunID:             run.ID,
-		Revision:          run.Revision,
-		ThoughtText:       strings.TrimSpace(thoughtText),
-		ReplyText:         strings.TrimSpace(replyText),
-		ResponseMessageID: strings.TrimSpace(replyRefs.MessageID),
-		ResponseCardID:    strings.TrimSpace(replyRefs.CardID),
-		DeliveryMode:      replyRefs.DeliveryMode,
-		TargetMessageID:   strings.TrimSpace(replyRefs.TargetMessageID),
-		TargetCardID:      strings.TrimSpace(replyRefs.TargetCardID),
-		TargetStepID:      strings.TrimSpace(replyRefs.TargetStepID),
-		QueuedCapability:  &queuedCapability,
-		ContinuedAt:       continuedAt,
-	})
-	if err != nil {
-		return err
-	}
-	continuedRun, err = p.overrideRunResultSummary(ctx, continuedRun, resultSummary, continuedAt)
-	if err != nil {
-		return err
-	}
-	return p.linkReplyPlanStep(ctx, continuedRun.ID, planStepIndex+1, replyRefs)
-}
-
-func (p *ContinuationProcessor) overrideRunResultSummary(ctx context.Context, run *AgentRun, resultSummary string, updatedAt time.Time) (*AgentRun, error) {
+func (p *ContinuationProcessor) resolveRootReplyTarget(ctx context.Context, run *AgentRun) (replyTarget, error) {
 	if p == nil || p.coordinator == nil || run == nil {
-		return run, nil
+		return replyTarget{}, nil
 	}
-	resultSummary = strings.TrimSpace(resultSummary)
-	if resultSummary == "" || strings.TrimSpace(run.ResultSummary) == resultSummary {
-		return run, nil
+
+	steps, err := p.coordinator.stepRepo.ListByRun(ctx, run.ID)
+	if err != nil {
+		return replyTarget{}, err
 	}
-	return p.coordinator.runRepo.UpdateStatus(ctx, run.ID, run.Revision, func(current *AgentRun) error {
-		current.ResultSummary = resultSummary
-		current.UpdatedAt = updatedAt
-		return nil
-	})
+	return NewRunProjection(run, steps).RootReplyTarget(), nil
 }
 
-func (p *ContinuationProcessor) linkReplyPlanStep(ctx context.Context, runID string, replyStepIndex int, refs ReplyEmissionResult) error {
-	if p == nil || p.coordinator == nil {
-		return nil
-	}
-	if strings.TrimSpace(refs.TargetStepID) == "" {
-		return nil
-	}
-
-	steps, err := p.coordinator.stepRepo.ListByRun(ctx, strings.TrimSpace(runID))
+func (p *ContinuationProcessor) resolveFollowUpReplyTarget(ctx context.Context, run *AgentRun) (replyTarget, bool, error) {
+	root, err := p.resolveRootReplyTarget(ctx, run)
 	if err != nil {
-		return err
+		return replyTarget{}, false, err
 	}
-	replyStep := findStepByIndex(steps, replyStepIndex)
-	if replyStep == nil {
-		return nil
-	}
-	return p.linkSupersededReplyStep(ctx, refs, replyStep.ID)
-}
-
-func (p *ContinuationProcessor) clearActiveRunSlot(ctx context.Context, run *AgentRun, updatedAt time.Time) error {
-	if p == nil || p.coordinator == nil || run == nil || strings.TrimSpace(run.SessionID) == "" {
-		return nil
-	}
-
-	session, err := p.coordinator.sessionRepo.GetByID(ctx, run.SessionID)
-	if err != nil {
-		return err
-	}
-	if session != nil && session.ActiveRunID == run.ID {
-		if err := p.coordinator.sessionRepo.SetActiveRun(ctx, session.ID, "", "", "", updatedAt); err != nil {
-			return err
+	if ctxRoot, ok := runtimecontext.RootAgenticReplyTarget(ctx); ok {
+		if strings.TrimSpace(root.MessageID) == "" {
+			root.MessageID = strings.TrimSpace(ctxRoot.MessageID)
+		}
+		if strings.TrimSpace(root.CardID) == "" {
+			root.CardID = strings.TrimSpace(ctxRoot.CardID)
 		}
 	}
-
-	if p.coordinator.runtimeStore == nil || session == nil || strings.TrimSpace(session.ChatID) == "" {
-		return nil
+	if strings.TrimSpace(root.MessageID) != "" {
+		return root, true, nil
 	}
 
-	swapped, err := p.coordinator.runtimeStore.SwapActiveChatRun(ctx, session.ChatID, run.ID, "", p.coordinator.activeRunTTL)
+	target, err := p.resolveReplyTarget(ctx, run)
 	if err != nil {
-		return err
+		return replyTarget{}, false, err
 	}
-	if swapped {
-		return nil
-	}
+	return target, false, nil
+}
 
-	current, err := p.coordinator.runtimeStore.ActiveChatRun(ctx, session.ChatID)
+func (p *ContinuationProcessor) resolveModelReplyTarget(ctx context.Context, run *AgentRun) (replyTarget, error) {
+	root, err := p.resolveRootReplyTarget(ctx, run)
 	if err != nil {
-		return err
+		return replyTarget{}, err
 	}
-	if current == run.ID {
-		return fmt.Errorf("active chat slot still points to completed run: chat_id=%s run_id=%s", session.ChatID, run.ID)
-	}
-	return nil
-}
-
-func findStepByIndex(steps []*AgentStep, index int) *AgentStep {
-	for _, step := range steps {
-		if step != nil && step.Index == index {
-			return step
+	if ctxRoot, ok := runtimecontext.RootAgenticReplyTarget(ctx); ok {
+		if strings.TrimSpace(root.MessageID) == "" {
+			root.MessageID = strings.TrimSpace(ctxRoot.MessageID)
+		}
+		if strings.TrimSpace(root.CardID) == "" {
+			root.CardID = strings.TrimSpace(ctxRoot.CardID)
 		}
 	}
-	return nil
-}
-
-func findPreviousStepBeforeIndex(steps []*AgentStep, index int) *AgentStep {
-	bestIndex := -1
-	var best *AgentStep
-	for _, step := range steps {
-		if step == nil || step.Index >= index {
-			continue
-		}
-		if step.Index > bestIndex {
-			bestIndex = step.Index
-			best = step
-		}
+	if strings.TrimSpace(root.MessageID) != "" || strings.TrimSpace(root.CardID) != "" {
+		return root, nil
 	}
-	return best
-}
-
-func findLatestReplyTargetBeforeIndex(steps []*AgentStep, index int) replyTarget {
-	target := findLatestReplyTargetBeforeIndexWithFilter(steps, index, func(step *AgentStep) bool {
-		return replyLifecycleState(step) != ReplyLifecycleStateSuperseded
-	})
-	if target.MessageID != "" || target.CardID != "" {
-		return target
-	}
-	return findLatestReplyTargetBeforeIndexWithFilter(steps, index, nil)
+	return p.resolveLatestModelReplyTarget(ctx, run)
 }
 
 func (p *ContinuationProcessor) resolveReplyTarget(ctx context.Context, run *AgentRun) (replyTarget, error) {
@@ -1661,110 +1436,19 @@ func (p *ContinuationProcessor) resolveReplyTarget(ctx context.Context, run *Age
 	if err != nil {
 		return replyTarget{}, err
 	}
-	target := findLatestReplyTargetWithFilter(steps, func(step *AgentStep) bool {
-		return replyLifecycleState(step) != ReplyLifecycleStateSuperseded
-	})
-	if target.MessageID != "" || target.CardID != "" {
-		return target, nil
-	}
-	return findLatestReplyTargetWithFilter(steps, nil), nil
+	return NewRunProjection(run, steps).LatestReplyTarget(), nil
 }
 
-func findLatestReplyTargetWithFilter(steps []*AgentStep, filter func(*AgentStep) bool) replyTarget {
-	for i := len(steps) - 1; i >= 0; i-- {
-		step := steps[i]
-		if step == nil || (step.Kind != StepKindReply && step.Kind != StepKindCapabilityCall) {
-			continue
-		}
-		if filter != nil && !filter(step) {
-			continue
-		}
-		target := decodeReplyLikeTarget(step)
-		if target.MessageID != "" || target.CardID != "" {
-			target.StepID = strings.TrimSpace(step.ID)
-			return target
-		}
-	}
-	return replyTarget{}
-}
-
-func findLatestReplyTargetBeforeIndexWithFilter(steps []*AgentStep, index int, filter func(*AgentStep) bool) replyTarget {
-	for i := len(steps) - 1; i >= 0; i-- {
-		step := steps[i]
-		if step == nil || step.Index >= index || (step.Kind != StepKindReply && step.Kind != StepKindCapabilityCall) {
-			continue
-		}
-		if filter != nil && !filter(step) {
-			continue
-		}
-		target := decodeReplyLikeTarget(step)
-		if target.MessageID != "" || target.CardID != "" {
-			target.StepID = strings.TrimSpace(step.ID)
-			return target
-		}
-	}
-	return replyTarget{}
-}
-
-func replyLifecycleState(step *AgentStep) ReplyLifecycleState {
-	if step == nil || len(step.OutputJSON) == 0 {
-		return ""
-	}
-	var state struct {
-		LifecycleState ReplyLifecycleState `json:"lifecycle_state,omitempty"`
-	}
-	if err := json.Unmarshal(step.OutputJSON, &state); err != nil {
-		return ""
-	}
-	return state.LifecycleState
-}
-
-func decodeReplyTarget(step *AgentStep) replyTarget {
-	target := replyTarget{}
-	if step == nil {
-		return target
+func (p *ContinuationProcessor) resolveLatestModelReplyTarget(ctx context.Context, run *AgentRun) (replyTarget, error) {
+	if p == nil || p.coordinator == nil || run == nil {
+		return replyTarget{}, nil
 	}
 
-	reply := capabilityReply{}
-	if err := json.Unmarshal(step.OutputJSON, &reply); err == nil {
-		target.MessageID = strings.TrimSpace(reply.ResponseMessageID)
-		target.CardID = strings.TrimSpace(reply.ResponseCardID)
+	steps, err := p.coordinator.stepRepo.ListByRun(ctx, run.ID)
+	if err != nil {
+		return replyTarget{}, err
 	}
-	if target.MessageID == "" && target.CardID == "" {
-		target.MessageID = strings.TrimSpace(step.ExternalRef)
-	}
-	return target
-}
-
-func decodeCapabilityCompatibleReplyTarget(step *AgentStep) replyTarget {
-	target := replyTarget{}
-	if step == nil || len(step.OutputJSON) == 0 {
-		return target
-	}
-
-	var result struct {
-		CompatibleReplyMessageID string `json:"compatible_reply_message_id,omitempty"`
-		CompatibleReplyKind      string `json:"compatible_reply_kind,omitempty"`
-	}
-	if err := json.Unmarshal(step.OutputJSON, &result); err != nil {
-		return target
-	}
-	target.MessageID = strings.TrimSpace(result.CompatibleReplyMessageID)
-	return target
-}
-
-func decodeReplyLikeTarget(step *AgentStep) replyTarget {
-	if step == nil {
-		return replyTarget{}
-	}
-	switch step.Kind {
-	case StepKindReply:
-		return decodeReplyTarget(step)
-	case StepKindCapabilityCall:
-		return decodeCapabilityCompatibleReplyTarget(step)
-	default:
-		return replyTarget{}
-	}
+	return NewRunProjection(run, steps).LatestModelReplyTarget(), nil
 }
 
 func (p *ContinuationProcessor) linkSupersededReplyStep(ctx context.Context, refs ReplyEmissionResult, nextStepID string) error {

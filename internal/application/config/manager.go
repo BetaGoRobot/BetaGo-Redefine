@@ -17,6 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+	"gorm.io/gorm/clause"
 )
 
 // ConfigKey 配置键类型
@@ -573,37 +574,20 @@ func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string)
 		attribute.String("config.value.preview", otel.PreviewString(value, 128)),
 		attribute.Int("config.value.len", len(value)),
 	)
-	err = query.Q.Transaction(func(tx *query.Query) error {
-		existing, err := tx.DynamicConfig.WithContext(ctx).
-			Where(query.DynamicConfig.Key.Eq(fullKey)).
-			First()
-
-		if err == nil && existing != nil {
-			span.AddEvent("config.update")
-			_, err = tx.DynamicConfig.WithContext(ctx).
-				Where(query.DynamicConfig.Key.Eq(fullKey)).
-				Update(query.DynamicConfig.Value, value)
-		} else {
-			span.AddEvent("config.create")
-			err = tx.DynamicConfig.WithContext(ctx).
-				Create(&model.DynamicConfig{
-					Key:   fullKey,
-					Value: value,
-				})
-		}
-
-		if err != nil {
-			return err
-		}
-
-		m.mu.Lock()
-		m.cache[fullKey] = value
-		m.mu.Unlock()
-		storeConfigValueInTraceCache(ctx, fullKey, value, true)
-
-		return nil
-	})
-	return err
+	q := query.DynamicConfig
+	err = q.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).
+		Create(&model.DynamicConfig{
+			Key:   fullKey,
+			Value: value,
+		})
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.cache[fullKey] = value
+	m.mu.Unlock()
+	storeConfigValueInTraceCache(ctx, fullKey, value, true)
+	return nil
 }
 
 // DeleteConfig 删除配置

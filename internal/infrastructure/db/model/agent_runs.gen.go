@@ -33,6 +33,10 @@ type AgentRun struct {
 	FinishedAt       time.Time `gorm:"column:finished_at" json:"finished_at"`
 	CreatedAt        time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt        time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	WorkerID         string    `gorm:"column:worker_id;not null" json:"worker_id"`
+	HeartbeatAt      time.Time `gorm:"column:heartbeat_at" json:"heartbeat_at"`
+	LeaseExpiresAt   time.Time `gorm:"column:lease_expires_at" json:"lease_expires_at"`
+	RepairAttempts   int64     `gorm:"column:repair_attempts;not null" json:"repair_attempts"`
 }
 
 // TableName AgentRun's table name

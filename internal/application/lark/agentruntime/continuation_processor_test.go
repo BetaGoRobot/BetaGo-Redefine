@@ -657,7 +657,7 @@ func TestContinuationProcessorIncludesPreviousStepContextInThought(t *testing.T)
 	}
 }
 
-func TestContinuationProcessorTargetsLatestReplyRefsForAgenticPatch(t *testing.T) {
+func TestContinuationProcessorRepliesInThreadToRootAgenticCardAndSupersedesPriorReply(t *testing.T) {
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
 	coordinator := agentruntime.NewRunCoordinator(
@@ -694,8 +694,8 @@ func TestContinuationProcessorTargetsLatestReplyRefsForAgenticPatch(t *testing.T
 
 	replyEmitter := &plannerTestReplyEmitter{
 		result: agentruntime.ReplyEmissionResult{
-			MessageID:       "om_existing_reply",
-			CardID:          "card_existing_reply",
+			MessageID:       "om_follow_up_reply",
+			CardID:          "card_follow_up_reply",
 			DeliveryMode:    agentruntime.ReplyDeliveryModePatch,
 			TargetMessageID: "om_existing_reply",
 			TargetCardID:    "card_existing_reply",
@@ -722,6 +722,9 @@ func TestContinuationProcessorTargetsLatestReplyRefsForAgenticPatch(t *testing.T
 	if replyEmitter.requests[0].TargetCardID != "card_existing_reply" {
 		t.Fatalf("target card id = %q, want %q", replyEmitter.requests[0].TargetCardID, "card_existing_reply")
 	}
+	if replyEmitter.requests[0].ReplyInThread {
+		t.Fatal("expected continuation model reply to patch the root agentic card")
+	}
 	if replyEmitter.requests[0].ReplyText != "收到回调了，我已经把原消息更新好了。" {
 		t.Fatalf("reply text = %q, want %q", replyEmitter.requests[0].ReplyText, "收到回调了，我已经把原消息更新好了。")
 	}
@@ -743,6 +746,12 @@ func TestContinuationProcessorTargetsLatestReplyRefsForAgenticPatch(t *testing.T
 	if err := json.Unmarshal(steps[len(steps)-1].OutputJSON, &replyOutput); err != nil {
 		t.Fatalf("json.Unmarshal(reply output) error = %v", err)
 	}
+	if replyOutput["response_message_id"] != "om_follow_up_reply" {
+		t.Fatalf("response_message_id = %#v, want %q", replyOutput["response_message_id"], "om_follow_up_reply")
+	}
+	if replyOutput["response_card_id"] != "card_follow_up_reply" {
+		t.Fatalf("response_card_id = %#v, want %q", replyOutput["response_card_id"], "card_follow_up_reply")
+	}
 	if replyOutput["delivery_mode"] != string(agentruntime.ReplyDeliveryModePatch) {
 		t.Fatalf("delivery_mode = %#v, want %q", replyOutput["delivery_mode"], agentruntime.ReplyDeliveryModePatch)
 	}
@@ -763,11 +772,14 @@ func TestContinuationProcessorTargetsLatestReplyRefsForAgenticPatch(t *testing.T
 	if err := json.Unmarshal(steps[1].OutputJSON, &priorReplyOutput); err != nil {
 		t.Fatalf("json.Unmarshal(prior reply output) error = %v", err)
 	}
+	if priorReplyOutput["lifecycle_state"] != string(agentruntime.ReplyLifecycleStateSuperseded) {
+		t.Fatalf("lifecycle_state = %#v, want %q", priorReplyOutput["lifecycle_state"], agentruntime.ReplyLifecycleStateSuperseded)
+	}
 	if priorReplyOutput["patched_by_step_id"] != steps[len(steps)-1].ID {
 		t.Fatalf("patched_by_step_id = %#v, want %q", priorReplyOutput["patched_by_step_id"], steps[len(steps)-1].ID)
 	}
-	if priorReplyOutput["lifecycle_state"] != string(agentruntime.ReplyLifecycleStateSuperseded) {
-		t.Fatalf("lifecycle_state = %#v, want %q", priorReplyOutput["lifecycle_state"], agentruntime.ReplyLifecycleStateSuperseded)
+	if _, exists := priorReplyOutput["superseded_by_step_id"]; exists {
+		t.Fatalf("superseded_by_step_id should be absent for root patch replies, got %#v", priorReplyOutput["superseded_by_step_id"])
 	}
 	if priorReplyOutput["thought_text"] != "先读上下文" {
 		t.Fatalf("thought_text = %#v, want %q", priorReplyOutput["thought_text"], "先读上下文")
@@ -813,8 +825,10 @@ func TestContinuationProcessorSupersedesPriorReplyStepWhenContinuationCreatesNew
 
 	replyEmitter := &plannerTestReplyEmitter{
 		result: agentruntime.ReplyEmissionResult{
-			MessageID:    "om_new_reply",
-			DeliveryMode: agentruntime.ReplyDeliveryModeReply,
+			MessageID:       "om_new_reply",
+			CardID:          "card_new_reply",
+			DeliveryMode:    agentruntime.ReplyDeliveryModePatch,
+			TargetMessageID: "om_prior_reply",
 		},
 	}
 	processor := agentruntime.NewContinuationProcessor(coordinator, agentruntime.WithReplyEmitter(replyEmitter))
@@ -834,6 +848,9 @@ func TestContinuationProcessorSupersedesPriorReplyStepWhenContinuationCreatesNew
 	}
 	if replyEmitter.requests[0].TargetMessageID != "om_prior_reply" {
 		t.Fatalf("target message id = %q, want %q", replyEmitter.requests[0].TargetMessageID, "om_prior_reply")
+	}
+	if replyEmitter.requests[0].ReplyInThread {
+		t.Fatal("expected continuation model reply to patch the root agentic card")
 	}
 
 	steps, err := agentstore.NewStepRepository(db).ListByRun(context.Background(), waitingRun.ID)
@@ -856,8 +873,14 @@ func TestContinuationProcessorSupersedesPriorReplyStepWhenContinuationCreatesNew
 	if replyOutput["response_message_id"] != "om_new_reply" {
 		t.Fatalf("response_message_id = %#v, want %q", replyOutput["response_message_id"], "om_new_reply")
 	}
-	if replyOutput["delivery_mode"] != string(agentruntime.ReplyDeliveryModeReply) {
-		t.Fatalf("delivery_mode = %#v, want %q", replyOutput["delivery_mode"], agentruntime.ReplyDeliveryModeReply)
+	if replyOutput["response_card_id"] != "card_new_reply" {
+		t.Fatalf("response_card_id = %#v, want %q", replyOutput["response_card_id"], "card_new_reply")
+	}
+	if replyOutput["delivery_mode"] != string(agentruntime.ReplyDeliveryModePatch) {
+		t.Fatalf("delivery_mode = %#v, want %q", replyOutput["delivery_mode"], agentruntime.ReplyDeliveryModePatch)
+	}
+	if replyOutput["target_message_id"] != "om_prior_reply" {
+		t.Fatalf("target_message_id = %#v, want %q", replyOutput["target_message_id"], "om_prior_reply")
 	}
 	if replyOutput["target_step_id"] != "step_prior_reply_create" {
 		t.Fatalf("target_step_id = %#v, want %q", replyOutput["target_step_id"], "step_prior_reply_create")
@@ -870,11 +893,11 @@ func TestContinuationProcessorSupersedesPriorReplyStepWhenContinuationCreatesNew
 	if err := json.Unmarshal(steps[1].OutputJSON, &priorReplyOutput); err != nil {
 		t.Fatalf("json.Unmarshal(prior reply output) error = %v", err)
 	}
-	if priorReplyOutput["superseded_by_step_id"] != steps[len(steps)-1].ID {
-		t.Fatalf("superseded_by_step_id = %#v, want %q", priorReplyOutput["superseded_by_step_id"], steps[len(steps)-1].ID)
-	}
 	if priorReplyOutput["lifecycle_state"] != string(agentruntime.ReplyLifecycleStateSuperseded) {
 		t.Fatalf("lifecycle_state = %#v, want %q", priorReplyOutput["lifecycle_state"], agentruntime.ReplyLifecycleStateSuperseded)
+	}
+	if priorReplyOutput["patched_by_step_id"] != steps[len(steps)-1].ID {
+		t.Fatalf("patched_by_step_id = %#v, want %q", priorReplyOutput["patched_by_step_id"], steps[len(steps)-1].ID)
 	}
 	if priorReplyOutput["thought_text"] != "旧 thought" {
 		t.Fatalf("thought_text = %#v, want %q", priorReplyOutput["thought_text"], "旧 thought")
@@ -882,8 +905,8 @@ func TestContinuationProcessorSupersedesPriorReplyStepWhenContinuationCreatesNew
 	if priorReplyOutput["reply_text"] != "旧 reply" {
 		t.Fatalf("reply_text = %#v, want %q", priorReplyOutput["reply_text"], "旧 reply")
 	}
-	if _, exists := priorReplyOutput["patched_by_step_id"]; exists {
-		t.Fatalf("patched_by_step_id should be absent for create/reply supersede, got %#v", priorReplyOutput["patched_by_step_id"])
+	if _, exists := priorReplyOutput["superseded_by_step_id"]; exists {
+		t.Fatalf("superseded_by_step_id should be absent for root patch supersede, got %#v", priorReplyOutput["superseded_by_step_id"])
 	}
 }
 
@@ -1049,6 +1072,61 @@ func TestContinuationProcessorUsesApprovalTitleInGenericReplyText(t *testing.T) 
 	}
 }
 
+func TestContinuationProcessorDefersApprovalResumeUntilReservedApprovalIsActivated(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	run, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_reserved_approval_defer",
+		InputText:        "@bot 先准备一个需要审批的动作",
+		Now:              time.Date(2026, 3, 23, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("StartShadowRun() error = %v", err)
+	}
+
+	requestedAt := time.Date(2026, 3, 23, 10, 1, 0, 0, time.UTC)
+	reserved, err := coordinator.ReserveApproval(context.Background(), agentruntime.RequestApprovalInput{
+		RunID:          run.ID,
+		ApprovalType:   "side_effect",
+		Title:          "审批发送消息",
+		Summary:        "将向群里发送一条消息",
+		CapabilityName: "send_message",
+		PayloadJSON:    []byte(`{"content":"hello"}`),
+		ExpiresAt:      requestedAt.Add(10 * time.Minute),
+		RequestedAt:    requestedAt,
+	})
+	if err != nil {
+		t.Fatalf("ReserveApproval() error = %v", err)
+	}
+
+	processor := agentruntime.NewContinuationProcessor(coordinator)
+	err = processor.ProcessRun(context.Background(), agentruntime.RunProcessorInput{
+		Resume: &agentruntime.ResumeEvent{
+			RunID:       run.ID,
+			StepID:      reserved.StepID,
+			Revision:    reserved.Revision,
+			Source:      agentruntime.ResumeSourceApproval,
+			Token:       reserved.Token,
+			ActorOpenID: "ou_actor",
+			OccurredAt:  requestedAt.Add(time.Minute),
+		},
+	})
+	if !errors.Is(err, agentruntime.ErrResumeDeferred) {
+		t.Fatalf("ProcessRun() error = %v, want %v", err, agentruntime.ErrResumeDeferred)
+	}
+}
+
 func TestContinuationProcessorRequestsApprovalAndSendsApprovalCardForQueuedCapability(t *testing.T) {
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -1134,6 +1212,289 @@ func TestContinuationProcessorRequestsApprovalAndSendsApprovalCardForQueuedCapab
 	}
 	if updatedRun.Status != agentruntime.RunStatusWaitingApproval {
 		t.Fatalf("run status = %q, want %q", updatedRun.Status, agentruntime.RunStatusWaitingApproval)
+	}
+}
+
+func TestContinuationProcessorRequestsApprovalByReplyingInThreadToRootAgenticCard(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	run, err := coordinator.StartShadowRun(context.Background(), agentruntime.StartShadowRunRequest{
+		ChatID:           "oc_chat",
+		ActorOpenID:      "ou_actor",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_capability_send_message_thread",
+		InputText:        "@bot 执行一个能力",
+		Now:              time.Date(2026, 3, 18, 18, 50, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("StartShadowRun() error = %v", err)
+	}
+
+	stepRepo := agentstore.NewStepRepository(db)
+	steps, err := stepRepo.ListByRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("ListByRun() error = %v", err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("expected initial decide step")
+	}
+	if _, err := stepRepo.UpdateStatus(context.Background(), steps[0].ID, agentruntime.StepStatusQueued, func(current *agentruntime.AgentStep) error {
+		current.Status = agentruntime.StepStatusSkipped
+		current.FinishedAt = ptrTime(time.Date(2026, 3, 18, 18, 51, 0, 0, time.UTC))
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateStatus() initial step error = %v", err)
+	}
+
+	replyOutput, err := json.Marshal(map[string]any{
+		"response_message_id": "om_root_agentic_reply",
+		"response_card_id":    "card_root_agentic_reply",
+		"delivery_mode":       string(agentruntime.ReplyDeliveryModeReply),
+		"lifecycle_state":     string(agentruntime.ReplyLifecycleStateActive),
+	})
+	if err != nil {
+		t.Fatalf("Marshal() reply output error = %v", err)
+	}
+	if err := stepRepo.Append(context.Background(), &agentruntime.AgentStep{
+		ID:          "step_root_reply",
+		RunID:       run.ID,
+		Index:       1,
+		Kind:        agentruntime.StepKindReply,
+		Status:      agentruntime.StepStatusCompleted,
+		OutputJSON:  replyOutput,
+		ExternalRef: "card_root_agentic_reply",
+		CreatedAt:   time.Date(2026, 3, 18, 18, 51, 30, 0, time.UTC),
+		StartedAt:   ptrTime(time.Date(2026, 3, 18, 18, 51, 30, 0, time.UTC)),
+		FinishedAt:  ptrTime(time.Date(2026, 3, 18, 18, 51, 30, 0, time.UTC)),
+	}); err != nil {
+		t.Fatalf("Append() reply step error = %v", err)
+	}
+
+	rawInput, err := json.Marshal(agentruntime.CapabilityCallInput{
+		Request: agentruntime.CapabilityRequest{
+			Scope:       agentruntime.CapabilityScopeGroup,
+			ChatID:      "oc_chat",
+			PayloadJSON: []byte(`{"content":"hello"}`),
+		},
+		Approval: &agentruntime.CapabilityApprovalSpec{
+			Type:      "capability",
+			Title:     "审批发送消息",
+			Summary:   "将向群里发送一条消息",
+			ExpiresAt: time.Date(2026, 3, 18, 14, 45, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() capability input error = %v", err)
+	}
+	if err := stepRepo.Append(context.Background(), &agentruntime.AgentStep{
+		ID:             "step_capability_send_message_thread",
+		RunID:          run.ID,
+		Index:          2,
+		Kind:           agentruntime.StepKindCapabilityCall,
+		Status:         agentruntime.StepStatusQueued,
+		CapabilityName: "send_message",
+		InputJSON:      rawInput,
+		CreatedAt:      time.Date(2026, 3, 18, 13, 18, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Append() capability step error = %v", err)
+	}
+	run, err = agentstore.NewRunRepository(db).UpdateStatus(context.Background(), run.ID, run.Revision, func(current *agentruntime.AgentRun) error {
+		current.CurrentStepIndex = 2
+		current.UpdatedAt = time.Date(2026, 3, 18, 13, 18, 0, 0, time.UTC)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateStatus() run current step error = %v", err)
+	}
+
+	capability := &plannerTestCapability{
+		meta: agentruntime.CapabilityMeta{
+			Name:            "send_message",
+			Kind:            agentruntime.CapabilityKindTool,
+			SideEffectLevel: agentruntime.SideEffectLevelChatWrite,
+			AllowedScopes:   []agentruntime.CapabilityScope{agentruntime.CapabilityScopeGroup},
+			DefaultTimeout:  5 * time.Second,
+		},
+		result: agentruntime.CapabilityResult{OutputText: "sent"},
+	}
+	registry := agentruntime.NewCapabilityRegistry()
+	if err := registry.Register(capability); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	approvalSender := &plannerTestApprovalSender{}
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		agentruntime.WithCapabilityRegistry(registry),
+		agentruntime.WithApprovalSender(approvalSender),
+	)
+	if err := processor.ProcessResume(context.Background(), agentruntime.ResumeEvent{
+		RunID:       run.ID,
+		Revision:    run.Revision,
+		Source:      agentruntime.ResumeSourceSchedule,
+		ActorOpenID: "ou_actor",
+		OccurredAt:  time.Date(2026, 3, 18, 14, 30, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("ProcessResume() error = %v", err)
+	}
+
+	if len(approvalSender.requests) != 1 {
+		t.Fatalf("approval sender request count = %d, want 1", len(approvalSender.requests))
+	}
+	req := approvalSender.requests[0]
+	if req.Target.ReplyToMessageID != "om_root_agentic_reply" {
+		t.Fatalf("approval reply target = %q, want %q", req.Target.ReplyToMessageID, "om_root_agentic_reply")
+	}
+	if !req.Target.ReplyInThread {
+		t.Fatal("expected approval card to reply in thread to the root agentic card")
+	}
+	if req.Target.VisibleOpenID != "ou_actor" {
+		t.Fatalf("approval visible open id = %q, want %q when replying to root agentic thread", req.Target.VisibleOpenID, "ou_actor")
+	}
+}
+
+func TestContinuationProcessorActivatesApprovedReservedApprovalWithoutSyncResume(t *testing.T) {
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"},
+	)
+
+	run := createQueuedCapabilityRun(t, db, coordinator, "send_message", agentruntime.CapabilityCallInput{
+		Request: agentruntime.CapabilityRequest{
+			Scope:       agentruntime.CapabilityScopeGroup,
+			ChatID:      "oc_chat",
+			ActorOpenID: "ou_actor",
+			InputText:   "@bot 发一下金价卡",
+			PayloadJSON: []byte(`{"content":"gold"}`),
+		},
+		Approval: &agentruntime.CapabilityApprovalSpec{
+			Type:      "capability",
+			Title:     "审批发送金价走势卡",
+			Summary:   "需要确认后再发送卡片",
+			ExpiresAt: time.Date(2026, 3, 23, 10, 15, 0, 0, time.UTC),
+		},
+		Continuation: &agentruntime.CapabilityContinuationInput{
+			PreviousResponseID: "resp_gold_pending_1",
+		},
+	})
+
+	requestedAt := time.Date(2026, 3, 23, 10, 5, 0, 0, time.UTC)
+	reserved, err := coordinator.ReserveApproval(context.Background(), agentruntime.RequestApprovalInput{
+		RunID:          run.ID,
+		ApprovalType:   "capability",
+		Title:          "审批发送金价走势卡",
+		Summary:        "需要确认后再发送卡片",
+		CapabilityName: "send_message",
+		PayloadJSON:    []byte(`{"content":"gold"}`),
+		ExpiresAt:      requestedAt.Add(10 * time.Minute),
+		RequestedAt:    requestedAt,
+	})
+	if err != nil {
+		t.Fatalf("ReserveApproval() error = %v", err)
+	}
+
+	stepRepo := agentstore.NewStepRepository(db)
+	steps, err := stepRepo.ListByRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("ListByRun() error = %v", err)
+	}
+	if len(steps) < 2 {
+		t.Fatalf("step count = %d, want at least 2", len(steps))
+	}
+	if _, err := stepRepo.UpdateStatus(context.Background(), steps[1].ID, agentruntime.StepStatusQueued, func(current *agentruntime.AgentStep) error {
+		input := agentruntime.CapabilityCallInput{}
+		decodeErr := json.Unmarshal(current.InputJSON, &input)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if input.Approval == nil {
+			input.Approval = &agentruntime.CapabilityApprovalSpec{}
+		}
+		input.Approval.ReservationStepID = reserved.StepID
+		input.Approval.ReservationToken = reserved.Token
+		raw, marshalErr := json.Marshal(input)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		current.InputJSON = raw
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateStatus() capability input error = %v", err)
+	}
+
+	approvalEvent := agentruntime.ResumeEvent{
+		RunID:       run.ID,
+		StepID:      reserved.StepID,
+		Revision:    reserved.Revision,
+		Source:      agentruntime.ResumeSourceApproval,
+		Token:       reserved.Token,
+		ActorOpenID: "ou_actor",
+		OccurredAt:  requestedAt.Add(30 * time.Second),
+	}
+	if _, err := coordinator.ResumeRun(context.Background(), approvalEvent); err != nil {
+		t.Fatalf("ResumeRun() approval decision error = %v", err)
+	}
+
+	registry := agentruntime.NewCapabilityRegistry()
+	capability := &plannerTestCapability{
+		meta: agentruntime.CapabilityMeta{
+			Name:            "send_message",
+			Kind:            agentruntime.CapabilityKindTool,
+			SideEffectLevel: agentruntime.SideEffectLevelChatWrite,
+			AllowedScopes:   []agentruntime.CapabilityScope{agentruntime.CapabilityScopeGroup},
+			DefaultTimeout:  5 * time.Second,
+		},
+		result: agentruntime.CapabilityResult{OutputText: "sent"},
+	}
+	if err := registry.Register(capability); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		agentruntime.WithCapabilityRegistry(registry),
+	)
+	if err := processor.ProcessResume(context.Background(), agentruntime.ResumeEvent{
+		RunID:       run.ID,
+		Revision:    run.Revision,
+		Source:      agentruntime.ResumeSourceSchedule,
+		ActorOpenID: "ou_actor",
+		OccurredAt:  requestedAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("ProcessResume() activation error = %v", err)
+	}
+
+	if capability.executeCount != 0 {
+		t.Fatalf("execute count after activation path = %d, want 0 before async approval resume", capability.executeCount)
+	}
+
+	activatedRun, err := agentstore.NewRunRepository(db).GetByID(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetByID() after activation error = %v", err)
+	}
+	if activatedRun.Status != agentruntime.RunStatusWaitingApproval {
+		t.Fatalf("run status after activation = %q, want %q", activatedRun.Status, agentruntime.RunStatusWaitingApproval)
+	}
+
+	if err := processor.ProcessResume(context.Background(), approvalEvent); err != nil {
+		t.Fatalf("ProcessResume() approval resume error = %v", err)
+	}
+
+	if capability.executeCount != 1 {
+		t.Fatalf("execute count after approval resume = %d, want 1", capability.executeCount)
 	}
 }
 
@@ -1326,9 +1687,6 @@ func TestContinuationProcessorCompletesCapabilityReplyTurnAfterDurablyRecordingN
 			if req.Recorder == nil {
 				t.Fatal("expected capability reply turn recorder")
 			}
-			if req.PlanRecorder == nil {
-				t.Fatal("expected capability reply turn plan recorder")
-			}
 			if err := req.Recorder.RecordCompletedCapabilityCall(ctx, agentruntime.CompletedCapabilityCall{
 				CallID:             "call_nested_capability",
 				CapabilityName:     "search_history",
@@ -1440,9 +1798,6 @@ func TestContinuationProcessorQueuesPendingCapabilityAfterDurablyRecordingContin
 		execute: func(ctx context.Context, req agentruntime.ContinuationReplyTurnRequest) (agentruntime.ContinuationReplyTurnResult, error) {
 			if req.Recorder == nil {
 				t.Fatal("expected continuation reply turn recorder")
-			}
-			if req.PlanRecorder == nil {
-				t.Fatal("expected continuation reply turn plan recorder")
 			}
 			if err := req.Recorder.RecordCompletedCapabilityCall(ctx, agentruntime.CompletedCapabilityCall{
 				CallID:             "call_nested_1",

@@ -76,7 +76,7 @@ func TestRuntimeContextForObservedMessageAttachesOwnershipInAgenticMode(t *testi
 	if !ok {
 		t.Fatal("expected runtime ownership in context")
 	}
-	if ownership.TriggerType != agentruntime.TriggerTypeFollowUp {
+	if ownership.TriggerType != string(agentruntime.TriggerTypeFollowUp) {
 		t.Fatalf("trigger type = %q, want %q", ownership.TriggerType, agentruntime.TriggerTypeFollowUp)
 	}
 	if ownership.AttachToRunID != "run_active" {

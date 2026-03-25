@@ -97,6 +97,8 @@ type CapabilityCallTrace struct {
 	ApprovalTitle      string
 	ApprovalSummary    string
 	ApprovalExpiresAt  time.Time
+	ApprovalStepID     string
+	ApprovalToken      string
 }
 
 type ToolOutputInput struct {
@@ -393,9 +395,6 @@ func (r *ResponsesImpl[T]) drainPendingStreamItems() []*ModelStreamRespReasoning
 }
 
 func (r *ResponsesImpl[T]) flushPendingStreamItems(ctx context.Context, yield func(*ModelStreamRespReasoning) bool) bool {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-
 	if r == nil {
 		return true
 	}

@@ -22,7 +22,7 @@ const (
 	musicListResolveConcurrency = 4
 	defaultMusicListPageSize    = 5
 	maxMusicListPageSize        = 100
-	musicListStreamPatchWindow  = 20 * time.Millisecond
+	musicListStreamPatchWindow  = 500 * time.Millisecond
 )
 
 var activeMusicListStreams sync.Map
@@ -134,10 +134,10 @@ func StreamMusicListCardForRequest(ctx context.Context, req MusicListRequest, se
 	}
 
 	renderer := newMusicListCardRenderer(data)
-	streamCtx, cancel := context.WithCancel(ctx)
+	_, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	err = renderer.streamCurrentPage(streamCtx, send, patch, cancel)
+	err = renderer.streamCurrentPage(context.WithoutCancel(ctx), send, patch, cancel)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -229,7 +229,6 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
-		state := state
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
 				return err
@@ -262,18 +261,7 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 		if !pendingPatch {
 			return nil
 		}
-		if err := streamGuard.EnsureActive(ctx); err != nil {
-			return err
-		}
-		nextMessageID, err := emit(r.vars(), messageID)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(nextMessageID) == "" {
-			return errors.New("empty message id for music list card")
-		}
-		messageID = nextMessageID
-		pendingPatch = false
+		emit(r.vars(), messageID)
 		return nil
 	}
 
@@ -308,7 +296,6 @@ func (r *musicListCardRenderer) resolveCurrentPage(ctx context.Context) {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
-		state := state
 		group.Go(func() error {
 			r.resolveLine(groupCtx, state)
 			return nil
@@ -353,6 +340,7 @@ func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicLis
 	}
 	line.Field3 = commentContent
 	line.CommentTime = commentTime
+	line.Filled = true
 	state.line = line
 }
 

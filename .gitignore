@@ -11,3 +11,5 @@ __debug_bin*
 *.test
 script/neteaseapi/api_repo/*
 **__pycache__**
+.gocache
+.gomodcache
