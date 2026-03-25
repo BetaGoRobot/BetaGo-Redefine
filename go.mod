@@ -6,11 +6,9 @@ require (
 	github.com/BetaGoRobot/go_utils v0.0.3
 	github.com/RealAlexandreAI/json-repair v0.0.15
 	github.com/alicebob/miniredis/v2 v2.37.0
-	github.com/avast/retry-go/v4 v4.7.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.5
 	github.com/bytedance/sonic v1.15.0
-	github.com/cloudwego/hertz v0.10.4
 	github.com/defensestation/osquery v1.0.0
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/eko/gocache/lib/v4 v4.2.3
@@ -29,7 +27,7 @@ require (
 	github.com/opensearch-project/opensearch-go v1.1.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
-	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/rivo/uniseg v0.4.7
@@ -49,16 +47,12 @@ require (
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
 	golang.org/x/sync v0.20.0
 	gorm.io/driver/postgres v1.6.0
-	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gen v0.3.28-0.20251230105250-93ec9a609775
 	gorm.io/gorm v1.31.1
 	gorm.io/plugin/dbresolver v1.6.2
 )
 
-require (
-	github.com/mattn/go-sqlite3 v1.14.22 // indirect
-	github.com/oklog/ulid/v2 v2.1.1 // indirect
-)
+require github.com/oklog/ulid/v2 v2.1.1 // indirect
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect
@@ -68,12 +62,9 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/cloudwego/gopkg v0.1.4 // indirect
-	github.com/cloudwego/netpoll v0.7.2 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -127,9 +118,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
