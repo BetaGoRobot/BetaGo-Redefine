@@ -85,15 +85,11 @@ func (m *LarkMessageEvent) BuildLine() (line string, ok bool) {
 	if senderOpenID != "" && currentBot.BotOpenID != "" && senderOpenID == currentBot.BotOpenID {
 		userName = "机器人"
 	} else if senderOpenID != "" {
-		userInfo, err := larkuser.GetUserInfoCache(context.Background(), *m.Event.Message.ChatId, senderOpenID)
+		userInfo, err := larkuser.GetUserNameCache(context.Background(), *m.Event.Message.ChatId, senderOpenID)
 		if err != nil {
 			logs.L().Ctx(context.Background()).Error("got error openID", zap.Error(err))
 		}
-		if userInfo == nil {
-			userName = "NULL"
-		} else {
-			userName = *userInfo.Name
-		}
+		userName = userInfo
 	} else {
 		userName = "NULL"
 	}

@@ -14,6 +14,11 @@ import (
 )
 
 const ephemeralSendPath = "/open-apis/ephemeral/v1/send"
+const ephemeralDeletePath = "/open-apis/ephemeral/v1/delete"
+
+var ephemeralAPIPost = func(ctx context.Context, path string, req any) (*larkcore.ApiResp, error) {
+	return lark_dal.Client().Post(ctx, path, req, larkcore.AccessTokenTypeTenant)
+}
 
 type sendEphemeralMessageReq struct {
 	ChatID  string `json:"chat_id"`
@@ -29,7 +34,19 @@ type sendEphemeralMessageResp struct {
 	} `json:"data,omitempty"`
 }
 
+type deleteEphemeralMessageReq struct {
+	MessageID string `json:"message_id"`
+}
+
+type deleteEphemeralMessageResp struct {
+	larkcore.CodeError
+}
+
 func (r *sendEphemeralMessageResp) Success() bool {
+	return r != nil && r.Code == 0
+}
+
+func (r *deleteEphemeralMessageResp) Success() bool {
 	return r != nil && r.Code == 0
 }
 
@@ -43,12 +60,12 @@ func SendEphemeralCard(ctx context.Context, chatID, openID string, cardData any)
 		return "", fmt.Errorf("ephemeral open_id is required")
 	}
 
-	apiResp, err := lark_dal.Client().Post(ctx, ephemeralSendPath, sendEphemeralMessageReq{
+	apiResp, err := ephemeralAPIPost(ctx, ephemeralSendPath, sendEphemeralMessageReq{
 		ChatID:  chatID,
 		OpenID:  openID,
 		MsgType: "interactive",
 		Card:    cardData,
-	}, larkcore.AccessTokenTypeTenant)
+	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("SendEphemeralCard failed", zap.String("chat_id", chatID), zap.String("open_id", openID), zap.Error(err))
 		return "", err
@@ -71,4 +88,34 @@ func SendEphemeralCard(ctx context.Context, chatID, openID string, cardData any)
 		return "", nil
 	}
 	return strings.TrimSpace(resp.Data.MessageID), nil
+}
+
+func DeleteEphemeralMessage(ctx context.Context, messageID string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return fmt.Errorf("ephemeral message_id is required")
+	}
+
+	apiResp, err := ephemeralAPIPost(ctx, ephemeralDeletePath, deleteEphemeralMessageReq{
+		MessageID: messageID,
+	})
+	if err != nil {
+		logs.L().Ctx(ctx).Error("DeleteEphemeralMessage failed", zap.String("message_id", messageID), zap.Error(err))
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("empty ephemeral api response")
+	}
+
+	resp := &deleteEphemeralMessageResp{}
+	if err := json.Unmarshal(apiResp.RawBody, resp); err != nil {
+		logs.L().Ctx(ctx).Error("DeleteEphemeralMessage decode failed", zap.String("message_id", messageID), zap.Error(err))
+		return err
+	}
+	if !resp.Success() {
+		err := errors.New(resp.Error())
+		logs.L().Ctx(ctx).Error("DeleteEphemeralMessage failed", zap.String("message_id", messageID), zap.Error(err))
+		return err
+	}
+	return nil
 }

@@ -12,72 +12,59 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/bytedance/gg/gresult"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalStandardExecutor := defaultStandardChatGenerationExecutor
-	originalAgenticExecutor := defaultAgenticChatGenerationExecutor
-	originalBuilder := defaultInitialChatPlanBuilder
-	originalAgenticBuilder := defaultAgenticInitialChatPlanBuilder
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	originalFinalizer := defaultInitialChatStreamFinalizer
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultStandardChatGenerationExecutor = originalStandardExecutor
-		defaultAgenticChatGenerationExecutor = originalAgenticExecutor
-		defaultInitialChatPlanBuilder = originalBuilder
-		defaultAgenticInitialChatPlanBuilder = originalAgenticBuilder
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-		defaultInitialChatStreamFinalizer = originalFinalizer
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]()
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	var (
 		capturedReq          InitialChatGenerationRequest
 		capturedTurnReq      InitialChatTurnRequest
 		collectorInitialized bool
 		finalizerCalled      bool
 	)
-	defaultInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		capturedReq = req
-		collectorInitialized = runtimecontext.CollectorFromContext(ctx) != nil
-		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "system prompt",
-			UserInput: "formatted user input",
-			Files:     append([]string(nil), req.Files...),
-			Tools:     req.Tools,
-		}, nil
-	}
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
-		capturedTurnReq = req
-		return InitialChatTurnResult{
-			Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
-			Snapshot: func() InitialChatTurnSnapshot {
-				return InitialChatTurnSnapshot{}
-			},
-		}, nil
-	}
-	defaultInitialChatStreamFinalizer = func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
-		finalizerCalled = true
-		return stream
-	}
-
-	executor := NewDefaultChatGenerationPlanExecutor()
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			capturedReq = req
+			collectorInitialized = runtimecontext.CollectorFromContext(ctx) != nil
+			return InitialChatExecutionPlan{
+				Event:           req.Event,
+				ModelID:         req.ModelID,
+				ReasoningEffort: req.ReasoningEffort,
+				ChatID:          "oc_chat",
+				OpenID:          "ou_actor",
+				Prompt:          "system prompt",
+				UserInput:       "formatted user input",
+				Files:           append([]string(nil), req.Files...),
+				Tools:           req.Tools,
+			}, nil
+		},
+		initialChatTurnExecutor: func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			capturedTurnReq = req
+			return InitialChatTurnResult{
+				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
+				Snapshot: func() InitialChatTurnSnapshot {
+					return InitialChatTurnSnapshot{}
+				},
+			}, nil
+		},
+		initialChatStreamFinalizer: func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
+			finalizerCalled = true
+			return stream
+		},
+		agenticInitialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("unexpected agentic builder call")
+			return InitialChatExecutionPlan{}, nil
+		},
+	})
 	event := testChatResponseEvent()
 	stream, err := executor.Generate(context.Background(), event, ChatGenerationPlan{
 		ModelID:                     "ep-test",
 		Size:                        12,
 		Files:                       []string{"https://example.com/a.png"},
 		Args:                        []string{"帮我总结"},
+		ReasoningEffort:             responses.ReasoningEffort_high,
 		EnableDeferredToolCollector: true,
 	})
 	if err != nil {
@@ -112,6 +99,9 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 	if capturedReq.Tools == toolset {
 		t.Fatal("expected runtime to decorate toolset before forwarding")
 	}
+	if capturedReq.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("builder reasoning effort = %v, want %v", capturedReq.ReasoningEffort, responses.ReasoningEffort_high)
+	}
 	if capturedTurnReq.Plan.ChatID != "oc_chat" {
 		t.Fatalf("turn plan chat id = %q, want %q", capturedTurnReq.Plan.ChatID, "oc_chat")
 	}
@@ -130,6 +120,9 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 	if capturedTurnReq.Plan.Tools == nil {
 		t.Fatal("expected builder output toolset to reach turn executor")
 	}
+	if capturedTurnReq.Plan.ReasoningEffort != responses.ReasoningEffort_high {
+		t.Fatalf("turn reasoning effort = %v, want %v", capturedTurnReq.Plan.ReasoningEffort, responses.ReasoningEffort_high)
+	}
 	if !collectorInitialized {
 		t.Fatal("expected deferred tool collector to be initialized")
 	}
@@ -139,61 +132,41 @@ func TestDefaultChatGenerationPlanExecutorUsesConfiguredToolProvider(t *testing.
 }
 
 func TestDefaultChatGenerationPlanExecutorUsesAgenticPlanBuilderForAgenticMode(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalStandardExecutor := defaultStandardChatGenerationExecutor
-	originalAgenticExecutor := defaultAgenticChatGenerationExecutor
-	originalBuilder := defaultInitialChatPlanBuilder
-	originalAgenticBuilder := defaultAgenticInitialChatPlanBuilder
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	originalFinalizer := defaultInitialChatStreamFinalizer
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultStandardChatGenerationExecutor = originalStandardExecutor
-		defaultAgenticChatGenerationExecutor = originalAgenticExecutor
-		defaultInitialChatPlanBuilder = originalBuilder
-		defaultAgenticInitialChatPlanBuilder = originalAgenticBuilder
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-		defaultInitialChatStreamFinalizer = originalFinalizer
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]()
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	agenticBuilderCalled := false
-	defaultInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		t.Fatal("standard builder should not be called for agentic mode")
-		return InitialChatExecutionPlan{}, nil
-	}
-	defaultAgenticInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		agenticBuilderCalled = true
-		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "agentic system prompt",
-			UserInput: "agentic user prompt",
-			Tools:     req.Tools,
-		}, nil
-	}
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
-		if req.Plan.Prompt != "agentic system prompt" {
-			t.Fatalf("prompt = %q, want %q", req.Plan.Prompt, "agentic system prompt")
-		}
-		return InitialChatTurnResult{
-			Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
-			Snapshot: func() InitialChatTurnSnapshot {
-				return InitialChatTurnSnapshot{}
-			},
-		}, nil
-	}
-	defaultInitialChatStreamFinalizer = func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
-		return stream
-	}
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("standard builder should not be called for agentic mode")
+			return InitialChatExecutionPlan{}, nil
+		},
+		agenticInitialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			agenticBuilderCalled = true
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "agentic system prompt",
+				UserInput: "agentic user prompt",
+				Tools:     req.Tools,
+			}, nil
+		},
+		initialChatTurnExecutor: func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			if req.Plan.Prompt != "agentic system prompt" {
+				t.Fatalf("prompt = %q, want %q", req.Plan.Prompt, "agentic system prompt")
+			}
+			return InitialChatTurnResult{
+				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
+				Snapshot: func() InitialChatTurnSnapshot {
+					return InitialChatTurnSnapshot{}
+				},
+			}, nil
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test-agentic",
 		Mode:    appconfig.ChatModeAgentic,
 	})
@@ -208,40 +181,47 @@ func TestDefaultChatGenerationPlanExecutorUsesAgenticPlanBuilderForAgenticMode(t
 }
 
 func TestDefaultChatGenerationPlanExecutorDispatchesToAgenticExecutor(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalStandardExecutor := defaultStandardChatGenerationExecutor
-	originalAgenticExecutor := defaultAgenticChatGenerationExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultStandardChatGenerationExecutor = originalStandardExecutor
-		defaultAgenticChatGenerationExecutor = originalAgenticExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]()
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	agenticCalled := false
-	defaultStandardChatGenerationExecutor = func(context.Context, *larkim.P2MessageReceiveV1, ChatGenerationPlan, *arktools.Impl[larkim.P2MessageReceiveV1]) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-		t.Fatal("standard executor should not be called for agentic mode")
-		return nil, nil
-	}
-	defaultAgenticChatGenerationExecutor = func(ctx context.Context, event *larkim.P2MessageReceiveV1, plan ChatGenerationPlan, tools *arktools.Impl[larkim.P2MessageReceiveV1]) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-		agenticCalled = true
-		if plan.Mode != appconfig.ChatModeAgentic {
-			t.Fatalf("plan mode = %q, want %q", plan.Mode, appconfig.ChatModeAgentic)
-		}
-		if tools == nil {
-			t.Fatal("expected configured toolset")
-		}
-		if tools == toolset {
-			t.Fatal("expected runtime to decorate toolset")
-		}
-		return defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}), nil
-	}
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("standard executor should not be called for agentic mode")
+			return InitialChatExecutionPlan{}, nil
+		},
+		agenticInitialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			agenticCalled = true
+			if req.ModelID != "ep-test-agentic" {
+				t.Fatalf("model id = %q, want %q", req.ModelID, "ep-test-agentic")
+			}
+			if req.Tools == nil {
+				t.Fatal("expected configured toolset")
+			}
+			if req.Tools == toolset {
+				t.Fatal("expected runtime to decorate toolset")
+			}
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "agentic system prompt",
+				UserInput: "agentic user prompt",
+				Tools:     req.Tools,
+			}, nil
+		},
+		initialChatTurnExecutor: func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			return InitialChatTurnResult{
+				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
+				Snapshot: func() InitialChatTurnSnapshot {
+					return InitialChatTurnSnapshot{}
+				},
+			}, nil
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test-agentic",
 		Mode:    appconfig.ChatModeAgentic,
 	})
@@ -256,40 +236,47 @@ func TestDefaultChatGenerationPlanExecutorDispatchesToAgenticExecutor(t *testing
 }
 
 func TestDefaultChatGenerationPlanExecutorDispatchesToStandardExecutor(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalStandardExecutor := defaultStandardChatGenerationExecutor
-	originalAgenticExecutor := defaultAgenticChatGenerationExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultStandardChatGenerationExecutor = originalStandardExecutor
-		defaultAgenticChatGenerationExecutor = originalAgenticExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]()
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	standardCalled := false
-	defaultAgenticChatGenerationExecutor = func(context.Context, *larkim.P2MessageReceiveV1, ChatGenerationPlan, *arktools.Impl[larkim.P2MessageReceiveV1]) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-		t.Fatal("agentic executor should not be called for standard mode")
-		return nil, nil
-	}
-	defaultStandardChatGenerationExecutor = func(ctx context.Context, event *larkim.P2MessageReceiveV1, plan ChatGenerationPlan, tools *arktools.Impl[larkim.P2MessageReceiveV1]) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-		standardCalled = true
-		if plan.Mode != appconfig.ChatModeStandard {
-			t.Fatalf("plan mode = %q, want %q", plan.Mode, appconfig.ChatModeStandard)
-		}
-		if tools == nil {
-			t.Fatal("expected configured toolset")
-		}
-		if tools == toolset {
-			t.Fatal("expected runtime to decorate toolset")
-		}
-		return defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}), nil
-	}
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		agenticInitialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("agentic executor should not be called for standard mode")
+			return InitialChatExecutionPlan{}, nil
+		},
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			standardCalled = true
+			if req.ModelID != "ep-test-standard" {
+				t.Fatalf("model id = %q, want %q", req.ModelID, "ep-test-standard")
+			}
+			if req.Tools == nil {
+				t.Fatal("expected configured toolset")
+			}
+			if req.Tools == toolset {
+				t.Fatal("expected runtime to decorate toolset")
+			}
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "standard system prompt",
+				UserInput: "standard user prompt",
+				Tools:     req.Tools,
+			}, nil
+		},
+		initialChatTurnExecutor: func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			return InitialChatTurnResult{
+				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "ok"}}),
+				Snapshot: func() InitialChatTurnSnapshot {
+					return InitialChatTurnSnapshot{}
+				},
+			}, nil
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test-standard",
 		Mode:    appconfig.ChatModeStandard,
 	})
@@ -304,13 +291,7 @@ func TestDefaultChatGenerationPlanExecutorDispatchesToStandardExecutor(t *testin
 }
 
 func TestDefaultChatGenerationPlanExecutorReturnsErrorWithoutToolProvider(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	defer func() {
-		defaultChatToolProvider = originalProvider
-	}()
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] { return nil }
-
-	_, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), nil, ChatGenerationPlan{})
+	_, err := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{}).Generate(context.Background(), nil, ChatGenerationPlan{})
 	if err == nil {
 		t.Fatal("expected missing tool provider error")
 	}
@@ -326,6 +307,11 @@ func TestDecorateRuntimeChatToolsAnnotatesApprovalAndReadSemantics(t *testing.T)
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
 			Name("gold_price_get").
 			Desc("查询金价变化").
+			Params(arktools.NewParams("object")),
+	).Add(
+		arktools.NewUnit[larkim.P2MessageReceiveV1]().
+			Name("research_read_url").
+			Desc("读取网页正文").
 			Params(arktools.NewParams("object")),
 	)
 
@@ -348,26 +334,26 @@ func TestDecorateRuntimeChatToolsAnnotatesApprovalAndReadSemantics(t *testing.T)
 	if !ok || goldPrice == nil {
 		t.Fatal("expected gold_price_get tool")
 	}
-	if !strings.Contains(goldPrice.Description, "只读查询") {
-		t.Fatalf("gold_price_get description = %q, want contain read-only guidance", goldPrice.Description)
+	if !strings.Contains(goldPrice.Description, "先进入审批等待") {
+		t.Fatalf("gold_price_get description = %q, want contain approval guidance", goldPrice.Description)
 	}
-	if !strings.Contains(goldPrice.Description, "优先使用") {
-		t.Fatalf("gold_price_get description = %q, want contain prefer-tool guidance", goldPrice.Description)
+	if !strings.Contains(goldPrice.Description, "明确要求执行") {
+		t.Fatalf("gold_price_get description = %q, want contain explicit-action guidance", goldPrice.Description)
+	}
+
+	researchReadURL, ok := decorated.Get("research_read_url")
+	if !ok || researchReadURL == nil {
+		t.Fatal("expected research_read_url tool")
+	}
+	if !strings.Contains(researchReadURL.Description, "只读查询") {
+		t.Fatalf("research_read_url description = %q, want contain read-only guidance", researchReadURL.Description)
+	}
+	if !strings.Contains(researchReadURL.Description, "优先使用") {
+		t.Fatalf("research_read_url description = %q, want contain prefer-tool guidance", researchReadURL.Description)
 	}
 }
 
 func TestDefaultChatGenerationPlanExecutorOwnsToolLoop(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalBuilder := defaultInitialChatPlanBuilder
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	originalFinalizer := defaultInitialChatStreamFinalizer
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatPlanBuilder = originalBuilder
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-		defaultInitialChatStreamFinalizer = originalFinalizer
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -382,65 +368,82 @@ func TestDefaultChatGenerationPlanExecutorOwnsToolLoop(t *testing.T) {
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-	defaultInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "system prompt",
-			UserInput: "帮我查 agentic",
-			Tools:     req.Tools,
-		}, nil
-	}
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "system prompt",
+				UserInput: "帮我查 agentic",
+				Tools:     req.Tools,
+			}, nil
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+	})
 
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
-		turnCalls++
-		switch turnCalls {
-		case 1:
-			if req.PreviousResponseID != "" || req.ToolOutput != nil {
-				t.Fatalf("unexpected first turn request: %+v", req)
-			}
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ReasoningContent: "先查资料"}),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{
-						ResponseID: "resp_1",
-						ToolCall: &InitialChatToolCall{
-							CallID:       "call_1",
-							FunctionName: "search_history",
-							Arguments:    `{"q":"agentic"}`,
-						},
-					}
-				},
+	executor = NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "system prompt",
+				UserInput: "帮我查 agentic",
+				Tools:     req.Tools,
 			}, nil
-		case 2:
-			if req.PreviousResponseID != "resp_1" {
-				t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+		},
+		initialChatTurnExecutor: func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			turnCalls++
+			switch turnCalls {
+			case 1:
+				if req.PreviousResponseID != "" || req.ToolOutput != nil {
+					t.Fatalf("unexpected first turn request: %+v", req)
+				}
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ReasoningContent: "先查资料"}),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{
+							ResponseID: "resp_1",
+							ToolCall: &InitialChatToolCall{
+								CallID:       "call_1",
+								FunctionName: "search_history",
+								Arguments:    `{"q":"agentic"}`,
+							},
+						}
+					},
+				}, nil
+			case 2:
+				if req.PreviousResponseID != "resp_1" {
+					t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+				}
+				if req.ToolOutput == nil || req.ToolOutput.CallID != "call_1" || req.ToolOutput.Output != "搜索结果" {
+					t.Fatalf("unexpected tool output: %+v", req.ToolOutput)
+				}
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "查到了"}}),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{ResponseID: "resp_2"}
+					},
+				}, nil
+			default:
+				t.Fatalf("unexpected turn call count = %d", turnCalls)
+				return InitialChatTurnResult{}, nil
 			}
-			if req.ToolOutput == nil || req.ToolOutput.CallID != "call_1" || req.ToolOutput.Output != "搜索结果" {
-				t.Fatalf("unexpected tool output: %+v", req.ToolOutput)
-			}
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "查到了"}}),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{ResponseID: "resp_2"}
-				},
-			}, nil
-		default:
-			t.Fatalf("unexpected turn call count = %d", turnCalls)
-			return InitialChatTurnResult{}, nil
-		}
-	}
-	defaultInitialChatStreamFinalizer = func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
-		return stream
-	}
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+		agenticInitialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("unexpected agentic builder call")
+			return InitialChatExecutionPlan{}, nil
+		},
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test",
 	})
 	if err != nil {
@@ -481,17 +484,6 @@ func TestDefaultChatGenerationPlanExecutorOwnsToolLoop(t *testing.T) {
 }
 
 func TestDefaultChatGenerationPlanExecutorTurnsApprovalIntoPendingCapability(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalBuilder := defaultInitialChatPlanBuilder
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	originalFinalizer := defaultInitialChatStreamFinalizer
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatPlanBuilder = originalBuilder
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-		defaultInitialChatStreamFinalizer = originalFinalizer
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -503,62 +495,63 @@ func TestDefaultChatGenerationPlanExecutorTurnsApprovalIntoPendingCapability(t *
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-	defaultInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "system prompt",
-			UserInput: "发条消息",
-			Tools:     req.Tools,
-		}, nil
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
-		turnCalls++
-		switch turnCalls {
-		case 1:
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{
-						ResponseID: "resp_1",
-						ToolCall: &InitialChatToolCall{
-							CallID:       "call_pending_1",
-							FunctionName: "send_message",
-							Arguments:    `{"content":"hello"}`,
-						},
-					}
-				},
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "system prompt",
+				UserInput: "发条消息",
+				Tools:     req.Tools,
 			}, nil
-		case 2:
-			if req.PreviousResponseID != "resp_1" {
-				t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+		},
+		initialChatTurnExecutor: func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			turnCalls++
+			switch turnCalls {
+			case 1:
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{
+							ResponseID: "resp_1",
+							ToolCall: &InitialChatToolCall{
+								CallID:       "call_pending_1",
+								FunctionName: "send_message",
+								Arguments:    `{"content":"hello"}`,
+							},
+						}
+					},
+				}, nil
+			case 2:
+				if req.PreviousResponseID != "resp_1" {
+					t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+				}
+				if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
+					t.Fatalf("unexpected pending tool output: %+v", req.ToolOutput)
+				}
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "已发起审批"}}),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{ResponseID: "resp_2"}
+					},
+				}, nil
+			default:
+				t.Fatalf("unexpected turn call count = %d", turnCalls)
+				return InitialChatTurnResult{}, nil
 			}
-			if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
-				t.Fatalf("unexpected pending tool output: %+v", req.ToolOutput)
-			}
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "已发起审批"}}),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{ResponseID: "resp_2"}
-				},
-			}, nil
-		default:
-			t.Fatalf("unexpected turn call count = %d", turnCalls)
-			return InitialChatTurnResult{}, nil
-		}
-	}
-	defaultInitialChatStreamFinalizer = func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
-		return stream
-	}
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+		agenticInitialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("unexpected agentic builder call")
+			return InitialChatExecutionPlan{}, nil
+		},
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test",
 	})
 	if err != nil {
@@ -598,17 +591,6 @@ func TestDefaultChatGenerationPlanExecutorTurnsApprovalIntoPendingCapability(t *
 }
 
 func TestDefaultChatGenerationPlanExecutorChainsMultiplePendingCapabilities(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalBuilder := defaultInitialChatPlanBuilder
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	originalFinalizer := defaultInitialChatStreamFinalizer
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatPlanBuilder = originalBuilder
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-		defaultInitialChatStreamFinalizer = originalFinalizer
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -620,82 +602,83 @@ func TestDefaultChatGenerationPlanExecutorChainsMultiplePendingCapabilities(t *t
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-	defaultInitialChatPlanBuilder = func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
-		return InitialChatExecutionPlan{
-			Event:     req.Event,
-			ModelID:   req.ModelID,
-			ChatID:    "oc_chat",
-			OpenID:    "ou_actor",
-			Prompt:    "system prompt",
-			UserInput: "连续发两条消息",
-			Tools:     req.Tools,
-		}, nil
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
-		turnCalls++
-		switch turnCalls {
-		case 1:
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{
-						ResponseID: "resp_1",
-						ToolCall: &InitialChatToolCall{
-							CallID:       "call_pending_1",
-							FunctionName: "send_message",
-							Arguments:    `{"content":"hello-1"}`,
-						},
-					}
-				},
+	executor := NewDefaultChatGenerationPlanExecutorWithDeps(defaultRuntimeExecutorDeps{
+		toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] { return toolset },
+		initialPlanBuilder: func(ctx context.Context, req InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			return InitialChatExecutionPlan{
+				Event:     req.Event,
+				ModelID:   req.ModelID,
+				ChatID:    "oc_chat",
+				OpenID:    "ou_actor",
+				Prompt:    "system prompt",
+				UserInput: "连续发两条消息",
+				Tools:     req.Tools,
 			}, nil
-		case 2:
-			if req.PreviousResponseID != "resp_1" {
-				t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+		},
+		initialChatTurnExecutor: func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+			turnCalls++
+			switch turnCalls {
+			case 1:
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{
+							ResponseID: "resp_1",
+							ToolCall: &InitialChatToolCall{
+								CallID:       "call_pending_1",
+								FunctionName: "send_message",
+								Arguments:    `{"content":"hello-1"}`,
+							},
+						}
+					},
+				}, nil
+			case 2:
+				if req.PreviousResponseID != "resp_1" {
+					t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_1")
+				}
+				if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
+					t.Fatalf("unexpected first pending tool output: %+v", req.ToolOutput)
+				}
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{
+							ResponseID: "resp_2",
+							ToolCall: &InitialChatToolCall{
+								CallID:       "call_pending_2",
+								FunctionName: "send_message",
+								Arguments:    `{"content":"hello-2"}`,
+							},
+						}
+					},
+				}, nil
+			case 3:
+				if req.PreviousResponseID != "resp_2" {
+					t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_2")
+				}
+				if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
+					t.Fatalf("unexpected second pending tool output: %+v", req.ToolOutput)
+				}
+				return InitialChatTurnResult{
+					Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我已经把两个发送动作排队了。"}}),
+					Snapshot: func() InitialChatTurnSnapshot {
+						return InitialChatTurnSnapshot{ResponseID: "resp_3"}
+					},
+				}, nil
+			default:
+				t.Fatalf("unexpected turn call count = %d", turnCalls)
+				return InitialChatTurnResult{}, nil
 			}
-			if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
-				t.Fatalf("unexpected first pending tool output: %+v", req.ToolOutput)
-			}
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{
-						ResponseID: "resp_2",
-						ToolCall: &InitialChatToolCall{
-							CallID:       "call_pending_2",
-							FunctionName: "send_message",
-							Arguments:    `{"content":"hello-2"}`,
-						},
-					}
-				},
-			}, nil
-		case 3:
-			if req.PreviousResponseID != "resp_2" {
-				t.Fatalf("previous response id = %q, want %q", req.PreviousResponseID, "resp_2")
-			}
-			if req.ToolOutput == nil || req.ToolOutput.Output != "已发起审批，等待确认后发送消息。" {
-				t.Fatalf("unexpected second pending tool output: %+v", req.ToolOutput)
-			}
-			return InitialChatTurnResult{
-				Stream: defaultExecutorSeqFromItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我已经把两个发送动作排队了。"}}),
-				Snapshot: func() InitialChatTurnSnapshot {
-					return InitialChatTurnSnapshot{ResponseID: "resp_3"}
-				},
-			}, nil
-		default:
-			t.Fatalf("unexpected turn call count = %d", turnCalls)
-			return InitialChatTurnResult{}, nil
-		}
-	}
-	defaultInitialChatStreamFinalizer = func(ctx context.Context, plan InitialChatExecutionPlan, stream iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
-		return stream
-	}
+		},
+		initialChatStreamFinalizer: passthroughInitialReplyFinalizer(),
+		agenticInitialPlanBuilder: func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error) {
+			t.Fatal("unexpected agentic builder call")
+			return InitialChatExecutionPlan{}, nil
+		},
+	})
 
-	stream, err := NewDefaultChatGenerationPlanExecutor().Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
+	stream, err := executor.Generate(context.Background(), testChatResponseEvent(), ChatGenerationPlan{
 		ModelID: "ep-test",
 	})
 	if err != nil {

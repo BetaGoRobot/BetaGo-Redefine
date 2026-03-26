@@ -39,6 +39,8 @@ func AutoMigrate(db *gorm.DB) error {
 		"create unique index if not exists idx_agent_runs_session_trigger_unique on agent_runs (session_id, trigger_message_id)",
 		"create index if not exists idx_agent_runs_status_updated on agent_runs (status, updated_at desc)",
 		"create index if not exists idx_agent_runs_session_updated on agent_runs (session_id, updated_at desc)",
+		"create index if not exists idx_agent_runs_worker_updated on agent_runs (worker_id, updated_at desc)",
+		"create index if not exists idx_agent_runs_active_lease_expires on agent_runs (lease_expires_at, updated_at desc)",
 		`create unique index if not exists idx_agent_steps_run_index_unique on agent_steps (run_id, "index")`,
 		"create index if not exists idx_agent_steps_run_created on agent_steps (run_id, created_at asc)",
 	}
@@ -90,11 +92,17 @@ func autoMigratePostgres(db *gorm.DB) error {
 			started_at timestamptz null,
 			finished_at timestamptz null,
 			created_at timestamptz not null default now(),
-			updated_at timestamptz not null default now()
+			updated_at timestamptz not null default now(),
+			worker_id text not null default '',
+			heartbeat_at timestamptz null,
+			lease_expires_at timestamptz null,
+			repair_attempts bigint not null default 0
 		)`,
 		`create unique index if not exists idx_agent_runs_session_trigger_unique on agent_runs (session_id, trigger_message_id)`,
 		`create index if not exists idx_agent_runs_status_updated on agent_runs (status, updated_at desc)`,
 		`create index if not exists idx_agent_runs_session_updated on agent_runs (session_id, updated_at desc)`,
+		`create index if not exists idx_agent_runs_worker_updated on agent_runs (worker_id, updated_at desc)`,
+		`create index if not exists idx_agent_runs_active_lease_expires on agent_runs (lease_expires_at asc, updated_at asc) where status in ('queued', 'running', 'waiting_approval', 'waiting_schedule', 'waiting_callback')`,
 		`create table if not exists agent_steps (
 			id text primary key,
 			run_id text not null references agent_runs(id) on delete cascade,
@@ -161,11 +169,17 @@ func autoMigrateSQLite(db *gorm.DB) error {
 			started_at datetime null,
 			finished_at datetime null,
 			created_at datetime not null,
-			updated_at datetime not null
+			updated_at datetime not null,
+			worker_id text not null default '',
+			heartbeat_at datetime null,
+			lease_expires_at datetime null,
+			repair_attempts integer not null default 0
 		)`,
 		`create unique index if not exists idx_agent_runs_session_trigger_unique on agent_runs (session_id, trigger_message_id)`,
 		`create index if not exists idx_agent_runs_status_updated on agent_runs (status, updated_at desc)`,
 		`create index if not exists idx_agent_runs_session_updated on agent_runs (session_id, updated_at desc)`,
+		`create index if not exists idx_agent_runs_worker_updated on agent_runs (worker_id, updated_at desc)`,
+		`create index if not exists idx_agent_runs_active_lease_expires on agent_runs (lease_expires_at, updated_at asc)`,
 		`create table if not exists agent_steps (
 			id text primary key,
 			run_id text not null,
@@ -327,6 +341,12 @@ func (r *RunRepository) Create(ctx context.Context, run *agentruntime.AgentRun) 
 	if run.FinishedAt == nil {
 		create = create.Omit(r.q.AgentRun.FinishedAt)
 	}
+	if run.HeartbeatAt == nil {
+		create = create.Omit(r.q.AgentRun.HeartbeatAt)
+	}
+	if run.LeaseExpiresAt == nil {
+		create = create.Omit(r.q.AgentRun.LeaseExpiresAt)
+	}
 	if err := create.Create(entity); err != nil {
 		return err
 	}
@@ -367,6 +387,98 @@ func (r *RunRepository) FindByTriggerMessage(ctx context.Context, sessionID, tri
 		return nil, nil
 	}
 	return runFromModel(entities[0]), nil
+}
+
+func (r *RunRepository) FindLatestActiveBySessionActor(ctx context.Context, sessionID, actorOpenID string) (*agentruntime.AgentRun, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	if sessionID == "" || actorOpenID == "" {
+		return nil, nil
+	}
+
+	ins := r.q.AgentRun
+	entities, err := ins.WithContext(ctx).
+		Where(
+			ins.SessionID.Eq(sessionID),
+			ins.ActorOpenID.Eq(actorOpenID),
+			ins.Status.In(
+				string(agentruntime.RunStatusQueued),
+				string(agentruntime.RunStatusRunning),
+				string(agentruntime.RunStatusWaitingApproval),
+				string(agentruntime.RunStatusWaitingSchedule),
+				string(agentruntime.RunStatusWaitingCallback),
+			),
+		).
+		Order(ins.UpdatedAt.Desc()).
+		Limit(1).
+		Find()
+	if err != nil {
+		return nil, err
+	}
+	if len(entities) == 0 {
+		return nil, nil
+	}
+	return runFromModel(entities[0]), nil
+}
+
+func (r *RunRepository) CountActiveBySessionActor(ctx context.Context, sessionID, actorOpenID string) (int64, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	actorOpenID = strings.TrimSpace(actorOpenID)
+	if sessionID == "" || actorOpenID == "" {
+		return 0, nil
+	}
+
+	ins := r.q.AgentRun
+	return ins.WithContext(ctx).
+		Where(
+			ins.SessionID.Eq(sessionID),
+			ins.ActorOpenID.Eq(actorOpenID),
+			ins.Status.In(
+				string(agentruntime.RunStatusQueued),
+				string(agentruntime.RunStatusRunning),
+				string(agentruntime.RunStatusWaitingApproval),
+				string(agentruntime.RunStatusWaitingSchedule),
+				string(agentruntime.RunStatusWaitingCallback),
+			),
+		).
+		Count()
+}
+
+func (r *RunRepository) ListStaleActiveRuns(ctx context.Context, now, legacyCutoff time.Time, limit int) ([]*agentruntime.AgentRun, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
+	now = now.UTC()
+	legacyCutoff = legacyCutoff.UTC()
+	if limit <= 0 {
+		limit = 100
+	}
+
+	activeStatuses := []string{
+		string(agentruntime.RunStatusRunning),
+	}
+	entities := make([]*model.AgentRun, 0)
+	err := r.db.WithContext(ctx).
+		Model(&model.AgentRun{}).
+		Where("status IN ?", activeStatuses).
+		Where(
+			"(lease_expires_at IS NOT NULL AND lease_expires_at <= ?) OR (lease_expires_at IS NULL AND updated_at <= ?)",
+			now,
+			legacyCutoff,
+		).
+		Order("coalesce(lease_expires_at, updated_at) asc").
+		Order("updated_at asc").
+		Limit(limit).
+		Find(&entities).Error
+	if err != nil {
+		return nil, err
+	}
+
+	runs := make([]*agentruntime.AgentRun, 0, len(entities))
+	for _, entity := range entities {
+		runs = append(runs, runFromModel(entity))
+	}
+	return runs, nil
 }
 
 func (r *RunRepository) UpdateStatus(ctx context.Context, runID string, fromRevision int64, mutate func(*agentruntime.AgentRun) error) (*agentruntime.AgentRun, error) {
@@ -594,6 +706,10 @@ func runFromModel(entity *model.AgentRun) *agentruntime.AgentRun {
 		LastResponseID:   entity.LastResponseID,
 		ResultSummary:    entity.ResultSummary,
 		ErrorText:        entity.ErrorText,
+		WorkerID:         entity.WorkerID,
+		HeartbeatAt:      timePtrFromValue(entity.HeartbeatAt),
+		LeaseExpiresAt:   timePtrFromValue(entity.LeaseExpiresAt),
+		RepairAttempts:   entity.RepairAttempts,
 		Revision:         entity.Revision,
 		StartedAt:        timePtrFromValue(entity.StartedAt),
 		FinishedAt:       timePtrFromValue(entity.FinishedAt),
@@ -645,9 +761,17 @@ func runToModel(run *agentruntime.AgentRun) *model.AgentRun {
 		LastResponseID:   run.LastResponseID,
 		ResultSummary:    run.ResultSummary,
 		ErrorText:        run.ErrorText,
+		WorkerID:         strings.TrimSpace(run.WorkerID),
+		RepairAttempts:   run.RepairAttempts,
 		Revision:         run.Revision,
 		CreatedAt:        run.CreatedAt,
 		UpdatedAt:        run.UpdatedAt,
+	}
+	if run.HeartbeatAt != nil {
+		entity.HeartbeatAt = *run.HeartbeatAt
+	}
+	if run.LeaseExpiresAt != nil {
+		entity.LeaseExpiresAt = *run.LeaseExpiresAt
 	}
 	if run.StartedAt != nil {
 		entity.StartedAt = *run.StartedAt
@@ -669,8 +793,18 @@ func runUpdateMap(run *agentruntime.AgentRun) map[string]any {
 		"last_response_id":   run.LastResponseID,
 		"result_summary":     run.ResultSummary,
 		"error_text":         run.ErrorText,
+		"worker_id":          strings.TrimSpace(run.WorkerID),
+		"heartbeat_at":       nil,
+		"lease_expires_at":   nil,
+		"repair_attempts":    run.RepairAttempts,
 		"revision":           run.Revision,
 		"updated_at":         run.UpdatedAt,
+	}
+	if run.HeartbeatAt != nil {
+		values["heartbeat_at"] = *run.HeartbeatAt
+	}
+	if run.LeaseExpiresAt != nil {
+		values["lease_expires_at"] = *run.LeaseExpiresAt
 	}
 	if run.StartedAt != nil {
 		values["started_at"] = *run.StartedAt

@@ -213,7 +213,7 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 	chatID := cardAction.Event.Context.OpenChatID
 	openMessageID := strings.TrimSpace(cardAction.Event.Context.OpenMessageID)
 	openID := cardAction.Event.Operator.OpenID
-	userInfo, err := larkuser.GetUserInfoCache(ctx, cardAction.Event.Context.OpenChatID, openID)
+	userName, err := larkuser.GetUserNameCache(ctx, cardAction.Event.Context.OpenChatID, openID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("GetUserInfo error", zap.Error(err))
 		return
@@ -233,7 +233,7 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 		CreateTime:             createTime,
 		CreateTimeUnix:         parseCardActionCreateTime(cardAction),
 		OpenID:                 openID,
-		UserName:               utils.AddrOrNil(userInfo.Name),
+		UserName:               userName,
 		OpenMessageID:          openMessageID,
 		OpenChatID:             chatID,
 		ActionName:             actionName,

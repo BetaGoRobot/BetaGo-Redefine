@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -34,6 +36,12 @@ func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
 		Name:        "回复聊天功能",
 		Description: "@机器人时的聊天回复功能",
 		Default:     true,
+	}
+}
+
+func (r *ReplyChatOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
+		IntentRecognizeFetcher,
 	}
 }
 
@@ -68,12 +76,12 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 
-	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
+	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
 	msg := messageText(ctx, event)
 	msg = larkmsg.TrimAtMsg(ctx, msg)
 	observation, ok := observeRuntimeMessage(ctx, event, meta)
-	ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok,
+	ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok,
 		agentruntime.TriggerTypeMention,
 		agentruntime.TriggerTypeReplyToBot,
 		agentruntime.TriggerTypeFollowUp,
@@ -81,8 +89,8 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	// 记录回复
 	decider := ratelimit.GetDecider()
 	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)
-	err = runChatByMode(ctx, event, meta, strings.Split(msg, " ")...)
-	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
+	err = xcommand.BindCLI(handlers.Chat)(ctx, event, meta, strings.Split(msg, " ")...)
+	addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
 
 	return
 }

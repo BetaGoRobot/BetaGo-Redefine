@@ -10,14 +10,14 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestContinuationProcessorProcessRunCompletesInitialReply(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是首轮回复"}}), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是首轮回复"}}), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -29,9 +29,9 @@ func TestContinuationProcessorProcessRunCompletesInitialReply(t *testing.T) {
 		store,
 		identity,
 	)
-	processor := agentruntime.NewContinuationProcessor(coordinator)
-	processor = agentruntime.NewContinuationProcessor(
+	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithInitialReplyEmitter(fakeInitialReplyEmitter{
 			result: agentruntime.InitialReplyEmissionResult{
 				ResponseMessageID: "om_reply_complete",
@@ -105,8 +105,7 @@ func TestContinuationProcessorProcessRunCompletesInitialReply(t *testing.T) {
 }
 
 func TestContinuationProcessorProcessRunExecutesQueuedCapabilityAfterInitialReply(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我先发起审批。"}}), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我先发起审批。"}}), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -124,6 +123,7 @@ func TestContinuationProcessorProcessRunExecutesQueuedCapabilityAfterInitialRepl
 	}
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithCapabilityRegistry(registry),
 		agentruntime.WithInitialReplyEmitter(fakeInitialReplyEmitter{
 			result: agentruntime.InitialReplyEmissionResult{
@@ -201,9 +201,257 @@ func TestContinuationProcessorProcessRunExecutesQueuedCapabilityAfterInitialRepl
 	}
 }
 
+func TestContinuationProcessorProcessRunDispatchesPendingApprovalDuringInitialStream(t *testing.T) {
+	expiresAt := time.Date(2026, 3, 23, 11, 15, 0, 0, time.UTC)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(
+		&ark_dal.ModelStreamRespReasoning{
+			CapabilityCall: &ark_dal.CapabilityCallTrace{
+				CallID:            "call_pending_1",
+				FunctionName:      "send_message",
+				Arguments:         `{"content":"hello"}`,
+				Pending:           true,
+				ApprovalType:      "capability",
+				ApprovalTitle:     "审批发送消息",
+				ApprovalSummary:   "将向当前群发送一条消息",
+				ApprovalExpiresAt: expiresAt,
+			},
+		},
+		&ark_dal.ModelStreamRespReasoning{
+			ContentStruct: ark_dal.ContentStruct{Reply: "我已经发起审批。"},
+		},
+	), nil)
+
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	identity := botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"}
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		identity,
+	)
+
+	approvalSender := &plannerTestApprovalSender{}
+	emitter := observingInitialReplyEmitter{
+		onStart: func(ctx context.Context) {
+			runtimecontext.RecordActiveAgenticReplyTarget(ctx, "om_root_agentic_reply", "card_root_agentic_reply")
+		},
+		onItem: func(item *ark_dal.ModelStreamRespReasoning) {
+			if item == nil || item.CapabilityCall == nil || !item.CapabilityCall.Pending {
+				return
+			}
+			if len(approvalSender.requests) != 1 {
+				t.Fatalf("approval sender request count during stream = %d, want 1", len(approvalSender.requests))
+			}
+			if item.CapabilityCall.ApprovalStepID == "" || item.CapabilityCall.ApprovalToken == "" {
+				t.Fatalf("pending trace missing reservation ids: %+v", item.CapabilityCall)
+			}
+		},
+		result: agentruntime.InitialReplyEmissionResult{
+			ResponseMessageID: "om_root_agentic_reply",
+			ResponseCardID:    "card_root_agentic_reply",
+			DeliveryMode:      agentruntime.ReplyDeliveryModeReply,
+			Reply: agentruntime.CapturedInitialReply{
+				ReplyText: "我已经发起审批。",
+			},
+		},
+	}
+
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		initialReplyExecutor,
+		agentruntime.WithInitialReplyEmitter(emitter),
+		agentruntime.WithApprovalSender(approvalSender),
+	)
+
+	err := processor.ProcessRun(context.Background(), agentruntime.RunProcessorInput{
+		Initial: &agentruntime.InitialRunInput{
+			Start: agentruntime.StartShadowRunRequest{
+				ChatID:           "oc_chat",
+				ActorOpenID:      "ou_actor",
+				TriggerType:      agentruntime.TriggerTypeMention,
+				TriggerMessageID: "om_initial_pending_dispatch",
+				InputText:        "@bot 发一条需要审批的消息",
+				Now:              time.Date(2026, 3, 23, 11, 0, 0, 0, time.UTC),
+			},
+			Event:      testRunProcessorEvent(),
+			Plan:       agentruntime.ChatGenerationPlan{ModelID: "ep-test-agentic"},
+			OutputMode: agentruntime.InitialReplyOutputModeAgentic,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+
+	if len(approvalSender.requests) != 1 {
+		t.Fatalf("approval sender request count = %d, want 1", len(approvalSender.requests))
+	}
+	req := approvalSender.requests[0]
+	if req.Target.ReplyToMessageID != "om_root_agentic_reply" {
+		t.Fatalf("approval reply target = %q, want %q", req.Target.ReplyToMessageID, "om_root_agentic_reply")
+	}
+	if !req.Target.ReplyInThread {
+		t.Fatal("expected approval card to reply in thread to the root agentic card")
+	}
+	if req.Target.VisibleOpenID != "ou_actor" {
+		t.Fatalf("approval visible open id = %q, want %q", req.Target.VisibleOpenID, "ou_actor")
+	}
+}
+
+func TestContinuationProcessorProcessRunUsesReplyTargetForThreadFollowUp(t *testing.T) {
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是线程内回复"}}), nil)
+
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	identity := botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"}
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		identity,
+	)
+
+	seen := agentruntime.InitialReplyTarget{}
+	seenOK := false
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		initialReplyExecutor,
+		agentruntime.WithInitialReplyEmitter(captureInitialReplyTargetEmitter{
+			onEmit: func(ctx context.Context) {
+				seen, seenOK = agentruntime.InitialReplyTargetFromContext(ctx)
+			},
+			result: agentruntime.InitialReplyEmissionResult{
+				ResponseMessageID: "om_thread_reply",
+				ResponseCardID:    "card_thread_reply",
+				DeliveryMode:      agentruntime.ReplyDeliveryModeReply,
+				TargetMessageID:   "om_thread_followup",
+				Reply: agentruntime.CapturedInitialReply{
+					ReplyText: "这是线程内回复",
+				},
+			},
+		}),
+	)
+
+	event := testRunProcessorEvent()
+	threadID := "omt_topic_1"
+	msgID := "om_thread_followup"
+	event.Event.Message.ThreadId = &threadID
+	event.Event.Message.MessageId = &msgID
+
+	err := processor.ProcessRun(context.Background(), agentruntime.RunProcessorInput{
+		Initial: &agentruntime.InitialRunInput{
+			Start: agentruntime.StartShadowRunRequest{
+				ChatID:           "oc_chat",
+				ActorOpenID:      "ou_actor",
+				TriggerType:      agentruntime.TriggerTypeFollowUp,
+				TriggerMessageID: "om_thread_followup",
+				InputText:        "在这个话题里继续",
+				Now:              time.Date(2026, 3, 19, 9, 2, 0, 0, time.UTC),
+			},
+			Event:      event,
+			Plan:       agentruntime.ChatGenerationPlan{ModelID: "ep-test-agentic"},
+			OutputMode: agentruntime.InitialReplyOutputModeAgentic,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+
+	if !seenOK {
+		t.Fatal("expected initial reply target in context")
+	}
+	if seen.Mode != agentruntime.InitialReplyTargetModeReply {
+		t.Fatalf("target mode = %q, want %q", seen.Mode, agentruntime.InitialReplyTargetModeReply)
+	}
+	if seen.MessageID != "om_thread_followup" {
+		t.Fatalf("target message id = %q, want %q", seen.MessageID, "om_thread_followup")
+	}
+	if seen.CardID != "" {
+		t.Fatalf("target card id = %q, want empty", seen.CardID)
+	}
+	if !seen.ReplyInThread {
+		t.Fatal("expected reply_in_thread target")
+	}
+}
+
+func TestContinuationProcessorProcessRunUsesDirectReplyTargetForTopLevelMessage(t *testing.T) {
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是首轮回复"}}), nil)
+
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	identity := botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"}
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		identity,
+	)
+
+	seen := agentruntime.InitialReplyTarget{}
+	seenOK := false
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		initialReplyExecutor,
+		agentruntime.WithInitialReplyEmitter(captureInitialReplyTargetEmitter{
+			onEmit: func(ctx context.Context) {
+				seen, seenOK = agentruntime.InitialReplyTargetFromContext(ctx)
+			},
+			result: agentruntime.InitialReplyEmissionResult{
+				ResponseMessageID: "om_direct_reply",
+				ResponseCardID:    "card_direct_reply",
+				DeliveryMode:      agentruntime.ReplyDeliveryModeReply,
+				TargetMessageID:   "om_initial_complete",
+				Reply: agentruntime.CapturedInitialReply{
+					ReplyText: "这是首轮回复",
+				},
+			},
+		}),
+	)
+
+	event := testRunProcessorEvent()
+	msgID := "om_initial_complete"
+	event.Event.Message.MessageId = &msgID
+	event.Event.Message.ThreadId = nil
+	event.Event.Message.ParentId = nil
+
+	err := processor.ProcessRun(context.Background(), agentruntime.RunProcessorInput{
+		Initial: &agentruntime.InitialRunInput{
+			Start: agentruntime.StartShadowRunRequest{
+				ChatID:           "oc_chat",
+				ActorOpenID:      "ou_actor",
+				TriggerType:      agentruntime.TriggerTypeCommandBridge,
+				TriggerMessageID: "om_initial_complete",
+				InputText:        "/bb 帮我总结",
+				Now:              time.Date(2026, 3, 19, 9, 1, 0, 0, time.UTC),
+			},
+			Event:      event,
+			Plan:       agentruntime.ChatGenerationPlan{ModelID: "ep-test-agentic"},
+			OutputMode: agentruntime.InitialReplyOutputModeAgentic,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+
+	if !seenOK {
+		t.Fatal("expected initial reply target in context")
+	}
+	if seen.Mode != agentruntime.InitialReplyTargetModeReply {
+		t.Fatalf("target mode = %q, want %q", seen.Mode, agentruntime.InitialReplyTargetModeReply)
+	}
+	if seen.MessageID != "om_initial_complete" {
+		t.Fatalf("target message id = %q, want %q", seen.MessageID, "om_initial_complete")
+	}
+	if seen.ReplyInThread {
+		t.Fatal("top-level direct reply should not force reply_in_thread")
+	}
+}
+
 func TestContinuationProcessorProcessRunExecutesQueuedCapabilityTailSequentially(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我先开始处理。"}}), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "我先开始处理。"}}), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -244,6 +492,7 @@ func TestContinuationProcessorProcessRunExecutesQueuedCapabilityTailSequentially
 	}
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithCapabilityRegistry(registry),
 		agentruntime.WithReplyEmitter(replyEmitter),
 		agentruntime.WithInitialReplyEmitter(fakeInitialReplyEmitter{
@@ -335,8 +584,7 @@ func TestContinuationProcessorProcessRunExecutesQueuedCapabilityTailSequentially
 }
 
 func TestContinuationProcessorProcessRunPersistsCompletedCapabilityPreviousResponseID(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是首轮回复"}}), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "这是首轮回复"}}), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -350,6 +598,7 @@ func TestContinuationProcessorProcessRunPersistsCompletedCapabilityPreviousRespo
 	)
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithInitialReplyEmitter(fakeInitialReplyEmitter{
 			result: agentruntime.InitialReplyEmissionResult{
 				ResponseMessageID: "om_reply_with_tool",
@@ -435,23 +684,22 @@ func TestContinuationProcessorProcessRunPersistsCompletedCapabilityPreviousRespo
 }
 
 func TestContinuationProcessorProcessRunDurablyRecordsInitialCapabilityTraceBeforeReply(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(
-			&ark_dal.ModelStreamRespReasoning{
-				CapabilityCall: &ark_dal.CapabilityCallTrace{
-					CallID:             "call_history_turn_1",
-					FunctionName:       "search_history",
-					Arguments:          `{"q":"日报"}`,
-					Output:             "找到日报记录",
-					PreviousResponseID: "resp_turn_1",
-				},
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(
+		&ark_dal.ModelStreamRespReasoning{
+			CapabilityCall: &ark_dal.CapabilityCallTrace{
+				CallID:             "call_history_turn_1",
+				FunctionName:       "search_history",
+				Arguments:          `{"q":"日报"}`,
+				Output:             "找到日报记录",
+				PreviousResponseID: "resp_turn_1",
 			},
-			&ark_dal.ModelStreamRespReasoning{
-				ContentStruct: ark_dal.ContentStruct{
-					Reply: "这是带工具结果的首轮回复",
-				},
+		},
+		&ark_dal.ModelStreamRespReasoning{
+			ContentStruct: ark_dal.ContentStruct{
+				Reply: "这是带工具结果的首轮回复",
 			},
-		), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+		},
+	), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -465,6 +713,7 @@ func TestContinuationProcessorProcessRunDurablyRecordsInitialCapabilityTraceBefo
 	)
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithInitialReplyEmitter(drainingInitialReplyEmitter{
 			result: agentruntime.InitialReplyEmissionResult{
 				ResponseMessageID: "om_reply_trace",
@@ -539,18 +788,17 @@ func TestContinuationProcessorProcessRunDurablyRecordsInitialCapabilityTraceBefo
 }
 
 func TestContinuationProcessorProcessRunAdvancesRunCursorWhenInitialTraceRecordedBeforeFailure(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(
-			&ark_dal.ModelStreamRespReasoning{
-				CapabilityCall: &ark_dal.CapabilityCallTrace{
-					CallID:             "call_history_turn_1",
-					FunctionName:       "search_history",
-					Arguments:          `{"q":"日报"}`,
-					Output:             "找到日报记录",
-					PreviousResponseID: "resp_turn_1",
-				},
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(
+		&ark_dal.ModelStreamRespReasoning{
+			CapabilityCall: &ark_dal.CapabilityCallTrace{
+				CallID:             "call_history_turn_1",
+				FunctionName:       "search_history",
+				Arguments:          `{"q":"日报"}`,
+				Output:             "找到日报记录",
+				PreviousResponseID: "resp_turn_1",
 			},
-		), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+		},
+	), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -564,6 +812,7 @@ func TestContinuationProcessorProcessRunAdvancesRunCursorWhenInitialTraceRecorde
 	)
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithInitialReplyEmitter(failingAfterDrainInitialReplyEmitter{
 			err: errors.New("stream interrupted"),
 		}),
@@ -619,8 +868,7 @@ func TestContinuationProcessorProcessRunAdvancesRunCursorWhenInitialTraceRecorde
 }
 
 func TestContinuationProcessorProcessRunAttachCarriesActiveReplyTargetIntoInitialExecutor(t *testing.T) {
-	setRunProcessorAgenticInitialReplyStream(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "继续处理"}}), nil)
-	defer agentruntime.SetAgenticInitialReplyStreamGenerator(nil)
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "继续处理"}}), nil)
 
 	db := openCoordinatorTestDB(t)
 	store := openCoordinatorRedisStore(t)
@@ -638,6 +886,7 @@ func TestContinuationProcessorProcessRunAttachCarriesActiveReplyTargetIntoInitia
 	}
 	processor := agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithCapabilityRegistry(registry),
 		agentruntime.WithInitialReplyEmitter(fakeInitialReplyEmitter{
 			result: agentruntime.InitialReplyEmissionResult{
@@ -695,6 +944,7 @@ func TestContinuationProcessorProcessRunAttachCarriesActiveReplyTargetIntoInitia
 	seenOK := false
 	processor = agentruntime.NewContinuationProcessor(
 		coordinator,
+		initialReplyExecutor,
 		agentruntime.WithCapabilityRegistry(registry),
 		agentruntime.WithInitialReplyEmitter(captureInitialReplyTargetEmitter{
 			onEmit: func(ctx context.Context) {
@@ -735,11 +985,89 @@ func TestContinuationProcessorProcessRunAttachCarriesActiveReplyTargetIntoInitia
 	if !seenOK {
 		t.Fatal("expected initial reply target in context")
 	}
+	if seen.Mode != agentruntime.InitialReplyTargetModePatch {
+		t.Fatalf("target mode = %q, want %q", seen.Mode, agentruntime.InitialReplyTargetModePatch)
+	}
 	if seen.MessageID != "om_reply_seed" {
 		t.Fatalf("target message id = %q, want %q", seen.MessageID, "om_reply_seed")
 	}
 	if seen.CardID != "card_reply_seed" {
 		t.Fatalf("target card id = %q, want %q", seen.CardID, "card_reply_seed")
+	}
+	if seen.ReplyInThread {
+		t.Fatal("attached follow-up model reply should patch root instead of replying in thread")
+	}
+}
+
+func TestContinuationProcessorInitialRunFallsBackToStartActorOpenIDForRootMention(t *testing.T) {
+	initialReplyExecutor := runProcessorInitialReplyExecutorOption(seqFromRunProcessorItems(&ark_dal.ModelStreamRespReasoning{
+		ContentStruct: ark_dal.ContentStruct{Reply: "这是 root 回复"},
+	}), nil)
+
+	db := openCoordinatorTestDB(t)
+	store := openCoordinatorRedisStore(t)
+	identity := botidentity.Identity{AppID: "cli_app", BotOpenID: "ou_bot"}
+	coordinator := agentruntime.NewRunCoordinator(
+		agentstore.NewSessionRepository(db),
+		agentstore.NewRunRepository(db),
+		agentstore.NewStepRepository(db),
+		store,
+		identity,
+	)
+
+	var seen agentruntime.InitialReplyEmissionRequest
+	processor := agentruntime.NewContinuationProcessor(
+		coordinator,
+		initialReplyExecutor,
+		agentruntime.WithInitialReplyEmitter(captureInitialReplyRequestEmitter{
+			onEmit: func(req agentruntime.InitialReplyEmissionRequest) {
+				seen = req
+			},
+			result: agentruntime.InitialReplyEmissionResult{
+				ResponseMessageID: "om_root_reply",
+				ResponseCardID:    "card_root_reply",
+				DeliveryMode:      agentruntime.ReplyDeliveryModeReply,
+				Reply: agentruntime.CapturedInitialReply{
+					ThoughtText: "先整理上下文",
+					ReplyText:   "这是 root 回复",
+				},
+			},
+		}),
+	)
+
+	chatID := "oc_chat"
+	msgID := "om_runtime_missing_sender"
+	chatType := "group"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatId:    &chatID,
+				MessageId: &msgID,
+				ChatType:  &chatType,
+			},
+		},
+	}
+
+	if err := processor.ProcessRun(context.Background(), agentruntime.RunProcessorInput{
+		Initial: &agentruntime.InitialRunInput{
+			Start: agentruntime.StartShadowRunRequest{
+				ChatID:           "oc_chat",
+				ActorOpenID:      "ou_actor",
+				TriggerType:      agentruntime.TriggerTypeMention,
+				TriggerMessageID: "om_initial_missing_sender",
+				InputText:        "@bot 帮我处理一下",
+				Now:              time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC),
+			},
+			Event:      event,
+			Plan:       agentruntime.ChatGenerationPlan{ModelID: "ep-test-agentic"},
+			OutputMode: agentruntime.InitialReplyOutputModeAgentic,
+		},
+	}); err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+
+	if seen.MentionOpenID != "ou_actor" {
+		t.Fatalf("mention open id = %q, want %q", seen.MentionOpenID, "ou_actor")
 	}
 }
 
@@ -798,6 +1126,38 @@ func (e captureInitialReplyTargetEmitter) EmitInitialReply(ctx context.Context, 
 	return e.result, e.err
 }
 
+type captureInitialReplyRequestEmitter struct {
+	onEmit func(agentruntime.InitialReplyEmissionRequest)
+	result agentruntime.InitialReplyEmissionResult
+	err    error
+}
+
+func (e captureInitialReplyRequestEmitter) EmitInitialReply(_ context.Context, req agentruntime.InitialReplyEmissionRequest) (agentruntime.InitialReplyEmissionResult, error) {
+	if e.onEmit != nil {
+		e.onEmit(req)
+	}
+	return e.result, e.err
+}
+
+type observingInitialReplyEmitter struct {
+	onStart func(context.Context)
+	onItem  func(*ark_dal.ModelStreamRespReasoning)
+	result  agentruntime.InitialReplyEmissionResult
+	err     error
+}
+
+func (e observingInitialReplyEmitter) EmitInitialReply(ctx context.Context, req agentruntime.InitialReplyEmissionRequest) (agentruntime.InitialReplyEmissionResult, error) {
+	if e.onStart != nil {
+		e.onStart(ctx)
+	}
+	for item := range req.Stream {
+		if e.onItem != nil {
+			e.onItem(item)
+		}
+	}
+	return e.result, e.err
+}
+
 func seqFromRunProcessorItems(items ...*ark_dal.ModelStreamRespReasoning) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
 		for _, item := range items {
@@ -808,9 +1168,24 @@ func seqFromRunProcessorItems(items ...*ark_dal.ModelStreamRespReasoning) iter.S
 	}
 }
 
-func setRunProcessorAgenticInitialReplyStream(result iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
-	agentruntime.SetAgenticInitialReplyStreamGenerator(func(context.Context, *larkim.P2MessageReceiveV1, agentruntime.ChatGenerationPlan) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-		return result, err
+func runProcessorInitialReplyExecutorOption(
+	result iter.Seq[*ark_dal.ModelStreamRespReasoning],
+	err error,
+) agentruntime.ContinuationProcessorOption {
+	return agentruntime.WithInitialReplyExecutorFactory(func(input agentruntime.InitialRunInput, emitter agentruntime.InitialReplyEmitter) (agentruntime.InitialReplyExecutor, error) {
+		mode := input.OutputMode
+		if mode == "" {
+			mode = agentruntime.InitialReplyOutputModeAgentic
+		}
+		return agentruntime.NewDefaultInitialReplyExecutorWithGenerator(
+			mode,
+			input.Event,
+			input.Plan,
+			emitter,
+			func(context.Context, *larkim.P2MessageReceiveV1, agentruntime.ChatGenerationPlan) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+				return result, err
+			},
+		), nil
 	})
 }
 

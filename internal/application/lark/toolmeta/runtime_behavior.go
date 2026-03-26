@@ -91,60 +91,153 @@ var runtimeBehaviors = map[string]RuntimeBehavior{
 		},
 	},
 	"gold_price_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "gold_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送金价走势卡。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送金价走势卡",
+		},
 	},
 	"stock_zh_a_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "stock_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送股票走势卡。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送股票走势卡",
+		},
 	},
 	"talkrate_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "talkrate_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送发言趋势图。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送发言趋势图",
+		},
 	},
 	"word_cloud_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "word_cloud_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送词云卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送词云卡片",
+		},
 	},
 	"word_cloud_graph_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "word_cloud_graph_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送词云图。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送词云图",
+		},
 	},
 	"word_chunks_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "word_chunks_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送 chunk 列表卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送 chunk 列表卡片",
+		},
 	},
 	"word_chunk_detail_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "word_chunk_detail_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送 chunk 详情卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送 chunk 详情卡片",
+		},
 	},
 	"word_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "word_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送复读词条卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送复读词条卡片",
+		},
 	},
 	"reply_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "reply_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送关键词回复卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送关键词回复卡片",
+		},
 	},
 	"image_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "image_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送图片素材卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送图片素材卡片",
+		},
 	},
 	"config_list": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "config_list_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送配置列表卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送配置列表卡片",
+		},
 	},
 	"feature_list": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "feature_list_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送功能开关卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送功能开关卡片",
+		},
 	},
 	"ratelimit_stats_get": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "ratelimit_stats_get_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送频控详情卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送频控详情卡片",
+		},
 	},
 	"ratelimit_list": {
-		SideEffectLevel:       SideEffectLevelNone,
+		SideEffectLevel:       SideEffectLevelChatWrite,
 		AllowCompatibleOutput: true,
+		Approval: &ApprovalBehavior{
+			ResultKey:         "ratelimit_list_result",
+			PlaceholderOutput: "已发起审批，等待确认后发送频控概览卡片。",
+			ApprovalType:      "capability",
+			ApprovalTitle:     "审批发送频控概览卡片",
+		},
+	},
+	"research_read_url": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"research_extract_evidence": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"research_source_ledger": {
+		SideEffectLevel: SideEffectLevelNone,
 	},
 	"config_set": {
 		SideEffectLevel: SideEffectLevelAdminWrite,

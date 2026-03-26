@@ -13,6 +13,9 @@ func TestValidateRunStatusTransition(t *testing.T) {
 	if err := ValidateRunStatusTransition(RunStatusRunning, RunStatusQueued); err != nil {
 		t.Fatalf("expected running -> queued to be valid, got %v", err)
 	}
+	if err := ValidateRunStatusTransition(RunStatusQueued, RunStatusFailed); err != nil {
+		t.Fatalf("expected queued -> failed to be valid for stale repair, got %v", err)
+	}
 	if err := ValidateRunStatusTransition(RunStatusWaitingApproval, RunStatusCompleted); err == nil {
 		t.Fatalf("expected waiting_approval -> completed to be invalid")
 	}
@@ -74,5 +77,55 @@ func TestRunStatusIsTerminal(t *testing.T) {
 	}
 	if RunStatusRunning.IsTerminal() {
 		t.Fatalf("expected running to be non-terminal")
+	}
+}
+
+func TestAgentRunLivenessHelpers(t *testing.T) {
+	policy := RunLeasePolicy{
+		TTL:               30 * time.Second,
+		HeartbeatInterval: 10 * time.Second,
+	}
+	now := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)
+	heartbeatAt := now.Add(-11 * time.Second)
+	leaseExpiresAt := now.Add(19 * time.Second)
+
+	run := AgentRun{
+		ID:             "run_liveness",
+		Status:         RunStatusRunning,
+		WorkerID:       "worker_1",
+		HeartbeatAt:    &heartbeatAt,
+		LeaseExpiresAt: &leaseExpiresAt,
+	}
+
+	if !run.HasExecutionLease() {
+		t.Fatal("HasExecutionLease() = false, want true")
+	}
+	if run.IsLeaseExpired(now) {
+		t.Fatal("IsLeaseExpired() = true, want false")
+	}
+	if !run.NeedsHeartbeat(now, policy) {
+		t.Fatal("NeedsHeartbeat() = false, want true")
+	}
+	if state := run.LivenessState(now); state != RunLivenessHealthy {
+		t.Fatalf("LivenessState() = %q, want %q", state, RunLivenessHealthy)
+	}
+
+	expiredAt := now.Add(-time.Second)
+	run.LeaseExpiresAt = &expiredAt
+	if !run.IsLeaseExpired(now) {
+		t.Fatal("IsLeaseExpired() = false, want true")
+	}
+	if state := run.LivenessState(now); state != RunLivenessExpired {
+		t.Fatalf("expired LivenessState() = %q, want %q", state, RunLivenessExpired)
+	}
+
+	run.WorkerID = ""
+	run.HeartbeatAt = nil
+	run.LeaseExpiresAt = nil
+	if run.HasExecutionLease() {
+		t.Fatal("HasExecutionLease() = true, want false")
+	}
+	if state := run.LivenessState(now); state != RunLivenessUnknown {
+		t.Fatalf("untracked LivenessState() = %q, want %q", state, RunLivenessUnknown)
 	}
 }

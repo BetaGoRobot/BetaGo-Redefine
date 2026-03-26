@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	capdef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/capability"
 )
 
+// CompleteRunWithReplyInput carries agent runtime state.
 type CompleteRunWithReplyInput struct {
 	RunID             string                    `json:"run_id"`
 	Revision          int64                     `json:"revision"`
@@ -23,6 +27,7 @@ type CompleteRunWithReplyInput struct {
 	CompletedAt       time.Time                 `json:"completed_at,omitempty"`
 }
 
+// ContinueRunWithReplyInput carries agent runtime state.
 type ContinueRunWithReplyInput struct {
 	RunID             string                    `json:"run_id"`
 	Revision          int64                     `json:"revision"`
@@ -39,6 +44,7 @@ type ContinueRunWithReplyInput struct {
 	ContinuedAt       time.Time                 `json:"continued_at,omitempty"`
 }
 
+// QueuePlanStepInput carries agent runtime state.
 type QueuePlanStepInput struct {
 	RunID             string                 `json:"run_id"`
 	Revision          int64                  `json:"revision"`
@@ -47,20 +53,6 @@ type QueuePlanStepInput struct {
 	ReplyText         string                 `json:"reply_text,omitempty"`
 	PendingCapability *PlanPendingCapability `json:"pending_capability,omitempty"`
 	PlannedAt         time.Time              `json:"planned_at,omitempty"`
-}
-
-type CompletedCapabilityCall struct {
-	CallID             string `json:"call_id,omitempty"`
-	CapabilityName     string `json:"capability_name,omitempty"`
-	Arguments          string `json:"arguments,omitempty"`
-	Output             string `json:"output,omitempty"`
-	PreviousResponseID string `json:"previous_response_id,omitempty"`
-}
-
-type QueuedCapabilityCall struct {
-	CallID         string              `json:"call_id,omitempty"`
-	CapabilityName string              `json:"capability_name,omitempty"`
-	Input          CapabilityCallInput `json:"input"`
 }
 
 type replyCompletionOutput struct {
@@ -75,18 +67,35 @@ type replyCompletionOutput struct {
 	TargetStepID      string              `json:"target_step_id,omitempty"`
 }
 
-type PlanPendingCapability struct {
-	CallID         string `json:"call_id,omitempty"`
-	CapabilityName string `json:"capability_name,omitempty"`
-	Arguments      string `json:"arguments,omitempty"`
-}
-
 type replyPlanStepInput struct {
 	ThoughtText       string                 `json:"thought_text,omitempty"`
 	ReplyText         string                 `json:"reply_text,omitempty"`
 	PendingCapability *PlanPendingCapability `json:"pending_capability,omitempty"`
 }
 
+var (
+	pendingScopeSweepTriggerMu sync.RWMutex
+	pendingScopeSweepTrigger   func()
+)
+
+// RegisterPendingScopeSweepTrigger implements agent runtime behavior.
+func RegisterPendingScopeSweepTrigger(trigger func()) {
+	pendingScopeSweepTriggerMu.Lock()
+	defer pendingScopeSweepTriggerMu.Unlock()
+	pendingScopeSweepTrigger = trigger
+}
+
+// TriggerPendingScopeSweep implements agent runtime behavior.
+func TriggerPendingScopeSweep() {
+	pendingScopeSweepTriggerMu.RLock()
+	trigger := pendingScopeSweepTrigger
+	pendingScopeSweepTriggerMu.RUnlock()
+	if trigger != nil {
+		trigger()
+	}
+}
+
+// QueuePlanStep appends a plan step that captures reply intent before the runtime emits a reply or queues more capability work.
 func (c *RunCoordinator) QueuePlanStep(ctx context.Context, input QueuePlanStepInput) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -159,17 +168,14 @@ func (c *RunCoordinator) QueuePlanStep(ctx context.Context, input QueuePlanStepI
 		return nil, err
 	}
 
-	return c.runRepo.UpdateStatus(ctx, runningRun.ID, runningRun.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusRunning
-		current.CurrentStepIndex = planStep.Index
-		current.UpdatedAt = plannedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &plannedAt
-		}
-		return nil
+	return c.updateRunReplyLifecycle(ctx, runningRun, replyLifecycleUpdate{
+		status:           RunStatusRunning,
+		currentStepIndex: planStep.Index,
+		updatedAt:        plannedAt,
 	})
 }
 
+// CompleteRunWithReply finalizes a run by recording capability traces, appending the reply step, and clearing any active slot state.
 func (c *RunCoordinator) CompleteRunWithReply(ctx context.Context, input CompleteRunWithReplyInput) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -214,27 +220,12 @@ func (c *RunCoordinator) CompleteRunWithReply(ctx context.Context, input Complet
 	}
 
 	nextStepIndex := nextAvailableStepIndex(steps, currentStep.Index)
-	for _, call := range input.CapabilityCalls {
-		step, err := newCompletedCapabilityStep(runningRun.ID, nextStepIndex, call, completedAt)
-		if err != nil {
-			return nil, err
-		}
-		if err := c.stepRepo.Append(ctx, step); err != nil {
-			return nil, err
-		}
-		nextStepIndex++
-
-		observeStep, err := newCompletedCapabilityObserveStep(runningRun.ID, nextStepIndex, call, completedAt)
-		if err != nil {
-			return nil, err
-		}
-		if err := c.stepRepo.Append(ctx, observeStep); err != nil {
-			return nil, err
-		}
-		nextStepIndex++
+	nextStepIndex, err = c.appendCompletedCapabilityCalls(ctx, runningRun.ID, nextStepIndex, input.CapabilityCalls, completedAt)
+	if err != nil {
+		return nil, err
 	}
 
-	replyOutput, err := json.Marshal(replyCompletionOutput{
+	replyStep, err := newReplyCompletionStep(runningRun.ID, nextStepIndex, replyCompletionOutput{
 		ThoughtText:       strings.TrimSpace(input.ThoughtText),
 		ReplyText:         strings.TrimSpace(input.ReplyText),
 		ResponseMessageID: strings.TrimSpace(input.ResponseMessageID),
@@ -244,27 +235,7 @@ func (c *RunCoordinator) CompleteRunWithReply(ctx context.Context, input Complet
 		TargetMessageID:   strings.TrimSpace(input.TargetMessageID),
 		TargetCardID:      strings.TrimSpace(input.TargetCardID),
 		TargetStepID:      strings.TrimSpace(input.TargetStepID),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	replyExternalRef := strings.TrimSpace(input.ResponseCardID)
-	if replyExternalRef == "" {
-		replyExternalRef = strings.TrimSpace(input.ResponseMessageID)
-	}
-	replyStep := &AgentStep{
-		ID:          newRuntimeID("step"),
-		RunID:       runningRun.ID,
-		Index:       nextStepIndex,
-		Kind:        StepKindReply,
-		Status:      StepStatusCompleted,
-		OutputJSON:  replyOutput,
-		ExternalRef: replyExternalRef,
-		CreatedAt:   completedAt,
-		StartedAt:   &completedAt,
-		FinishedAt:  &completedAt,
-	}
+	}, completedAt)
 	if err := c.stepRepo.Append(ctx, replyStep); err != nil {
 		return nil, err
 	}
@@ -273,29 +244,25 @@ func (c *RunCoordinator) CompleteRunWithReply(ctx context.Context, input Complet
 	if resultSummary == "" {
 		resultSummary = "runtime reply completed"
 	}
-	completedRun, err := c.runRepo.UpdateStatus(ctx, runningRun.ID, runningRun.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusCompleted
-		current.CurrentStepIndex = replyStep.Index
-		current.LastResponseID = strings.TrimSpace(input.ResponseMessageID)
-		current.ResultSummary = resultSummary
-		current.ErrorText = ""
-		current.UpdatedAt = completedAt
-		current.FinishedAt = &completedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &completedAt
-		}
-		return nil
+	completedRun, err := c.updateRunReplyLifecycle(ctx, runningRun, replyLifecycleUpdate{
+		status:           RunStatusCompleted,
+		currentStepIndex: replyStep.Index,
+		lastResponseID:   strings.TrimSpace(input.ResponseMessageID),
+		resultSummary:    resultSummary,
+		updatedAt:        completedAt,
+		finishedAt:       &completedAt,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if err := c.clearFinishedRunState(ctx, completedRun.ID, completedRun.SessionID, completedAt); err != nil {
+	if err := c.clearFinishedRunState(ctx, completedRun.ID, completedRun.SessionID, completedRun.ActorOpenID, completedAt); err != nil {
 		return nil, err
 	}
 	return completedRun, nil
 }
 
+// ContinueRunWithReply records an intermediate reply, queues the next capability step, and leaves the run in a resumable state.
 func (c *RunCoordinator) ContinueRunWithReply(ctx context.Context, input ContinueRunWithReplyInput) (*AgentRun, error) {
 	if c == nil {
 		return nil, fmt.Errorf("run coordinator is nil")
@@ -343,27 +310,12 @@ func (c *RunCoordinator) ContinueRunWithReply(ctx context.Context, input Continu
 	}
 
 	nextStepIndex := nextAvailableStepIndex(steps, currentStep.Index)
-	for _, call := range input.CapabilityCalls {
-		step, err := newCompletedCapabilityStep(runningRun.ID, nextStepIndex, call, continuedAt)
-		if err != nil {
-			return nil, err
-		}
-		if err := c.stepRepo.Append(ctx, step); err != nil {
-			return nil, err
-		}
-		nextStepIndex++
-
-		observeStep, err := newCompletedCapabilityObserveStep(runningRun.ID, nextStepIndex, call, continuedAt)
-		if err != nil {
-			return nil, err
-		}
-		if err := c.stepRepo.Append(ctx, observeStep); err != nil {
-			return nil, err
-		}
-		nextStepIndex++
+	nextStepIndex, err = c.appendCompletedCapabilityCalls(ctx, runningRun.ID, nextStepIndex, input.CapabilityCalls, continuedAt)
+	if err != nil {
+		return nil, err
 	}
 
-	replyOutput, err := json.Marshal(replyCompletionOutput{
+	replyStep, err := newReplyCompletionStep(runningRun.ID, nextStepIndex, replyCompletionOutput{
 		ThoughtText:       strings.TrimSpace(input.ThoughtText),
 		ReplyText:         strings.TrimSpace(input.ReplyText),
 		ResponseMessageID: strings.TrimSpace(input.ResponseMessageID),
@@ -373,27 +325,7 @@ func (c *RunCoordinator) ContinueRunWithReply(ctx context.Context, input Continu
 		TargetMessageID:   strings.TrimSpace(input.TargetMessageID),
 		TargetCardID:      strings.TrimSpace(input.TargetCardID),
 		TargetStepID:      strings.TrimSpace(input.TargetStepID),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	replyExternalRef := strings.TrimSpace(input.ResponseCardID)
-	if replyExternalRef == "" {
-		replyExternalRef = strings.TrimSpace(input.ResponseMessageID)
-	}
-	replyStep := &AgentStep{
-		ID:          newRuntimeID("step"),
-		RunID:       runningRun.ID,
-		Index:       nextStepIndex,
-		Kind:        StepKindReply,
-		Status:      StepStatusCompleted,
-		OutputJSON:  replyOutput,
-		ExternalRef: replyExternalRef,
-		CreatedAt:   continuedAt,
-		StartedAt:   &continuedAt,
-		FinishedAt:  &continuedAt,
-	}
+	}, continuedAt)
 	if err := c.stepRepo.Append(ctx, replyStep); err != nil {
 		return nil, err
 	}
@@ -411,17 +343,12 @@ func (c *RunCoordinator) ContinueRunWithReply(ctx context.Context, input Continu
 	if resultSummary == "" {
 		resultSummary = "runtime reply continued"
 	}
-	return c.runRepo.UpdateStatus(ctx, runningRun.ID, runningRun.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusQueued
-		current.CurrentStepIndex = queuedStep.Index
-		current.LastResponseID = strings.TrimSpace(input.ResponseMessageID)
-		current.ResultSummary = resultSummary
-		current.ErrorText = ""
-		current.UpdatedAt = continuedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &continuedAt
-		}
-		return nil
+	return c.updateRunReplyLifecycle(ctx, runningRun, replyLifecycleUpdate{
+		status:           RunStatusQueued,
+		currentStepIndex: queuedStep.Index,
+		lastResponseID:   strings.TrimSpace(input.ResponseMessageID),
+		resultSummary:    resultSummary,
+		updatedAt:        continuedAt,
 	})
 }
 
@@ -458,7 +385,7 @@ func newCompletedCapabilityStep(runID string, index int, call CompletedCapabilit
 		Status:         StepStatusCompleted,
 		CapabilityName: strings.TrimSpace(call.CapabilityName),
 		InputJSON:      inputJSON,
-		OutputJSON:     encodeCapabilityResult(result),
+		OutputJSON:     capdef.EncodeResult(result),
 		ExternalRef:    strings.TrimSpace(call.CallID),
 		CreatedAt:      completedAt,
 		StartedAt:      &completedAt,
@@ -555,28 +482,6 @@ func nextAvailableStepIndex(steps []*AgentStep, currentIndex int) int {
 	return next
 }
 
-func (c *RunCoordinator) moveRunToRunning(ctx context.Context, run *AgentRun, startedAt time.Time) (*AgentRun, error) {
-	if run == nil {
-		return nil, fmt.Errorf("agent runtime run is nil")
-	}
-	if run.Status == RunStatusRunning {
-		if run.StartedAt == nil {
-			run.StartedAt = &startedAt
-		}
-		return run, nil
-	}
-	return c.runRepo.UpdateStatus(ctx, run.ID, run.Revision, func(current *AgentRun) error {
-		current.Status = RunStatusRunning
-		current.WaitingReason = WaitingReasonNone
-		current.WaitingToken = ""
-		current.UpdatedAt = startedAt
-		if current.StartedAt == nil {
-			current.StartedAt = &startedAt
-		}
-		return nil
-	})
-}
-
 func (c *RunCoordinator) completeCurrentStep(ctx context.Context, step *AgentStep, finishedAt time.Time) error {
 	if step == nil {
 		return fmt.Errorf("agent runtime step is nil")
@@ -611,7 +516,7 @@ func (c *RunCoordinator) completeCurrentStep(ctx context.Context, step *AgentSte
 	return err
 }
 
-func (c *RunCoordinator) clearFinishedRunState(ctx context.Context, runID, sessionID string, now time.Time) error {
+func (c *RunCoordinator) clearFinishedRunState(ctx context.Context, runID, sessionID, actorOpenID string, now time.Time) error {
 	if c == nil {
 		return nil
 	}
@@ -626,20 +531,22 @@ func (c *RunCoordinator) clearFinishedRunState(ctx context.Context, runID, sessi
 		}
 	}
 
-	if c.runtimeStore != nil && session != nil && strings.TrimSpace(session.ChatID) != "" {
-		swapped, err := c.runtimeStore.SwapActiveChatRun(ctx, session.ChatID, runID, "", c.activeRunTTL)
+	if c.runtimeStore != nil && session != nil && strings.TrimSpace(session.ChatID) != "" && strings.TrimSpace(actorOpenID) != "" {
+		swapped, err := c.runtimeStore.SwapActiveActorChatRun(ctx, session.ChatID, actorOpenID, runID, "", c.activeRunTTL)
 		if err != nil {
 			return err
 		}
 		if !swapped {
-			current, err := c.runtimeStore.ActiveChatRun(ctx, session.ChatID)
+			current, err := c.runtimeStore.ActiveActorChatRun(ctx, session.ChatID, actorOpenID)
 			if err != nil {
 				return err
 			}
 			if current == runID {
-				return fmt.Errorf("active chat slot still points to completed run: chat_id=%s run_id=%s", session.ChatID, runID)
+				return fmt.Errorf("active actor chat slot still points to completed run: chat_id=%s actor_open_id=%s run_id=%s", session.ChatID, actorOpenID, runID)
 			}
 		}
+		_ = c.runtimeStore.NotifyPendingInitialRun(ctx, session.ChatID, actorOpenID)
+		TriggerPendingScopeSweep()
 	}
 	return nil
 }

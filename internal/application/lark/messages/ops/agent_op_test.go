@@ -14,11 +14,10 @@ import (
 )
 
 type fakeAgentRuntimeAccessor struct {
-	shadowOnly bool
+	mode appconfig.ChatMode
 }
 
-func (f fakeAgentRuntimeAccessor) ChatMode() appconfig.ChatMode { return appconfig.ChatModeStandard }
-func (f fakeAgentRuntimeAccessor) AgentRuntimeShadowOnly() bool { return f.shadowOnly }
+func (f fakeAgentRuntimeAccessor) ChatMode() appconfig.ChatMode { return f.mode }
 
 type fakeShadowObserver struct {
 	seen   agentruntime.ShadowObserveInput
@@ -30,16 +29,28 @@ func (f *fakeShadowObserver) Observe(ctx context.Context, input agentruntime.Sha
 	return f.result
 }
 
-func TestAgentShadowOperatorPreRunSkipsWithoutShadowFlag(t *testing.T) {
+func TestAgentShadowOperatorPreRunSkipsAgenticChat(t *testing.T) {
 	op := &AgentShadowOperator{
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: false}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeAgentic}
 		},
 	}
 
 	err := op.PreRun(context.Background(), nil, &xhandler.BaseMetaData{})
 	if !errors.Is(err, xerror.ErrStageSkip) {
 		t.Fatalf("PreRun() error = %v, want stage skip", err)
+	}
+}
+
+func TestAgentShadowOperatorPreRunAllowsStandardChat(t *testing.T) {
+	op := &AgentShadowOperator{
+		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
+		},
+	}
+
+	if err := op.PreRun(context.Background(), nil, &xhandler.BaseMetaData{}); err != nil {
+		t.Fatalf("PreRun() error = %v", err)
 	}
 }
 
@@ -59,7 +70,7 @@ func TestAgentShadowOperatorRunStoresShadowDecisionInMeta(t *testing.T) {
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: true}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 		},
 		observer:        observer,
 		mentionDetector: func(*larkim.P2MessageReceiveV1) bool { return true },

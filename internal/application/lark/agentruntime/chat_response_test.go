@@ -9,6 +9,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -32,7 +33,7 @@ func TestHandleAgenticChatResponseDelegatesToRuntimeCutover(t *testing.T) {
 		return fakeCutover
 	}
 	SetChatGenerationPlanExecutor(fakeExecutor)
-	runtimeAgenticCardSender = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
+	runtimeAgenticCardSender = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], opts ...larkmsg.AgentStreamingCardOptions) error {
 		t.Fatal("expected runtime cutover to bypass direct card sender")
 		return nil
 	}
@@ -116,7 +117,7 @@ func TestHandleAgenticChatResponseForcesAgenticPlanModeOnFallbackPath(t *testing
 	}
 	SetChatGenerationPlanExecutor(fakeExecutor)
 	runtimeAgenticCutoverBuilder = func(context.Context) RuntimeAgenticCutoverHandler { return nil }
-	runtimeAgenticCardSender = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
+	runtimeAgenticCardSender = func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], opts ...larkmsg.AgentStreamingCardOptions) error {
 		for range seq {
 		}
 		return nil

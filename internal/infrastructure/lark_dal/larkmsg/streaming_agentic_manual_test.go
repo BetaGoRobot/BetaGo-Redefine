@@ -20,7 +20,7 @@ func TestManualSendAgenticStreamingCard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	cardID, err := createAgentStreamingCardEntity(ctx)
+	cardID, err := createAgentStreamingCardEntity(ctx, AgentStreamingCardOptions{})
 	if err != nil {
 		t.Fatalf("createAgentStreamingCardEntity() error = %v", err)
 	}

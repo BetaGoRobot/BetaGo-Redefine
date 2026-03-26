@@ -66,8 +66,9 @@ func TestGetStringFallsBackToToml(t *testing.T) {
 				LiteModel:      "intent-lite",
 			},
 			OpensearchConfig: &infraConfig.OpensearchConfig{
-				LarkMsgIndex:   "msg-index",
-				LarkChunkIndex: "chunk-index",
+				LarkCardActionIndex: "card-action-index",
+				LarkMsgIndex:        "msg-index",
+				LarkChunkIndex:      "chunk-index",
 			},
 		}
 	}
@@ -92,6 +93,9 @@ func TestGetStringFallsBackToToml(t *testing.T) {
 	}
 	if got := manager.GetString(context.Background(), KeyLarkChunkIndex, "", ""); got != "chunk-index" {
 		t.Fatalf("GetString(chunk index) = %q, want %q", got, "chunk-index")
+	}
+	if got := manager.GetString(context.Background(), ConfigKey("lark_card_action_index"), "", ""); got != "card-action-index" {
+		t.Fatalf("GetString(card action index) = %q, want %q", got, "card-action-index")
 	}
 }
 
@@ -162,6 +166,67 @@ func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
 			t.Fatalf("expected config key %q in GetAllConfigKeys()", key)
 		}
 	}
+}
+
+func TestGetAllConfigKeysIncludesStartupOnlyKeys(t *testing.T) {
+	keys := GetAllConfigKeys()
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		set[string(key)] = struct{}{}
+	}
+
+	expected := []string{
+		"lark_card_action_index",
+		"agent_runtime_resume_workers",
+		"agent_runtime_pending_initial_workers",
+		"agent_runtime_execution_lease_timeout_seconds",
+		"agent_runtime_execution_heartbeat_interval_seconds",
+		"agent_runtime_stale_run_legacy_timeout_seconds",
+		"agent_runtime_stale_run_sweep_interval_seconds",
+	}
+	for _, key := range expected {
+		if _, ok := set[key]; !ok {
+			t.Fatalf("expected startup-only config key %q in GetAllConfigKeys()", key)
+		}
+	}
+}
+
+func TestGetIntFallsBackToTomlForAgentRuntimeTuning(t *testing.T) {
+	oldIdentity := currentBotIdentity
+	oldConfig := currentBaseConfig
+	currentBotIdentity = func() botidentity.Identity { return botidentity.Identity{} }
+	currentBaseConfig = func() *infraConfig.BaseConfig {
+		return &infraConfig.BaseConfig{
+			RuntimeConfig: &infraConfig.RuntimeConfig{
+				AgentRuntimeResumeWorkers:                     4,
+				AgentRuntimePendingInitialWorkers:             6,
+				AgentRuntimeExecutionLeaseTimeoutSeconds:      210,
+				AgentRuntimeExecutionHeartbeatIntervalSeconds: 21,
+				AgentRuntimeStaleRunLegacyTimeoutSeconds:      2700,
+				AgentRuntimeStaleRunSweepIntervalSeconds:      9,
+			},
+		}
+	}
+	defer func() {
+		currentBotIdentity = oldIdentity
+		currentBaseConfig = oldConfig
+	}()
+
+	manager := NewManager()
+
+	assertInt := func(key ConfigKey, want int) {
+		t.Helper()
+		if got := manager.GetInt(context.Background(), key, "", ""); got != want {
+			t.Fatalf("GetInt(%q) = %d, want %d", key, got, want)
+		}
+	}
+
+	assertInt(ConfigKey("agent_runtime_resume_workers"), 4)
+	assertInt(ConfigKey("agent_runtime_pending_initial_workers"), 6)
+	assertInt(ConfigKey("agent_runtime_execution_lease_timeout_seconds"), 210)
+	assertInt(ConfigKey("agent_runtime_execution_heartbeat_interval_seconds"), 21)
+	assertInt(ConfigKey("agent_runtime_stale_run_legacy_timeout_seconds"), 2700)
+	assertInt(ConfigKey("agent_runtime_stale_run_sweep_interval_seconds"), 9)
 }
 
 func TestConfigDefaultDisplayValueSupportsStringDefaults(t *testing.T) {

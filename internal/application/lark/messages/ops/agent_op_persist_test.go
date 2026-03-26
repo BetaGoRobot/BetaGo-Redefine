@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -22,7 +23,7 @@ func (f *fakeShadowCoordinator) StartShadowRun(ctx context.Context, req agentrun
 	return f.result, f.err
 }
 
-func (f *fakeShadowCoordinator) ActiveRunSnapshot(context.Context, string) (*agentruntime.ActiveRunSnapshot, error) {
+func (f *fakeShadowCoordinator) ActiveRunSnapshot(context.Context, string, string) (*agentruntime.ActiveRunSnapshot, error) {
 	return f.active, f.err
 }
 
@@ -50,7 +51,7 @@ func TestAgentShadowOperatorPersistsRunIDsInMetaWhenCoordinatorIsPresent(t *test
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: true}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 		},
 		observer:        observer,
 		coordinator:     coordinator,
@@ -107,7 +108,7 @@ func TestAgentShadowOperatorPersistsRunIDsViaCoordinatorLoader(t *testing.T) {
 	op := &AgentShadowOperator{
 		now: func() time.Time { return fixedNow },
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-			return fakeAgentRuntimeAccessor{shadowOnly: true}
+			return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 		},
 		observer: observer,
 		coordinatorLoader: func(context.Context) agentruntime.ShadowRunStarter {
@@ -166,7 +167,7 @@ func TestNewAgentShadowOperatorAttachesFollowUpToActiveRun(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{shadowOnly: true}
+		return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return false }
@@ -198,7 +199,7 @@ func TestNewAgentShadowOperatorAttachesFollowUpToActiveRun(t *testing.T) {
 	assertMetaExtra(t, meta, agentRuntimeShadowReasonKey, "attach_follow_up")
 }
 
-func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
+func TestNewAgentShadowOperatorLeavesMentionAsIndependentRunWhenActiveRunExists(t *testing.T) {
 	fixedNow := time.Date(2026, 3, 19, 10, 1, 0, 0, time.UTC)
 	coordinator := &fakeShadowCoordinator{
 		active: &agentruntime.ActiveRunSnapshot{
@@ -215,7 +216,7 @@ func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
 	op := NewAgentShadowOperator()
 	op.now = func() time.Time { return fixedNow }
 	op.configAccessor = func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) agentRuntimeShadowConfig {
-		return fakeAgentRuntimeAccessor{shadowOnly: true}
+		return fakeAgentRuntimeAccessor{mode: appconfig.ChatModeStandard}
 	}
 	op.coordinator = coordinator
 	op.mentionDetector = func(*larkim.P2MessageReceiveV1) bool { return true }
@@ -234,8 +235,8 @@ func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if coordinator.seen.SupersedeRunID != "run_active" {
-		t.Fatalf("supersede_run_id = %q, want %q", coordinator.seen.SupersedeRunID, "run_active")
+	if coordinator.seen.SupersedeRunID != "" {
+		t.Fatalf("supersede_run_id = %q, want empty", coordinator.seen.SupersedeRunID)
 	}
 	if coordinator.seen.AttachToRunID != "" {
 		t.Fatalf("attach_to_run_id = %q, want empty", coordinator.seen.AttachToRunID)
@@ -244,5 +245,5 @@ func TestNewAgentShadowOperatorSupersedesActiveRunOnMention(t *testing.T) {
 		t.Fatalf("trigger type = %q, want %q", coordinator.seen.TriggerType, agentruntime.TriggerTypeMention)
 	}
 	assertMetaExtra(t, meta, agentRuntimeShadowTriggerKey, string(agentruntime.TriggerTypeMention))
-	assertMetaExtra(t, meta, agentRuntimeShadowReasonKey, "supersede_active_run")
+	assertMetaExtra(t, meta, agentRuntimeShadowReasonKey, "explicit_mention")
 }

@@ -46,6 +46,10 @@ func newAgentRun(db *gorm.DB, opts ...gen.DOOption) agentRun {
 	_agentRun.FinishedAt = field.NewTime(tableName, "finished_at")
 	_agentRun.CreatedAt = field.NewTime(tableName, "created_at")
 	_agentRun.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_agentRun.WorkerID = field.NewString(tableName, "worker_id")
+	_agentRun.HeartbeatAt = field.NewTime(tableName, "heartbeat_at")
+	_agentRun.LeaseExpiresAt = field.NewTime(tableName, "lease_expires_at")
+	_agentRun.RepairAttempts = field.NewInt64(tableName, "repair_attempts")
 
 	_agentRun.fillFieldMap()
 
@@ -77,6 +81,10 @@ type agentRun struct {
 	FinishedAt       field.Time
 	CreatedAt        field.Time
 	UpdatedAt        field.Time
+	WorkerID         field.String
+	HeartbeatAt      field.Time
+	LeaseExpiresAt   field.Time
+	RepairAttempts   field.Int64
 
 	fieldMap map[string]field.Expr
 }
@@ -114,6 +122,10 @@ func (a *agentRun) updateTableName(table string) *agentRun {
 	a.FinishedAt = field.NewTime(table, "finished_at")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
+	a.WorkerID = field.NewString(table, "worker_id")
+	a.HeartbeatAt = field.NewTime(table, "heartbeat_at")
+	a.LeaseExpiresAt = field.NewTime(table, "lease_expires_at")
+	a.RepairAttempts = field.NewInt64(table, "repair_attempts")
 
 	a.fillFieldMap()
 
@@ -138,7 +150,7 @@ func (a *agentRun) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *agentRun) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 21)
+	a.fieldMap = make(map[string]field.Expr, 25)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["session_id"] = a.SessionID
 	a.fieldMap["trigger_type"] = a.TriggerType
@@ -160,6 +172,10 @@ func (a *agentRun) fillFieldMap() {
 	a.fieldMap["finished_at"] = a.FinishedAt
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
+	a.fieldMap["worker_id"] = a.WorkerID
+	a.fieldMap["heartbeat_at"] = a.HeartbeatAt
+	a.fieldMap["lease_expires_at"] = a.LeaseExpiresAt
+	a.fieldMap["repair_attempts"] = a.RepairAttempts
 }
 
 func (a agentRun) clone(db *gorm.DB) agentRun {

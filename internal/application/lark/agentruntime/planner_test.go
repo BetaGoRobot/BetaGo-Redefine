@@ -345,8 +345,14 @@ func TestContinuationProcessorUsesCapabilityReplyPlannerWhenPresent(t *testing.T
 	if len(replyPlanner.requests) != 1 {
 		t.Fatalf("reply planner request count = %d, want 1", len(replyPlanner.requests))
 	}
-	if replyPlanner.requests[0].Run == nil || replyPlanner.requests[0].Run.ID != run.ID {
-		t.Fatalf("unexpected run in reply planner request: %+v", replyPlanner.requests[0].Run)
+	if replyPlanner.requests[0].ChatID != "oc_chat" {
+		t.Fatalf("planner chat id = %q, want %q", replyPlanner.requests[0].ChatID, "oc_chat")
+	}
+	if replyPlanner.requests[0].OpenID != run.ActorOpenID {
+		t.Fatalf("planner open id = %q, want %q", replyPlanner.requests[0].OpenID, run.ActorOpenID)
+	}
+	if replyPlanner.requests[0].InputText != run.InputText {
+		t.Fatalf("planner input text = %q, want %q", replyPlanner.requests[0].InputText, run.InputText)
 	}
 	if replyPlanner.requests[0].CapabilityName != "echo_cap" {
 		t.Fatalf("capability name = %q, want %q", replyPlanner.requests[0].CapabilityName, "echo_cap")

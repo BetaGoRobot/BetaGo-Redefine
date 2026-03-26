@@ -33,22 +33,28 @@ type BaseConfig struct {
 }
 
 type RuntimeConfig struct {
-	ShutdownTimeoutSeconds     int `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
-	MessageWorkers             int `json:"message_workers" yaml:"message_workers" toml:"message_workers"`
-	MessageQueueSize           int `json:"message_queue_size" yaml:"message_queue_size" toml:"message_queue_size"`
-	MessageTimeoutSeconds      int `json:"message_timeout_seconds" yaml:"message_timeout_seconds" toml:"message_timeout_seconds"`
-	ReactionWorkers            int `json:"reaction_workers" yaml:"reaction_workers" toml:"reaction_workers"`
-	ReactionQueueSize          int `json:"reaction_queue_size" yaml:"reaction_queue_size" toml:"reaction_queue_size"`
-	ReactionTimeoutSeconds     int `json:"reaction_timeout_seconds" yaml:"reaction_timeout_seconds" toml:"reaction_timeout_seconds"`
-	RecordingWorkers           int `json:"recording_workers" yaml:"recording_workers" toml:"recording_workers"`
-	RecordingQueueSize         int `json:"recording_queue_size" yaml:"recording_queue_size" toml:"recording_queue_size"`
-	RecordingTimeoutSeconds    int `json:"recording_timeout_seconds" yaml:"recording_timeout_seconds" toml:"recording_timeout_seconds"`
-	ChunkWorkers               int `json:"chunk_workers" yaml:"chunk_workers" toml:"chunk_workers"`
-	ChunkQueueSize             int `json:"chunk_queue_size" yaml:"chunk_queue_size" toml:"chunk_queue_size"`
-	ChunkTimeoutSeconds        int `json:"chunk_timeout_seconds" yaml:"chunk_timeout_seconds" toml:"chunk_timeout_seconds"`
-	ScheduleWorkers            int `json:"schedule_workers" yaml:"schedule_workers" toml:"schedule_workers"`
-	ScheduleQueueSize          int `json:"schedule_queue_size" yaml:"schedule_queue_size" toml:"schedule_queue_size"`
-	ScheduleTaskTimeoutSeconds int `json:"schedule_task_timeout_seconds" yaml:"schedule_task_timeout_seconds" toml:"schedule_task_timeout_seconds"`
+	ShutdownTimeoutSeconds                        int `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
+	AgentRuntimeResumeWorkers                     int `json:"agent_runtime_resume_workers" yaml:"agent_runtime_resume_workers" toml:"agent_runtime_resume_workers"`
+	AgentRuntimePendingInitialWorkers             int `json:"agent_runtime_pending_initial_workers" yaml:"agent_runtime_pending_initial_workers" toml:"agent_runtime_pending_initial_workers"`
+	AgentRuntimeExecutionLeaseTimeoutSeconds      int `json:"agent_runtime_execution_lease_timeout_seconds" yaml:"agent_runtime_execution_lease_timeout_seconds" toml:"agent_runtime_execution_lease_timeout_seconds"`
+	AgentRuntimeExecutionHeartbeatIntervalSeconds int `json:"agent_runtime_execution_heartbeat_interval_seconds" yaml:"agent_runtime_execution_heartbeat_interval_seconds" toml:"agent_runtime_execution_heartbeat_interval_seconds"`
+	AgentRuntimeStaleRunLegacyTimeoutSeconds      int `json:"agent_runtime_stale_run_legacy_timeout_seconds" yaml:"agent_runtime_stale_run_legacy_timeout_seconds" toml:"agent_runtime_stale_run_legacy_timeout_seconds"`
+	AgentRuntimeStaleRunSweepIntervalSeconds      int `json:"agent_runtime_stale_run_sweep_interval_seconds" yaml:"agent_runtime_stale_run_sweep_interval_seconds" toml:"agent_runtime_stale_run_sweep_interval_seconds"`
+	MessageWorkers                                int `json:"message_workers" yaml:"message_workers" toml:"message_workers"`
+	MessageQueueSize                              int `json:"message_queue_size" yaml:"message_queue_size" toml:"message_queue_size"`
+	MessageTimeoutSeconds                         int `json:"message_timeout_seconds" yaml:"message_timeout_seconds" toml:"message_timeout_seconds"`
+	ReactionWorkers                               int `json:"reaction_workers" yaml:"reaction_workers" toml:"reaction_workers"`
+	ReactionQueueSize                             int `json:"reaction_queue_size" yaml:"reaction_queue_size" toml:"reaction_queue_size"`
+	ReactionTimeoutSeconds                        int `json:"reaction_timeout_seconds" yaml:"reaction_timeout_seconds" toml:"reaction_timeout_seconds"`
+	RecordingWorkers                              int `json:"recording_workers" yaml:"recording_workers" toml:"recording_workers"`
+	RecordingQueueSize                            int `json:"recording_queue_size" yaml:"recording_queue_size" toml:"recording_queue_size"`
+	RecordingTimeoutSeconds                       int `json:"recording_timeout_seconds" yaml:"recording_timeout_seconds" toml:"recording_timeout_seconds"`
+	ChunkWorkers                                  int `json:"chunk_workers" yaml:"chunk_workers" toml:"chunk_workers"`
+	ChunkQueueSize                                int `json:"chunk_queue_size" yaml:"chunk_queue_size" toml:"chunk_queue_size"`
+	ChunkTimeoutSeconds                           int `json:"chunk_timeout_seconds" yaml:"chunk_timeout_seconds" toml:"chunk_timeout_seconds"`
+	ScheduleWorkers                               int `json:"schedule_workers" yaml:"schedule_workers" toml:"schedule_workers"`
+	ScheduleQueueSize                             int `json:"schedule_queue_size" yaml:"schedule_queue_size" toml:"schedule_queue_size"`
+	ScheduleTaskTimeoutSeconds                    int `json:"schedule_task_timeout_seconds" yaml:"schedule_task_timeout_seconds" toml:"schedule_task_timeout_seconds"`
 }
 
 type ManagementHTTPConfig struct {

@@ -21,7 +21,10 @@ func TestReplyOrchestratorEmitAgenticStreamsCardAndReturnsSnapshot(t *testing.T)
 
 	sent := make([]*ark_dal.ModelStreamRespReasoning, 0)
 	orchestrator := &replyOrchestrator{
-		agenticSender: func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error) {
+		agenticSender: func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], opts ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			if len(opts) != 0 {
+				t.Fatalf("agentic sender options = %+v, want empty for plain emit()", opts)
+			}
 			for item := range seq {
 				sent = append(sent, item)
 			}
@@ -182,6 +185,7 @@ func TestReplyOrchestratorEmitAgenticPatchesExistingCardWhenTargetExists(t *test
 	result, err := orchestrator.emit(context.Background(), replyOutputRequest{
 		Mode:            replyOutputModeAgentic,
 		Message:         msg,
+		TargetMode:      agentruntime.InitialReplyTargetModePatch,
 		TargetMessageID: "om_existing_reply",
 		TargetCardID:    "card_existing_reply",
 		Stream: seqFromItems(
@@ -203,6 +207,66 @@ func TestReplyOrchestratorEmitAgenticPatchesExistingCardWhenTargetExists(t *test
 	}
 	if result.TargetCardID != "card_existing_reply" {
 		t.Fatalf("target card id = %q, want %q", result.TargetCardID, "card_existing_reply")
+	}
+}
+
+func TestReplyOrchestratorEmitAgenticRepliesInThreadForSideEffectWhenReplyTargetExists(t *testing.T) {
+	msgID := "om_runtime_output_thread"
+	chatID := "oc_chat"
+	msg := &larkim.EventMessage{
+		MessageId: &msgID,
+		ChatId:    &chatID,
+	}
+
+	replyCalls := 0
+	replyMsgID := ""
+	replyInThread := false
+	orchestrator := &replyOrchestrator{
+		agenticReplier: func(ctx context.Context, msg *larkim.EventMessage, seq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool, opts ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error) {
+			replyCalls++
+			replyMsgID = *msg.MessageId
+			replyInThread = inThread
+			for range seq {
+			}
+			return larkmsg.AgentStreamingCardRefs{
+				MessageID: "om_thread_reply",
+				CardID:    "card_thread_reply",
+			}, nil
+		},
+	}
+
+	result, err := orchestrator.emit(context.Background(), replyOutputRequest{
+		OutputKind:      agentruntime.AgenticOutputKindSideEffect,
+		Mode:            replyOutputModeAgentic,
+		Message:         msg,
+		TargetMode:      agentruntime.InitialReplyTargetModeReply,
+		TargetMessageID: "om_runtime_output_thread",
+		ReplyInThread:   true,
+		Stream: seqFromItems(
+			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "线程内继续回复"}},
+		),
+	})
+	if err != nil {
+		t.Fatalf("emit() error = %v", err)
+	}
+
+	if replyCalls != 1 {
+		t.Fatalf("reply calls = %d, want 1", replyCalls)
+	}
+	if replyMsgID != "om_runtime_output_thread" {
+		t.Fatalf("reply message id = %q, want %q", replyMsgID, "om_runtime_output_thread")
+	}
+	if !replyInThread {
+		t.Fatal("expected reply_in_thread to be true")
+	}
+	if result.DeliveryMode != agentruntime.ReplyDeliveryModeReply {
+		t.Fatalf("delivery mode = %q, want %q", result.DeliveryMode, agentruntime.ReplyDeliveryModeReply)
+	}
+	if result.Refs.MessageID != "om_thread_reply" || result.Refs.CardID != "card_thread_reply" {
+		t.Fatalf("unexpected refs: %+v", result.Refs)
+	}
+	if result.TargetMessageID != "om_runtime_output_thread" {
+		t.Fatalf("target message id = %q, want %q", result.TargetMessageID, "om_runtime_output_thread")
 	}
 }
 

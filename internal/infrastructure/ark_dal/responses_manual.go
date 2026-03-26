@@ -78,6 +78,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 	if modelID == "" {
 		return nil, fmt.Errorf("response turn model id is required")
 	}
+	reasoningEffort := normalizeResponseTurnReasoningEffort(req.ReasoningEffort)
 
 	var input *responses.ResponsesInput
 	if previousResponseID := strings.TrimSpace(req.PreviousResponseID); previousResponseID != "" {
@@ -117,7 +118,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 			// 	},
 			// },
 			Reasoning: &responses.ResponsesReasoning{
-				Effort: responses.ReasoningEffort_medium,
+				Effort: reasoningEffort,
 			},
 			Stream: gptr.Of(true),
 		}, nil
@@ -145,10 +146,22 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		// 	},
 		// },
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_medium,
+			Effort: reasoningEffort,
 		},
 		Stream: gptr.Of(true),
 	}, nil
+}
+
+func normalizeResponseTurnReasoningEffort(effort responses.ReasoningEffort_Enum) responses.ReasoningEffort_Enum {
+	switch effort {
+	case responses.ReasoningEffort_minimal,
+		responses.ReasoningEffort_low,
+		responses.ReasoningEffort_medium,
+		responses.ReasoningEffort_high:
+		return effort
+	default:
+		return responses.ReasoningEffort_medium
+	}
 }
 
 func (r *ResponsesImpl[T]) handleManualTurnEvent(ctx context.Context, event *responses.Event) (*ToolCallIntent, error) {

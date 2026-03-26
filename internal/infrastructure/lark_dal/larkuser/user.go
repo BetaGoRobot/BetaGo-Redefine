@@ -9,12 +9,33 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/bytedance/sonic"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
+
+const basicUserPath = "/open-apis/contact/v3/users/basic_batch"
+
+type basicUserInfoReq struct {
+	UserIDs []string `json:"user_ids"`
+}
+
+type basicUserInfoResp struct {
+	larkcore.CodeError
+	Data struct {
+		Users []*basicUserInfo `json:"users,omitempty"`
+	} `json:"data,omitempty"`
+}
+
+type basicUserInfo struct {
+	I18nName *larkcontact.ProductI18nName `json:"i18n_name,omitempty"`
+	Name     string                       `json:"name,omitempty"`
+	UserID   string                       `json:"user_id,omitempty"`
+}
 
 func userInfoCacheKey(openID string) string {
 	return botidentity.Current().NamespaceKey("lark_user_info", openID)
@@ -73,6 +94,60 @@ func GetUserInfoCache(ctx context.Context, chatID, openID string) (user *larkcon
 		Name:   groupMember.Name,
 	}
 	return res, err
+}
+
+func GetUserNameCache(ctx context.Context, chatID, openID string) (userName string, err error) {
+	ctx, span := otel.Start(ctx, trace.WithAttributes(
+		attribute.String("chat.id", chatID),
+		attribute.String("user.open_id", otel.PreviewString(openID, 128)),
+	))
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+	res, err := cache.GetOrExecute(ctx, userInfoCacheKey(openID), func() (string, error) {
+		m, err := GetUserName(ctx, chatID, openID)
+		if err != nil {
+			return "", err
+		}
+		return m[openID], nil
+	})
+	if err == nil {
+		return res, nil
+	}
+	// 否则走群聊试试
+	groupMember, err := GetUserMemberFromChat(ctx, chatID, openID)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("GetUserMemberFromChat", zap.Any("user", groupMember), zap.Error(err))
+		return
+	}
+	if groupMember == nil {
+		err = errors.New("user not found in chat")
+		return
+	}
+	res = *groupMember.Name
+	return
+}
+
+func GetUserName(ctx context.Context, chatID string, openID ...string) (userNames map[string]string, err error) {
+	userNames = make(map[string]string)
+	req := &basicUserInfoReq{UserIDs: openID}
+	apiResp, err := lark_dal.Client().Post(ctx, basicUserPath, req, larkcore.AccessTokenTypeTenant)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("GetUserNameCahce", zap.Any("user", apiResp), zap.Error(err))
+		return
+	}
+	if apiResp == nil {
+		logs.L().Ctx(ctx).Error("GetUserNameCahce", zap.Any("user", apiResp), zap.Error(err))
+		return
+	}
+	resp := &basicUserInfoResp{}
+	if err = sonic.Unmarshal(apiResp.RawBody, resp); err != nil {
+		logs.L().Ctx(ctx).Error("GetUserNameCahce", zap.Any("user", apiResp), zap.Error(err))
+		return nil, err
+	}
+	for _, item := range resp.Data.Users {
+		userNames[item.UserID] = item.Name
+	}
+	return
 }
 
 func GetUserMemberFromChat(ctx context.Context, chatID, openID string) (member *larkim.ListMember, err error) {

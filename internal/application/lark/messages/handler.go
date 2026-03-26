@@ -16,7 +16,6 @@ import (
 )
 
 type MessageHandler struct {
-	manager   *appconfig.Manager
 	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 }
 
@@ -31,7 +30,6 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
 		cfgManager = appconfig.GetManager()
 	}
 	handler := &MessageHandler{
-		manager: cfgManager,
 		processor: newMessageProcessorBase(cfgManager).
 			AddAsync(ops.NewAgentShadowOperator()).
 			AddAsync(&ops.ReplyChatOperator{}).

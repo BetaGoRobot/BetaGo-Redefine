@@ -38,13 +38,6 @@ func (r *recordingCapabilityTraceRecorder) RecordReplyTurnPlan(_ context.Context
 }
 
 func TestDefaultCapabilityReplyTurnExecutorOwnsToolLoop(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -59,12 +52,8 @@ func TestDefaultCapabilityReplyTurnExecutorOwnsToolLoop(t *testing.T) {
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -109,14 +98,7 @@ func TestDefaultCapabilityReplyTurnExecutorOwnsToolLoop(t *testing.T) {
 		}
 	}
 
-	executor := &defaultCapabilityReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newCapabilityReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteCapabilityReplyTurn(context.Background(), CapabilityReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -166,13 +148,6 @@ func TestDefaultCapabilityReplyTurnExecutorOwnsToolLoop(t *testing.T) {
 }
 
 func TestDefaultCapabilityReplyTurnExecutorTurnsApprovalIntoPendingCapability(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -184,12 +159,8 @@ func TestDefaultCapabilityReplyTurnExecutorTurnsApprovalIntoPendingCapability(t 
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -231,14 +202,7 @@ func TestDefaultCapabilityReplyTurnExecutorTurnsApprovalIntoPendingCapability(t 
 		}
 	}
 
-	executor := &defaultCapabilityReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newCapabilityReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteCapabilityReplyTurn(context.Background(), CapabilityReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -291,13 +255,6 @@ func TestDefaultCapabilityReplyTurnExecutorTurnsApprovalIntoPendingCapability(t 
 }
 
 func TestDefaultCapabilityReplyTurnExecutorChainsMultiplePendingCapabilities(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -309,12 +266,8 @@ func TestDefaultCapabilityReplyTurnExecutorChainsMultiplePendingCapabilities(t *
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -376,14 +329,7 @@ func TestDefaultCapabilityReplyTurnExecutorChainsMultiplePendingCapabilities(t *
 		}
 	}
 
-	executor := &defaultCapabilityReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newCapabilityReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteCapabilityReplyTurn(context.Background(), CapabilityReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -439,13 +385,6 @@ func TestDefaultCapabilityReplyTurnExecutorChainsMultiplePendingCapabilities(t *
 }
 
 func TestDefaultCapabilityReplyTurnExecutorRecordsCompletedCapabilityTraceWithRecorder(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
 			Name("search_history").
@@ -455,12 +394,8 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsCompletedCapabilityTraceWithRe
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -493,14 +428,7 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsCompletedCapabilityTraceWithRe
 	}
 
 	recorder := &recordingCapabilityTraceRecorder{}
-	executor := &defaultCapabilityReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newCapabilityReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteCapabilityReplyTurn(context.Background(), CapabilityReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -551,13 +479,6 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsCompletedCapabilityTraceWithRe
 }
 
 func TestDefaultCapabilityReplyTurnExecutorRecordsIntermediatePlanTurn(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
 			Name("search_history").
@@ -567,12 +488,8 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsIntermediatePlanTurn(t *testin
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -607,14 +524,7 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsIntermediatePlanTurn(t *testin
 	}
 
 	recorder := &recordingCapabilityTraceRecorder{}
-	executor := &defaultCapabilityReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newCapabilityReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteCapabilityReplyTurn(context.Background(), CapabilityReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -642,7 +552,7 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsIntermediatePlanTurn(t *testin
 		Result: CapabilityResult{
 			OutputText: "echo:hello",
 		},
-		PlanRecorder: recorder,
+		Recorder: recorder,
 	})
 	if err != nil {
 		t.Fatalf("ExecuteCapabilityReplyTurn() error = %v", err)
@@ -661,5 +571,25 @@ func TestDefaultCapabilityReplyTurnExecutorRecordsIntermediatePlanTurn(t *testin
 	}
 	if recorder.plans[0].ToolCall.Arguments != `{"q":"agentic runtime"}` {
 		t.Fatalf("recorded tool args = %q, want %q", recorder.plans[0].ToolCall.Arguments, `{"q":"agentic runtime"}`)
+	}
+}
+
+func newCapabilityReplyTurnExecutorForTest(
+	toolset *arktools.Impl[larkim.P2MessageReceiveV1],
+	turnExecutor func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error),
+) *defaultCapabilityReplyTurnExecutor {
+	return &defaultCapabilityReplyTurnExecutor{
+		selectModel: func(context.Context, string, string) replyTurnModelSelection {
+			return replyTurnModelSelection{
+				Mode:    appconfig.ChatModeAgentic,
+				ModelID: "ep-test-agentic",
+			}
+		},
+		deps: defaultRuntimeExecutorDeps{
+			toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] {
+				return toolset
+			},
+			initialChatTurnExecutor: turnExecutor,
+		},
 	}
 }

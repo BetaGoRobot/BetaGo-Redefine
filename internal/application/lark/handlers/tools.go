@@ -42,6 +42,9 @@ func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools, allow
 
 func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetChatOverride bool) {
 	xcommand.RegisterTool(ins, SearchHistory)
+	xcommand.RegisterTool(ins, ResearchReadURL)
+	xcommand.RegisterTool(ins, ResearchExtractEvidence)
+	xcommand.RegisterTool(ins, ResearchSourceLedger)
 	xcommand.RegisterTool(ins, MusicSearch)
 	xcommand.RegisterTool(ins, Mute)
 	xcommand.RegisterTool(ins, Gold)

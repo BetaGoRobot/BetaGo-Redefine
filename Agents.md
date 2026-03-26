@@ -1,5 +1,15 @@
 # BetaGo-Redefine 项目指南
 
+### Compact Instructions 如何保留关键信息
+
+保留优先级：
+
+1. 架构决策，不得摘要
+2. 已修改文件和关键变更
+3. 验证状态，pass/fail
+4. 未解决的 TODO 和回滚笔记
+5. 工具输出，可删，只保留 pass/fail 结论
+
 ## 项目概述
 
 BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言开发，目前主要针对飞书 (Lark) 平台。项目采用清晰的分层架构，集成了多种 AI 能力和实用工具。
@@ -213,6 +223,12 @@ BetaGo-Redefine/
 - 先等待用户执行 SQL
 - 再等待用户执行 `go run ./cmd/generate`
 - 用户确认前，不继续写依赖新 schema 的业务代码
+
+## 测试与 Mock 约束
+
+- 单测不得通过包级函数变量、函数 alias、运行时重赋值函数入口的方式做 mock。
+- 单测中的替身必须使用显式依赖注入后的 fake / stub，或 `goconvey` 一类正式测试框架组织场景与断言。
+- 如果生产代码当前不可测试，应先把依赖收敛到构造参数、deps struct、接口或明确的 context-scoped seam，再写测试；不要为了测试新增可变全局函数 alias。
 
 ## 本地开发
 

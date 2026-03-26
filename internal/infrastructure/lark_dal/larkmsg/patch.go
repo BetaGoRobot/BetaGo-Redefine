@@ -20,7 +20,8 @@ import (
 //	@author kevinmatthe
 //	@update 2025-06-05 13:23:46
 func PatchCard(ctx context.Context, cardContent *larktpl.TemplateCardContent, msgID string) (err error) {
-	_, span := otel.Start(ctx)
+	newCtx := context.WithoutCancel(ctx)
+	_, span := otel.Start(newCtx)
 	span.SetAttributes(
 		attribute.String("message.id", msgID),
 		attribute.Int("card.variable.count", len(cardContent.Data.TemplateVariable)),

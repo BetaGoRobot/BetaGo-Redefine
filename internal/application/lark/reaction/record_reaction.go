@@ -52,7 +52,7 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 		)
 		return nil
 	}
-	userInfo, err := larkuser.GetUserInfoCache(ctx, chatID, openID)
+	userName, err := larkuser.GetUserNameCache(ctx, chatID, openID)
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 		OpenID:     openID,
 		GuildID:    chatID,
 		MsgID:      *event.Event.MessageId,
-		UserName:   *userInfo.Name,
+		UserName:   userName,
 		ActionType: "add_reaction",
 	})
 }

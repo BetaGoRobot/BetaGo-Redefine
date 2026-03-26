@@ -13,13 +13,6 @@ import (
 )
 
 func TestDefaultContinuationReplyTurnExecutorOwnsToolLoop(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -34,12 +27,8 @@ func TestDefaultContinuationReplyTurnExecutorOwnsToolLoop(t *testing.T) {
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -84,14 +73,7 @@ func TestDefaultContinuationReplyTurnExecutorOwnsToolLoop(t *testing.T) {
 		}
 	}
 
-	executor := &defaultContinuationReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newContinuationReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteContinuationReplyTurn(context.Background(), ContinuationReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -144,14 +126,23 @@ func TestContinuationReplyTurnSystemPromptConstrainsSingleToolCallPerTurn(t *tes
 	}
 }
 
-func TestDefaultContinuationReplyTurnExecutorTurnsApprovalIntoPendingCapability(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
+func TestContinuationReplyTurnSystemPromptGuidesResearchContinuation(t *testing.T) {
+	prompt := continuationReplyTurnSystemPrompt()
+	for _, want := range []string{
+		"调研",
+		"research_read_url",
+		"research_extract_evidence",
+		"research_source_ledger",
+		"证据不足",
+		"不要因为第一次搜索就直接收尾",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
+	}
+}
 
+func TestDefaultContinuationReplyTurnExecutorTurnsApprovalIntoPendingCapability(t *testing.T) {
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -163,12 +154,8 @@ func TestDefaultContinuationReplyTurnExecutorTurnsApprovalIntoPendingCapability(
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -207,14 +194,7 @@ func TestDefaultContinuationReplyTurnExecutorTurnsApprovalIntoPendingCapability(
 		}
 	}
 
-	executor := &defaultContinuationReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newContinuationReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteContinuationReplyTurn(context.Background(), ContinuationReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -252,13 +232,6 @@ func TestDefaultContinuationReplyTurnExecutorTurnsApprovalIntoPendingCapability(
 }
 
 func TestDefaultContinuationReplyTurnExecutorChainsMultiplePendingCapabilities(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolCalls := 0
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
@@ -270,12 +243,8 @@ func TestDefaultContinuationReplyTurnExecutorChainsMultiplePendingCapabilities(t
 				return gresult.OK("should not execute")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -328,14 +297,7 @@ func TestDefaultContinuationReplyTurnExecutorChainsMultiplePendingCapabilities(t
 		}
 	}
 
-	executor := &defaultContinuationReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newContinuationReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteContinuationReplyTurn(context.Background(), ContinuationReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -398,13 +360,6 @@ func TestBuildContinuationReplyTurnUserPromptIncludesResumeSummaryAndPayload(t *
 }
 
 func TestDefaultContinuationReplyTurnExecutorRecordsCompletedCapabilityTraceWithRecorder(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
 			Name("search_history").
@@ -414,12 +369,8 @@ func TestDefaultContinuationReplyTurnExecutorRecordsCompletedCapabilityTraceWith
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -452,14 +403,7 @@ func TestDefaultContinuationReplyTurnExecutorRecordsCompletedCapabilityTraceWith
 	}
 
 	recorder := &recordingCapabilityTraceRecorder{}
-	executor := &defaultContinuationReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newContinuationReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteContinuationReplyTurn(context.Background(), ContinuationReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -498,13 +442,6 @@ func TestDefaultContinuationReplyTurnExecutorRecordsCompletedCapabilityTraceWith
 }
 
 func TestDefaultContinuationReplyTurnExecutorRecordsIntermediatePlanTurn(t *testing.T) {
-	originalProvider := defaultChatToolProvider
-	originalTurnExecutor := defaultInitialChatTurnExecutor
-	defer func() {
-		defaultChatToolProvider = originalProvider
-		defaultInitialChatTurnExecutor = originalTurnExecutor
-	}()
-
 	toolset := arktools.New[larkim.P2MessageReceiveV1]().Add(
 		arktools.NewUnit[larkim.P2MessageReceiveV1]().
 			Name("search_history").
@@ -514,12 +451,8 @@ func TestDefaultContinuationReplyTurnExecutorRecordsIntermediatePlanTurn(t *test
 				return gresult.OK("搜索结果")
 			}),
 	)
-	defaultChatToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] {
-		return toolset
-	}
-
 	turnCalls := 0
-	defaultInitialChatTurnExecutor = func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
+	turnExecutor := func(ctx context.Context, req InitialChatTurnRequest) (InitialChatTurnResult, error) {
 		turnCalls++
 		switch turnCalls {
 		case 1:
@@ -554,14 +487,7 @@ func TestDefaultContinuationReplyTurnExecutorRecordsIntermediatePlanTurn(t *test
 	}
 
 	recorder := &recordingCapabilityTraceRecorder{}
-	executor := &defaultContinuationReplyTurnExecutor{
-		selectModel: func(context.Context, string, string) capabilityReplyPlannerModelSelection {
-			return capabilityReplyPlannerModelSelection{
-				Mode:    appconfig.ChatModeAgentic,
-				ModelID: "ep-test-agentic",
-			}
-		},
-	}
+	executor := newContinuationReplyTurnExecutorForTest(toolset, turnExecutor)
 	result, err := executor.ExecuteContinuationReplyTurn(context.Background(), ContinuationReplyTurnRequest{
 		Session: &AgentSession{ChatID: "oc_chat"},
 		Run: &AgentRun{
@@ -577,7 +503,7 @@ func TestDefaultContinuationReplyTurnExecutorRecordsIntermediatePlanTurn(t *test
 		PreviousStepExternalRef: "schedule_job_daily",
 		ThoughtFallback:         "恢复来源：定时任务",
 		ReplyFallback:           "定时任务已恢复执行并完成。",
-		PlanRecorder:            recorder,
+		Recorder:                recorder,
 	})
 	if err != nil {
 		t.Fatalf("ExecuteContinuationReplyTurn() error = %v", err)
@@ -596,5 +522,25 @@ func TestDefaultContinuationReplyTurnExecutorRecordsIntermediatePlanTurn(t *test
 	}
 	if recorder.plans[0].ToolCall.Arguments != `{"q":"日报"}` {
 		t.Fatalf("recorded tool args = %q, want %q", recorder.plans[0].ToolCall.Arguments, `{"q":"日报"}`)
+	}
+}
+
+func newContinuationReplyTurnExecutorForTest(
+	toolset *arktools.Impl[larkim.P2MessageReceiveV1],
+	turnExecutor func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error),
+) *defaultContinuationReplyTurnExecutor {
+	return &defaultContinuationReplyTurnExecutor{
+		selectModel: func(context.Context, string, string) replyTurnModelSelection {
+			return replyTurnModelSelection{
+				Mode:    appconfig.ChatModeAgentic,
+				ModelID: "ep-test-agentic",
+			}
+		},
+		deps: defaultRuntimeExecutorDeps{
+			toolProvider: func() *arktools.Impl[larkim.P2MessageReceiveV1] {
+				return toolset
+			},
+			initialChatTurnExecutor: turnExecutor,
+		},
 	}
 }

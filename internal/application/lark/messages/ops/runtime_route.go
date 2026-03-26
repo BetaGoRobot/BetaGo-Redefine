@@ -7,40 +7,26 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-var (
-	progressReactionHandler = withProgressReaction
-	doneReactionHandler     = addDoneReactionIfNeeded
-)
-
-func chatMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) appconfig.ChatMode {
-	return messageConfigAccessor(ctx, event, meta).ChatMode().Normalize()
-}
-
-func runChatByMode(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, args ...string) error {
-	return xcommand.BindCLI(handlers.Chat)(ctx, event, meta, args...)
-}
-
 func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
-	accessor := messageConfigAccessor(ctx, event, meta)
-	if accessor == nil {
+	if resolvedChatMode(meta) != appconfig.ChatModeAgentic {
 		return agentruntime.ShadowObservation{}, false
 	}
-	if accessor.ChatMode().Normalize() != appconfig.ChatModeAgentic {
-		return agentruntime.ShadowObservation{}, false
-	}
+	return observePotentialRuntimeMessage(ctx, event, meta)
+}
 
+func observePotentialRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (agentruntime.ShadowObservation, bool) {
 	observer := agentruntime.NewShadowObserver(
 		agentruntime.NewDefaultGroupPolicy(agentruntime.DefaultGroupPolicyConfig{}),
 		nil,
-		func(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
-			return runtimeActiveRunSnapshot(ctx, chatID)
+		func(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
+			return runtimeActiveRunSnapshot(ctx, chatID, actorOpenID)
 		},
 	)
 	observation := observer.Observe(ctx, agentruntime.ShadowObserveInput{
@@ -58,6 +44,19 @@ func observeRuntimeMessage(ctx context.Context, event *larkim.P2MessageReceiveV1
 		return observation, false
 	}
 	return observation, true
+}
+
+// resolvedChatMode reads the interaction mode that was decided at the fetch stage.
+func resolvedChatMode(meta *xhandler.BaseMetaData) appconfig.ChatMode {
+	if meta != nil {
+		if mode, ok := meta.IntentInteractionMode(); ok {
+			if mode == intentmeta.InteractionModeAgentic {
+				return appconfig.ChatModeAgentic
+			}
+			return appconfig.ChatModeStandard
+		}
+	}
+	return appconfig.ChatModeStandard
 }
 
 func runtimeIsMentioned(event *larkim.P2MessageReceiveV1) bool {
@@ -78,7 +77,7 @@ func runtimeCommandName(ctx context.Context, event *larkim.P2MessageReceiveV1) s
 	return strings.TrimSpace(parts[0])
 }
 
-func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.ActiveRunSnapshot {
+func runtimeActiveRunSnapshot(ctx context.Context, chatID, actorOpenID string) *agentruntime.ActiveRunSnapshot {
 	coordinator := buildDefaultShadowRunCoordinator(ctx)
 	if coordinator == nil {
 		return nil
@@ -87,7 +86,7 @@ func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.
 	if !ok || provider == nil {
 		return nil
 	}
-	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID))
+	snapshot, err := provider.ActiveRunSnapshot(ctx, strings.TrimSpace(chatID), strings.TrimSpace(actorOpenID))
 	if err != nil {
 		return nil
 	}
@@ -96,7 +95,7 @@ func runtimeActiveRunSnapshot(ctx context.Context, chatID string) *agentruntime.
 
 func runtimeOwnershipContext(ctx context.Context, observation agentruntime.ShadowObservation) context.Context {
 	return agentruntime.WithInitialRunOwnership(ctx, agentruntime.InitialRunOwnership{
-		TriggerType:    observation.TriggerType,
+		TriggerType:    string(observation.TriggerType),
 		AttachToRunID:  strings.TrimSpace(observation.AttachToRunID),
 		SupersedeRunID: strings.TrimSpace(observation.SupersedeRunID),
 	})

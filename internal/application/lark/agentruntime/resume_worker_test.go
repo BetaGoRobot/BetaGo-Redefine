@@ -2,6 +2,7 @@ package agentruntime_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -84,6 +85,37 @@ func (p *fakeRunProcessor) ProcessRun(ctx context.Context, input agentruntime.Ru
 	return nil
 }
 
+type scriptedRunProcessor struct {
+	mu      sync.Mutex
+	results []error
+	handled chan agentruntime.RunProcessorInput
+}
+
+func (p *scriptedRunProcessor) ProcessRun(ctx context.Context, input agentruntime.RunProcessorInput) error {
+	if p.handled != nil {
+		p.handled <- input
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.results) == 0 {
+		return nil
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	return result
+}
+
+type blockingRunProcessor struct {
+	handled chan agentruntime.RunProcessorInput
+	release <-chan struct{}
+}
+
+func (p *blockingRunProcessor) ProcessRun(ctx context.Context, input agentruntime.RunProcessorInput) error {
+	p.handled <- input
+	<-p.release
+	return nil
+}
+
 func TestResumeWorkerProcessesQueuedEventWithRunLock(t *testing.T) {
 	store := newFakeResumeQueueStore()
 	processor := &fakeRunProcessor{handled: make(chan agentruntime.RunProcessorInput, 1)}
@@ -121,6 +153,139 @@ func TestResumeWorkerProcessesQueuedEventWithRunLock(t *testing.T) {
 	stats := worker.Stats()
 	if stats["processed"] != int64(1) {
 		t.Fatalf("processed stats = %+v", stats)
+	}
+}
+
+func TestResumeWorkerWithWorkersProcessesEventsInParallel(t *testing.T) {
+	store := newFakeResumeQueueStore()
+	release := make(chan struct{})
+	processor := &blockingRunProcessor{
+		handled: make(chan agentruntime.RunProcessorInput, 2),
+		release: release,
+	}
+	worker := agentruntime.NewResumeWorker(store, processor).WithWorkers(2)
+
+	store.Enqueue(agentruntime.ResumeEvent{
+		RunID:    "run_parallel_01",
+		Revision: 1,
+		Source:   agentruntime.ResumeSourceCallback,
+		Token:    "cb_token_01",
+	})
+	store.Enqueue(agentruntime.ResumeEvent{
+		RunID:    "run_parallel_02",
+		Revision: 1,
+		Source:   agentruntime.ResumeSourceCallback,
+		Token:    "cb_token_02",
+	})
+
+	worker.Start()
+	defer worker.Stop()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-processor.handled:
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("expected both queued resume events to be handled concurrently")
+		}
+	}
+
+	close(release)
+	waitForResumeWorkerRelease(t, store, "run_parallel_01")
+	waitForResumeWorkerRelease(t, store, "run_parallel_02")
+}
+
+type fakeRunResumer struct {
+	seen   agentruntime.ResumeEvent
+	result *agentruntime.AgentRun
+	err    error
+}
+
+func (f *fakeRunResumer) ResumeRun(ctx context.Context, event agentruntime.ResumeEvent) (*agentruntime.AgentRun, error) {
+	f.seen = event
+	return f.result, f.err
+}
+
+type fakeResumeEnqueuer struct {
+	seen   agentruntime.ResumeEvent
+	called bool
+	err    error
+}
+
+func (f *fakeResumeEnqueuer) EnqueueResumeEvent(ctx context.Context, event agentruntime.ResumeEvent) error {
+	f.called = true
+	f.seen = event
+	return f.err
+}
+
+func TestResumeDispatcherDispatchResumesRunAndEnqueuesEvent(t *testing.T) {
+	resumer := &fakeRunResumer{
+		result: &agentruntime.AgentRun{ID: "run_01"},
+	}
+	enqueuer := &fakeResumeEnqueuer{}
+	dispatcher := agentruntime.NewResumeDispatcher(resumer, enqueuer)
+
+	event := agentruntime.ResumeEvent{
+		RunID:      "run_01",
+		Revision:   2,
+		Source:     agentruntime.ResumeSourceCallback,
+		Token:      "cb_token",
+		OccurredAt: time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC),
+	}
+	run, err := dispatcher.Dispatch(context.Background(), event)
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if run == nil || run.ID != "run_01" {
+		t.Fatalf("Dispatch() run = %+v, want run_01", run)
+	}
+	if !reflect.DeepEqual(resumer.seen, event) {
+		t.Fatalf("resumer saw %+v, want %+v", resumer.seen, event)
+	}
+	if !enqueuer.called || !reflect.DeepEqual(enqueuer.seen, event) {
+		t.Fatalf("enqueuer saw %+v called=%v, want %+v", enqueuer.seen, enqueuer.called, event)
+	}
+}
+
+func TestResumeDispatcherDispatchStopsWhenResumeFails(t *testing.T) {
+	resumeErr := errors.New("resume failed")
+	resumer := &fakeRunResumer{err: resumeErr}
+	enqueuer := &fakeResumeEnqueuer{}
+	dispatcher := agentruntime.NewResumeDispatcher(resumer, enqueuer)
+
+	_, err := dispatcher.Dispatch(context.Background(), agentruntime.ResumeEvent{
+		RunID:    "run_02",
+		Revision: 1,
+		Source:   agentruntime.ResumeSourceSchedule,
+	})
+	if !errors.Is(err, resumeErr) {
+		t.Fatalf("Dispatch() error = %v, want %v", err, resumeErr)
+	}
+	if enqueuer.called {
+		t.Fatal("expected enqueue to be skipped when resume fails")
+	}
+}
+
+func TestResumeDispatcherDispatchEnqueuesApprovalWhenResumeOnlyRecordsDecision(t *testing.T) {
+	resumer := &fakeRunResumer{}
+	enqueuer := &fakeResumeEnqueuer{}
+	dispatcher := agentruntime.NewResumeDispatcher(resumer, enqueuer)
+
+	run, err := dispatcher.Dispatch(context.Background(), agentruntime.ResumeEvent{
+		RunID:      "run_03",
+		StepID:     "step_reserved",
+		Revision:   4,
+		Source:     agentruntime.ResumeSourceApproval,
+		Token:      "approval_token",
+		OccurredAt: time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if run != nil {
+		t.Fatalf("Dispatch() run = %+v, want nil when resume only records decision", run)
+	}
+	if !enqueuer.called || !reflect.DeepEqual(enqueuer.seen, resumer.seen) {
+		t.Fatalf("enqueuer saw %+v called=%v, want %+v", enqueuer.seen, enqueuer.called, resumer.seen)
 	}
 }
 
@@ -164,6 +329,95 @@ func TestResumeWorkerRequeuesWhenRunLockIsHeld(t *testing.T) {
 	stats := worker.Stats()
 	if stats["skipped_locked"] != int64(1) {
 		t.Fatalf("skipped_locked stats = %+v", stats)
+	}
+}
+
+func TestResumeWorkerRequeuesDeferredApprovalResume(t *testing.T) {
+	store := newFakeResumeQueueStore()
+	processor := &scriptedRunProcessor{
+		results: []error{agentruntime.ErrResumeDeferred, nil},
+		handled: make(chan agentruntime.RunProcessorInput, 2),
+	}
+	worker := agentruntime.NewResumeWorker(store, processor)
+
+	event := agentruntime.ResumeEvent{
+		RunID:    "run_03",
+		StepID:   "step_reserved",
+		Revision: 5,
+		Source:   agentruntime.ResumeSourceApproval,
+		Token:    "approval_token",
+	}
+	store.Enqueue(event)
+
+	worker.Start()
+	defer worker.Stop()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case handled := <-processor.handled:
+			if handled.Resume == nil || !reflect.DeepEqual(*handled.Resume, event) {
+				t.Fatalf("handled input = %+v, want resume %+v", handled, event)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected deferred approval resume to be retried")
+		}
+	}
+
+	waitForResumeWorkerRelease(t, store, "run_03")
+
+	acquireCalls, releaseCalls, requeueCalls := store.snapshot()
+	if len(acquireCalls) != 2 || acquireCalls[0] != "run_03" || acquireCalls[1] != "run_03" {
+		t.Fatalf("AcquireRunLock() calls = %+v, want [run_03 run_03]", acquireCalls)
+	}
+	if len(releaseCalls) != 2 || releaseCalls[0] != "run_03" || releaseCalls[1] != "run_03" {
+		t.Fatalf("ReleaseRunLock() calls = %+v, want [run_03 run_03]", releaseCalls)
+	}
+	if len(requeueCalls) != 1 || !reflect.DeepEqual(requeueCalls[0], event) {
+		t.Fatalf("EnqueueResumeEvent() calls = %+v, want [%+v]", requeueCalls, event)
+	}
+}
+
+func TestResumeWorkerRequeuesWhenExecutionSlotIsBusy(t *testing.T) {
+	store := newFakeResumeQueueStore()
+	processor := &scriptedRunProcessor{
+		results: []error{agentruntime.ErrRunSlotOccupied},
+		handled: make(chan agentruntime.RunProcessorInput, 2),
+	}
+	worker := agentruntime.NewResumeWorker(store, processor)
+
+	event := agentruntime.ResumeEvent{
+		RunID:    "run_04",
+		Revision: 6,
+		Source:   agentruntime.ResumeSourceCallback,
+		Token:    "cb_token",
+	}
+	store.Enqueue(event)
+
+	worker.Start()
+	defer worker.Stop()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case handled := <-processor.handled:
+			if handled.Resume == nil || !reflect.DeepEqual(*handled.Resume, event) {
+				t.Fatalf("handled input = %+v, want resume %+v", handled, event)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected busy execution slot resume to be retried")
+		}
+	}
+
+	waitForResumeWorkerRelease(t, store, "run_04")
+
+	acquireCalls, releaseCalls, requeueCalls := store.snapshot()
+	if len(acquireCalls) != 2 || acquireCalls[0] != "run_04" || acquireCalls[1] != "run_04" {
+		t.Fatalf("AcquireRunLock() calls = %+v, want [run_04 run_04]", acquireCalls)
+	}
+	if len(releaseCalls) != 2 || releaseCalls[0] != "run_04" || releaseCalls[1] != "run_04" {
+		t.Fatalf("ReleaseRunLock() calls = %+v, want [run_04 run_04]", releaseCalls)
+	}
+	if len(requeueCalls) != 1 || !reflect.DeepEqual(requeueCalls[0], event) {
+		t.Fatalf("EnqueueResumeEvent() calls = %+v, want [%+v]", requeueCalls, event)
 	}
 }
 

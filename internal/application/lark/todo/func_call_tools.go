@@ -120,10 +120,12 @@ type listTodosHandler struct{}
 
 type deleteTodoHandler struct{}
 
-var CreateTodo createTodoHandler
-var UpdateTodo updateTodoHandler
-var ListTodos listTodosHandler
-var DeleteTodo deleteTodoHandler
+var (
+	CreateTodo createTodoHandler
+	UpdateTodo updateTodoHandler
+	ListTodos  listTodosHandler
+	DeleteTodo deleteTodoHandler
+)
 
 func toolResultSpec(name, desc string, params *tools.Param) xcommand.ToolSpec {
 	return xcommand.ToolSpec{
@@ -170,13 +172,9 @@ func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 		return nil
 	}
 
-	userInfo, err := larkuser.GetUserInfoCache(ctx, metaData.ChatID, metaData.OpenID)
+	userName, err := larkuser.GetUserNameCache(ctx, metaData.ChatID, metaData.OpenID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Get user info failed", zap.Error(err))
-	}
-	userName := ""
-	if userInfo != nil && userInfo.Name != nil {
-		userName = *userInfo.Name
 	}
 
 	var dueAt *time.Time

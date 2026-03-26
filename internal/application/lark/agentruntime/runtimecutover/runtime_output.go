@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -19,10 +20,14 @@ const (
 )
 
 type replyOutputRequest struct {
+	OutputKind      agentruntime.AgenticOutputKind
 	Mode            replyOutputMode
+	MentionOpenID   string
 	Message         *larkim.EventMessage
+	TargetMode      agentruntime.InitialReplyTargetMode
 	TargetMessageID string
 	TargetCardID    string
+	ReplyInThread   bool
 	Stream          iter.Seq[*ark_dal.ModelStreamRespReasoning]
 }
 
@@ -35,18 +40,24 @@ type replyOutputResult struct {
 }
 
 type replyOrchestrator struct {
-	agenticSender   func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error)
+	agenticSender   func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error)
+	agenticReplier  func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool, ...larkmsg.AgentStreamingCardOptions) (larkmsg.AgentStreamingCardRefs, error)
 	agenticPatcher  func(context.Context, larkmsg.AgentStreamingCardRefs, iter.Seq[*ark_dal.ModelStreamRespReasoning]) (larkmsg.AgentStreamingCardRefs, error)
 	standardSender  func(context.Context, *larkim.EventMessage, string) (string, error)
 	standardPatcher func(context.Context, string, string) error
 }
 
+// EmitInitialReply implements runtime cutover behavior.
 func (o *replyOrchestrator) EmitInitialReply(ctx context.Context, req agentruntime.InitialReplyEmissionRequest) (agentruntime.InitialReplyEmissionResult, error) {
 	result, err := o.emit(ctx, replyOutputRequest{
+		OutputKind:      req.OutputKind,
 		Mode:            mapInitialReplyOutputMode(req.Mode),
+		MentionOpenID:   req.MentionOpenID,
 		Message:         req.Message,
+		TargetMode:      req.TargetMode,
 		TargetMessageID: req.TargetMessageID,
 		TargetCardID:    req.TargetCardID,
+		ReplyInThread:   req.ReplyInThread,
 		Stream:          req.Stream,
 	})
 	if err != nil {
@@ -70,7 +81,16 @@ func (o *replyOrchestrator) emit(ctx context.Context, req replyOutputRequest) (r
 	stream, snapshot := captureRuntimeReplyStream(req.Stream)
 	switch req.Mode {
 	case replyOutputModeAgentic:
-		if req.TargetCardID != "" && o.agenticPatcher != nil {
+		outputKind := agentruntime.AgenticOutputKindModelReply
+		if req.OutputKind != "" {
+			outputKind = req.OutputKind
+		}
+		cardOptions := larkmsg.AgentStreamingCardOptions{}
+		if outputKind == agentruntime.AgenticOutputKindModelReply {
+			cardOptions.MentionOpenID = req.MentionOpenID
+		}
+		cardOptionArgs := replyOutputCardOptionArgs(cardOptions)
+		if outputKind == agentruntime.AgenticOutputKindModelReply && req.TargetMode == agentruntime.InitialReplyTargetModePatch && req.TargetCardID != "" && o.agenticPatcher != nil {
 			target := larkmsg.AgentStreamingCardRefs{
 				MessageID: req.TargetMessageID,
 				CardID:    req.TargetCardID,
@@ -93,10 +113,24 @@ func (o *replyOrchestrator) emit(ctx context.Context, req replyOutputRequest) (r
 				TargetCardID:    target.CardID,
 			}, nil
 		}
+		if req.TargetMode == agentruntime.InitialReplyTargetModeReply && req.TargetMessageID != "" && o.agenticReplier != nil {
+			replyMessage := cloneReplyOutputMessage(req.Message, req.TargetMessageID)
+			refs, err := o.agenticReplier(ctx, replyMessage, stream, req.ReplyInThread, cardOptionArgs...)
+			if err != nil {
+				return replyOutputResult{}, err
+			}
+			return replyOutputResult{
+				Refs:            refs,
+				Reply:           snapshot(),
+				DeliveryMode:    agentruntime.ReplyDeliveryModeReply,
+				TargetMessageID: req.TargetMessageID,
+				TargetCardID:    req.TargetCardID,
+			}, nil
+		}
 		if o.agenticSender == nil {
 			return replyOutputResult{}, fmt.Errorf("reply orchestrator agentic sender is not configured")
 		}
-		refs, err := o.agenticSender(ctx, req.Message, stream)
+		refs, err := o.agenticSender(ctx, req.Message, stream, cardOptionArgs...)
 		if err != nil {
 			return replyOutputResult{}, err
 		}
@@ -163,6 +197,16 @@ func mapInitialReplyOutputMode(mode agentruntime.InitialReplyOutputMode) replyOu
 	}
 }
 
+func cloneReplyOutputMessage(msg *larkim.EventMessage, messageID string) *larkim.EventMessage {
+	targetMessageID := messageID
+	if msg == nil {
+		return &larkim.EventMessage{MessageId: &targetMessageID}
+	}
+	cloned := *msg
+	cloned.MessageId = &targetMessageID
+	return &cloned
+}
+
 func mapCapturedInitialReply(reply capturedRuntimeReply) agentruntime.CapturedInitialReply {
 	var pending *agentruntime.CapturedInitialPendingCapability
 	if reply.PendingCapability != nil {
@@ -210,4 +254,11 @@ func mapCapturedPendingQueue(queue []capturedPendingCapability) []agentruntime.C
 		result = append(result, pending)
 	}
 	return result
+}
+
+func replyOutputCardOptionArgs(opts larkmsg.AgentStreamingCardOptions) []larkmsg.AgentStreamingCardOptions {
+	if strings.TrimSpace(opts.MentionOpenID) == "" {
+		return nil
+	}
+	return []larkmsg.AgentStreamingCardOptions{opts}
 }

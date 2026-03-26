@@ -121,6 +121,77 @@ func TestAgentStepRepositoryAppendAndListByRun(t *testing.T) {
 	}
 }
 
+func TestAgentRunRepositoryPersistsLivenessFields(t *testing.T) {
+	now := time.Date(2026, 3, 25, 13, 0, 0, 0, time.UTC)
+	heartbeatAt := now
+	leaseExpiresAt := now.Add(30 * time.Second)
+	run := &agentruntime.AgentRun{
+		ID:               "run_liveness",
+		SessionID:        "session_liveness",
+		TriggerType:      agentruntime.TriggerTypeMention,
+		TriggerMessageID: "om_message_liveness",
+		ActorOpenID:      "ou_actor",
+		Status:           agentruntime.RunStatusRunning,
+		WorkerID:         "worker_initial",
+		HeartbeatAt:      &heartbeatAt,
+		LeaseExpiresAt:   &leaseExpiresAt,
+		RepairAttempts:   2,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	entity := runToModel(run)
+	if entity.WorkerID != "worker_initial" {
+		t.Fatalf("model worker_id = %q, want %q", entity.WorkerID, "worker_initial")
+	}
+	if entity.HeartbeatAt.IsZero() || !entity.HeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("model heartbeat_at = %s, want %s", entity.HeartbeatAt, heartbeatAt)
+	}
+	if entity.LeaseExpiresAt.IsZero() || !entity.LeaseExpiresAt.Equal(leaseExpiresAt) {
+		t.Fatalf("model lease_expires_at = %s, want %s", entity.LeaseExpiresAt, leaseExpiresAt)
+	}
+	if entity.RepairAttempts != 2 {
+		t.Fatalf("model repair_attempts = %d, want 2", entity.RepairAttempts)
+	}
+
+	decoded := runFromModel(entity)
+	if decoded.WorkerID != "worker_initial" {
+		t.Fatalf("decoded worker_id = %q, want %q", decoded.WorkerID, "worker_initial")
+	}
+	if decoded.HeartbeatAt == nil || !decoded.HeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("decoded heartbeat_at = %+v, want %s", decoded.HeartbeatAt, heartbeatAt)
+	}
+	if decoded.LeaseExpiresAt == nil || !decoded.LeaseExpiresAt.Equal(leaseExpiresAt) {
+		t.Fatalf("decoded lease_expires_at = %+v, want %s", decoded.LeaseExpiresAt, leaseExpiresAt)
+	}
+	if decoded.RepairAttempts != 2 {
+		t.Fatalf("decoded repair_attempts = %d, want 2", decoded.RepairAttempts)
+	}
+
+	renewedAt := now.Add(15 * time.Second)
+	renewedLeaseAt := renewedAt.Add(30 * time.Second)
+	run.WorkerID = "worker_renewed"
+	run.HeartbeatAt = &renewedAt
+	run.LeaseExpiresAt = &renewedLeaseAt
+	run.RepairAttempts = 3
+	run.UpdatedAt = renewedAt
+	updateMap := runUpdateMap(run)
+	if updateMap["worker_id"] != "worker_renewed" {
+		t.Fatalf("update worker_id = %+v, want %q", updateMap["worker_id"], "worker_renewed")
+	}
+	heartbeatValue, ok := updateMap["heartbeat_at"].(time.Time)
+	if !ok || !heartbeatValue.Equal(renewedAt) {
+		t.Fatalf("update heartbeat_at = %+v, want %s", updateMap["heartbeat_at"], renewedAt)
+	}
+	leaseValue, ok := updateMap["lease_expires_at"].(time.Time)
+	if !ok || !leaseValue.Equal(renewedLeaseAt) {
+		t.Fatalf("update lease_expires_at = %+v, want %s", updateMap["lease_expires_at"], renewedLeaseAt)
+	}
+	if updateMap["repair_attempts"] != int64(3) {
+		t.Fatalf("update repair_attempts = %+v, want 3", updateMap["repair_attempts"])
+	}
+}
+
 func openAgentStoreTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := pgtest.OpenTempSchema(t)

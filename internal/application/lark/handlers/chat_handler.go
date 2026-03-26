@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
@@ -55,9 +56,7 @@ type (
 	chatHandler struct{}
 )
 
-var (
-	Chat = chatHandler{}
-)
+var Chat = chatHandler{}
 
 func (chatHandler) CommandDescription() string {
 	return "与机器人对话"
@@ -92,11 +91,20 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if arg.NoContext {
 		size = 0
 	}
-	accessor := appconfig.NewAccessor(ctx, currentChatID(event, nil), currentOpenID(event, nil))
-	if accessor.ChatMode() == appconfig.ChatModeAgentic {
-		return runAgenticChat(ctx, event, chatType, &size, arg.Input)
+	if resolveChatExecutionMode(metaData) == intent.InteractionModeAgentic {
+		return runAgenticChat(ctx, event, metaData, chatType, &size, arg.Input)
 	}
 	return runStandardChat(ctx, event, chatType, &size, arg.Input)
+}
+
+// resolveChatExecutionMode consumes the mode decided earlier in the message pipeline.
+func resolveChatExecutionMode(meta *xhandler.BaseMetaData) intent.InteractionMode {
+	if meta != nil {
+		if mode, ok := meta.IntentInteractionMode(); ok {
+			return mode
+		}
+	}
+	return intent.InteractionModeStandard
 }
 
 func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
@@ -177,8 +185,8 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chat
 	return nil
 }
 
-func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
-	return agentruntime.NewAgenticChatEntryHandler().Handle(ctx, event, chatType, size, args...)
+func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
+	return agentruntime.NewAgenticChatEntryHandler().Handle(ctx, event, meta, chatType, size, args...)
 }
 
 func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
@@ -221,16 +229,11 @@ func generateStandardChatSeq(ctx context.Context, event *larkim.P2MessageReceive
 	if err != nil {
 		return nil, err
 	}
-	userInfo, err := larkuser.GetUserInfoCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
+	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
 	}
-	userName := ""
-	if userInfo == nil {
-		userName = "NULL"
-	} else {
-		userName = *userInfo.Name
-	}
+
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
 	fullTpl.UserInput = []string{fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())}
 	fullTpl.HistoryRecords = messageList.ToLines()

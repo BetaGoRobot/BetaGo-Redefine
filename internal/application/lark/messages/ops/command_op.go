@@ -30,6 +30,12 @@ func (r *CommandOperator) Name() string {
 	return "CommandOperator"
 }
 
+func (r *CommandOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
+		IntentRecognizeFetcher,
+	}
+}
+
 func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
@@ -63,16 +69,16 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 	meta.SetMainCommand(commands[0])
 	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
 		observation, ok := observeRuntimeMessage(ctx, event, meta)
-		ctx = runtimeContextForObservedMessage(ctx, chatMode(ctx, event, meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
+		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
 	}
-	defer progressReactionHandler(ctx, *event.Event.Message.MessageId)()
+	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
 	err = command.LarkRootCommand.Execute(ctx, event, meta, commands)
 	if err != nil {
 		otel.RecordError(span, err)
 		return handleCommandError(ctx, event, meta, rawCommand, err)
 	}
-	doneReactionHandler(ctx, *event.Event.Message.MessageId, meta)
+	addDoneReactionIfNeeded(ctx, *event.Event.Message.MessageId, meta)
 	return nil
 }
 
