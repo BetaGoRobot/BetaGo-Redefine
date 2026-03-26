@@ -6,6 +6,7 @@ __debug_bin*
 !.codex/skills/
 !.codex/skills/lark-card-debug/
 !.codex/skills/lark-card-debug/**
+.worktrees/
 .cache
 .env
 *.test

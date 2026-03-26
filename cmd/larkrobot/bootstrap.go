@@ -147,9 +147,10 @@ func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	agentruntime.SetRuntimeAgenticCutoverBuilder(runtimecutover.BuildDefaultHandler)
 	// agentruntime.SetRuntimeStandardCutoverBuilder(runtimecutover.BuildDefaultStandardHandler)
 	agentruntime.SetDefaultChatToolProvider(handlers.BuildLarkTools)
+	agentruntime.SetDefaultChatCapabilityToolProvider(handlers.BuildRuntimeCapabilityTools)
 	agentruntime.SetChatGenerationPlanExecutor(agentruntime.NewDefaultChatGenerationPlanExecutor())
 	runtimewire.SetDefaultCapabilityProvider(func() []agentruntime.Capability {
-		return capdef.BuildToolCapabilities(handlers.BuildLarkTools(), nil, (*larkim.P2MessageReceiveV1)(nil))
+		return capdef.BuildToolCapabilities(handlers.BuildRuntimeCapabilityTools(), nil, (*larkim.P2MessageReceiveV1)(nil))
 	})
 	messageProcessor := messages.NewMessageProcessor(appconfig.GetManager())
 	reactionProcessor := reaction.NewReactionProcessor()

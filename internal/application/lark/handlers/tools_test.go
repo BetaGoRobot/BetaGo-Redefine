@@ -124,6 +124,33 @@ func TestLarkToolsExposeSearchHistoryMetadataFilters(t *testing.T) {
 	}
 }
 
+func TestLarkToolsExposeMemberLookupTools(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	allTools := larktools()
+	schedulable := BuildSchedulableTools()
+
+	for _, name := range []string{"get_chat_members", "get_recent_active_members"} {
+		if _, ok := allTools.Get(name); !ok {
+			t.Fatalf("expected lark tools to expose %q", name)
+		}
+		if _, ok := schedulable.Get(name); !ok {
+			t.Fatalf("expected schedulable tools to expose %q", name)
+		}
+	}
+
+	members, _ := allTools.Get("get_chat_members")
+	if _, exists := members.Parameters.Props["limit"]; !exists {
+		t.Fatalf("get_chat_members missing %q parameter", "limit")
+	}
+
+	active, _ := allTools.Get("get_recent_active_members")
+	for _, name := range []string{"top_k", "lookback_messages"} {
+		if _, exists := active.Parameters.Props[name]; !exists {
+			t.Fatalf("get_recent_active_members missing %q parameter", name)
+		}
+	}
+}
+
 func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {

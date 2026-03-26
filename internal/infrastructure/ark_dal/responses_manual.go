@@ -20,6 +20,12 @@ func (r *ResponsesImpl[T]) StreamTurn(
 	ctx context.Context,
 	req ResponseTurnRequest,
 ) (iter.Seq[*ModelStreamRespReasoning], func() ResponseTurnSnapshot, error) {
+	if names := responseToolNames(req.AdditionalTools); len(names) > 0 {
+		logs.L().Ctx(ctx).Info("manual response turn additional tools",
+			zap.Int("tool_count", len(names)),
+			zap.Strings("tool_names", names),
+		)
+	}
 	body, err := r.buildTurnRequest(req)
 	if err != nil {
 		return nil, nil, err
@@ -79,6 +85,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		return nil, fmt.Errorf("response turn model id is required")
 	}
 	reasoningEffort := normalizeResponseTurnReasoningEffort(req.ReasoningEffort)
+	mergedTools := mergeResponseTools(r.tools, req.AdditionalTools)
 
 	var input *responses.ResponsesInput
 	if previousResponseID := strings.TrimSpace(req.PreviousResponseID); previousResponseID != "" {
@@ -111,7 +118,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 			PreviousResponseId: gptr.Of(previousResponseID),
 			Input:              input,
 			Store:              gptr.Of(true),
-			Tools:              r.tools,
+			Tools:              mergedTools,
 			// Text: &responses.ResponsesText{
 			// 	Format: &responses.TextFormat{
 			// 		Type: responses.TextType_json_object,
@@ -139,7 +146,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		Model: modelID,
 		Input: input,
 		Store: gptr.Of(true),
-		Tools: r.tools,
+		Tools: mergedTools,
 		// Text: &responses.ResponsesText{
 		// 	Format: &responses.TextFormat{
 		// 		Type: responses.TextType_json_object,
@@ -150,6 +157,16 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		},
 		Stream: gptr.Of(true),
 	}, nil
+}
+
+func responseToolNames(tools []*responses.ResponsesTool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if name := responseToolName(tool); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func normalizeResponseTurnReasoningEffort(effort responses.ReasoningEffort_Enum) responses.ReasoningEffort_Enum {

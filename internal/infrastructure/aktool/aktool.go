@@ -211,15 +211,15 @@ func (p httpProvider) GetStockSymbolInfo(ctx context.Context, symbol string) (st
 	defer span.End()
 
 	var rows []akshareapi.StockIndividualInfoEmRow
-	err = p.callInto(ctx, akshareapi.EndpointStockIndividualInfoEm, akshareapi.StockIndividualInfoEmParams{
-		Symbol: symbol,
+	err = p.callInto(ctx, akshareapi.EndpointStockIndividualSpotXq, akshareapi.StockIndividualInfoEmParams{
+		Symbol: "sh" + symbol,
 	}, &rows)
 	if err != nil {
 		return "", err
 	}
 
 	for _, item := range rows {
-		if fmt.Sprint(item.Item) == "股票简称" {
+		if fmt.Sprint(item.Item) == "org_short_name_cn" || fmt.Sprint(item.Item) == "股票简称" {
 			return fmt.Sprint(item.Value), nil
 		}
 	}

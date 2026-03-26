@@ -114,6 +114,7 @@ type ResponseTurnRequest struct {
 	Files              []string
 	PreviousResponseID string
 	ToolOutput         *ToolOutputInput
+	AdditionalTools    []*responses.ResponsesTool
 }
 
 type ToolCallIntent struct {
@@ -166,6 +167,47 @@ func (r *ResponsesImpl[T]) WithTools(tools *tools.Impl[T]) *ResponsesImpl[T] {
 	r.tools = append(r.tools, tools.Tools()...)
 	maps.Copy(r.handlers, tools.HandlerMap())
 	return r
+}
+
+func mergeResponseTools(base, extra []*responses.ResponsesTool) []*responses.ResponsesTool {
+	if len(extra) == 0 {
+		return base
+	}
+	merged := make([]*responses.ResponsesTool, 0, len(base)+len(extra))
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	appendTool := func(tool *responses.ResponsesTool) {
+		if tool == nil {
+			return
+		}
+		name := responseToolName(tool)
+		if name != "" {
+			if _, exists := seen[name]; exists {
+				return
+			}
+			seen[name] = struct{}{}
+		}
+		merged = append(merged, tool)
+	}
+	for _, tool := range base {
+		appendTool(tool)
+	}
+	for _, tool := range extra {
+		appendTool(tool)
+	}
+	return merged
+}
+
+func responseToolName(tool *responses.ResponsesTool) string {
+	if tool == nil {
+		return ""
+	}
+	if fn := tool.GetToolFunction(); fn != nil {
+		return strings.TrimSpace(fn.GetName())
+	}
+	if tool.GetToolWebSearch() != nil {
+		return "__web_search__"
+	}
+	return ""
 }
 
 func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Event) {

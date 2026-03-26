@@ -21,6 +21,7 @@ type InitialChatTurnRequest struct {
 	Plan               InitialChatExecutionPlan
 	PreviousResponseID string
 	ToolOutput         *InitialChatToolOutput
+	AdditionalTools    *arktools.Impl[larkim.P2MessageReceiveV1]
 }
 
 // InitialChatToolCall carries chat flow state.
