@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultExecutionLeaseTTL           = 60 * time.Second
+	defaultExecutionLeaseTTL           = 3 * 60 * time.Second
 	defaultExecutionLeaseRenewInterval = 15 * time.Second
 )
 
