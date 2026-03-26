@@ -387,6 +387,15 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 		if len(tmpList) == 0 {
 			continue
 		}
+		currentBot := botidentity.Current()
+		if currentBot.BotOpenID != "" {
+			if strings.TrimSpace(res.OpenID) == "你" {
+				res.OpenID = currentBot.BotOpenID
+			}
+			if strings.TrimSpace(res.OpenID) == currentBot.BotOpenID {
+				res.UserName = "你"
+			}
+		}
 		l := &OpensearchMsgLog{
 			CreateTime:  res.CreateTime,
 			OpenID:      res.OpenID,

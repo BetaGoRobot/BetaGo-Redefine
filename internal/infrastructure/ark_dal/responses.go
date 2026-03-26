@@ -467,11 +467,6 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		Input: input,
 		Store: gptr.Of(true),
 		Tools: r.tools,
-		// Text: &responses.ResponsesText{
-		// 	Format: &responses.TextFormat{
-		// 		Type: responses.TextType_json_object,
-		// 	},
-		// },
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: responses.ReasoningEffort_low,
 		},

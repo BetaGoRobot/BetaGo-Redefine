@@ -65,6 +65,15 @@ func TestIntentRecognizeOperatorFetchSkipsAnalyzerForContinuation(t *testing.T) 
 	if analysis.Reason != "attach_follow_up" {
 		t.Fatalf("Reason = %q, want %q", analysis.Reason, "attach_follow_up")
 	}
+	if analysis.ReplyMode != intent.ReplyModeDirect {
+		t.Fatalf("ReplyMode = %q, want %q", analysis.ReplyMode, intent.ReplyModeDirect)
+	}
+	if analysis.UserWillingness != 100 {
+		t.Fatalf("UserWillingness = %d, want 100", analysis.UserWillingness)
+	}
+	if analysis.InterruptRisk != 0 {
+		t.Fatalf("InterruptRisk = %d, want 0", analysis.InterruptRisk)
+	}
 	if analysis.ReasoningEffort != responses.ReasoningEffort_medium {
 		t.Fatalf("ReasoningEffort = %v, want %v", analysis.ReasoningEffort, responses.ReasoningEffort_medium)
 	}
@@ -97,6 +106,9 @@ func TestIntentRecognizeOperatorFetchUsesAnalyzerForNonContinuationMessage(t *te
 				Reason:          "模型判断复杂请求",
 				SuggestAction:   intent.SuggestActionChat,
 				InteractionMode: intent.InteractionModeAgentic,
+				ReplyMode:       intent.ReplyModePassiveReply,
+				UserWillingness: 72,
+				InterruptRisk:   21,
 				ReasoningEffort: responses.ReasoningEffort_high,
 			}, nil
 		},
@@ -117,6 +129,15 @@ func TestIntentRecognizeOperatorFetchUsesAnalyzerForNonContinuationMessage(t *te
 	}
 	if analysis.InteractionMode != intent.InteractionModeAgentic {
 		t.Fatalf("InteractionMode = %q, want %q", analysis.InteractionMode, intent.InteractionModeAgentic)
+	}
+	if analysis.ReplyMode != intent.ReplyModeDirect {
+		t.Fatalf("ReplyMode = %q, want %q", analysis.ReplyMode, intent.ReplyModeDirect)
+	}
+	if analysis.UserWillingness != 100 {
+		t.Fatalf("UserWillingness = %d, want 100", analysis.UserWillingness)
+	}
+	if analysis.InterruptRisk != 0 {
+		t.Fatalf("InterruptRisk = %d, want 0", analysis.InterruptRisk)
 	}
 	if analysis.ReasoningEffort != responses.ReasoningEffort_high {
 		t.Fatalf("ReasoningEffort = %v, want %v", analysis.ReasoningEffort, responses.ReasoningEffort_high)

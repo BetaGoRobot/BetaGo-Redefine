@@ -109,6 +109,21 @@ func TestLarkToolsIncludeResearchHelpers(t *testing.T) {
 	}
 }
 
+func TestLarkToolsExposeSearchHistoryMetadataFilters(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	allTools := larktools()
+
+	searchHistory, ok := allTools.Get("search_history")
+	if !ok {
+		t.Fatal("expected search_history tool")
+	}
+	for _, name := range []string{"keywords", "user_id", "user_name", "message_type", "start_time", "end_time", "top_k"} {
+		if _, exists := searchHistory.Parameters.Props[name]; !exists {
+			t.Fatalf("search_history missing %q parameter", name)
+		}
+	}
+}
+
 func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	appconfig.SetGetFeaturesFunc(func() []appconfig.Feature {

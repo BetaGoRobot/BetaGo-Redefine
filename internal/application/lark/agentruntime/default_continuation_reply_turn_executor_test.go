@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/bytedance/gg/gresult"
@@ -123,6 +124,27 @@ func TestContinuationReplyTurnSystemPromptConstrainsSingleToolCallPerTurn(t *tes
 	}
 	if !strings.Contains(prompt, "不能同时输出") {
 		t.Fatalf("prompt = %q, want contain mutually-exclusive-output hint", prompt)
+	}
+	if !strings.Contains(prompt, "少用语气词") {
+		t.Fatalf("prompt = %q, want contain filler-word constraint", prompt)
+	}
+	if !strings.Contains(prompt, "不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅") {
+		t.Fatalf("prompt = %q, want contain anthropomorphic-particle constraint", prompt)
+	}
+}
+
+func TestContinuationReplyTurnSystemPromptGuidesMentionsAndThreadFollowUp(t *testing.T) {
+	prompt := continuationReplyTurnSystemPrompt()
+	for _, want := range []string{
+		"只有在需要某个具体成员响应",
+		"@姓名",
+		"<at user_id=\"open_id\">姓名</at>",
+		"优先沿当前线程或当前子话题继续",
+		"不要为了刷存在感乱 @",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
 	}
 }
 
@@ -346,7 +368,7 @@ func TestBuildContinuationReplyTurnUserPromptIncludesResumeSummaryAndPayload(t *
 		WaitingReason:     WaitingReasonSchedule,
 		ResumeSummary:     "定时任务触发：日报窗口已到。",
 		ResumePayloadJSON: []byte(`{"task_id":"task_daily","window":"morning"}`),
-	})
+	}, botidentity.Profile{})
 
 	if !strings.Contains(prompt, "恢复摘要") {
 		t.Fatalf("prompt = %q, want contain %q", prompt, "恢复摘要")
@@ -356,6 +378,27 @@ func TestBuildContinuationReplyTurnUserPromptIncludesResumeSummaryAndPayload(t *
 	}
 	if !strings.Contains(prompt, `"task_id":"task_daily"`) {
 		t.Fatalf("prompt = %q, want contain payload json", prompt)
+	}
+}
+
+func TestBuildContinuationReplyTurnUserPromptIncludesSelfIdentity(t *testing.T) {
+	prompt := buildContinuationReplyTurnUserPrompt(ContinuationReplyTurnRequest{
+		Run: &AgentRun{InputText: "帮我继续日报任务"},
+	}, botidentity.Profile{
+		AppID:     "cli_test_app",
+		BotOpenID: "ou_bot_self",
+		BotName:   "BetaGo",
+	})
+	for _, want := range []string{
+		"机器人身份",
+		"self_open_id: ou_bot_self",
+		"self_name: BetaGo",
+		"sender user_id/open_id 等于 self_open_id",
+		"mention target open_id 等于 self_open_id",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
 	}
 }
 

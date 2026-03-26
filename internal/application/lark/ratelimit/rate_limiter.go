@@ -397,12 +397,13 @@ func (m *Metrics) GetAllChatStats() map[string]*ChatMetrics {
 
 // SmartRateLimiter 智能频控器
 type SmartRateLimiter struct {
-	config         *Config
-	rdb            *redis.Client
-	metrics        *Metrics
-	localCache     map[string]*ChatStats
-	localCacheMu   sync.RWMutex
-	triggerWeights map[TriggerType]float64
+	config             *Config
+	rdb                *redis.Client
+	metrics            *Metrics
+	localCache         map[string]*ChatStats
+	localCacheMu       sync.RWMutex
+	hardTriggerWeights map[TriggerType]float64
+	softTriggerWeights map[TriggerType]float64
 }
 
 // NewSmartRateLimiter 创建智能频控器
@@ -419,12 +420,19 @@ func NewSmartRateLimiter(config *Config, rdb *redis.Client) *SmartRateLimiter {
 		rdb:        rdb,
 		metrics:    NewMetrics(rdb),
 		localCache: make(map[string]*ChatStats),
-		triggerWeights: map[TriggerType]float64{
+		hardTriggerWeights: map[TriggerType]float64{
 			TriggerTypeIntent:   1.0,
-			TriggerTypeRandom:   0.5,
+			TriggerTypeRandom:   0.6,
 			TriggerTypeReaction: 0.3,
 			TriggerTypeRepeat:   0.7,
-			TriggerTypeMention:  0.5,
+			TriggerTypeMention:  0.0,
+		},
+		softTriggerWeights: map[TriggerType]float64{
+			TriggerTypeIntent:   1.0,
+			TriggerTypeRandom:   0.6,
+			TriggerTypeReaction: 0.3,
+			TriggerTypeRepeat:   0.7,
+			TriggerTypeMention:  0.35,
 		},
 	}
 }
@@ -625,13 +633,8 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 		}
 	}
 
-	triggerWeight := s.triggerWeights[triggerType]
-	if triggerWeight == 0 {
-		triggerWeight = 1.0
-	}
-
 	// 检查每小时限制
-	messages1h := s.countMessagesInWindow(recentSends, now, time.Hour, triggerWeight)
+	messages1h := s.countMessagesInWindow(recentSends, now, time.Hour, s.hardTriggerWeights)
 	max1h := s.getAdjustedMaxPerHour(stats)
 	if messages1h >= float64(max1h) {
 		// 应用冷却
@@ -645,9 +648,16 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
 		return false, reason
 	}
+	softMessages1h := s.countMessagesInWindow(recentSends, now, time.Hour, s.softTriggerWeights)
+	softMax1h := s.getSoftLoadMaxPerHour(stats)
+	if softMessages1h >= softMax1h {
+		reason = fmt.Sprintf("近1小时软负载 %.2f 超过阈值 %.2f", softMessages1h, softMax1h)
+		s.recordCheck(ctx, chatID, string(triggerType), false, reason)
+		return false, reason
+	}
 
 	// 检查每天限制
-	messages24h := s.countMessagesInWindow(recentSends, now, 24*time.Hour, triggerWeight)
+	messages24h := s.countMessagesInWindow(recentSends, now, 24*time.Hour, s.hardTriggerWeights)
 	max24h := s.getAdjustedMaxPerDay(stats)
 	if messages24h >= float64(max24h) {
 		// 应用冷却
@@ -663,7 +673,7 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 	}
 
 	// 检查爆发
-	burstCount := s.countMessagesInWindow(recentSends, now, time.Duration(s.config.BurstWindowSeconds)*time.Second, 1.0)
+	burstCount := s.countMessagesInWindow(recentSends, now, time.Duration(s.config.BurstWindowSeconds)*time.Second, nil)
 	if int(burstCount) >= s.config.BurstThreshold {
 		// 应用冷却
 		newLevel := min(cooldownLevel+1, 5)
@@ -746,8 +756,8 @@ func (s *SmartRateLimiter) GetStats(ctx context.Context, chatID string) *ChatSta
 }
 
 func (s *SmartRateLimiter) updateDerivedStats(stats *ChatStats, hourly [24]HourlyStats, recentSends []SendRecord, now time.Time) {
-	stats.TotalMessages24h = int64(s.countMessagesInWindow(recentSends, now, 24*time.Hour, 1.0))
-	stats.TotalMessages1h = int64(s.countMessagesInWindow(recentSends, now, time.Hour, 1.0))
+	stats.TotalMessages24h = int64(s.countMessagesInWindow(recentSends, now, 24*time.Hour, nil))
+	stats.TotalMessages1h = int64(s.countMessagesInWindow(recentSends, now, time.Hour, nil))
 	stats.CurrentActivityScore = s.calculateActivityScore(hourly, now)
 	stats.CurrentBurstFactor = s.calculateBurstFactor(recentSends, now)
 }
@@ -780,8 +790,8 @@ func (s *SmartRateLimiter) calculateBurstFactor(recentSends []SendRecord, now ti
 	shortWindow := 5 * time.Minute
 	longWindow := 1 * time.Hour
 
-	shortCount := s.countMessagesInWindow(recentSends, now, shortWindow, 1.0)
-	longCount := s.countMessagesInWindow(recentSends, now, longWindow, 1.0)
+	shortCount := s.countMessagesInWindow(recentSends, now, shortWindow, nil)
+	longCount := s.countMessagesInWindow(recentSends, now, longWindow, nil)
 
 	if longCount == 0 {
 		return 1.0
@@ -794,7 +804,7 @@ func (s *SmartRateLimiter) calculateBurstFactor(recentSends []SendRecord, now ti
 
 func (s *SmartRateLimiter) getAdjustedMinInterval(stats *ChatStats, triggerType TriggerType) float64 {
 	baseInterval := s.config.MinIntervalSeconds
-	triggerWeight := s.triggerWeights[triggerType]
+	triggerWeight := s.hardWeight(triggerType)
 	if triggerWeight == 0 {
 		triggerWeight = 1.0
 	}
@@ -855,7 +865,11 @@ func (s *SmartRateLimiter) getAdjustedMaxPerDay(stats *ChatStats) int {
 	return int(math.Max(float64(baseMax)*multiplier, 20))
 }
 
-func (s *SmartRateLimiter) countMessagesInWindow(recentSends []SendRecord, now time.Time, window time.Duration, weight float64) float64 {
+func (s *SmartRateLimiter) getSoftLoadMaxPerHour(stats *ChatStats) float64 {
+	return float64(s.getAdjustedMaxPerHour(stats)) * 1.35
+}
+
+func (s *SmartRateLimiter) countMessagesInWindow(recentSends []SendRecord, now time.Time, window time.Duration, weights map[TriggerType]float64) float64 {
 	count := 0.0
 	cutoff := now.Add(-window)
 
@@ -863,14 +877,26 @@ func (s *SmartRateLimiter) countMessagesInWindow(recentSends []SendRecord, now t
 		if send.Timestamp.Before(cutoff) {
 			break
 		}
-		triggerWeight := s.triggerWeights[send.TriggerType]
-		if triggerWeight == 0 {
-			triggerWeight = 1.0
-		}
-		count += weight * triggerWeight
+		triggerWeight := weightFor(weights, send.TriggerType)
+		count += triggerWeight
 	}
 
 	return count
+}
+
+func (s *SmartRateLimiter) hardWeight(triggerType TriggerType) float64 {
+	return weightFor(s.hardTriggerWeights, triggerType)
+}
+
+func weightFor(weights map[TriggerType]float64, triggerType TriggerType) float64 {
+	if weights == nil {
+		return 1.0
+	}
+	triggerWeight, ok := weights[triggerType]
+	if !ok {
+		return 1.0
+	}
+	return triggerWeight
 }
 
 // ==========================================

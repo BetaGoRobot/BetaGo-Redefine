@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -238,20 +240,146 @@ func TestTriggerTypeWeights(t *testing.T) {
 	limiter := NewSmartRateLimiter(config, rdb)
 	chatID := "test_trigger_weights"
 
-	// 测试不同触发类型都允许
-	testCases := []TriggerType{
-		TriggerTypeIntent,
-		TriggerTypeRandom,
-		TriggerTypeReaction,
-		TriggerTypeRepeat,
+	if limiter.hardTriggerWeights[TriggerTypeMention] != 0 {
+		t.Fatalf("mention hard weight = %v, want 0", limiter.hardTriggerWeights[TriggerTypeMention])
+	}
+	if limiter.softTriggerWeights[TriggerTypeMention] <= 0 {
+		t.Fatalf("mention soft weight = %v, want > 0", limiter.softTriggerWeights[TriggerTypeMention])
+	}
+	if limiter.hardTriggerWeights[TriggerTypeIntent] <= limiter.hardTriggerWeights[TriggerTypeRandom] {
+		t.Fatalf("passive reply hard weight = %v, active interject hard weight = %v; passive should be heavier", limiter.hardTriggerWeights[TriggerTypeIntent], limiter.hardTriggerWeights[TriggerTypeRandom])
 	}
 
-	for _, tt := range testCases {
-		allowed, reason := limiter.Allow(ctx, chatID, tt)
-		if !allowed {
-			t.Errorf("触发类型 %s 应该允许: %s", tt, reason)
-		}
-		limiter.Record(ctx, chatID, tt)
-		time.Sleep(50 * time.Millisecond)
+	allowed, reason := limiter.Allow(ctx, chatID, TriggerTypeIntent)
+	if !allowed {
+		t.Fatalf("passive reply should be allowed initially: %s", reason)
+	}
+	limiter.Record(ctx, chatID, TriggerTypeIntent)
+	time.Sleep(50 * time.Millisecond)
+
+	allowed, reason = limiter.Allow(ctx, chatID, TriggerTypeRandom)
+	if !allowed {
+		t.Fatalf("active interject should be allowed initially: %s", reason)
+	}
+}
+
+func TestMentionContributesSoftLoadButNotHardBudget(t *testing.T) {
+	s, rdb := setupTestRedis(t)
+	defer s.Close()
+
+	ctx := context.Background()
+	config := &Config{
+		MaxMessagesPerHour:  1,
+		MaxMessagesPerDay:   100,
+		MinIntervalSeconds:  0.0,
+		CooldownBaseSeconds: 1.0,
+		MaxCooldownSeconds:  10.0,
+		BurstThreshold:      100,
+	}
+
+	limiter := NewSmartRateLimiter(config, rdb)
+	chatID := "test_chat_soft_load"
+
+	limiter.Record(ctx, chatID, TriggerTypeMention)
+	allowed, reason := limiter.Allow(ctx, chatID, TriggerTypeIntent)
+	if !allowed {
+		t.Fatalf("single mention should not consume hard passive budget: %s", reason)
+	}
+
+	for i := 0; i < 3; i++ {
+		limiter.Record(ctx, chatID, TriggerTypeMention)
+	}
+	allowed, reason = limiter.Allow(ctx, chatID, TriggerTypeIntent)
+	if allowed {
+		t.Fatal("expected repeated mention traffic to eventually trigger soft-load blocking")
+	}
+	if reason == "" {
+		t.Fatal("expected soft-load block reason")
+	}
+}
+
+func TestDeciderUsesConfigDrivenThresholdAndReplyMode(t *testing.T) {
+	s, rdb := setupTestRedis(t)
+	defer s.Close()
+
+	ctx := context.Background()
+	limiter := NewSmartRateLimiter(&Config{
+		MaxMessagesPerHour:  100,
+		MaxMessagesPerDay:   100,
+		MinIntervalSeconds:  0.0,
+		CooldownBaseSeconds: 1.0,
+		MaxCooldownSeconds:  10.0,
+		BurstThreshold:      100,
+	}, rdb)
+	decider := NewDecider(limiter)
+	decider.intentReplyThreshold = func(context.Context, string, string) int { return 90 }
+	decider.intentFallbackRate = func(context.Context, string, string) int { return 0 }
+	decider.randomFloat64 = func() float64 { return 0.99 }
+
+	analysis := &intent.IntentAnalysis{
+		IntentType:      intent.IntentTypeChat,
+		NeedReply:       true,
+		ReplyConfidence: 72,
+		ReplyMode:       intent.ReplyModePassiveReply,
+		UserWillingness: 62,
+		InterruptRisk:   38,
+	}
+	decision := decider.DecideIntentReply(ctx, "oc_chat", "ou_actor", analysis)
+	if decision.Allowed {
+		t.Fatalf("expected threshold-driven rejection, got allowed with reason: %s", decision.Reason)
+	}
+
+	decider.intentReplyThreshold = func(context.Context, string, string) int { return 60 }
+	decision = decider.DecideIntentReply(ctx, "oc_chat", "ou_actor", analysis)
+	if !decision.Allowed {
+		t.Fatalf("expected lower configured threshold to allow reply, got: %s", decision.Reason)
+	}
+	if decision.TriggerType != TriggerTypeIntent {
+		t.Fatalf("TriggerType = %q, want %q", decision.TriggerType, TriggerTypeIntent)
+	}
+
+	decision = decider.DecideIntentReply(ctx, "oc_chat", "ou_actor", &intent.IntentAnalysis{
+		NeedReply:       true,
+		ReplyMode:       intent.ReplyModeActiveInterject,
+		ReplyConfidence: 95,
+		UserWillingness: 90,
+		InterruptRisk:   10,
+	})
+	if !decision.Allowed {
+		t.Fatalf("expected high-confidence active interject to pass, got: %s", decision.Reason)
+	}
+	if decision.TriggerType != TriggerTypeRandom {
+		t.Fatalf("active interject trigger = %q, want %q", decision.TriggerType, TriggerTypeRandom)
+	}
+}
+
+func TestDeciderDirectReplyBypassesPassiveRateLimit(t *testing.T) {
+	s, rdb := setupTestRedis(t)
+	defer s.Close()
+
+	ctx := context.Background()
+	limiter := NewSmartRateLimiter(&Config{
+		MaxMessagesPerHour:  1,
+		MaxMessagesPerDay:   1,
+		MinIntervalSeconds:  0.0,
+		CooldownBaseSeconds: 1.0,
+		MaxCooldownSeconds:  10.0,
+		BurstThreshold:      100,
+	}, rdb)
+	limiter.Record(ctx, "oc_chat", TriggerTypeIntent)
+
+	decider := NewDecider(limiter)
+	decider.intentReplyThreshold = appconfig.GetIntentReplyThreshold
+	decider.intentFallbackRate = appconfig.GetIntentFallbackRate
+	decision := decider.DecideIntentReply(ctx, "oc_chat", "ou_actor", &intent.IntentAnalysis{
+		NeedReply:       true,
+		ReplyMode:       intent.ReplyModeDirect,
+		ReplyConfidence: 100,
+	})
+	if !decision.Allowed {
+		t.Fatalf("direct reply should bypass passive rate limit: %s", decision.Reason)
+	}
+	if decision.TriggerType != TriggerTypeMention {
+		t.Fatalf("TriggerType = %q, want %q", decision.TriggerType, TriggerTypeMention)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	capdef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/capability"
 	chatflow "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/chatflow"
 	message "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/message"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 
@@ -38,6 +39,7 @@ var (
 	defaultAgenticInitialChatPlanBuilder = chatflow.BuildAgenticChatExecutionPlan
 	defaultInitialChatTurnExecutor       = chatflow.ExecuteInitialChatTurn
 	defaultInitialChatStreamFinalizer    = chatflow.FinalizeInitialChatStream
+	continuationReplyBotProfileLoader    = botidentity.CurrentProfile
 )
 
 func snapshotDefaultRuntimeExecutorDeps() defaultRuntimeExecutorDeps {
@@ -75,7 +77,7 @@ func (e defaultChatGenerationPlanExecutor) Generate(ctx context.Context, event *
 	var tools *arktools.Impl[larkim.P2MessageReceiveV1]
 	if e.deps.toolProvider != nil {
 		tools = decorateRuntimeChatTools(e.deps.toolProvider())
-}
+	}
 	if plan.Mode.Normalize() == appconfig.ChatModeAgentic {
 		return generateAgenticChatPlan(ctx, event, plan, tools, e.deps)
 	}
@@ -560,7 +562,7 @@ func (e *defaultContinuationReplyTurnExecutor) ExecuteContinuationReplyTurn(ctx 
 				ChatID:    runtime.chatID,
 				OpenID:    runtime.openID,
 				Prompt:    continuationReplyTurnSystemPrompt(),
-				UserInput: buildContinuationReplyTurnUserPrompt(req),
+				UserInput: buildContinuationReplyTurnUserPrompt(req, continuationReplyBotProfileLoader(ctx)),
 				Tools:     runtime.tools,
 			},
 		},
@@ -698,12 +700,21 @@ func continuationReplyTurnSystemPrompt() string {
 - reply: 给用户看的最终续写回复
 - reply 默认像群里正常成员接话，不要写成系统播报、审批回执或工单状态单
 - 能直接说结果就直接说结果，非必要不要拉长
+- 只有在需要某个具体成员响应、确认、补充或接手时，才 @ 对方；普通续写不要为了刷存在感乱 @
+- 如果明确知道对方 open_id，可直接写 <at user_id="open_id">姓名</at>；如果只知道名字，可写 @姓名，系统会按当前群成员匹配
+- 如果当前已经在某条消息、线程或子话题里继续，优先沿当前线程或当前子话题继续，不要无意义重复 @
+- 少用语气词。不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅，避免拟人感过强
 `)
 }
 
-func buildContinuationReplyTurnUserPrompt(req ContinuationReplyTurnRequest) string {
+func buildContinuationReplyTurnUserPrompt(req ContinuationReplyTurnRequest, selfProfile botidentity.Profile) string {
 	var builder strings.Builder
 	builder.WriteString("请继续这次 agent runtime 恢复。\n")
+	if identityLines := botidentity.PromptIdentityLines(selfProfile); len(identityLines) > 0 {
+		builder.WriteString("机器人身份:\n")
+		builder.WriteString(replyTurnLinesBlock(identityLines))
+		builder.WriteString("\n")
+	}
 	builder.WriteString("原始目标:\n")
 	builder.WriteString(replyTurnTextBlock(coalesceString(req.Run.Goal, req.Run.InputText)))
 	builder.WriteString("\n恢复来源:\n")
@@ -726,6 +737,19 @@ func buildContinuationReplyTurnUserPrompt(req ContinuationReplyTurnRequest) stri
 	builder.WriteString(replyTurnTextBlock(req.ReplyFallback))
 	builder.WriteString("\n请基于这些信息判断：如果需要补充工具，就只发起一个 function call；如果不需要，就输出最终 JSON。不要同时输出两种格式。")
 	return builder.String()
+}
+
+func replyTurnLinesBlock(lines []string) string {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	if len(filtered) == 0 {
+		return "<empty>"
+	}
+	return strings.Join(filtered, "\n")
 }
 
 func resolveCapabilityReplyTurnToolOutput(capabilityName string, result CapabilityResult) string {

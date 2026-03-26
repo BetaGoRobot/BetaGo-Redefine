@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	message "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/message"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
@@ -31,6 +32,7 @@ import (
 
 type agenticChatPromptContext struct {
 	UserRequest  string
+	SelfProfile  botidentity.Profile
 	HistoryLines []string
 	ContextLines []string
 	Topics       []string
@@ -247,6 +249,7 @@ func buildAgenticChatPromptContext(
 
 	return messageList, agenticChatPromptContext{
 		UserRequest:  userRequest,
+		SelfProfile:  chatPromptBotProfileLoader(ctx),
 		HistoryLines: historyLines,
 		ContextLines: trimNonEmptyLines(contextLines),
 		Topics:       utils.Dedup(topics),
@@ -860,12 +863,16 @@ func agenticChatSystemPrompt() string {
 - 优先直接回答用户此刻最关心的点，能一两句说清就不要拉长
 - 除非用户明确要求，不要动不动就上小标题、长列表、总结腔
 - 用户在寒暄、追问、补一句时，先自然接话，不要强行升级成任务汇报
+- 少用语气词。不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅，避免拟人感过强
 
 行为要求：
 - 不要把“我是 AI/模型/助手”的自我介绍塞进 reply
 - 不要为了显得完整而编造工具结果
 - 如果已有上下文足够，不要机械调用工具
 - 如果工具结果不足以完成任务，要明确说清还缺什么
+- 只有在需要某个具体成员响应、确认、补充或接手时，才 @ 对方；普通群回复不要为了刷存在感乱 @
+- 如果明确知道对方 open_id，可直接写 <at user_id="open_id">姓名</at>；如果只知道名字，可写 @姓名，系统会按当前群成员匹配
+- 如果当前已经在某条消息、线程或子话题里继续，优先沿当前线程或当前子话题继续；只有需要把特定成员拉进来时才额外 @
 - 对实时数据、行情、天气、历史检索、资料查找这类需要事实的问题，不要凭空回答，优先调用查询工具
 - 对调研、写综述、要出处、要链接、比较多个来源这类 research 请求，不要在第一次查询后直接结束。通常应先完成“搜索 -> 阅读 -> 抽取证据 -> 整理来源 -> 再总结”。
 - 研究型请求优先用内置 web_search 做来源发现；需要打开网页正文时用 research_read_url；需要从长文里抽取答案和引文时用 research_extract_evidence；需要整理去重后的引用列表时用 research_source_ledger。
@@ -878,6 +885,11 @@ func agenticChatSystemPrompt() string {
 func buildAgenticChatUserPrompt(ctx agenticChatPromptContext) string {
 	var builder strings.Builder
 	builder.WriteString("请继续处理这次 agentic 聊天请求。\n")
+	if identityLines := botidentity.PromptIdentityLines(ctx.SelfProfile); len(identityLines) > 0 {
+		builder.WriteString("机器人身份:\n")
+		builder.WriteString(agenticChatLinesBlock(identityLines))
+		builder.WriteString("\n")
+	}
 	builder.WriteString("对话边界:\n")
 	builder.WriteString(agenticChatTextBlock(agenticChatBoundaryHint(ctx)))
 	builder.WriteString("\n回复风格:\n")
@@ -916,9 +928,11 @@ func agenticChatStyleHints(ctx agenticChatPromptContext) []string {
 		"默认用自然、直接、克制的中文短答，像群里正常接话。",
 		"能先给结论就先给结论，不要先铺垫自己怎么想。",
 		"不要使用客服腔、汇报腔、过度礼貌模板。",
+		"少用语气词，不要为了显得熟络而频繁写“哟”“呀”“啦”这类口头禅。",
+		"需要点名某个成员时再 @；如果只是正常续聊或面向全群反馈，就不要乱 @。",
 	}
 	if ctx.ReplyScoped {
-		hints = append(hints, "这是接某条消息的补充或追问，优先延续当前子话题，不要重写整段背景。")
+		hints = append(hints, "这是接某条消息的补充或追问，优先延续当前子话题，不要重写整段背景，也不要为了点名而另起一条乱 @。")
 	}
 	return hints
 }

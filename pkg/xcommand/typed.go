@@ -31,7 +31,7 @@ type (
 		Name   string
 		Desc   string
 		Params *arktools.Param
-		Result ToolResultEncoder
+		Result ToolResultEncoder `json:"-"`
 	}
 )
 
