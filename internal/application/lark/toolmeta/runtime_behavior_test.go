@@ -67,6 +67,30 @@ func TestLookupRuntimeBehaviorForAgenticTools(t *testing.T) {
 			wantApprovalTitle:     "审批发送股票走势卡",
 		},
 		{
+			name:                 "finance_tool_discover",
+			wantSideEffectLevel:  SideEffectLevelNone,
+			wantRequiresApproval: false,
+			wantCompatibleOutput: false,
+		},
+		{
+			name:                 "finance_market_data_get",
+			wantSideEffectLevel:  SideEffectLevelNone,
+			wantRequiresApproval: false,
+			wantCompatibleOutput: false,
+		},
+		{
+			name:                 "finance_news_get",
+			wantSideEffectLevel:  SideEffectLevelNone,
+			wantRequiresApproval: false,
+			wantCompatibleOutput: false,
+		},
+		{
+			name:                 "economy_indicator_get",
+			wantSideEffectLevel:  SideEffectLevelNone,
+			wantRequiresApproval: false,
+			wantCompatibleOutput: false,
+		},
+		{
 			name:                  "talkrate_get",
 			wantSideEffectLevel:   SideEffectLevelChatWrite,
 			wantRequiresApproval:  true,

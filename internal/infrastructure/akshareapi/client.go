@@ -16,8 +16,10 @@ import (
 	"github.com/bytedance/sonic"
 )
 
-const publicAPIURI = "/api/public/"
-const defaultMaxAttempts = 3
+const (
+	publicAPIURI       = "/api/public/"
+	defaultMaxAttempts = 5
+)
 
 type Client struct {
 	baseURL    string

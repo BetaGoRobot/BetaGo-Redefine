@@ -73,7 +73,7 @@ func newAgentStreamingCard(opts AgentStreamingCardOptions) RawCard {
 		Divider(),
 		agentStreamingMarkdown(agentReplyPlaceholder, agentReplyElementID),
 	)
-	return NewCardV2("Agentic Chat", elements, CardV2Options{
+	return NewCardV2("Agentic Chat For You", elements, CardV2Options{
 		HeaderTemplate:  "wathet",
 		VerticalSpacing: "8px",
 		Padding:         "12px",

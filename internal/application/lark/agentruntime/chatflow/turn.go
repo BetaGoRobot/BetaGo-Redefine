@@ -12,6 +12,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 // ExecuteInitialChatTurn implements chat flow behavior.
@@ -39,6 +40,10 @@ func ExecuteInitialChatTurn(ctx context.Context, req InitialChatTurnRequest) (In
 	}
 
 	turn := ark_dal.New(plan.ChatID, plan.OpenID, plan.Event).WithTools(plan.Tools)
+	var additionalTools []*responses.ResponsesTool
+	if req.AdditionalTools != nil {
+		additionalTools = req.AdditionalTools.Tools()
+	}
 	stream, snapshot, err := turn.StreamTurn(ctx, ark_dal.ResponseTurnRequest{
 		ModelID:            strings.TrimSpace(plan.ModelID),
 		SystemPrompt:       plan.Prompt,
@@ -47,6 +52,7 @@ func ExecuteInitialChatTurn(ctx context.Context, req InitialChatTurnRequest) (In
 		Files:              append([]string(nil), plan.Files...),
 		PreviousResponseID: strings.TrimSpace(req.PreviousResponseID),
 		ToolOutput:         mapInitialChatToolOutput(req.ToolOutput),
+		AdditionalTools:    additionalTools,
 	})
 	if err != nil {
 		return InitialChatTurnResult{}, err

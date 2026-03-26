@@ -14,6 +14,18 @@ func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	return ins
 }
 
+func BuildInjectableFinanceTools() *tools.Impl[larkim.P2MessageReceiveV1] {
+	ins := tools.New[larkim.P2MessageReceiveV1]()
+	registerInjectableFinanceTools(ins)
+	return ins
+}
+
+func BuildRuntimeCapabilityTools() *tools.Impl[larkim.P2MessageReceiveV1] {
+	ins := BuildLarkTools()
+	registerInjectableFinanceTools(ins)
+	return ins
+}
+
 func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	return BuildLarkTools()
 }
@@ -41,10 +53,13 @@ func buildTools(enableWebSearch, includeDebugRevert, includeScheduleTools, allow
 }
 
 func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetChatOverride bool) {
+	xcommand.RegisterTool(ins, ChatMembers)
+	xcommand.RegisterTool(ins, RecentActiveMembers)
 	xcommand.RegisterTool(ins, SearchHistory)
 	xcommand.RegisterTool(ins, ResearchReadURL)
 	xcommand.RegisterTool(ins, ResearchExtractEvidence)
 	xcommand.RegisterTool(ins, ResearchSourceLedger)
+	xcommand.RegisterTool(ins, FinanceToolDiscover)
 	xcommand.RegisterTool(ins, MusicSearch)
 	xcommand.RegisterTool(ins, Mute)
 	xcommand.RegisterTool(ins, Gold)
@@ -83,4 +98,10 @@ func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetCh
 		xcommand.RegisterTool(ins, ScheduledSendMessage)
 	}
 	todoapp.RegisterTools(ins)
+}
+
+func registerInjectableFinanceTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
+	xcommand.RegisterTool(ins, FinanceMarketData)
+	xcommand.RegisterTool(ins, FinanceNews)
+	xcommand.RegisterTool(ins, EconomyIndicator)
 }

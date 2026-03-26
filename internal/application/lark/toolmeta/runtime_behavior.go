@@ -239,6 +239,18 @@ var runtimeBehaviors = map[string]RuntimeBehavior{
 	"research_source_ledger": {
 		SideEffectLevel: SideEffectLevelNone,
 	},
+	"finance_tool_discover": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"finance_market_data_get": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"finance_news_get": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"economy_indicator_get": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
 	"config_set": {
 		SideEffectLevel: SideEffectLevelAdminWrite,
 		Approval: &ApprovalBehavior{

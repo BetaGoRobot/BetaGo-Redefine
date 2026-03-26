@@ -27,6 +27,7 @@ type defaultChatGenerationPlanExecutor struct {
 type defaultRuntimeExecutorDeps struct {
 	chatGenerationExecutor     ChatGenerationPlanExecutor
 	toolProvider               func() *arktools.Impl[larkim.P2MessageReceiveV1]
+	capabilityToolProvider     func() *arktools.Impl[larkim.P2MessageReceiveV1]
 	initialPlanBuilder         func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error)
 	agenticInitialPlanBuilder  func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error)
 	initialChatTurnExecutor    func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
@@ -35,6 +36,7 @@ type defaultRuntimeExecutorDeps struct {
 
 var (
 	defaultChatToolProvider              = func() *arktools.Impl[larkim.P2MessageReceiveV1] { return nil }
+	defaultChatCapabilityToolProvider    = func() *arktools.Impl[larkim.P2MessageReceiveV1] { return nil }
 	defaultInitialChatPlanBuilder        = chatflow.BuildInitialChatExecutionPlan
 	defaultAgenticInitialChatPlanBuilder = chatflow.BuildAgenticChatExecutionPlan
 	defaultInitialChatTurnExecutor       = chatflow.ExecuteInitialChatTurn
@@ -46,6 +48,7 @@ func snapshotDefaultRuntimeExecutorDeps() defaultRuntimeExecutorDeps {
 	return defaultRuntimeExecutorDeps{
 		chatGenerationExecutor:     chatGenerationPlanExecutor,
 		toolProvider:               defaultChatToolProvider,
+		capabilityToolProvider:     defaultChatCapabilityToolProvider,
 		initialPlanBuilder:         defaultInitialChatPlanBuilder,
 		agenticInitialPlanBuilder:  defaultAgenticInitialChatPlanBuilder,
 		initialChatTurnExecutor:    defaultInitialChatTurnExecutor,
@@ -60,6 +63,14 @@ func SetDefaultChatToolProvider(provider func() *arktools.Impl[larkim.P2MessageR
 		return
 	}
 	defaultChatToolProvider = provider
+}
+
+func SetDefaultChatCapabilityToolProvider(provider func() *arktools.Impl[larkim.P2MessageReceiveV1]) {
+	if provider == nil {
+		defaultChatCapabilityToolProvider = func() *arktools.Impl[larkim.P2MessageReceiveV1] { return nil }
+		return
+	}
+	defaultChatCapabilityToolProvider = provider
 }
 
 // NewDefaultChatGenerationPlanExecutor implements agent runtime behavior.
@@ -121,9 +132,16 @@ type chatGenerationVariant struct {
 func buildChatGenerationLoopOptions(plan ChatGenerationPlan, tools *arktools.Impl[larkim.P2MessageReceiveV1], variant chatGenerationVariant, deps defaultRuntimeExecutorDeps) RuntimeInitialChatLoopOptions {
 	builder := variant.planBuilder
 	turnExecutor := deps.initialChatTurnExecutor
+	capabilityTools := tools
+	if deps.capabilityToolProvider != nil {
+		if provided := deps.capabilityToolProvider(); provided != nil {
+			capabilityTools = provided
+		}
+	}
 	return RuntimeInitialChatLoopOptions{
 		Plan:                plan,
 		Tools:               tools,
+		CapabilityTools:     capabilityTools,
 		Builder:             builder,
 		TurnExecutor:        turnExecutor,
 		DefaultToolTurns:    variant.toolTurns,
@@ -176,12 +194,13 @@ type initialChatToolExecutionResult struct {
 
 // CapabilityReplyTurnRequest carries agent runtime state.
 type CapabilityReplyTurnRequest struct {
-	Session  *AgentSession        `json:"-"`
-	Run      *AgentRun            `json:"-"`
-	Step     *AgentStep           `json:"-"`
-	Input    CapabilityCallInput  `json:"input"`
-	Result   CapabilityResult     `json:"result"`
-	Recorder InitialTraceRecorder `json:"-"`
+	Session         *AgentSession                             `json:"-"`
+	Run             *AgentRun                                 `json:"-"`
+	Step            *AgentStep                                `json:"-"`
+	Input           CapabilityCallInput                       `json:"input"`
+	Result          CapabilityResult                          `json:"result"`
+	Recorder        InitialTraceRecorder                      `json:"-"`
+	AdditionalTools *arktools.Impl[larkim.P2MessageReceiveV1] `json:"-"`
 }
 
 // CapabilityReplyTurnResult carries agent runtime state.
@@ -208,18 +227,19 @@ func WithCapabilityReplyTurnExecutor(executor CapabilityReplyTurnExecutor) Conti
 
 // ContinuationReplyTurnRequest carries agent runtime state.
 type ContinuationReplyTurnRequest struct {
-	Session                 *AgentSession        `json:"-"`
-	Run                     *AgentRun            `json:"-"`
-	Source                  ResumeSource         `json:"source,omitempty"`
-	WaitingReason           WaitingReason        `json:"waiting_reason,omitempty"`
-	PreviousStepKind        StepKind             `json:"previous_step_kind,omitempty"`
-	PreviousStepTitle       string               `json:"previous_step_title,omitempty"`
-	PreviousStepExternalRef string               `json:"previous_step_external_ref,omitempty"`
-	ResumeSummary           string               `json:"resume_summary,omitempty"`
-	ResumePayloadJSON       []byte               `json:"resume_payload_json,omitempty"`
-	ThoughtFallback         string               `json:"thought_fallback,omitempty"`
-	ReplyFallback           string               `json:"reply_fallback,omitempty"`
-	Recorder                InitialTraceRecorder `json:"-"`
+	Session                 *AgentSession                             `json:"-"`
+	Run                     *AgentRun                                 `json:"-"`
+	Source                  ResumeSource                              `json:"source,omitempty"`
+	WaitingReason           WaitingReason                             `json:"waiting_reason,omitempty"`
+	PreviousStepKind        StepKind                                  `json:"previous_step_kind,omitempty"`
+	PreviousStepTitle       string                                    `json:"previous_step_title,omitempty"`
+	PreviousStepExternalRef string                                    `json:"previous_step_external_ref,omitempty"`
+	ResumeSummary           string                                    `json:"resume_summary,omitempty"`
+	ResumePayloadJSON       []byte                                    `json:"resume_payload_json,omitempty"`
+	ThoughtFallback         string                                    `json:"thought_fallback,omitempty"`
+	ReplyFallback           string                                    `json:"reply_fallback,omitempty"`
+	Recorder                InitialTraceRecorder                      `json:"-"`
+	AdditionalTools         *arktools.Impl[larkim.P2MessageReceiveV1] `json:"-"`
 }
 
 // ContinuationReplyTurnResult carries agent runtime state.
@@ -487,12 +507,14 @@ func (e *defaultCapabilityReplyTurnExecutor) ExecuteCapabilityReplyTurn(ctx cont
 				CallID: callID,
 				Output: resolveCapabilityReplyTurnToolOutput(req.Step.CapabilityName, req.Result),
 			},
+			AdditionalTools: req.AdditionalTools,
 		},
-		ToolTurns:    chatflow.ResolveResearchToolTurnLimit(coalesceString(req.Run.Goal, req.Run.InputText)),
-		BaseRequest:  baseRequest,
-		Registry:     runtime.registry,
-		Recorder:     req.Recorder,
-		TurnExecutor: e.deps.initialChatTurnExecutor,
+		ToolTurns:       chatflow.ResolveResearchToolTurnLimit(coalesceString(req.Run.Goal, req.Run.InputText)),
+		BaseRequest:     baseRequest,
+		Registry:        runtime.registry,
+		CapabilityTools: runtime.capabilityTools,
+		Recorder:        req.Recorder,
+		TurnExecutor:    e.deps.initialChatTurnExecutor,
 	})
 	if err != nil {
 		return CapabilityReplyTurnResult{}, err
@@ -517,11 +539,12 @@ type replyTurnModelSelection struct {
 }
 
 type replyTurnRuntime struct {
-	chatID   string
-	openID   string
-	modelID  string
-	tools    *arktools.Impl[larkim.P2MessageReceiveV1]
-	registry *CapabilityRegistry
+	chatID          string
+	openID          string
+	modelID         string
+	tools           *arktools.Impl[larkim.P2MessageReceiveV1]
+	capabilityTools *arktools.Impl[larkim.P2MessageReceiveV1]
+	registry        *CapabilityRegistry
 }
 
 // NewDefaultContinuationReplyTurnExecutor implements agent runtime behavior.
@@ -565,17 +588,19 @@ func (e *defaultContinuationReplyTurnExecutor) ExecuteContinuationReplyTurn(ctx 
 				UserInput: buildContinuationReplyTurnUserPrompt(req, continuationReplyBotProfileLoader(ctx)),
 				Tools:     runtime.tools,
 			},
+			AdditionalTools: req.AdditionalTools,
 		},
 		ToolTurns: chatflow.ResolveResearchToolTurnLimit(
 			coalesceString(req.Run.Goal, req.Run.InputText),
 			req.ResumeSummary,
 			strings.TrimSpace(string(req.ResumePayloadJSON)),
 		),
-		BaseRequest:  baseRequest,
-		Registry:     runtime.registry,
-		FallbackPlan: CapabilityReplyPlan{ThoughtText: strings.TrimSpace(req.ThoughtFallback), ReplyText: strings.TrimSpace(req.ReplyFallback)},
-		Recorder:     req.Recorder,
-		TurnExecutor: e.deps.initialChatTurnExecutor,
+		BaseRequest:     baseRequest,
+		Registry:        runtime.registry,
+		CapabilityTools: runtime.capabilityTools,
+		FallbackPlan:    CapabilityReplyPlan{ThoughtText: strings.TrimSpace(req.ThoughtFallback), ReplyText: strings.TrimSpace(req.ReplyFallback)},
+		Recorder:        req.Recorder,
+		TurnExecutor:    e.deps.initialChatTurnExecutor,
 	})
 	if err != nil {
 		return ContinuationReplyTurnResult{}, err
@@ -610,6 +635,12 @@ func resolveReplyTurnRuntime(
 	if tools == nil {
 		return replyTurnRuntime{}, false
 	}
+	capabilityTools := tools
+	if deps.capabilityToolProvider != nil {
+		if provided := deps.capabilityToolProvider(); provided != nil {
+			capabilityTools = provided
+		}
+	}
 	if selectModel == nil {
 		selectModel = selectReplyTurnModel
 	}
@@ -618,11 +649,12 @@ func resolveReplyTurnRuntime(
 		return replyTurnRuntime{}, false
 	}
 	return replyTurnRuntime{
-		chatID:   chatID,
-		openID:   openID,
-		modelID:  modelID,
-		tools:    tools,
-		registry: buildInitialChatCapabilityRegistry(nil, tools),
+		chatID:          chatID,
+		openID:          openID,
+		modelID:         modelID,
+		tools:           tools,
+		capabilityTools: capabilityTools,
+		registry:        buildInitialChatCapabilityRegistry(nil, capabilityTools),
 	}, true
 }
 
@@ -862,13 +894,14 @@ func buildQueuedCapabilityCallFromTrace(baseRequest CapabilityRequest, trace ark
 
 // ReplyTurnLoopRequest carries agent runtime state.
 type ReplyTurnLoopRequest struct {
-	TurnRequest  InitialChatTurnRequest
-	ToolTurns    int
-	TurnExecutor func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
-	BaseRequest  CapabilityRequest
-	Registry     *CapabilityRegistry
-	FallbackPlan CapabilityReplyPlan
-	Recorder     InitialTraceRecorder
+	TurnRequest     InitialChatTurnRequest
+	ToolTurns       int
+	TurnExecutor    func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
+	BaseRequest     CapabilityRequest
+	Registry        *CapabilityRegistry
+	CapabilityTools *arktools.Impl[larkim.P2MessageReceiveV1]
+	FallbackPlan    CapabilityReplyPlan
+	Recorder        InitialTraceRecorder
 }
 
 // ReplyTurnLoopResult carries agent runtime state.
@@ -883,6 +916,7 @@ type ReplyTurnLoopResult struct {
 func ExecuteReplyTurnLoop(ctx context.Context, req ReplyTurnLoopRequest) (ReplyTurnLoopResult, error) {
 	result := ReplyTurnLoopResult{}
 	turnReq := req.TurnRequest
+	capabilityTools := coalesceToolset(req.CapabilityTools, turnReq.Plan.Tools)
 	turnExecutor := req.TurnExecutor
 	if turnExecutor == nil {
 		turnExecutor = defaultInitialChatTurnExecutor
@@ -938,10 +972,16 @@ func ExecuteReplyTurnLoop(ctx context.Context, req ReplyTurnLoopRequest) (ReplyT
 			return ReplyTurnLoopResult{}, nil
 		}
 
+		nextAdditionalTools := turnReq.AdditionalTools
+		if resolved, updated := resolveDiscoveredFinanceTools(snapshot.ToolCall.FunctionName, execution.NextOutput.Output, capabilityTools); updated {
+			nextAdditionalTools = resolved
+		}
+
 		turnReq = InitialChatTurnRequest{
 			Plan:               turnReq.Plan,
 			PreviousResponseID: strings.TrimSpace(snapshot.ResponseID),
 			ToolOutput:         execution.NextOutput,
+			AdditionalTools:    nextAdditionalTools,
 		}
 	}
 
@@ -950,12 +990,13 @@ func ExecuteReplyTurnLoop(ctx context.Context, req ReplyTurnLoopRequest) (ReplyT
 
 // InitialChatLoopRequest carries agent runtime state.
 type InitialChatLoopRequest struct {
-	Plan         InitialChatExecutionPlan
-	ToolTurns    int
-	TurnExecutor func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
-	Event        *larkim.P2MessageReceiveV1
-	Registry     *CapabilityRegistry
-	Finalizer    func(context.Context, InitialChatExecutionPlan, iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning]
+	Plan            InitialChatExecutionPlan
+	ToolTurns       int
+	TurnExecutor    func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
+	Event           *larkim.P2MessageReceiveV1
+	Registry        *CapabilityRegistry
+	CapabilityTools *arktools.Impl[larkim.P2MessageReceiveV1]
+	Finalizer       func(context.Context, InitialChatExecutionPlan, iter.Seq[*ark_dal.ModelStreamRespReasoning]) iter.Seq[*ark_dal.ModelStreamRespReasoning]
 }
 
 // BuildInitialChatLoopRequest implements agent runtime behavior.
@@ -992,18 +1033,20 @@ func BuildInitialChatLoopRequest(
 		toolTurns = chatflow.DefaultInitialChatToolTurns
 	}
 	return InitialChatLoopRequest{
-		Plan:         initialPlan,
-		ToolTurns:    toolTurns,
-		TurnExecutor: tools.TurnExecutor,
-		Event:        event,
-		Registry:     buildInitialChatCapabilityRegistry(event, tools.Tools),
-		Finalizer:    tools.Finalizer,
+		Plan:            initialPlan,
+		ToolTurns:       toolTurns,
+		TurnExecutor:    tools.TurnExecutor,
+		Event:           event,
+		Registry:        buildInitialChatCapabilityRegistry(event, coalesceToolset(tools.CapabilityTools, tools.Tools)),
+		CapabilityTools: coalesceToolset(tools.CapabilityTools, tools.Tools),
+		Finalizer:       tools.Finalizer,
 	}, nil
 }
 
 // CapabilityRegistryTools carries agent runtime state.
 type CapabilityRegistryTools struct {
 	Tools            *arktools.Impl[larkim.P2MessageReceiveV1]
+	CapabilityTools  *arktools.Impl[larkim.P2MessageReceiveV1]
 	Builder          func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error)
 	TurnExecutor     func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
 	DefaultToolTurns int
@@ -1014,6 +1057,7 @@ type CapabilityRegistryTools struct {
 type RuntimeInitialChatLoopOptions struct {
 	Plan                ChatGenerationPlan
 	Tools               *arktools.Impl[larkim.P2MessageReceiveV1]
+	CapabilityTools     *arktools.Impl[larkim.P2MessageReceiveV1]
 	Builder             func(context.Context, InitialChatGenerationRequest) (InitialChatExecutionPlan, error)
 	TurnExecutor        func(context.Context, InitialChatTurnRequest) (InitialChatTurnResult, error)
 	DefaultToolTurns    int
@@ -1041,6 +1085,7 @@ func BuildRuntimeInitialChatLoop(
 
 	loopReq, err := BuildInitialChatLoopRequest(ctx, event, opts.Plan, &CapabilityRegistryTools{
 		Tools:            tools,
+		CapabilityTools:  coalesceToolset(opts.CapabilityTools, tools),
 		Builder:          opts.Builder,
 		TurnExecutor:     opts.TurnExecutor,
 		DefaultToolTurns: opts.DefaultToolTurns,
@@ -1093,11 +1138,24 @@ func StreamInitialChatLoop(ctx context.Context, req InitialChatLoopRequest) iter
 				return
 			}
 
+			nextAdditionalTools := turnReq.AdditionalTools
+			if resolved, updated := resolveDiscoveredFinanceTools(snapshot.ToolCall.FunctionName, execution.NextOutput.Output, req.CapabilityTools); updated {
+				nextAdditionalTools = resolved
+			}
+
 			turnReq = InitialChatTurnRequest{
 				Plan:               req.Plan,
 				PreviousResponseID: strings.TrimSpace(snapshot.ResponseID),
 				ToolOutput:         execution.NextOutput,
+				AdditionalTools:    nextAdditionalTools,
 			}
 		}
 	}
+}
+
+func coalesceToolset(primary, fallback *arktools.Impl[larkim.P2MessageReceiveV1]) *arktools.Impl[larkim.P2MessageReceiveV1] {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }
