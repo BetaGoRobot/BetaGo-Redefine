@@ -28,6 +28,15 @@ const (
 	SuggestActionIgnore SuggestAction = "ignore"
 )
 
+type ReplyMode string
+
+const (
+	ReplyModeDirect          ReplyMode = "direct"
+	ReplyModePassiveReply    ReplyMode = "passive_reply"
+	ReplyModeActiveInterject ReplyMode = "active_interject"
+	ReplyModeIgnore          ReplyMode = "ignore"
+)
+
 type InteractionMode string
 
 const (
@@ -52,6 +61,11 @@ type IntentAnalysis struct {
 	Reason          string                         `json:"reason"`
 	SuggestAction   SuggestAction                  `json:"suggest_action"`
 	InteractionMode InteractionMode                `json:"interaction_mode"`
+	ReplyMode       ReplyMode                      `json:"reply_mode"`
+	UserWillingness int                            `json:"user_willingness"`
+	InterruptRisk   int                            `json:"interrupt_risk"`
+	NeedsHistory    bool                           `json:"needs_history"`
+	NeedsWeb        bool                           `json:"needs_web"`
 	ReasoningEffort responses.ReasoningEffort_Enum `json:"reasoning_effort"`
 }
 
@@ -64,6 +78,11 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		Reason          string          `json:"reason"`
 		SuggestAction   SuggestAction   `json:"suggest_action"`
 		InteractionMode InteractionMode `json:"interaction_mode"`
+		ReplyMode       ReplyMode       `json:"reply_mode"`
+		UserWillingness int             `json:"user_willingness"`
+		InterruptRisk   int             `json:"interrupt_risk"`
+		NeedsHistory    bool            `json:"needs_history"`
+		NeedsWeb        bool            `json:"needs_web"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -77,6 +96,11 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		Reason:          raw.Reason,
 		SuggestAction:   raw.SuggestAction,
 		InteractionMode: raw.InteractionMode,
+		ReplyMode:       raw.ReplyMode,
+		UserWillingness: raw.UserWillingness,
+		InterruptRisk:   raw.InterruptRisk,
+		NeedsHistory:    raw.NeedsHistory,
+		NeedsWeb:        raw.NeedsWeb,
 		ReasoningEffort: parseReasoningEffort(raw.ReasoningEffort),
 	}
 	return nil
@@ -129,12 +153,50 @@ func (a *IntentAnalysis) Sanitize() {
 	if a.ReplyConfidence > 100 {
 		a.ReplyConfidence = 100
 	}
+	if a.UserWillingness < 0 {
+		a.UserWillingness = 0
+	}
+	if a.UserWillingness > 100 {
+		a.UserWillingness = 100
+	}
+	if a.InterruptRisk < 0 {
+		a.InterruptRisk = 0
+	}
+	if a.InterruptRisk > 100 {
+		a.InterruptRisk = 100
+	}
 
 	if a.IntentType == IntentTypeQuestion {
 		a.NeedReply = true
 	} else if a.IntentType == IntentTypeIgnore {
 		a.NeedReply = false
 	}
+
+	switch a.ReplyMode {
+	case ReplyModeDirect, ReplyModePassiveReply, ReplyModeActiveInterject, ReplyModeIgnore:
+	default:
+		a.ReplyMode = defaultReplyMode(a.NeedReply)
+	}
+
+	if !a.NeedReply {
+		a.ReplyMode = ReplyModeIgnore
+	}
+
+	switch a.ReplyMode {
+	case ReplyModeDirect:
+		a.NeedReply = true
+		a.UserWillingness = 100
+		a.InterruptRisk = 0
+	case ReplyModeIgnore:
+		a.NeedReply = false
+	}
+}
+
+func defaultReplyMode(needReply bool) ReplyMode {
+	if needReply {
+		return ReplyModePassiveReply
+	}
+	return ReplyModeIgnore
 }
 
 func parseReasoningEffort(raw json.RawMessage) responses.ReasoningEffort_Enum {

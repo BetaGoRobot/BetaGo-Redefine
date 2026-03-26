@@ -112,6 +112,13 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 		observed,
 		eligible,
 	)
+	if shouldForceDirectReplyMode(event, observation, observed) {
+		analysis.ReplyMode = intent.ReplyModeDirect
+		analysis.NeedReply = true
+		analysis.UserWillingness = 100
+		analysis.InterruptRisk = 0
+	}
+	analysis.Sanitize()
 
 	if err := storeIntentAnalysis(meta, analysis); err != nil {
 		logs.L().Ctx(ctx).Error("failed to store intent analysis", zap.Error(err))
@@ -211,6 +218,9 @@ func continuationIntentAnalysis(observation agentruntime.ShadowObservation) *int
 		ReplyConfidence: 100,
 		Reason:          strings.TrimSpace(observation.Reason),
 		SuggestAction:   intent.SuggestActionChat,
+		ReplyMode:       intent.ReplyModeDirect,
+		UserWillingness: 100,
+		InterruptRisk:   0,
 		InteractionMode: intent.InteractionModeAgentic,
 		ReasoningEffort: intent.DefaultReasoningEffort(intent.InteractionModeAgentic),
 	}
@@ -240,6 +250,31 @@ func shouldUseIntentDrivenInteractionMode(
 		return strings.EqualFold(runtimeCommandName(ctx, event), "bb")
 	}
 	return observed && observation.TriggerType == agentruntime.TriggerTypeReplyToBot
+}
+
+func shouldForceDirectReplyMode(
+	event *larkim.P2MessageReceiveV1,
+	observation agentruntime.ShadowObservation,
+	observed bool,
+) bool {
+	if strings.EqualFold(currentChatType(event), "p2p") {
+		return true
+	}
+	if runtimeIsMentioned(event) {
+		return true
+	}
+	if !observed {
+		return false
+	}
+	switch observation.TriggerType {
+	case agentruntime.TriggerTypeMention,
+		agentruntime.TriggerTypeReplyToBot,
+		agentruntime.TriggerTypeFollowUp,
+		agentruntime.TriggerTypeP2P:
+		return true
+	default:
+		return false
+	}
 }
 
 // interactionModeFromChatMode maps the configured chat mode to the seeded interaction mode.

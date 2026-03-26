@@ -15,6 +15,11 @@ func TestIntentSystemPromptMarksResearchAndAnalysisTasksAsAgentic(t *testing.T) 
 		"是否需要综合多来源信息",
 		"是否需要归因、比较多个因素",
 		"是否预期会触发工具检索",
+		"reply_mode 用于判断这条消息属于哪种回复模式",
+		"user_willingness 表示用户此刻主观上有多希望机器人接话",
+		"interrupt_risk 表示如果机器人现在插话，打扰感有多强",
+		"needs_history: true/false",
+		"needs_web: true/false",
 		"“金价今天多少”更接近 standard",
 		"“综合各方信息资源，帮我分析金价剧烈波动的主要原因”更接近 agentic",
 	}
@@ -95,6 +100,37 @@ func TestAnalyzeMessageUsesSinglePassAndParsesReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestAnalyzeMessageParsesReplyModeAndRetrievalHints(t *testing.T) {
+	oldResponseTextWithCacheFn := responseTextWithCacheFn
+	defer func() {
+		responseTextWithCacheFn = oldResponseTextWithCacheFn
+	}()
+
+	responseTextWithCacheFn = func(ctx context.Context, req ark_dal.CachedResponseRequest) (string, error) {
+		return `{"intent_type":"chat","need_reply":true,"reply_confidence":72,"reason":"用户明确要继续追问历史上下文","suggest_action":"chat","interaction_mode":"standard","reply_mode":"passive_reply","user_willingness":88,"interrupt_risk":12,"needs_history":true,"needs_web":false}`, nil
+	}
+
+	analysis, err := analyzeMessage(context.Background(), "把刚才讨论的方案接着说完", "intent-lite")
+	if err != nil {
+		t.Fatalf("analyzeMessage() error = %v", err)
+	}
+	if analysis.ReplyMode != ReplyModePassiveReply {
+		t.Fatalf("ReplyMode = %q, want %q", analysis.ReplyMode, ReplyModePassiveReply)
+	}
+	if analysis.UserWillingness != 88 {
+		t.Fatalf("UserWillingness = %d, want 88", analysis.UserWillingness)
+	}
+	if analysis.InterruptRisk != 12 {
+		t.Fatalf("InterruptRisk = %d, want 12", analysis.InterruptRisk)
+	}
+	if !analysis.NeedsHistory {
+		t.Fatal("NeedsHistory should be true")
+	}
+	if analysis.NeedsWeb {
+		t.Fatal("NeedsWeb should be false")
+	}
+}
+
 func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardMode(t *testing.T) {
 	oldResponseTextWithCacheFn := responseTextWithCacheFn
 	defer func() {
@@ -121,6 +157,40 @@ func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardMode(t *testing
 	}
 	if analysis.ReasoningEffort != responses.ReasoningEffort_minimal {
 		t.Fatalf("ReasoningEffort = %v, want %v", analysis.ReasoningEffort, responses.ReasoningEffort_minimal)
+	}
+}
+
+func TestAnalyzeMessageSanitizesInvalidReplyMetadata(t *testing.T) {
+	oldResponseTextWithCacheFn := responseTextWithCacheFn
+	defer func() {
+		responseTextWithCacheFn = oldResponseTextWithCacheFn
+	}()
+
+	responseTextWithCacheFn = func(ctx context.Context, req ark_dal.CachedResponseRequest) (string, error) {
+		return `{"intent_type":"share","need_reply":true,"reply_confidence":130,"reason":"也许可以插一句","suggest_action":"chat","interaction_mode":"standard","reply_mode":"surprise","user_willingness":180,"interrupt_risk":-3}`, nil
+	}
+
+	analysis, err := analyzeMessage(context.Background(), "我刚看到一条新闻", "intent-lite")
+	if err != nil {
+		t.Fatalf("analyzeMessage() error = %v", err)
+	}
+	if analysis.ReplyConfidence != 100 {
+		t.Fatalf("ReplyConfidence = %d, want 100", analysis.ReplyConfidence)
+	}
+	if analysis.ReplyMode != ReplyModePassiveReply {
+		t.Fatalf("ReplyMode = %q, want %q", analysis.ReplyMode, ReplyModePassiveReply)
+	}
+	if analysis.UserWillingness != 100 {
+		t.Fatalf("UserWillingness = %d, want 100", analysis.UserWillingness)
+	}
+	if analysis.InterruptRisk != 0 {
+		t.Fatalf("InterruptRisk = %d, want 0", analysis.InterruptRisk)
+	}
+	if analysis.NeedsHistory {
+		t.Fatal("NeedsHistory should default to false")
+	}
+	if analysis.NeedsWeb {
+		t.Fatal("NeedsWeb should default to false")
 	}
 }
 

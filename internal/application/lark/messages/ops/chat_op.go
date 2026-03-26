@@ -83,6 +83,7 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	defer otel.RecordErrorPtr(span, &err)
 
 	chatID := *event.Event.Message.ChatId
+	openID := messageOpenID(event, meta)
 	decider := ratelimit.GetDecider()
 	observation, ok := observeRuntimeMessage(ctx, event, meta)
 	if ok && shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot) {
@@ -97,14 +98,18 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	// 优先尝试使用意图识别结果
 	if analysis, ok := GetIntentAnalysisFromMeta(meta); ok {
 		// 使用频控决策器决定是否回复
-		decision := decider.DecideIntentReply(ctx, chatID, analysis)
+		decision := decider.DecideIntentReply(ctx, chatID, openID, analysis)
 		if decision.Allowed {
 			// 先记录，再回复；因为回复的时延可能高的一批。。
-			decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
+			decider.RecordReply(ctx, chatID, decision.TriggerType)
 			logs.L().Ctx(ctx).Info("decided to reply by intent recognition with rate limit",
 				zap.String("intent_type", string(analysis.IntentType)),
 				zap.Int("confidence", analysis.ReplyConfidence),
+				zap.String("reply_mode", string(analysis.ReplyMode)),
+				zap.Int("user_willingness", analysis.UserWillingness),
+				zap.Int("interrupt_risk", analysis.InterruptRisk),
 				zap.String("reason", analysis.Reason),
+				zap.String("trigger_type", string(decision.TriggerType)),
 				zap.String("ratelimit_reason", decision.Reason),
 			)
 			// sendMsg
@@ -118,6 +123,10 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 			zap.String("intent_type", string(analysis.IntentType)),
 			zap.Bool("need_reply", analysis.NeedReply),
 			zap.Int("confidence", analysis.ReplyConfidence),
+			zap.String("reply_mode", string(analysis.ReplyMode)),
+			zap.Int("user_willingness", analysis.UserWillingness),
+			zap.Int("interrupt_risk", analysis.InterruptRisk),
+			zap.String("trigger_type", string(decision.TriggerType)),
 			zap.String("ratelimit_reason", decision.Reason),
 		)
 		// 意图识别说不需要回复或被频控拒绝，直接返回

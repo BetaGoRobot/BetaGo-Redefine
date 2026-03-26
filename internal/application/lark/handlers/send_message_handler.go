@@ -53,6 +53,7 @@ func (h sendMessageHandler) ToolSpec() xcommand.ToolSpec {
 		desc = "发送一条消息到当前任务所属的对话。当你需要主动通知用户、发送提醒确认、或者发送额外信息时使用此工具"
 	}
 	desc += "。如果需要@成员，优先直接输出飞书格式 `<at user_id=\"open_id\">姓名</at>`；如果只知道名字，也可以输出 `@姓名`，系统会尝试按当前群成员匹配。"
+	desc += " 只有在需要某个具体成员响应、确认、补充或接手时再 @；普通群通知不要一上来就 @。如果只是延续当前对话，不必为了点名而强行 @。"
 	return xcommand.ToolSpec{
 		Name:   "send_message",
 		Desc:   desc,

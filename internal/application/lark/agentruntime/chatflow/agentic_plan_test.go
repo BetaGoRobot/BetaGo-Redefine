@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
@@ -37,9 +38,42 @@ func TestAgenticChatSystemPromptGuidesDeepResearchWorkflow(t *testing.T) {
 	}
 }
 
+func TestAgenticChatSystemPromptConstrainsAnthropomorphicParticles(t *testing.T) {
+	prompt := agenticChatSystemPrompt()
+	for _, want := range []string{
+		"少用语气词",
+		"不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅",
+		"拟人感过强",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
+	}
+}
+
+func TestAgenticChatSystemPromptGuidesMentionsAndCallbacks(t *testing.T) {
+	prompt := agenticChatSystemPrompt()
+	for _, want := range []string{
+		"只有在需要某个具体成员响应",
+		"@姓名",
+		"<at user_id=\"open_id\">姓名</at>",
+		"优先沿当前线程或当前子话题继续",
+		"不要为了刷存在感乱 @",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
+	}
+}
+
 func TestBuildAgenticChatUserPromptIncludesRuntimeContextSections(t *testing.T) {
 	prompt := buildAgenticChatUserPrompt(agenticChatPromptContext{
 		UserRequest: "帮我总结今天讨论并给下一步建议",
+		SelfProfile: botidentity.Profile{
+			AppID:     "cli_test_app",
+			BotOpenID: "ou_bot_self",
+			BotName:   "BetaGo",
+		},
 		HistoryLines: []string{
 			"[10:00](ou_a) <Alice>: 今天主要讨论了 agentic runtime",
 		},
@@ -50,7 +84,7 @@ func TestBuildAgenticChatUserPromptIncludesRuntimeContextSections(t *testing.T) 
 		Files:  []string{"https://example.com/a.png"},
 	})
 
-	for _, want := range []string{"对话边界", "回复风格", "当前用户请求", "最近对话", "召回上下文", "主题线索", "附件", "帮我总结今天讨论并给下一步建议"} {
+	for _, want := range []string{"机器人身份", "self_open_id: ou_bot_self", "self_name: BetaGo", "对话边界", "回复风格", "当前用户请求", "最近对话", "召回上下文", "主题线索", "附件", "帮我总结今天讨论并给下一步建议"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt = %q, want contain %q", prompt, want)
 		}
@@ -73,14 +107,19 @@ func TestBuildAgenticChatPromptContextUsesReplyScopedContext(t *testing.T) {
 	originalRecallDocs := agenticChatRecallDocs
 	originalChunkIndexResolver := agenticChatChunkIndexResolver
 	originalTopicLookup := agenticChatTopicSummaryLookup
+	originalBotProfileLoader := chatPromptBotProfileLoader
 	defer func() {
 		agenticChatHistoryLoader = originalHistoryLoader
 		agenticChatReplyScopeLoader = originalReplyScopeLoader
 		agenticChatRecallDocs = originalRecallDocs
 		agenticChatChunkIndexResolver = originalChunkIndexResolver
 		agenticChatTopicSummaryLookup = originalTopicLookup
+		chatPromptBotProfileLoader = originalBotProfileLoader
 	}()
 
+	chatPromptBotProfileLoader = func(ctx context.Context) botidentity.Profile {
+		return botidentity.Profile{AppID: "cli_test_app", BotOpenID: "ou_bot_self", BotName: "BetaGo"}
+	}
 	agenticChatHistoryLoader = func(ctx context.Context, chatID string, size int) (history.OpensearchMsgLogList, error) {
 		t.Fatal("broad chat history should not be loaded for reply-scoped context")
 		return nil, nil
@@ -125,6 +164,9 @@ func TestBuildAgenticChatPromptContextUsesReplyScopedContext(t *testing.T) {
 	}
 	if got := strings.Join(promptCtx.ContextLines, "\n"); !strings.Contains(got, "reply scoped recalled context") {
 		t.Fatalf("context lines = %q, want contain recalled context", got)
+	}
+	if got := promptCtx.SelfProfile; got.BotOpenID != "ou_bot_self" || got.BotName != "BetaGo" {
+		t.Fatalf("self profile = %+v, want ou_bot_self/BetaGo", got)
 	}
 }
 

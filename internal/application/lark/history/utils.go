@@ -3,6 +3,8 @@ package history
 import (
 	"fmt"
 	"strings"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 )
 
 func TagText(text string, color string) string {
@@ -23,9 +25,19 @@ type Mention struct {
 // ReplaceMentionToName 将@user_1 替换成 name
 func ReplaceMentionToName(input string, mentions []*Mention) string {
 	if mentions != nil {
+		currentBot := botidentity.Current()
 		for _, mention := range mentions {
-			// input = strings.ReplaceAll(input, mention.Key, fmt.Sprintf("<at user_id=\\\"%s\\\">%s</at>", mention.ID.LegacyUserID, mention.Name))
-			input = strings.ReplaceAll(input, mention.Key, "")
+			if mention == nil || mention.Key == "" {
+				continue
+			}
+			displayName := strings.TrimSpace(mention.Name)
+			if currentBot.BotOpenID != "" && strings.TrimSpace(mention.ID.OpenID) == currentBot.BotOpenID {
+				displayName = "你"
+			}
+			if displayName == "" {
+				displayName = strings.TrimSpace(mention.ID.OpenID)
+			}
+			input = strings.ReplaceAll(input, mention.Key, fmt.Sprintf("@%s", displayName))
 			if len(input) > 0 && string(input[0]) == "/" {
 				if inputs := strings.Split(input, " "); len(inputs) > 0 {
 					input = strings.Join(inputs[1:], " ")

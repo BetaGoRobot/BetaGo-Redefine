@@ -30,6 +30,14 @@ import (
 	"go.uber.org/zap"
 )
 
+func resolveRecordedBotIdentity(senderID string) (openID, userName string) {
+	openID = strings.TrimSpace(senderID)
+	if openID == "" && config.Get() != nil && config.Get().LarkConfig != nil {
+		openID = strings.TrimSpace(config.Get().LarkConfig.BotOpenID)
+	}
+	return openID, "你"
+}
+
 func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessageResp, contents ...string) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
@@ -79,6 +87,7 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 	jieba := gojieba.NewJieba()
 	defer jieba.Free()
 	ws := jieba.Cut(content, true)
+	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, utils.AddrOrNil(resp.Data.MessageId),
 		&xmodel.MessageIndex{
@@ -89,8 +98,8 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),
 			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
 			Message:         embedded,
-			OpenID:          "你",
-			UserName:        "你",
+			OpenID:          recordedOpenID,
+			UserName:        recordedUserName,
 			TokenUsage:      usage,
 		},
 	)
@@ -166,6 +175,7 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 	jieba := gojieba.NewJieba()
 	defer jieba.Free()
 	ws := jieba.Cut(content, true)
+	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex,
 		utils.AddrOrNil(resp.Data.MessageId),
@@ -177,8 +187,8 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),
 			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
 			Message:         embedded,
-			OpenID:          "你",
-			UserName:        "你",
+			OpenID:          recordedOpenID,
+			UserName:        recordedUserName,
 			TokenUsage:      usage,
 		},
 	)

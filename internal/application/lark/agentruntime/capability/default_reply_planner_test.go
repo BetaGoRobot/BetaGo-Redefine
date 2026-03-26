@@ -106,4 +106,10 @@ func TestReplyPlannerSystemPromptEncouragesConversationalReply(t *testing.T) {
 	if !strings.Contains(prompt, "不要写成工具执行报告") {
 		t.Fatalf("prompt = %q, want contain non-reporting hint", prompt)
 	}
+	if !strings.Contains(prompt, "少用语气词") {
+		t.Fatalf("prompt = %q, want contain filler-word constraint", prompt)
+	}
+	if !strings.Contains(prompt, "不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅") {
+		t.Fatalf("prompt = %q, want contain anthropomorphic-particle constraint", prompt)
+	}
 }
