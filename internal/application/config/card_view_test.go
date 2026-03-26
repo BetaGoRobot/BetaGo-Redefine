@@ -326,6 +326,7 @@ func TestBuildConfigItemSectionPlacesControlsOnRight(t *testing.T) {
 		Value:       "30",
 		ValueType:   "int",
 		Scope:       "chat",
+		IsEditable:  true,
 		ChatID:      "chat-1",
 		OpenID:      "user-1",
 	}, ConfigViewState{
@@ -344,6 +345,35 @@ func TestBuildConfigItemSectionPlacesControlsOnRight(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"action":"config.delete"`) {
 		t.Fatalf("expected restore default action in right column: %s", jsonStr)
+	}
+}
+
+func TestBuildConfigItemSectionOmitsControlsForReadOnlyConfig(t *testing.T) {
+	element := buildConfigItemSection(ConfigItem{
+		Key:         "agent_runtime_execution_lease_timeout_seconds",
+		Description: "运行租约超时 (秒)",
+		Value:       "180",
+		ValueType:   "int",
+		Scope:       "toml",
+		IsEditable:  false,
+		ChatID:      "chat-1",
+		OpenID:      "user-1",
+	}, ConfigViewState{
+		Scope: "chat",
+	})
+	raw, err := json.Marshal(element)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	jsonStr := string(raw)
+	if strings.Contains(jsonStr, `"tag":"form"`) {
+		t.Fatalf("did not expect form wrapper for read-only config: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"tag":"button"`) {
+		t.Fatalf("did not expect action buttons for read-only config: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `只读`) {
+		t.Fatalf("expected read-only hint in card json: %s", jsonStr)
 	}
 }
 
@@ -367,6 +397,24 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"action":"config.delete"`) {
 		t.Fatalf("expected delete action in int config action row: %s", jsonStr)
+	}
+}
+
+func TestHandleConfigActionRejectsReadOnlyStartupConfig(t *testing.T) {
+	resp, err := HandleConfigAction(context.Background(), &ConfigActionRequest{
+		Action: ConfigActionSet,
+		Key:    "agent_runtime_execution_lease_timeout_seconds",
+		Value:  "240",
+		Scope:  "global",
+	})
+	if err == nil {
+		t.Fatal("expected error for read-only startup config")
+	}
+	if resp == nil || resp.Success {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if !strings.Contains(resp.Message, "只读") {
+		t.Fatalf("expected read-only message, got %+v", resp)
 	}
 }
 

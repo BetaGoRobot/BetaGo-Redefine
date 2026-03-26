@@ -66,6 +66,20 @@ func NewStaleRunSweeper(repo staleRunSweepRepository, repairer staleRunRepairer)
 	}
 }
 
+func (w *StaleRunSweeper) WithSweepInterval(interval time.Duration) *StaleRunSweeper {
+	if w != nil && interval > 0 {
+		w.interval = interval
+	}
+	return w
+}
+
+func (w *StaleRunSweeper) WithLegacyStaleAfter(timeout time.Duration) *StaleRunSweeper {
+	if w != nil && timeout > 0 {
+		w.legacyStaleAfter = timeout
+	}
+	return w
+}
+
 func (w *StaleRunSweeper) Available() bool {
 	return w != nil && w.repo != nil && w.repairer != nil
 }

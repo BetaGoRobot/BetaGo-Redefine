@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -153,6 +154,7 @@ func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, openID
 		if selectedKey != "" && string(key) != selectedKey {
 			continue
 		}
+		def, hasDef := GetConfigDefinition(key)
 		item := ConfigItem{
 			Key:         string(key),
 			Description: GetConfigDescription(key),
@@ -161,20 +163,30 @@ func GetConfigCardDataWithOptions(ctx context.Context, viewScope, chatID, openID
 			ChatID:      chatID,
 			OpenID:      openID,
 		}
-		item.Value, item.Scope = resolveConfigDisplayValue(
-			viewScope,
-			key,
-			chatID,
-			openID,
-			func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
-				return mgr.getConfigWithOptions(ctx, candidate.scope, candidate.chatID, candidate.openID, key, ConfigReadOptions{
-					BypassCache: options.BypassCache,
-				})
-			},
-			func(key ConfigKey) string {
-				return configDefaultDisplayValue(mgr, key)
-			},
-		)
+		if hasDef {
+			item.Description = def.Description
+			item.ValueType = def.ValueType
+			item.IsEditable = def.IsEditable()
+		}
+		if item.IsEditable {
+			item.Value, item.Scope = resolveConfigDisplayValue(
+				viewScope,
+				key,
+				chatID,
+				openID,
+				func(candidate configLookupCandidate, key ConfigKey) (string, bool) {
+					return mgr.getConfigWithOptions(ctx, candidate.scope, candidate.chatID, candidate.openID, key, ConfigReadOptions{
+						BypassCache: options.BypassCache,
+					})
+				},
+				func(key ConfigKey) string {
+					return configDefaultDisplayValue(mgr, key)
+				},
+			)
+		} else {
+			item.Value = configDefaultDisplayValue(mgr, key)
+			item.Scope = "toml"
+		}
 
 		items = append(items, item)
 	}
@@ -393,6 +405,22 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 		}, nil
 	}
 
+	configKey := ConfigKey(req.Key)
+	def, ok := GetConfigDefinition(configKey)
+	if !ok {
+		return &ConfigActionResponse{
+			Success: false,
+			Message: "无效的配置定义: " + req.Key,
+		}, nil
+	}
+	if !def.IsEditable() {
+		err := fmt.Errorf("配置 %s 为只读：请修改 TOML 后重启进程", req.Key)
+		return &ConfigActionResponse{
+			Success: false,
+			Message: err.Error(),
+		}, err
+	}
+
 	// 解析 scope
 	var scope ConfigScope
 	chatID := req.ChatID
@@ -417,15 +445,6 @@ func HandleConfigAction(ctx context.Context, req *ConfigActionRequest) (*ConfigA
 		return &ConfigActionResponse{
 			Success: false,
 			Message: "无效的作用域: " + req.Scope,
-		}, nil
-	}
-
-	configKey := ConfigKey(req.Key)
-	def, ok := GetConfigDefinition(configKey)
-	if !ok {
-		return &ConfigActionResponse{
-			Success: false,
-			Message: "无效的配置定义: " + req.Key,
 		}, nil
 	}
 	var err error

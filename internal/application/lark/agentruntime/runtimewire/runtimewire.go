@@ -29,6 +29,12 @@ var (
 		ResumeWorkers:            1,
 		PendingInitialRunWorkers: 1,
 	}
+	agentRuntimeTimingSettings = appruntime.AgentRuntimeTimingSettings{
+		ExecutionLeaseTTL:          3 * time.Minute,
+		ExecutionHeartbeatInterval: 15 * time.Second,
+		LegacyRunStaleTimeout:      30 * time.Minute,
+		StaleRunSweepInterval:      5 * time.Second,
+	}
 )
 
 // SetDefaultCapabilityProvider overrides the capability provider used when
@@ -57,6 +63,30 @@ func currentAgentRuntimeWorkerSettings() appruntime.AgentRuntimeWorkerSettings {
 	agentRuntimeWorkerSettingsMu.RLock()
 	defer agentRuntimeWorkerSettingsMu.RUnlock()
 	return agentRuntimeWorkerSettings
+}
+
+func SetAgentRuntimeTimingSettings(settings appruntime.AgentRuntimeTimingSettings) {
+	agentRuntimeWorkerSettingsMu.Lock()
+	defer agentRuntimeWorkerSettingsMu.Unlock()
+	if settings.ExecutionLeaseTTL <= 0 {
+		settings.ExecutionLeaseTTL = 3 * time.Minute
+	}
+	if settings.ExecutionHeartbeatInterval <= 0 {
+		settings.ExecutionHeartbeatInterval = 15 * time.Second
+	}
+	if settings.LegacyRunStaleTimeout <= 0 {
+		settings.LegacyRunStaleTimeout = 30 * time.Minute
+	}
+	if settings.StaleRunSweepInterval <= 0 {
+		settings.StaleRunSweepInterval = 5 * time.Second
+	}
+	agentRuntimeTimingSettings = settings
+}
+
+func currentAgentRuntimeTimingSettings() appruntime.AgentRuntimeTimingSettings {
+	agentRuntimeWorkerSettingsMu.RLock()
+	defer agentRuntimeWorkerSettingsMu.RUnlock()
+	return agentRuntimeTimingSettings
 }
 
 // BuildCoordinator constructs the default runtime coordinator from the current request context and infrastructure singletons.
@@ -264,7 +294,10 @@ func BuildStaleRunSweeper(ctx context.Context) *agentruntime.StaleRunSweeper {
 	if coordinator == nil {
 		return nil
 	}
-	return agentruntime.NewStaleRunSweeper(runRepo, coordinator)
+	settings := currentAgentRuntimeTimingSettings()
+	return agentruntime.NewStaleRunSweeper(runRepo, coordinator).
+		WithSweepInterval(settings.StaleRunSweepInterval).
+		WithLegacyStaleAfter(settings.LegacyRunStaleTimeout)
 }
 
 // PendingInitialMetricsProvider builds the metrics provider exposed to the
@@ -293,6 +326,7 @@ func BuildRunProcessor(ctx context.Context, initialReplyEmitter agentruntime.Ini
 	if coordinator == nil {
 		return nil
 	}
+	settings := currentAgentRuntimeTimingSettings()
 	return agentruntime.NewContinuationProcessor(
 		coordinator,
 		agentruntime.WithCapabilityRegistry(buildDefaultCapabilityRegistry()),
@@ -302,6 +336,10 @@ func BuildRunProcessor(ctx context.Context, initialReplyEmitter agentruntime.Ini
 		agentruntime.WithInitialReplyEmitter(initialReplyEmitter),
 		agentruntime.WithReplyEmitter(agentruntime.NewLarkReplyEmitter()),
 		agentruntime.WithApprovalSender(agentruntime.NewLarkApprovalSender()),
+		agentruntime.WithRunLeasePolicy(agentruntime.RunLeasePolicy{
+			TTL:               settings.ExecutionLeaseTTL,
+			HeartbeatInterval: settings.ExecutionHeartbeatInterval,
+		}),
 	)
 }
 

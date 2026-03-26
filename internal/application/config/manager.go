@@ -36,12 +36,19 @@ const (
 	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
 
 	// 字符串配置
-	KeyChatMode           ConfigKey = "chat_mode"
-	KeyChatReasoningModel ConfigKey = "chat_reasoning_model"
-	KeyChatNormalModel    ConfigKey = "chat_normal_model"
-	KeyIntentLiteModel    ConfigKey = "intent_lite_model"
-	KeyLarkMsgIndex       ConfigKey = "lark_msg_index"
-	KeyLarkChunkIndex     ConfigKey = "lark_chunk_index"
+	KeyChatMode                                      ConfigKey = "chat_mode"
+	KeyChatReasoningModel                            ConfigKey = "chat_reasoning_model"
+	KeyChatNormalModel                               ConfigKey = "chat_normal_model"
+	KeyIntentLiteModel                               ConfigKey = "intent_lite_model"
+	KeyLarkCardActionIndex                           ConfigKey = "lark_card_action_index"
+	KeyLarkMsgIndex                                  ConfigKey = "lark_msg_index"
+	KeyLarkChunkIndex                                ConfigKey = "lark_chunk_index"
+	KeyAgentRuntimeResumeWorkers                     ConfigKey = "agent_runtime_resume_workers"
+	KeyAgentRuntimePendingInitialWorkers             ConfigKey = "agent_runtime_pending_initial_workers"
+	KeyAgentRuntimeExecutionLeaseTimeoutSeconds      ConfigKey = "agent_runtime_execution_lease_timeout_seconds"
+	KeyAgentRuntimeExecutionHeartbeatIntervalSeconds ConfigKey = "agent_runtime_execution_heartbeat_interval_seconds"
+	KeyAgentRuntimeStaleRunLegacyTimeoutSeconds      ConfigKey = "agent_runtime_stale_run_legacy_timeout_seconds"
+	KeyAgentRuntimeStaleRunSweepIntervalSeconds      ConfigKey = "agent_runtime_stale_run_sweep_interval_seconds"
 
 	// 业务开关
 	KeyMusicCardInThread ConfigKey = "music_card_in_thread"
@@ -415,23 +422,71 @@ func (m *Manager) getConfigByFullKeyWithOptions(ctx context.Context, fullKey str
 // getIntFromToml 从 TOML 配置获取整数
 func (m *Manager) getIntFromToml(key ConfigKey) int {
 	cfg := currentBaseConfig()
-	if cfg == nil || cfg.RateConfig == nil {
+	if cfg == nil {
 		return m.getDefaultInt(key)
 	}
 
 	switch key {
 	case KeyReactionDefaultRate:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.ReactionDefaultRate
 	case KeyReactionFollowDefaultRate:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.ReactionFollowDefaultRate
 	case KeyRepeatDefaultRate:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.RepeatDefaultRate
 	case KeyImitateDefaultRate:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.ImitateDefaultRate
 	case KeyIntentFallbackRate:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.IntentFallbackRate
 	case KeyIntentReplyThreshold:
+		if cfg.RateConfig == nil {
+			return m.getDefaultInt(key)
+		}
 		return cfg.RateConfig.IntentReplyThreshold
+	case KeyAgentRuntimeResumeWorkers:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimeResumeWorkers
+	case KeyAgentRuntimePendingInitialWorkers:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimePendingInitialWorkers
+	case KeyAgentRuntimeExecutionLeaseTimeoutSeconds:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimeExecutionLeaseTimeoutSeconds
+	case KeyAgentRuntimeExecutionHeartbeatIntervalSeconds:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimeExecutionHeartbeatIntervalSeconds
+	case KeyAgentRuntimeStaleRunLegacyTimeoutSeconds:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimeStaleRunLegacyTimeoutSeconds
+	case KeyAgentRuntimeStaleRunSweepIntervalSeconds:
+		if cfg.RuntimeConfig == nil {
+			return m.getDefaultInt(key)
+		}
+		return cfg.RuntimeConfig.AgentRuntimeStaleRunSweepIntervalSeconds
 	default:
 		return m.getDefaultInt(key)
 	}
@@ -489,6 +544,11 @@ func (m *Manager) getStringFromToml(key ConfigKey) string {
 			return m.getDefaultString(key)
 		}
 		return cfg.ArkConfig.LiteModel
+	case KeyLarkCardActionIndex:
+		if cfg.OpensearchConfig == nil {
+			return m.getDefaultString(key)
+		}
+		return cfg.OpensearchConfig.LarkCardActionIndex
 	case KeyLarkMsgIndex:
 		if cfg.OpensearchConfig == nil {
 			return m.getDefaultString(key)
@@ -519,6 +579,18 @@ func (m *Manager) getDefaultInt(key ConfigKey) int {
 		return 10
 	case KeyIntentReplyThreshold:
 		return 70
+	case KeyAgentRuntimeResumeWorkers:
+		return 1
+	case KeyAgentRuntimePendingInitialWorkers:
+		return 1
+	case KeyAgentRuntimeExecutionLeaseTimeoutSeconds:
+		return 180
+	case KeyAgentRuntimeExecutionHeartbeatIntervalSeconds:
+		return 15
+	case KeyAgentRuntimeStaleRunLegacyTimeoutSeconds:
+		return 1800
+	case KeyAgentRuntimeStaleRunSweepIntervalSeconds:
+		return 5
 	default:
 		return 0
 	}

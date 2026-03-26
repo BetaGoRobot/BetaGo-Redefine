@@ -136,6 +136,7 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
 	runtimewire.SetAgentRuntimeWorkerSettings(appruntime.AgentRuntimeWorkerConfigs(cfg))
+	runtimewire.SetAgentRuntimeTimingSettings(appruntime.AgentRuntimeTimingConfigs(cfg))
 
 	messageExecutor := appruntime.NewExecutor(executorConfigs["message"])
 	reactionExecutor := appruntime.NewExecutor(executorConfigs["reaction"])

@@ -11,6 +11,13 @@ type AgentRuntimeWorkerSettings struct {
 	PendingInitialRunWorkers int
 }
 
+type AgentRuntimeTimingSettings struct {
+	ExecutionLeaseTTL          time.Duration
+	ExecutionHeartbeatInterval time.Duration
+	LegacyRunStaleTimeout      time.Duration
+	StaleRunSweepInterval      time.Duration
+}
+
 // ShutdownTimeout 返回 App.Stop 的总优雅关闭时间。默认值故意保守一些，
 // 让工作池有机会把已接收任务尽量处理完。
 func ShutdownTimeout(cfg *infraConfig.BaseConfig) time.Duration {
@@ -37,6 +44,19 @@ func AgentRuntimeWorkerConfigs(cfg *infraConfig.BaseConfig) AgentRuntimeWorkerSe
 	return AgentRuntimeWorkerSettings{
 		ResumeWorkers:            defaultInt(runtimeCfg.AgentRuntimeResumeWorkers, 1),
 		PendingInitialRunWorkers: defaultInt(runtimeCfg.AgentRuntimePendingInitialWorkers, 1),
+	}
+}
+
+func AgentRuntimeTimingConfigs(cfg *infraConfig.BaseConfig) AgentRuntimeTimingSettings {
+	runtimeCfg := &infraConfig.RuntimeConfig{}
+	if cfg != nil && cfg.RuntimeConfig != nil {
+		runtimeCfg = cfg.RuntimeConfig
+	}
+	return AgentRuntimeTimingSettings{
+		ExecutionLeaseTTL:          defaultDuration(runtimeCfg.AgentRuntimeExecutionLeaseTimeoutSeconds, 3*time.Minute),
+		ExecutionHeartbeatInterval: defaultDuration(runtimeCfg.AgentRuntimeExecutionHeartbeatIntervalSeconds, 15*time.Second),
+		LegacyRunStaleTimeout:      defaultDuration(runtimeCfg.AgentRuntimeStaleRunLegacyTimeoutSeconds, 30*time.Minute),
+		StaleRunSweepInterval:      defaultDuration(runtimeCfg.AgentRuntimeStaleRunSweepIntervalSeconds, 5*time.Second),
 	}
 }
 

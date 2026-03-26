@@ -21,6 +21,7 @@ type ConfigDefinition struct {
 	EnumGroup       string
 	EnumOptionsFunc func() []ConfigEnumOption
 	AllowCustom     bool
+	ReadOnly        bool
 }
 
 var configDefinitions = []ConfigDefinition{
@@ -117,6 +118,15 @@ var configDefinitions = []ConfigDefinition{
 		AllowCustom:     true,
 	},
 	{
+		Key:             KeyLarkCardActionIndex,
+		Description:     "Lark 卡片操作记录索引名",
+		ValueType:       "string",
+		EnumGroup:       configEnumGroupOpenSearchIndex,
+		EnumOptionsFunc: openSearchIndexEnumOptions,
+		AllowCustom:     true,
+		ReadOnly:        true,
+	},
+	{
 		Key:             KeyLarkMsgIndex,
 		Description:     "Lark 消息索引名",
 		ValueType:       "string",
@@ -131,6 +141,54 @@ var configDefinitions = []ConfigDefinition{
 		EnumGroup:       configEnumGroupOpenSearchIndex,
 		EnumOptionsFunc: openSearchIndexEnumOptions,
 		AllowCustom:     true,
+	},
+	{
+		Key:         KeyAgentRuntimeResumeWorkers,
+		Description: "Resume worker 并发度",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      64,
+		ReadOnly:    true,
+	},
+	{
+		Key:         KeyAgentRuntimePendingInitialWorkers,
+		Description: "Pending initial worker 并发度",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      64,
+		ReadOnly:    true,
+	},
+	{
+		Key:         KeyAgentRuntimeExecutionLeaseTimeoutSeconds,
+		Description: "运行租约超时 (秒)",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      3600,
+		ReadOnly:    true,
+	},
+	{
+		Key:         KeyAgentRuntimeExecutionHeartbeatIntervalSeconds,
+		Description: "运行租约心跳间隔 (秒)",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      1800,
+		ReadOnly:    true,
+	},
+	{
+		Key:         KeyAgentRuntimeStaleRunLegacyTimeoutSeconds,
+		Description: "旧版 stale run 兜底超时 (秒)",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      86400,
+		ReadOnly:    true,
+	},
+	{
+		Key:         KeyAgentRuntimeStaleRunSweepIntervalSeconds,
+		Description: "stale run 扫描周期 (秒)",
+		ValueType:   "int",
+		IntMin:      1,
+		IntMax:      3600,
+		ReadOnly:    true,
 	},
 }
 
@@ -161,6 +219,10 @@ func (d ConfigDefinition) EnumOptions(currentValue string) []ConfigEnumOption {
 
 func (d ConfigDefinition) HasEnumOptions() bool {
 	return d.EnumOptionsFunc != nil
+}
+
+func (d ConfigDefinition) IsEditable() bool {
+	return !d.ReadOnly
 }
 
 func ensureCurrentConfigEnumOption(options []ConfigEnumOption, currentValue string) []ConfigEnumOption {
@@ -201,6 +263,7 @@ func openSearchIndexEnumOptions() []ConfigEnumOption {
 		return nil
 	}
 	return buildConfigEnumOptions([]configEnumCandidate{
+		{Value: cfg.OpensearchConfig.LarkCardActionIndex, Source: "lark_card_action_index"},
 		{Value: cfg.OpensearchConfig.LarkMsgIndex, Source: "lark_msg_index"},
 		{Value: cfg.OpensearchConfig.LarkChunkIndex, Source: "lark_chunk_index"},
 	})

@@ -605,18 +605,20 @@ func (p *ContinuationProcessor) withExecutionLease(ctx context.Context, chatID, 
 	if store == nil || chatID == "" || actorOpenID == "" || holder == "" {
 		return run()
 	}
-	acquired, err := store.AcquireExecutionLease(ctx, chatID, actorOpenID, holder, defaultExecutionLeaseTTL, DefaultMaxExecutionLeasesPerActorChat)
+	policy := p.normalizedRunLeasePolicy()
+	acquired, err := store.AcquireExecutionLease(ctx, chatID, actorOpenID, holder, policy.TTL, DefaultMaxExecutionLeasesPerActorChat)
 	if err != nil {
 		return err
 	}
 	if !acquired {
 		return ErrRunSlotOccupied
+		
 	}
 
 	ctx = withExecutionWorkerID(ctx, holder)
 	stopRenew := make(chan struct{})
 	doneRenew := make(chan struct{})
-	go p.renewExecutionLease(ctx, store, chatID, actorOpenID, holder, stopRenew, doneRenew)
+	go p.renewExecutionLease(ctx, store, chatID, actorOpenID, holder, policy, stopRenew, doneRenew)
 	defer func() {
 		close(stopRenew)
 		<-doneRenew
@@ -636,11 +638,13 @@ func (p *ContinuationProcessor) renewExecutionLease(
 	ctx context.Context,
 	store executionLeaseStore,
 	chatID, actorOpenID, holder string,
+	policy RunLeasePolicy,
 	stop <-chan struct{},
 	done chan<- struct{},
 ) {
 	defer close(done)
-	ticker := time.NewTicker(defaultExecutionLeaseRenewInterval)
+	policy = policy.Normalize()
+	ticker := time.NewTicker(policy.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -649,7 +653,7 @@ func (p *ContinuationProcessor) renewExecutionLease(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			renewed, err := store.RenewExecutionLease(ctx, chatID, actorOpenID, holder, defaultExecutionLeaseTTL)
+			renewed, err := store.RenewExecutionLease(ctx, chatID, actorOpenID, holder, policy.TTL)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logs.L().Ctx(ctx).Warn("agent runtime execution lease renew failed",
 					zap.Error(err),

@@ -99,6 +99,11 @@ func buildConfigItemBlock(item ConfigItem) map[string]any {
 }
 
 func buildConfigItemSection(item ConfigItem, view ConfigViewState) map[string]any {
+	if !item.IsEditable {
+		return buildConfigColumns(buildConfigItemBlock(item), []any{
+			hintBlock("只读：启动时加载，请修改 TOML 并重启后生效"),
+		})
+	}
 	switch item.ValueType {
 	case "bool":
 		return buildConfigColumns(buildConfigItemBlock(item), []any{buildConfigActionRow(item, view)})

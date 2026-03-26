@@ -295,6 +295,43 @@ func TestContinuationProcessorWithRunExecutionHeartbeatRenewsLease(t *testing.T)
 	}
 }
 
+func TestContinuationProcessorWithExecutionLeaseUsesConfiguredPolicy(t *testing.T) {
+	store := &executionLeasePolicyTestStore{}
+	processor := &ContinuationProcessor{
+		coordinator: &RunCoordinator{
+			runtimeStore: store,
+		},
+		runLeasePolicy: RunLeasePolicy{
+			TTL:               40 * time.Millisecond,
+			HeartbeatInterval: 10 * time.Millisecond,
+		},
+	}
+
+	err := processor.withExecutionLease(context.Background(), "oc_chat", "ou_actor", "holder_a", func() error {
+		time.Sleep(25 * time.Millisecond)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withExecutionLease() error = %v", err)
+	}
+
+	acquireTTL, renewTTLs, releaseCount := store.snapshot()
+	if acquireTTL != 40*time.Millisecond {
+		t.Fatalf("AcquireExecutionLease() ttl = %s, want %s", acquireTTL, 40*time.Millisecond)
+	}
+	if len(renewTTLs) == 0 {
+		t.Fatal("expected RenewExecutionLease() to be called at least once")
+	}
+	for _, ttl := range renewTTLs {
+		if ttl != 40*time.Millisecond {
+			t.Fatalf("RenewExecutionLease() ttl = %s, want %s", ttl, 40*time.Millisecond)
+		}
+	}
+	if releaseCount != 1 {
+		t.Fatalf("ReleaseExecutionLease() count = %d, want 1", releaseCount)
+	}
+}
+
 func newRunLivenessTestCoordinator(t *testing.T) (*RunCoordinator, *runLivenessTestRunRepo, *AgentRun) {
 	t.Helper()
 	runRepo := &runLivenessTestRunRepo{runs: make(map[string]*AgentRun)}
@@ -406,4 +443,78 @@ func cloneRunForTest(run *AgentRun) *AgentRun {
 		cloned.LeaseExpiresAt = &leaseExpiresAt
 	}
 	return &cloned
+}
+
+type executionLeasePolicyTestStore struct {
+	mu           sync.Mutex
+	acquireTTL   time.Duration
+	renewTTLs    []time.Duration
+	releaseCount int
+}
+
+func (s *executionLeasePolicyTestStore) ActiveChatRun(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (s *executionLeasePolicyTestStore) SwapActiveChatRun(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *executionLeasePolicyTestStore) ActiveActorChatRun(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (s *executionLeasePolicyTestStore) SwapActiveActorChatRun(context.Context, string, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *executionLeasePolicyTestStore) NextCancelGeneration(context.Context, string) (int64, error) {
+	return 0, nil
+}
+
+func (s *executionLeasePolicyTestStore) NotifyPendingInitialRun(context.Context, string, string) error {
+	return nil
+}
+
+func (s *executionLeasePolicyTestStore) SaveApprovalReservation(context.Context, string, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (s *executionLeasePolicyTestStore) LoadApprovalReservation(context.Context, string, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *executionLeasePolicyTestStore) RecordApprovalReservationDecision(context.Context, string, string, []byte) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *executionLeasePolicyTestStore) ConsumeApprovalReservation(context.Context, string, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (s *executionLeasePolicyTestStore) AcquireExecutionLease(_ context.Context, _ string, _ string, _ string, ttl time.Duration, _ int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acquireTTL = ttl
+	return true, nil
+}
+
+func (s *executionLeasePolicyTestStore) RenewExecutionLease(_ context.Context, _ string, _ string, _ string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renewTTLs = append(s.renewTTLs, ttl)
+	return true, nil
+}
+
+func (s *executionLeasePolicyTestStore) ReleaseExecutionLease(context.Context, string, string, string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseCount++
+	return true, nil
+}
+
+func (s *executionLeasePolicyTestStore) snapshot() (time.Duration, []time.Duration, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acquireTTL, append([]time.Duration(nil), s.renewTTLs...), s.releaseCount
 }

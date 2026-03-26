@@ -317,6 +317,16 @@ func WithCapabilityReplyPlanner(planner CapabilityReplyPlanner) ContinuationProc
 	}
 }
 
+// WithRunLeasePolicy injects the execution-lease and run-heartbeat timing used
+// by the continuation processor.
+func WithRunLeasePolicy(policy RunLeasePolicy) ContinuationProcessorOption {
+	return func(p *ContinuationProcessor) {
+		if p != nil {
+			p.runLeasePolicy = policy
+		}
+	}
+}
+
 func resolveCapabilityApprovalSpec(step *AgentStep, meta CapabilityMeta, input CapabilityCallInput, now time.Time) CapabilityApprovalSpec {
 	return capdef.ResolveApprovalSpec(
 		strings.TrimSpace(step.CapabilityName),
