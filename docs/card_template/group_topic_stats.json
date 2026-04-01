@@ -1,0 +1,715 @@
+{
+    "schema": "2.0",
+    "config": {
+        "update_multi": true,
+        "style": {
+            "text_size": {
+                "normal_v2": {
+                    "default": "normal",
+                    "pc": "normal",
+                    "mobile": "heading"
+                }
+            }
+        }
+    },
+    "body": {
+        "direction": "vertical",
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "> 原始命令: ",
+                "text_align": "left",
+                "text_size": "notation",
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "markdown",
+                "content": "**<font color='blue'>消息摘要</font>**\n",
+                "text_align": "left",
+                "text_size": "normal",
+                "margin": "0px 0px 0px 0px",
+                "icon": {
+                    "tag": "standard_icon",
+                    "token": "arrange_outlined",
+                    "color": "grey"
+                },
+                "element_id": "custom_id"
+            },
+            {
+                "tag": "markdown",
+                "content": "${summary}",
+                "text_align": "left",
+                "text_size": "notation",
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px",
+                "element_id": "Q_6fb398MKvU32WiT9b3"
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "排名",
+                                "text_align": "left",
+                                "text_size": "normal_v2",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "用户",
+                                "text_align": "left",
+                                "text_size": "normal_v2",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "消息量",
+                                "text_align": "left",
+                                "text_size": "normal_v2",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "互动量",
+                                "text_align": "left",
+                                "text_size": "normal_v2",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    }
+                ],
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "repeat",
+                "variable": "user_list",
+                "elements": [
+                    {
+                        "tag": "column_set",
+                        "horizontal_spacing": "8px",
+                        "horizontal_align": "left",
+                        "columns": [
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "第${user_list.number}名",
+                                        "text_align": "left",
+                                        "text_size": "normal_v2",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "person_list",
+                                        "persons": "${user_list.user}",
+                                        "size": "small",
+                                        "show_avatar": true,
+                                        "show_name": true,
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "${user_list.msg_cnt}",
+                                        "text_align": "left",
+                                        "text_size": "normal_v2",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            },
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "${user_list.action_cnt}",
+                                        "text_align": "left",
+                                        "text_size": "normal_v2",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ],
+                                "vertical_spacing": "8px",
+                                "horizontal_align": "left",
+                                "vertical_align": "top",
+                                "weight": 1
+                            }
+                        ],
+                        "margin": "0px 0px 0px 0px"
+                    }
+                ]
+            },
+            {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "**<font color='indigo'>意图分类</font>**",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "big-eye_outlined",
+                                    "color": "grey"
+                                },
+                                "element_id": "AoHXyN3_D6RvyMfEwOcO"
+                            },
+                            {
+                                "tag": "markdown",
+                                "content": "<text_tag color='yellow'>${intent}</text_tag>",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "margin": "0px 0px 0px 0px"
+                            },
+                            {
+                                "tag": "markdown",
+                                "content": "**<font color='lime'>情感分析</font>**<text_tag color='green'>${sentiment}</text_tag>\n",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "virtual-avatar_outlined",
+                                    "color": "grey"
+                                },
+                                "element_id": "YBIjU8CHucMLVc58G8yf"
+                            },
+                            {
+                                "tag": "repeat",
+                                "variable": "tones",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "<text_tag color='wathet'>${tones.tone}</text_tag>",
+                                        "text_align": "left",
+                                        "text_size": "normal",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ]
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "**<font color='violet'>参与者</font>**",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "member_outlined",
+                                    "color": "grey"
+                                },
+                                "element_id": "GYna0SOSDmFM6DCiTsa1"
+                            },
+                            {
+                                "tag": "person_list",
+                                "persons": "${participants}",
+                                "size": "extra_small",
+                                "lines": 3,
+                                "show_avatar": true,
+                                "show_name": false,
+                                "margin": "0px 0px 0px 0px"
+                            },
+                            {
+                                "tag": "markdown",
+                                "content": "**<font color='violet'>问题提取</font>**",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "bitableunknow_outlined",
+                                    "color": "grey"
+                                },
+                                "element_id": "kIzoHnd9gD3w6Ok2h8u_"
+                            },
+                            {
+                                "tag": "repeat",
+                                "variable": "questions",
+                                "elements": [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "<text_tag  color='red'>${questions.question}</text_tag>",
+                                        "text_align": "left",
+                                        "text_size": "normal",
+                                        "margin": "0px 0px 0px 0px"
+                                    }
+                                ]
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    }
+                ],
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "**<font color='green'>实体分析</font>**",
+                                "text_align": "left",
+                                "text_size": "normal",
+                                "margin": "0px 0px 0px 0px",
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "efficiency_outlined",
+                                    "color": "grey"
+                                }
+                            },
+                            {
+                                "tag": "column_set",
+                                "flex_mode": "stretch",
+                                "horizontal_spacing": "8px",
+                                "horizontal_align": "left",
+                                "columns": [
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**主题/活动**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "main_topics_or_activities",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='green'>${main_topics_or_activities.text}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    },
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**关键名词**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "key_concepts_and_nouns",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='yellow'>${key_concepts_and_nouns.text}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    },
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**相关组织**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "mentioned_groups_or_organizations",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='orange'>${mentioned_groups_or_organizations.text}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    },
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**提及用户**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "mentioned_people",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='lime'>${mentioned_people.text}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    },
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**地理信息**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "locations_and_venues",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='turquoise'>${locations_and_venues.text}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    },
+                                    {
+                                        "tag": "column",
+                                        "width": "auto",
+                                        "elements": [
+                                            {
+                                                "tag": "markdown",
+                                                "content": "**媒介实体**",
+                                                "text_align": "left",
+                                                "text_size": "notation",
+                                                "margin": "0px 0px 0px 0px"
+                                            },
+                                            {
+                                                "tag": "repeat",
+                                                "variable": "media_and_works",
+                                                "elements": [
+                                                    {
+                                                        "tag": "markdown",
+                                                        "content": "<text_tag  color='violet'>${media_and_works.type}-${media_and_works.title}</text_tag>",
+                                                        "text_align": "left",
+                                                        "text_size": "normal_v2",
+                                                        "margin": "0px 0px 0px 0px"
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        "vertical_spacing": "8px",
+                                        "horizontal_align": "left",
+                                        "vertical_align": "top"
+                                    }
+                                ],
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    }
+                ],
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "hr",
+                "margin": "0px 0px 0px 0px",
+                "element_id": "df8WFnTYjnW6NQrpXn3u"
+            },
+            {
+                "tag": "markdown",
+                "content": "**<font color='indigo'>元数据</font>**",
+                "text_align": "left",
+                "text_size": "normal",
+                "margin": "0px 0px 0px 0px",
+                "icon": {
+                    "tag": "standard_icon",
+                    "token": "asterisk_outlined",
+                    "color": "grey"
+                },
+                "element_id": "WttMshLUlkk5GlMqo9Gr"
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "<text_tag color='blue'> ${timestamp}</text_tag>",
+                                "text_align": "left",
+                                "text_size": "notation",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top"
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "<text_tag color='green'>${msg_id} </text_tag>",
+                                "text_align": "left",
+                                "text_size": "notation",
+                                "margin": "0px 0px 0px 0px"
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top"
+                    }
+                ],
+                "margin": "0px 0px 0px 0px"
+            },
+            {
+                "tag": "column_set",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "right",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": "卡片更新时间：${refresh_time}",
+                                    "text_size": "notation",
+                                    "text_align": "left",
+                                    "text_color": "grey"
+                                },
+                                "icon": {
+                                    "tag": "standard_icon",
+                                    "token": "time-zone_outlined",
+                                    "color": "grey"
+                                },
+                                "margin": "0px 0px 0px 0px",
+                                "element_id": "update_time"
+                            }
+                        ],
+                        "direction": "horizontal",
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top",
+                        "weight": 1
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                            {
+                                "tag": "button",
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": "${jaeger_trace_info}"
+                                },
+                                "type": "primary_filled",
+                                "width": "default",
+                                "size": "tiny",
+                                "behaviors": [
+                                    {
+                                        "type": "open_url",
+                                        "default_url": "${jaeger_trace_url}",
+                                        "pc_url": "",
+                                        "ios_url": "",
+                                        "android_url": ""
+                                    }
+                                ]
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top"
+                    },
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                            {
+                                "tag": "button",
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": "${withdraw_info}"
+                                },
+                                "type": "danger_filled",
+                                "width": "default",
+                                "size": "tiny",
+                                "confirm": {
+                                    "title": {
+                                        "tag": "plain_text",
+                                        "content": "${withdraw_title}"
+                                    },
+                                    "text": {
+                                        "tag": "plain_text",
+                                        "content": "${withdraw_confirm}"
+                                    }
+                                },
+                                "behaviors": [
+                                    {
+                                        "type": "callback",
+                                        "value": "${withdraw_object}"
+                                    }
+                                ]
+                            }
+                        ],
+                        "vertical_spacing": "8px",
+                        "horizontal_align": "left",
+                        "vertical_align": "top"
+                    }
+                ]
+            }
+        ]
+    },
+    "header": {
+        "title": {
+            "tag": "plain_text",
+            "content": "水群报告"
+        },
+        "subtitle": {
+            "tag": "plain_text",
+            "content": ""
+        },
+        "template": "blue",
+        "icon": {
+            "tag": "standard_icon",
+            "token": "keyboard_outlined"
+        },
+        "padding": "12px 8px 12px 8px"
+    }
+}
