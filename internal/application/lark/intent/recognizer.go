@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
@@ -44,12 +45,6 @@ const (
 	ReplyModePassiveReply    = intentmeta.ReplyModePassiveReply
 	ReplyModeActiveInterject = intentmeta.ReplyModeActiveInterject
 	ReplyModeIgnore          = intentmeta.ReplyModeIgnore
-)
-
-type InteractionMode = intentmeta.InteractionMode
-
-const (
-	InteractionModeStandard = intentmeta.InteractionModeStandard
 )
 
 type IntentAnalysis = intentmeta.IntentAnalysis
@@ -100,12 +95,7 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
 8. interaction_mode 固定为 standard（当前仅保留标准聊天链路）：
    - standard: 单轮问答、寒暄、解释、轻聊天、简单追问、单点事实查询。
    
-
-9. needs_history: true/false。只有当你认为需要搜索当前会话历史，才能更稳妥地判断或回答时，才设为 true。
-
-10. needs_web: true/false。只有当问题依赖实时/外部事实、公开资料或联网检索时，才设为 true。
-
-11. reasoning_effort 用于给后续标准对话提供思考深度建议：
+9. reasoning_effort 用于给后续标准对话提供思考深度建议：
    - minimal: 几乎不需要推理，简单接话或直接执行单步任务
    - low: 需要少量分析，任务较明确
    - medium: 需要多步分析或权衡
@@ -123,17 +113,15 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
   "user_willingness": 90,
   "interrupt_risk": 10,
   "interaction_mode": "standard",
-  "needs_history": true/false,
-  "needs_web": true/false,
   "reasoning_effort": "minimal|low|medium|high"
 }`
 
 // AnalyzeMessage 分析消息意图
-func AnalyzeMessage(ctx context.Context, message string) (analysis *IntentAnalysis, err error) {
-	return analyzeMessage(ctx, message, appconfig.NewAccessor(ctx, "", "").IntentLiteModel())
+func AnalyzeMessage(ctx context.Context, message string, recentLines []string) (analysis *IntentAnalysis, err error) {
+	return analyzeMessage(ctx, message, recentLines, appconfig.NewAccessor(ctx, "", "").IntentLiteModel())
 }
 
-func analyzeMessage(ctx context.Context, message, modelID string) (analysis *IntentAnalysis, err error) {
+func analyzeMessage(ctx context.Context, message string, recentLines []string, modelID string) (analysis *IntentAnalysis, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -148,10 +136,11 @@ func analyzeMessage(ctx context.Context, message, modelID string) (analysis *Int
 		return nil, errors.New("empty message")
 	}
 
+	userPrompt := buildIntentUserPrompt(message, recentLines)
 	responseText, err := responseTextWithCacheFn(ctx, ark_dal.CachedResponseRequest{
 		CacheScene:   "intent",
 		SystemPrompt: intentSystemPrompt,
-		UserPrompt:   message,
+		UserPrompt:   userPrompt,
 		ModelID:      modelID,
 		Text: &responses.ResponsesText{
 			Format: &responses.TextFormat{
@@ -192,8 +181,6 @@ func analyzeMessage(ctx context.Context, message, modelID string) (analysis *Int
 		attribute.Key("reply_mode").String(string(analysis.ReplyMode)),
 		attribute.Key("user_willingness").Int(analysis.UserWillingness),
 		attribute.Key("interrupt_risk").Int(analysis.InterruptRisk),
-		attribute.Key("needs_history").Bool(analysis.NeedsHistory),
-		attribute.Key("needs_web").Bool(analysis.NeedsWeb),
 		attribute.Key("recommended_reasoning_effort").String(analysis.ReasoningEffort.String()),
 	)
 
@@ -205,8 +192,6 @@ func analyzeMessage(ctx context.Context, message, modelID string) (analysis *Int
 		zap.String("reply_mode", string(analysis.ReplyMode)),
 		zap.Int("user_willingness", analysis.UserWillingness),
 		zap.Int("interrupt_risk", analysis.InterruptRisk),
-		zap.Bool("needs_history", analysis.NeedsHistory),
-		zap.Bool("needs_web", analysis.NeedsWeb),
 		zap.String("reasoning_effort", analysis.ReasoningEffort.String()),
 	)
 
@@ -214,14 +199,35 @@ func analyzeMessage(ctx context.Context, message, modelID string) (analysis *Int
 }
 
 // DefaultReasoningEffort returns the fallback reasoning depth for the given interaction mode.
-func DefaultReasoningEffort(mode InteractionMode) responses.ReasoningEffort_Enum {
-	return intentmeta.DefaultReasoningEffort(mode)
+func DefaultReasoningEffort() responses.ReasoningEffort_Enum {
+	return intentmeta.DefaultReasoningEffort()
 }
 
 // NormalizeReasoningEffort validates a model-returned effort and falls back by interaction mode.
 func NormalizeReasoningEffort(
 	effort responses.ReasoningEffort_Enum,
-	mode InteractionMode,
 ) responses.ReasoningEffort_Enum {
 	return intentmeta.NormalizeReasoningEffort(effort)
+}
+
+func buildIntentUserPrompt(message string, recentLines []string) string {
+	var builder strings.Builder
+	builder.WriteString("最近对话:\n")
+	builder.WriteString(intentLinesBlock(recentLines))
+	builder.WriteString("\n当前用户消息:\n")
+	builder.WriteString(strings.TrimSpace(message))
+	return builder.String()
+}
+
+func intentLinesBlock(lines []string) string {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	if len(filtered) == 0 {
+		return "<empty>"
+	}
+	return strings.Join(filtered, "\n")
 }

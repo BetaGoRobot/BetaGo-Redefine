@@ -23,7 +23,20 @@ func TestIntentRecognizeOperatorFetchStoresAnalysis(t *testing.T) {
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig {
 			return fakeIntentRecognizeAccessor{enabled: true, mode: appconfig.ChatModeStandard}
 		},
-		analyzer: func(context.Context, string) (*intent.IntentAnalysis, error) {
+		recentContextLoader: func(context.Context, *larkim.P2MessageReceiveV1, int) ([]string, error) {
+			return []string{
+				"[2026-04-02 10:00:01](ou_a) <甲>: 先按旧方案拆接口",
+				"[2026-04-02 10:00:05](ou_b) <乙>: 那降级策略也补一下",
+				"[2026-04-02 10:00:09](ou_c) <丙>: 指标要单独看",
+			}, nil
+		},
+		analyzer: func(_ context.Context, text string, recent []string) (*intent.IntentAnalysis, error) {
+			if text != "hello" {
+				t.Fatalf("text = %q, want %q", text, "hello")
+			}
+			if len(recent) != 3 {
+				t.Fatalf("recent len = %d, want 3", len(recent))
+			}
 			return &intent.IntentAnalysis{
 				IntentType:      intent.IntentTypeQuestion,
 				NeedReply:       true,

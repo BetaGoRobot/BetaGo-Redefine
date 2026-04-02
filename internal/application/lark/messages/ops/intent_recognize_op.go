@@ -2,8 +2,12 @@ package ops
 
 import (
 	"context"
+	"strconv"
+	"strings"
+	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
@@ -12,6 +16,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	"github.com/defensestation/osquery"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -27,8 +32,9 @@ var (
 //	@update 2025-03-02
 type IntentRecognizeOperator struct {
 	OpBase
-	configAccessor func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig
-	analyzer       func(context.Context, string) (*intent.IntentAnalysis, error)
+	configAccessor      func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig
+	analyzer            func(context.Context, string, []string) (*intent.IntentAnalysis, error)
+	recentContextLoader func(context.Context, *larkim.P2MessageReceiveV1, int) ([]string, error)
 }
 
 type intentRecognizeConfig interface {
@@ -38,6 +44,8 @@ type intentRecognizeConfig interface {
 
 // 全局单例 IntentRecognizeFetcher
 var IntentRecognizeFetcher = &IntentRecognizeOperator{}
+
+const intentRecentContextLimit = 3
 
 func (r *IntentRecognizeOperator) Name() string {
 	return "IntentRecognizeOperator"
@@ -67,14 +75,19 @@ func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2Mes
 		return errors.Wrap(xerror.ErrStageSkip, r.Name()+" intent recognition disabled")
 	}
 
-	text := messageText(ctx, event)
+	text := strings.TrimSpace(messageText(ctx, event))
 	if text == "" {
 		logs.L().Ctx(ctx).Warn("empty message, skip intent recognition")
 		return nil
 	}
 
+	recentLines, recentErr := r.loadRecentContext(ctx, event, intentRecentContextLimit)
+	if recentErr != nil {
+		logs.L().Ctx(ctx).Warn("load recent context for intent recognition failed", zap.Error(recentErr))
+	}
+
 	// 调用意图识别
-	analysis, err := r.analyzeIntent(ctx, text)
+	analysis, err := r.analyzeIntent(ctx, text, recentLines)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("intent analysis failed", zap.Error(err))
 		return nil
@@ -100,11 +113,58 @@ func (r *IntentRecognizeOperator) intentConfigAccessor(ctx context.Context, even
 	return messageConfigAccessor(ctx, event, meta)
 }
 
-func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, text string) (*intent.IntentAnalysis, error) {
+func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, text string, recentLines []string) (*intent.IntentAnalysis, error) {
 	if r != nil && r.analyzer != nil {
-		return r.analyzer(ctx, text)
+		return r.analyzer(ctx, text, recentLines)
 	}
-	return intent.AnalyzeMessage(ctx, text)
+	return intent.AnalyzeMessage(ctx, text, recentLines)
+}
+
+func (r *IntentRecognizeOperator) loadRecentContext(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	size int,
+) ([]string, error) {
+	if size <= 0 {
+		return nil, nil
+	}
+	if r != nil && r.recentContextLoader != nil {
+		return r.recentContextLoader(ctx, event, size)
+	}
+	return loadIntentRecentContext(ctx, event, size)
+}
+
+func loadIntentRecentContext(ctx context.Context, event *larkim.P2MessageReceiveV1, size int) ([]string, error) {
+	chatID := messageChatID(event, nil)
+	if chatID == "" {
+		return nil, nil
+	}
+
+	cutoff := time.Now()
+	if event != nil && event.Event != nil && event.Event.Message != nil && event.Event.Message.CreateTime != nil {
+		if createdAtMillis, err := strconv.ParseInt(*event.Event.Message.CreateTime, 10, 64); err == nil {
+			cutoff = time.UnixMilli(createdAtMillis)
+		}
+	}
+
+	messageList, err := history.New(ctx).
+		Query(osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range("create_time_v2").Lt(cutoff),
+		)).
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type").
+		Size(uint64(size*3)).
+		Sort("create_time_v2", "desc").
+		GetMsg()
+	if err != nil {
+		return nil, err
+	}
+
+	lines := messageList.ToLines()
+	if len(lines) > size {
+		lines = lines[len(lines)-size:]
+	}
+	return lines, nil
 }
 
 // PreRun 意图识别前置检查（作为 Operator 时使用）
