@@ -16,6 +16,9 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
@@ -335,8 +338,8 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		size = new(int)
 		*size = 20
 	}
-
 	chatID := *event.Event.Message.ChatId
+	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
 	messageList, err := history.New(ctx).
 		Query(osquery.Bool().Must(
 			osquery.Term("chat_id", chatID),
@@ -365,7 +368,38 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
 	systemPrompt := buildStandardChatSystemPrompt(promptMode)
-	userPrompt := buildStandardChatUserPrompt(standardChatBotProfileLoader(ctx), historyLines, nil, currentInput)
+	// 从chunking中拉取话题
+	topicLines := make([]string, 0)
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("RecallDocs err", zap.Error(err))
+	}
+	for _, doc := range docs {
+		msgID, ok := doc.Metadata["msg_id"]
+		if ok {
+			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
+				Search().Sort("timestamp_v2", osquery.OrderDesc).
+				Query(osquery.Bool().Must(osquery.Term("msg_ids", msgID))).
+				Size(1),
+			)
+			if searchErr != nil {
+				return nil, searchErr
+			}
+			chunk := &xmodel.MessageChunkLogV3{}
+			if len(resp.Hits.Hits) > 0 {
+				sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
+				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", *chunk.TimestampV2, chunk.Summary))
+			}
+		}
+	}
+	topicLines = utils.Dedup(topicLines)
+
+	userPrompt := buildStandardChatUserPrompt(
+		standardChatBotProfileLoader(ctx),
+		historyLines,
+		topicLines,
+		currentInput,
+	)
 
 	iterSeq, err := ark_dal.
 		New(chatID, currentOpenID(event, nil), event).
