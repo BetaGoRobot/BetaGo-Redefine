@@ -71,9 +71,9 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 
 	redisGetCtx, redisGetSpan := otel.StartNamed(ctx, "ark.responses.cache_get")
 	respID, err := redis_dal.GetRedisClient().Get(redisGetCtx, key).Result()
-	otel.RecordError(redisGetSpan, err)
 	redisGetSpan.End()
 	if err != nil && err != redis.Nil {
+		otel.RecordError(redisGetSpan, err)
 		logs.L().Ctx(ctx).Error("get cache error", zap.Error(err))
 		return "", err
 	}

@@ -40,6 +40,11 @@ type wordCloudHandler struct{}
 
 var WordCloud wordCloudHandler
 
+const (
+	wordCloudOverviewMessageTop = 5
+	wordCloudOverviewChunkTop   = 3
+)
+
 func (wordCloudHandler) ParseCLI(args []string) (WordCloudArgs, error) {
 	argMap, _ := parseArgs(args...)
 	sortType, err := xcommand.ParseEnum[WordCloudSortType](argMap["sort"])
@@ -168,7 +173,9 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 		days: arg.Days, st: scope.Start, et: scope.End, msgID: currentMessageID(data), chatID: scope.ChatID, interval: arg.Interval,
 	}
 
-	userList, err := genHotRate(ctx, helper, arg.MessageTop)
+	overviewArg := clampWordCloudOverviewArgs(arg)
+
+	userList, err := genHotRate(ctx, helper, overviewArg.MessageTop)
 	if err != nil {
 		return
 	}
@@ -178,7 +185,7 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 		return
 	}
 
-	chunks, err := getChunks(ctx, scope.ChatID, scope.Start, scope.End, arg.ChunkTop, arg.Sort)
+	chunks, err := getChunks(ctx, scope.ChatID, scope.Start, scope.End, overviewArg.ChunkTop, arg.Sort)
 	if err != nil {
 		return
 	}
@@ -195,6 +202,16 @@ func (wordCloudHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiv
 	tpl.WithData(cardVar)
 	cardContent := larktpl.NewCardContentV2(ctx, tpl)
 	return sendCompatibleCard(ctx, data, metaData, cardContent, "", false)
+}
+
+func clampWordCloudOverviewArgs(arg WordCloudArgs) WordCloudArgs {
+	if arg.MessageTop <= 0 || arg.MessageTop > wordCloudOverviewMessageTop {
+		arg.MessageTop = wordCloudOverviewMessageTop
+	}
+	if arg.ChunkTop <= 0 || arg.ChunkTop > wordCloudOverviewChunkTop {
+		arg.ChunkTop = wordCloudOverviewChunkTop
+	}
+	return arg
 }
 
 type WordCountType struct {
@@ -349,6 +366,12 @@ func genHotRate(ctx context.Context, helper *trendInternalHelper, top int) (user
 	}
 	if len(userList) > top {
 		userList = userList[:top]
+	}
+	d := make(map[string]struct{}, len(userList))
+	for _, item := range userList {
+		if len(item.User) > 0 {
+			d[item.User[0].ID] = struct{}{}
+		}
 	}
 	return
 }

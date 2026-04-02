@@ -492,7 +492,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		Store: gptr.Of(true),
 		Tools: r.tools,
 		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_low,
+			Effort: responses.ReasoningEffort_high,
 		},
 		Stream: gptr.Of(true),
 	}
