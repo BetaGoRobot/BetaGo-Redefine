@@ -15,13 +15,16 @@ func TestIntentSystemPromptKeepsStandardOnlyInteractionMode(t *testing.T) {
 		"reply_mode 用于判断这条消息属于哪种回复模式",
 		"user_willingness 表示用户此刻主观上有多希望机器人接话",
 		"interrupt_risk 表示如果机器人现在插话，打扰感有多强",
-		"needs_history: true/false",
-		"needs_web: true/false",
 		`"interaction_mode": "standard"`,
 	}
 	for _, phrase := range requiredPhrases {
 		if !strings.Contains(intentSystemPrompt, phrase) {
 			t.Fatalf("intentSystemPrompt missing phrase %q", phrase)
+		}
+	}
+	for _, phrase := range []string{"needs_history", "needs_web"} {
+		if strings.Contains(intentSystemPrompt, phrase) {
+			t.Fatalf("intentSystemPrompt should not contain %q", phrase)
 		}
 	}
 }
@@ -38,7 +41,7 @@ func TestAnalyzeMessageKeepsMinimalForNonQuestionStandard(t *testing.T) {
 		return `{"intent_type":"chat","need_reply":true,"reply_confidence":61,"reason":"闲聊","suggest_action":"chat","interaction_mode":"standard"}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "今天真热", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "今天真热", nil, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -46,7 +49,7 @@ func TestAnalyzeMessageKeepsMinimalForNonQuestionStandard(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("responseTextWithCacheFn call count = %d, want 1", len(captured))
 	}
-	assertIntentRequest(t, captured[0], "今天真热", "intent-lite", responses.ReasoningEffort_minimal)
+	assertIntentRequest(t, captured[0], buildIntentUserPrompt("今天真热", nil), "intent-lite", responses.ReasoningEffort_minimal)
 	if analysis.IntentType != IntentTypeChat {
 		t.Fatalf("IntentType = %q, want %q", analysis.IntentType, IntentTypeChat)
 	}
@@ -70,7 +73,7 @@ func TestAnalyzeMessageUsesSinglePassAndParsesReasoningEffort(t *testing.T) {
 		return `{"intent_type":"question","need_reply":true,"reply_confidence":93,"reason":"需要更稳妥回答","suggest_action":"chat","interaction_mode":"standard","reasoning_effort":"high"}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "明天要下雨吗", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "明天要下雨吗", nil, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -78,7 +81,7 @@ func TestAnalyzeMessageUsesSinglePassAndParsesReasoningEffort(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("responseTextWithCacheFn call count = %d, want 1", len(captured))
 	}
-	assertIntentRequest(t, captured[0], "明天要下雨吗", "intent-lite", responses.ReasoningEffort_minimal)
+	assertIntentRequest(t, captured[0], buildIntentUserPrompt("明天要下雨吗", nil), "intent-lite", responses.ReasoningEffort_minimal)
 	if analysis.IntentType != IntentTypeQuestion {
 		t.Fatalf("IntentType = %q, want %q", analysis.IntentType, IntentTypeQuestion)
 	}
@@ -96,17 +99,20 @@ func TestAnalyzeMessageUsesSinglePassAndParsesReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestAnalyzeMessageParsesReplyModeAndRetrievalHints(t *testing.T) {
+func TestAnalyzeMessageParsesReplyModeMetadata(t *testing.T) {
 	oldResponseTextWithCacheFn := responseTextWithCacheFn
 	defer func() {
 		responseTextWithCacheFn = oldResponseTextWithCacheFn
 	}()
 
 	responseTextWithCacheFn = func(ctx context.Context, req ark_dal.CachedResponseRequest) (string, error) {
-		return `{"intent_type":"chat","need_reply":true,"reply_confidence":72,"reason":"用户明确要继续追问历史上下文","suggest_action":"chat","interaction_mode":"standard","reply_mode":"passive_reply","user_willingness":88,"interrupt_risk":12,"needs_history":true,"needs_web":false}`, nil
+		return `{"intent_type":"chat","need_reply":true,"reply_confidence":72,"reason":"用户明确要继续追问历史上下文","suggest_action":"chat","interaction_mode":"standard","reply_mode":"passive_reply","user_willingness":88,"interrupt_risk":12}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "把刚才讨论的方案接着说完", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "把刚才讨论的方案接着说完", []string{
+		"[2026-04-02 10:00:01](ou_a) <甲>: 先按旧方案拆接口",
+		"[2026-04-02 10:00:05](ou_b) <乙>: 那降级策略也补一下",
+	}, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -119,11 +125,31 @@ func TestAnalyzeMessageParsesReplyModeAndRetrievalHints(t *testing.T) {
 	if analysis.InterruptRisk != 12 {
 		t.Fatalf("InterruptRisk = %d, want 12", analysis.InterruptRisk)
 	}
-	if !analysis.NeedsHistory {
-		t.Fatal("NeedsHistory should be true")
+}
+
+func TestAnalyzeMessageIncludesRecentLinesInUserPrompt(t *testing.T) {
+	oldResponseTextWithCacheFn := responseTextWithCacheFn
+	defer func() {
+		responseTextWithCacheFn = oldResponseTextWithCacheFn
+	}()
+
+	var captured ark_dal.CachedResponseRequest
+	responseTextWithCacheFn = func(ctx context.Context, req ark_dal.CachedResponseRequest) (string, error) {
+		captured = req
+		return `{"intent_type":"chat","need_reply":true,"reply_confidence":72,"reason":"续聊","suggest_action":"chat","interaction_mode":"standard","reply_mode":"passive_reply","user_willingness":88,"interrupt_risk":12}`, nil
 	}
-	if analysis.NeedsWeb {
-		t.Fatal("NeedsWeb should be false")
+
+	recent := []string{
+		"[2026-04-02 10:00:01](ou_a) <甲>: 先按旧方案拆接口",
+		"[2026-04-02 10:00:05](ou_b) <乙>: 那降级策略也补一下",
+	}
+	if _, err := analyzeMessage(context.Background(), "把刚才讨论的方案接着说完", recent, "intent-lite"); err != nil {
+		t.Fatalf("analyzeMessage() error = %v", err)
+	}
+
+	wantPrompt := buildIntentUserPrompt("把刚才讨论的方案接着说完", recent)
+	if captured.UserPrompt != wantPrompt {
+		t.Fatalf("user prompt = %q, want %q", captured.UserPrompt, wantPrompt)
 	}
 }
 
@@ -139,7 +165,7 @@ func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardModeDeepAnalysi
 		return `{"intent_type":"chat","need_reply":true,"reply_confidence":81,"reason":"普通闲聊","suggest_action":"chat","interaction_mode":"standard","reasoning_effort":"impossible"}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "帮我看看这个", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "帮我看看这个", nil, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -147,7 +173,7 @@ func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardModeDeepAnalysi
 	if len(captured) != 1 {
 		t.Fatalf("responseTextWithCacheFn call count = %d, want 1", len(captured))
 	}
-	assertIntentRequest(t, captured[0], "帮我看看这个", "intent-lite", responses.ReasoningEffort_minimal)
+	assertIntentRequest(t, captured[0], buildIntentUserPrompt("帮我看看这个", nil), "intent-lite", responses.ReasoningEffort_minimal)
 	if analysis.InteractionMode != InteractionModeStandard {
 		t.Fatalf("InteractionMode = %q, want %q", analysis.InteractionMode, InteractionModeStandard)
 	}
@@ -166,7 +192,7 @@ func TestAnalyzeMessageSanitizesInvalidReplyMetadata(t *testing.T) {
 		return `{"intent_type":"share","need_reply":true,"reply_confidence":130,"reason":"也许可以插一句","suggest_action":"chat","interaction_mode":"standard","reply_mode":"surprise","user_willingness":180,"interrupt_risk":-3}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "我刚看到一条新闻", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "我刚看到一条新闻", nil, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -182,12 +208,6 @@ func TestAnalyzeMessageSanitizesInvalidReplyMetadata(t *testing.T) {
 	if analysis.InterruptRisk != 0 {
 		t.Fatalf("InterruptRisk = %d, want 0", analysis.InterruptRisk)
 	}
-	if analysis.NeedsHistory {
-		t.Fatal("NeedsHistory should default to false")
-	}
-	if analysis.NeedsWeb {
-		t.Fatal("NeedsWeb should default to false")
-	}
 }
 
 func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardMode(t *testing.T) {
@@ -202,7 +222,7 @@ func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardMode(t *testing
 		return `{"intent_type":"chat","need_reply":true,"reply_confidence":90,"reason":"需要更细致分析","suggest_action":"chat","interaction_mode":"standard","reasoning_effort":"impossible"}`, nil
 	}
 
-	analysis, err := analyzeMessage(context.Background(), "请深入分析金价波动原因", "intent-lite")
+	analysis, err := analyzeMessage(context.Background(), "请深入分析金价波动原因", nil, "intent-lite")
 	if err != nil {
 		t.Fatalf("analyzeMessage() error = %v", err)
 	}
@@ -210,7 +230,7 @@ func TestAnalyzeMessageSanitizesInvalidReasoningEffortForStandardMode(t *testing
 	if len(captured) != 1 {
 		t.Fatalf("responseTextWithCacheFn call count = %d, want 1", len(captured))
 	}
-	assertIntentRequest(t, captured[0], "请深入分析金价波动原因", "intent-lite", responses.ReasoningEffort_minimal)
+	assertIntentRequest(t, captured[0], buildIntentUserPrompt("请深入分析金价波动原因", nil), "intent-lite", responses.ReasoningEffort_minimal)
 	if analysis.InteractionMode != InteractionModeStandard {
 		t.Fatalf("InteractionMode = %q, want %q", analysis.InteractionMode, InteractionModeStandard)
 	}

@@ -37,17 +37,6 @@ const (
 	ReplyModeIgnore          ReplyMode = "ignore"
 )
 
-type InteractionMode string
-
-const (
-	InteractionModeStandard InteractionMode = "standard"
-)
-
-func (m InteractionMode) Normalize() InteractionMode {
-	_ = m
-	return InteractionModeStandard
-}
-
 // IntentAnalysis 意图分析结果
 type IntentAnalysis struct {
 	IntentType      IntentType                     `json:"intent_type"`
@@ -55,12 +44,9 @@ type IntentAnalysis struct {
 	ReplyConfidence int                            `json:"reply_confidence"`
 	Reason          string                         `json:"reason"`
 	SuggestAction   SuggestAction                  `json:"suggest_action"`
-	InteractionMode InteractionMode                `json:"interaction_mode"`
 	ReplyMode       ReplyMode                      `json:"reply_mode"`
 	UserWillingness int                            `json:"user_willingness"`
 	InterruptRisk   int                            `json:"interrupt_risk"`
-	NeedsHistory    bool                           `json:"needs_history"`
-	NeedsWeb        bool                           `json:"needs_web"`
 	ReasoningEffort responses.ReasoningEffort_Enum `json:"reasoning_effort"`
 }
 
@@ -72,12 +58,9 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		ReplyConfidence int             `json:"reply_confidence"`
 		Reason          string          `json:"reason"`
 		SuggestAction   SuggestAction   `json:"suggest_action"`
-		InteractionMode InteractionMode `json:"interaction_mode"`
 		ReplyMode       ReplyMode       `json:"reply_mode"`
 		UserWillingness int             `json:"user_willingness"`
 		InterruptRisk   int             `json:"interrupt_risk"`
-		NeedsHistory    bool            `json:"needs_history"`
-		NeedsWeb        bool            `json:"needs_web"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -90,20 +73,16 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		ReplyConfidence: raw.ReplyConfidence,
 		Reason:          raw.Reason,
 		SuggestAction:   raw.SuggestAction,
-		InteractionMode: raw.InteractionMode,
 		ReplyMode:       raw.ReplyMode,
 		UserWillingness: raw.UserWillingness,
 		InterruptRisk:   raw.InterruptRisk,
-		NeedsHistory:    raw.NeedsHistory,
-		NeedsWeb:        raw.NeedsWeb,
 		ReasoningEffort: parseReasoningEffort(raw.ReasoningEffort),
 	}
 	return nil
 }
 
 // DefaultReasoningEffort returns the mode-based fallback effort when the model does not provide one.
-func DefaultReasoningEffort(mode InteractionMode) responses.ReasoningEffort_Enum {
-	_ = mode
+func DefaultReasoningEffort() responses.ReasoningEffort_Enum {
 	return responses.ReasoningEffort_minimal
 }
 
@@ -137,7 +116,6 @@ func (a *IntentAnalysis) Sanitize() {
 	}
 
 	// Chat pipeline is standard-only.
-	a.InteractionMode = InteractionModeStandard
 	a.ReasoningEffort = NormalizeReasoningEffort(a.ReasoningEffort)
 
 	if a.ReplyConfidence < 0 {
