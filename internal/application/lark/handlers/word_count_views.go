@@ -536,18 +536,20 @@ func buildChunkTemplateData(chunkLog *xmodel.MessageChunkLogV3) *larktpl.ChunkDa
 	chunkData.ChunkLog.Intent = larkmsg.TagText(GetIntentPhraseWithFallback(chunkLog.Intent))
 	if chunkData.ChunkLog.SentimentAndTone != nil {
 		chunkData.Sentiment = larkmsg.TagText(SentimentColor(chunkData.ChunkLog.SentimentAndTone.Sentiment))
-		chunkData.Tones = strings.Join(transStrings(chunkData.ChunkLog.SentimentAndTone.Tones, func(s string) string {
+		toneTags := transStrings(chunkData.ChunkLog.SentimentAndTone.Tones, func(s string) string {
 			return larkmsg.TagText(GetToneStyle(s))
-		}), "")
+		})
+		if len(toneTags) > 2 {
+			toneTags = toneTags[:2]
+		}
+		chunkData.Tones = strings.Join(toneTags, "")
 	}
 	chunkData.ChunkLog.SentimentAndTone = nil
 
 	chunkData.UserIDs4Lark = transParticipants(chunkLog)
 	chunkData.ChunkLog.OpenIDs = nil
 	if chunkLog.InteractionAnalysis != nil {
-		chunkData.UnresolvedQuestions = strings.Join(transStrings(chunkLog.InteractionAnalysis.UnresolvedQuestions, func(q string) string {
-			return larkmsg.TagText(q, "red")
-		}), "")
+		chunkData.UnresolvedQuestions = summarizeUnresolvedQuestions(chunkLog.InteractionAnalysis.UnresolvedQuestions)
 	}
 	return chunkData
 }
@@ -577,6 +579,25 @@ func transStrings[T any](items []T, mapper func(T) string) []string {
 		result = append(result, mapper(item))
 	}
 	return result
+}
+
+func summarizeUnresolvedQuestions(items []string) string {
+	trimmed := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := strings.TrimSpace(item); text != "" {
+			trimmed = append(trimmed, text)
+		}
+	}
+	switch len(trimmed) {
+	case 0:
+		return "暂时没挂着的问题"
+	case 1:
+		return trimmed[0]
+	case 2:
+		return trimmed[0] + " 等 2 个待回答问题"
+	default:
+		return trimmed[0] + " 等 " + strconv.Itoa(len(trimmed)) + " 个待回答问题"
+	}
 }
 
 func buildWordChunkListCard(ctx context.Context, scope wordCountScope, query wordChunkQuery, chunks []*xmodel.MessageChunkLogV3) larkmsg.RawCard {

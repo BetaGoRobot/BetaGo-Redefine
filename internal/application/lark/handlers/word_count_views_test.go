@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 )
 
@@ -132,6 +133,56 @@ func TestBuildWordChunkDetailCardIncludesBackAction(t *testing.T) {
 	}
 	if !strings.Contains(jsonStr, `"action":"wordcount.chunks.view"`) {
 		t.Fatalf("expected back action to return to chunk list state: %s", jsonStr)
+	}
+}
+
+func TestBuildChunkTemplateDataLimitsToneTagsToTwo(t *testing.T) {
+	chunk := &xmodel.MessageChunkLogV3{
+		Intent: string(WordChunkIntentTypeCasualChitchat),
+		SentimentAndTone: &xmodel.SentimentAndTone{
+			Sentiment: string(WordChunkSentimentTypePositive),
+			Tones:     []string{"HUMOROUS", "SUPPORTIVE", "FORMAL"},
+		},
+	}
+
+	data := buildChunkTemplateData(chunk)
+	if data == nil {
+		t.Fatal("buildChunkTemplateData() returned nil")
+	}
+
+	wantIncluded := []string{
+		larkmsg.TagText(GetToneStyle("HUMOROUS")),
+		larkmsg.TagText(GetToneStyle("SUPPORTIVE")),
+	}
+	for _, item := range wantIncluded {
+		if !strings.Contains(data.Tones, item) {
+			t.Fatalf("Tones = %q, want to include %q", data.Tones, item)
+		}
+	}
+
+	if strings.Contains(data.Tones, larkmsg.TagText(GetToneStyle("FORMAL"))) {
+		t.Fatalf("Tones = %q, want at most first two tone tags", data.Tones)
+	}
+}
+
+func TestBuildChunkTemplateDataSummarizesUnresolvedQuestions(t *testing.T) {
+	chunk := &xmodel.MessageChunkLogV3{
+		Intent: string(WordChunkIntentTypeCasualChitchat),
+		InteractionAnalysis: &xmodel.InteractionAnalysis{
+			UnresolvedQuestions: []string{
+				"周六几点集合？",
+				"谁来开车？",
+				"预算怎么算？",
+			},
+		},
+	}
+
+	data := buildChunkTemplateData(chunk)
+	if data == nil {
+		t.Fatal("buildChunkTemplateData() returned nil")
+	}
+	if data.UnresolvedQuestions != "周六几点集合？ 等 3 个待回答问题" {
+		t.Fatalf("UnresolvedQuestions = %q, want compact summary", data.UnresolvedQuestions)
 	}
 }
 
