@@ -78,26 +78,68 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 	return sendCreateMessage(ctx, req, recordContents...)
 }
 
-func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool, options ...AgentStreamingCardOptions) (err error) {
+func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	_, err = sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread, options...)
-	return err
+
+	if msg == nil || msg.MessageId == nil {
+		return errors.New("nil message")
+	}
+
+	var (
+		latestText string
+		replyMsgID string
+	)
+	for data := range msgSeq {
+		chunk := streamingChunkText(data)
+		if strings.TrimSpace(chunk) == "" {
+			continue
+		}
+		latestText = chunk
+		if replyMsgID == "" {
+			resp, replyErr := ReplyMsgText(ctx, latestText, *msg.MessageId, "_streaming_reply", inThread)
+			if replyErr != nil {
+				return replyErr
+			}
+			if !resp.Success() {
+				return errors.New(resp.Error())
+			}
+			if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
+				return errors.New("empty reply message id")
+			}
+			replyMsgID = strings.TrimSpace(*resp.Data.MessageId)
+			continue
+		}
+		if patchErr := PatchTextMessage(ctx, replyMsgID, latestText); patchErr != nil {
+			return patchErr
+		}
+	}
+	if replyMsgID != "" || strings.TrimSpace(latestText) == "" {
+		return nil
+	}
+	resp, replyErr := ReplyMsgText(ctx, latestText, *msg.MessageId, "_streaming_reply_final", inThread)
+	if replyErr != nil {
+		return replyErr
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
 }
 
-// SendAndReplyStreamingCardWithRefs replies with an agentic streaming card and returns both message/card refs.
-func SendAndReplyStreamingCardWithRefs(
-	ctx context.Context,
-	msg *larkim.EventMessage,
-	msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning],
-	inThread bool,
-	options ...AgentStreamingCardOptions,
-) (refs AgentStreamingCardRefs, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-	return sendAgentStreamingReplyCard(ctx, msg, msgSeq, inThread, options...)
+func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
+	return SendAndReplyStreamingCard(ctx, msg, msgSeq, false)
+}
+
+func streamingChunkText(data *ark_dal.ModelStreamRespReasoning) string {
+	if data == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(data.ContentStruct.Reply); text != "" {
+		return text
+	}
+	return strings.TrimSpace(data.Content)
 }
 
 // SendRecoveredMsg  SendRecoveredMsg
@@ -123,21 +165,6 @@ func SendRecoveredMsg(ctx context.Context, err any, msgID string) {
 	if err != nil {
 		logs.L().Ctx(ctx).Error("send error", zap.Error(err.(error)))
 	}
-}
-
-func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], options ...AgentStreamingCardOptions) (err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-	_, err = SendAndUpdateStreamingCardWithRefs(ctx, msg, msgSeq, options...)
-	return err
-}
-
-func SendAndUpdateStreamingCardWithRefs(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], options ...AgentStreamingCardOptions) (refs AgentStreamingCardRefs, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-	return sendAgentStreamingCreateCardFunc(ctx, msg, msgSeq, options...)
 }
 
 func RecoverMsg(ctx context.Context, msgID string) {

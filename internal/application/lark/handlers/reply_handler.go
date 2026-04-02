@@ -37,11 +37,15 @@ type ReplyAddArgs struct {
 
 type ReplyGetArgs struct{}
 
-type replyAddHandler struct{}
-type replyGetHandler struct{}
+type (
+	replyAddHandler struct{}
+	replyGetHandler struct{}
+)
 
-var ReplyAdd replyAddHandler
-var ReplyGet replyGetHandler
+var (
+	ReplyAdd replyAddHandler
+	ReplyGet replyGetHandler
+)
 
 const replyActionToolResultKey = "reply_action_result"
 
@@ -144,12 +148,7 @@ func (replyAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	if arg.Type != ReplyMatchTypeSubstr && arg.Type != ReplyMatchTypeRegex && arg.Type != ReplyMatchTypeFull {
 		return errors.New("type must be substr, regex or full")
 	}
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "reply_add",
-		ApprovalSummary: "将为关键词「" + arg.Word + "」添加 " + string(arg.Type) + " 匹配回复",
-	}) {
-		return nil
-	}
+
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
 		return errors.New("chat_id is required")

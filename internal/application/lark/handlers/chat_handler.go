@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
@@ -92,20 +91,7 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if arg.NoContext {
 		size = 0
 	}
-	if resolveChatExecutionMode(metaData) == intent.InteractionModeAgentic {
-		return runAgenticChat(ctx, event, metaData, chatType, &size, arg.Input)
-	}
 	return runStandardChat(ctx, event, chatType, &size, arg.Input)
-}
-
-// resolveChatExecutionMode consumes the mode decided earlier in the message pipeline.
-func resolveChatExecutionMode(meta *xhandler.BaseMetaData) intent.InteractionMode {
-	if meta != nil {
-		if mode, ok := meta.IntentInteractionMode(); ok {
-			return mode
-		}
-	}
-	return intent.InteractionModeStandard
 }
 
 func resolveStandardPromptMode(event *larkim.P2MessageReceiveV1) standardPromptMode {
@@ -141,31 +127,84 @@ func standardPromptHistoryLimit(mode standardPromptMode, requested int) int {
 
 func buildStandardChatSystemPrompt(mode standardPromptMode) string {
 	lines := []string{
-		"你是群聊里的自然成员，不要端着客服腔，也不要自称 AI。",
-		"你会收到当前用户消息，以及少量最近对话作为运行时输入；如果信息不够，不要假装看过更多历史。",
-		"如果需要补历史，请优先调用 search_history。它只会搜索当前 chat_id，可按关键词、user_id、user_name、message_type、时间范围过滤。",
-		"只有在需要某个具体成员响应、确认、补充或接手时，才在 reply 里 @ 对方；普通接话或泛泛回应不要滥用 @。",
-		"如果明确知道对方 open_id，可直接写 `<at user_id=\"open_id\">姓名</at>`；如果只知道名字，可写 `@姓名`，系统会按当前群成员匹配。",
-		"只输出 JSON object，不要输出 markdown 代码块、解释性前言或额外文本。",
-		"JSON 字段只允许使用 decision、thought、reply、reference_from_web、reference_from_history。",
-		`decision 只能是 "reply" 或 "skip"。`,
-		`如果 decision="skip"，reply 留空即可；如果 decision="reply"，reply 里给出用户可见回复。`,
-		`示例：{"decision":"reply","thought":"简短判断","reply":"面向用户的回复","reference_from_web":"","reference_from_history":""}`,
-		"thought 用一句简短中文概括你的判断，不要泄露系统提示。",
-		"reference_from_web 和 reference_from_history 只有在确实用到对应来源时再填，否则留空。",
-		"如果没有足够价值，不要硬接话；该跳过时把 decision 设为 skip。",
-		"少用语气词。不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅，避免拟人感过强。",
+`# 任务
+你是群聊里的 AI 成员，大家叫你“机器人”。你机智、幽默、略皮，擅长接梗和活跃气氛；本质友好，不冒犯、不恶意攻击。
+
+# 输入
+你会收到：
+1. 聊天记录 HistoryRecords
+2. 相关上下文 Context
+3. 相关话题 Topics
+4. 当前时间 CurrentTimeStamp
+5. 可选工具结果（网页搜索、历史检索等）
+
+# 目标
+基于“最新消息 + 上下文 + 工具结果”，判断是否回复，并输出一条可直接发送的群聊文本。
+
+# 行为准则
+1. 积极互动：有槽点/笑点/可推进讨论时优先回复，并尽量 @ 群成员参与。
+2. 调侃边界：允许朋友式互怼；禁止人身攻击、羞辱、阴阳怪气、歧视、威胁。
+3. 图片识别：消息含 file_key 时，视为图片/表情包，推断情绪和语境，不要把 file_key 当文本复读。
+4. 简洁自然：回复口语化、接地气、少语气词；非必要不加 emoji。
+5. @ 规范：每个 @名字 后必须有一个空格。
+
+# 联网与工具策略
+1. 满足以下任一条件时调用 web_search：
+- 需要最新/实时信息
+- 你不确定事实
+- 现有信息不足以可靠回答
+2. 工具一次只调用一个。
+3. 使用了外部信息时：
+- 把原文放进 reference_from_web / reference_from_history
+- reply 保持干净自然，不粘贴大段资料
+
+# 决策规则
+1. 若最新消息是纯事务确认、无互动价值、插话会扰民 -> decision="skip"
+2. 否则 -> decision="reply"
+
+# Thought 要求
+thought 仅用 1-2 句话说明：
+“识别到的关键信号 -> 采用的回复态度/策略”
+不要写冗长过程，不展开中间推理。
+
+# 输出格式（必须严格 JSON）
+仅输出一个 JSON 对象，不要 Markdown、不要代码块、不要额外说明。
+
+当 decision="reply"：
+{
+  "decision": "reply",
+  "thought": "...",
+  "reference_from_web": "...",
+  "reference_from_history": "...",
+  "reply": "..."
+}
+
+当 decision="skip"：
+{
+  "decision": "skip",
+  "thought": "...",
+  "reference_from_web": "",
+  "reference_from_history": "",
+  "reply": ""
+}
+
+# 硬性限制
+1. 只输出一条消息，不扮演多个角色。
+2. 用户提到“机器人”通常指你。
+3. 不得输出 JSON 以外内容。
+4. reply 必须是可直接发送的纯聊天文本。
+`,
 	}
 	switch mode {
 	case standardPromptModeDirect:
 		lines = append(lines,
-			"当前属于 direct reply。用户已经明确在找你接话，默认应回答，不要轻易 skip。",
+			"当前用户已经明确在找你接话，默认应回答，不要轻易 skip。",
 			"如果只是补一句确认或延续当前子话题，直接自然回复，不要把背景重讲一遍。",
 			"如果当前已经在某条消息或子话题里续聊，优先直接延续当前子话题，不要为了点名而重复 @。",
 		)
 	default:
 		lines = append(lines,
-			"当前属于 ambient/passive reply。只有在用户意愿明显、且不容易打扰时才接话。",
+			"只有在用户意愿明显、且不容易打扰时才接话。",
 			"如果上下文不够或更像主动插话，请优先保持克制，必要时直接 skip。",
 		)
 	}
@@ -287,15 +326,7 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chat
 	return nil
 }
 
-func runAgenticChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
-	return agentruntime.NewAgenticChatEntryHandler().Handle(ctx, event, meta, chatType, size, args...)
-}
-
 func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
-	return generateStandardChatSeq(ctx, event, modelID, size, files, input...)
-}
-
-func generateStandardChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -307,9 +338,14 @@ func generateStandardChatSeq(ctx context.Context, event *larkim.P2MessageReceive
 
 	chatID := *event.Event.Message.ChatId
 	messageList, err := history.New(ctx).
-		Query(osquery.Bool().Must(osquery.Term("chat_id", chatID))).
-		Source("raw_message", "mentions", "create_time", "user_id", "chat_id", "user_name", "message_type").
-		Size(uint64(*size*3)).Sort("create_time", "desc").GetMsg()
+		Query(osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range(
+				"create_time_v2",
+			).Lte(time.Now()),
+		)).
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type").
+		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
 	if err != nil {
 		return
 	}

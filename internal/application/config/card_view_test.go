@@ -350,10 +350,10 @@ func TestBuildConfigItemSectionPlacesControlsOnRight(t *testing.T) {
 
 func TestBuildConfigItemSectionOmitsControlsForReadOnlyConfig(t *testing.T) {
 	element := buildConfigItemSection(ConfigItem{
-		Key:         "agent_runtime_execution_lease_timeout_seconds",
-		Description: "运行租约超时 (秒)",
-		Value:       "180",
-		ValueType:   "int",
+		Key:         "lark_card_action_index",
+		Description: "Lark 卡片操作记录索引名",
+		Value:       "card-action-index",
+		ValueType:   "string",
 		Scope:       "toml",
 		IsEditable:  false,
 		ChatID:      "chat-1",
@@ -403,8 +403,8 @@ func TestBuildConfigActionRowForIntOnlyKeepsDeleteButton(t *testing.T) {
 func TestHandleConfigActionRejectsReadOnlyStartupConfig(t *testing.T) {
 	resp, err := HandleConfigAction(context.Background(), &ConfigActionRequest{
 		Action: ConfigActionSet,
-		Key:    "agent_runtime_execution_lease_timeout_seconds",
-		Value:  "240",
+		Key:    "lark_card_action_index",
+		Value:  "another-index",
 		Scope:  "global",
 	})
 	if err == nil {

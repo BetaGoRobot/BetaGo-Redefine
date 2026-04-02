@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -67,10 +66,6 @@ func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1
 
 	meta.SetIsCommand(true)
 	meta.SetMainCommand(commands[0])
-	if strings.EqualFold(strings.TrimSpace(commands[0]), "bb") {
-		observation, ok := observeRuntimeMessage(ctx, event, meta)
-		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok, agentruntime.TriggerTypeCommandBridge)
-	}
 	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
 	err = command.LarkRootCommand.Execute(ctx, event, meta, commands)

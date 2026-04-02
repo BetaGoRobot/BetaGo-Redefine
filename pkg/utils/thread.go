@@ -7,11 +7,7 @@ import (
 )
 
 func GetIfInthread(ctx context.Context, meta *xhandler.BaseMetaData, sceneDefault bool) bool {
-	if meta != nil {
-		if mode, ok := meta.GetExtra("interaction_mode"); ok && mode == "agentic" {
-			return !meta.IsP2P
-		}
-	}
+	_ = ctx
 	if !sceneDefault { // 如果默认就是不开话题，就直接回复
 		return false
 	}

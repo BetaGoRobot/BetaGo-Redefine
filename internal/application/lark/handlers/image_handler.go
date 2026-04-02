@@ -35,19 +35,25 @@ type ImageAddArgs struct {
 	Type   ImageAssetType `json:"type"`
 }
 
-type ImageGetArgs struct{}
-type ImageDeleteArgs struct {
-	ImgKey string         `json:"img_key"`
-	Type   ImageAssetType `json:"type"`
-}
+type (
+	ImageGetArgs    struct{}
+	ImageDeleteArgs struct {
+		ImgKey string         `json:"img_key"`
+		Type   ImageAssetType `json:"type"`
+	}
+)
 
-type imageAddHandler struct{}
-type imageGetHandler struct{}
-type imageDeleteHandler struct{}
+type (
+	imageAddHandler    struct{}
+	imageGetHandler    struct{}
+	imageDeleteHandler struct{}
+)
 
-var ImageAdd imageAddHandler
-var ImageGet imageGetHandler
-var ImageDelete imageDeleteHandler
+var (
+	ImageAdd    imageAddHandler
+	ImageGet    imageGetHandler
+	ImageDelete imageDeleteHandler
+)
 
 const imageActionToolResultKey = "image_action_result"
 
@@ -114,12 +120,6 @@ func (imageAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceive
 	defer func() { otel.RecordError(span, err) }()
 
 	logs.L().Ctx(ctx).Info("wordAddHandler", zap.Any("args", arg))
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "image_add",
-		ApprovalSummary: resolveImageAddApprovalSummary(arg),
-	}) {
-		return nil
-	}
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
 		return errors.New("chat_id is required")
@@ -310,12 +310,7 @@ func (imageDeleteHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer func() { otel.RecordError(span, err) }()
 
 	logs.L().Ctx(ctx).Info("replyDelHandler", zap.Any("args", arg))
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "image_delete",
-		ApprovalSummary: resolveImageDeleteApprovalSummary(arg),
-	}) {
-		return nil
-	}
+
 	chatID := currentChatID(data, metaData)
 	if chatID == "" {
 		return errors.New("chat_id is required")

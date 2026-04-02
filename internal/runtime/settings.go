@@ -37,26 +37,20 @@ func ManagementShutdownTimeout(cfg *infraConfig.BaseConfig) time.Duration {
 }
 
 func AgentRuntimeWorkerConfigs(cfg *infraConfig.BaseConfig) AgentRuntimeWorkerSettings {
-	runtimeCfg := &infraConfig.RuntimeConfig{}
-	if cfg != nil && cfg.RuntimeConfig != nil {
-		runtimeCfg = cfg.RuntimeConfig
-	}
+	_ = cfg
 	return AgentRuntimeWorkerSettings{
-		ResumeWorkers:            defaultInt(runtimeCfg.AgentRuntimeResumeWorkers, 1),
-		PendingInitialRunWorkers: defaultInt(runtimeCfg.AgentRuntimePendingInitialWorkers, 1),
+		ResumeWorkers:            1,
+		PendingInitialRunWorkers: 1,
 	}
 }
 
 func AgentRuntimeTimingConfigs(cfg *infraConfig.BaseConfig) AgentRuntimeTimingSettings {
-	runtimeCfg := &infraConfig.RuntimeConfig{}
-	if cfg != nil && cfg.RuntimeConfig != nil {
-		runtimeCfg = cfg.RuntimeConfig
-	}
+	_ = cfg
 	return AgentRuntimeTimingSettings{
-		ExecutionLeaseTTL:          defaultDuration(runtimeCfg.AgentRuntimeExecutionLeaseTimeoutSeconds, 3*time.Minute),
-		ExecutionHeartbeatInterval: defaultDuration(runtimeCfg.AgentRuntimeExecutionHeartbeatIntervalSeconds, 15*time.Second),
-		LegacyRunStaleTimeout:      defaultDuration(runtimeCfg.AgentRuntimeStaleRunLegacyTimeoutSeconds, 30*time.Minute),
-		StaleRunSweepInterval:      defaultDuration(runtimeCfg.AgentRuntimeStaleRunSweepIntervalSeconds, 5*time.Second),
+		ExecutionLeaseTTL:          3 * time.Minute,
+		ExecutionHeartbeatInterval: 15 * time.Second,
+		LegacyRunStaleTimeout:      30 * time.Minute,
+		StaleRunSweepInterval:      5 * time.Second,
 	}
 }
 

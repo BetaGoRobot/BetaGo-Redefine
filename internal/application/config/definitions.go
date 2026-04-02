@@ -84,12 +84,11 @@ var configDefinitions = []ConfigDefinition{
 	},
 	{
 		Key:         KeyChatMode,
-		Description: "聊天模式，standard 为标准聊天，agentic 为 agentic 卡片聊天",
+		Description: "聊天模式，仅支持 standard 标准聊天",
 		ValueType:   "string",
 		EnumOptionsFunc: func() []ConfigEnumOption {
 			return []ConfigEnumOption{
 				{Text: "standard | 标准聊天", Value: string(ChatModeStandard)},
-				{Text: "agentic | Agentic 卡片聊天", Value: string(ChatModeAgentic)},
 			}
 		},
 	},
@@ -141,54 +140,6 @@ var configDefinitions = []ConfigDefinition{
 		EnumGroup:       configEnumGroupOpenSearchIndex,
 		EnumOptionsFunc: openSearchIndexEnumOptions,
 		AllowCustom:     true,
-	},
-	{
-		Key:         KeyAgentRuntimeResumeWorkers,
-		Description: "Resume worker 并发度",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      64,
-		ReadOnly:    true,
-	},
-	{
-		Key:         KeyAgentRuntimePendingInitialWorkers,
-		Description: "Pending initial worker 并发度",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      64,
-		ReadOnly:    true,
-	},
-	{
-		Key:         KeyAgentRuntimeExecutionLeaseTimeoutSeconds,
-		Description: "运行租约超时 (秒)",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      3600,
-		ReadOnly:    true,
-	},
-	{
-		Key:         KeyAgentRuntimeExecutionHeartbeatIntervalSeconds,
-		Description: "运行租约心跳间隔 (秒)",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      1800,
-		ReadOnly:    true,
-	},
-	{
-		Key:         KeyAgentRuntimeStaleRunLegacyTimeoutSeconds,
-		Description: "旧版 stale run 兜底超时 (秒)",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      86400,
-		ReadOnly:    true,
-	},
-	{
-		Key:         KeyAgentRuntimeStaleRunSweepIntervalSeconds,
-		Description: "stale run 扫描周期 (秒)",
-		ValueType:   "int",
-		IntMin:      1,
-		IntMax:      3600,
-		ReadOnly:    true,
 	},
 }
 

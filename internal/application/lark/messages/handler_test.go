@@ -81,7 +81,6 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 		"*ops.RepeatMsgOperator",
 		"*ops.ReactMsgOperator",
 		"*ops.WordReplyMsgOperator",
-		"*ops.AgentShadowOperator",
 		"*ops.ReplyChatOperator",
 		"*ops.CommandOperator",
 		"*ops.ChatMsgOperator",
@@ -100,6 +99,7 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 	}
 
 	unexpected := []string{
+		"*ops.AgentShadowOperator",
 		"*ops.StandardCommandOperator",
 		"*ops.AgenticCommandOperator",
 		"*ops.AgenticReplyChatOperator",

@@ -20,9 +20,11 @@ const (
 	ModeAsync Mode = "async"
 )
 
-type SyncHandler func(context.Context, *Context) (*callback.CardActionTriggerResponse, error)
-type AsyncTask func(context.Context)
-type AsyncHandler func(context.Context, *Context) (AsyncTask, error)
+type (
+	SyncHandler  func(context.Context, *Context) (*callback.CardActionTriggerResponse, error)
+	AsyncTask    func(context.Context)
+	AsyncHandler func(context.Context, *Context) (AsyncTask, error)
+)
 
 type Context struct {
 	Event    *callback.CardActionTriggerEvent
@@ -69,10 +71,6 @@ func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaD
 		Event:    event,
 		MetaData: metaData,
 		Action:   action,
-	}
-
-	if handled, resp, err := dispatchAgentRuntimeAction(ctx, actionCtx); handled {
-		return resp, err
 	}
 
 	handler, ok := defaultRegistry.handler(action.Name)

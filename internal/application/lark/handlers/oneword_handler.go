@@ -82,12 +82,6 @@ func (oneWordHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "oneword_get",
-		ApprovalSummary: resolveOneWordApprovalSummary(arg),
-	}) {
-		return nil
-	}
 
 	oneWordArgs := []string{}
 

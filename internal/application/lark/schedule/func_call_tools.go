@@ -8,12 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
-	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -81,15 +78,6 @@ type resumeScheduleArgs struct {
 	ChatID    string        `json:"chat_id"`
 }
 
-type agentRuntimeResumeArgs struct {
-	RunID       string          `json:"run_id"`
-	StepID      string          `json:"step_id"`
-	Revision    int64           `json:"revision"`
-	Token       string          `json:"token"`
-	Summary     string          `json:"summary"`
-	PayloadJSON json.RawMessage `json:"payload_json"`
-}
-
 type (
 	createScheduleHandler     struct{}
 	listSchedulesHandler      struct{}
@@ -97,7 +85,6 @@ type (
 	deleteScheduleHandler     struct{}
 	pauseScheduleHandler      struct{}
 	resumeScheduleHandler     struct{}
-	agentRuntimeResumeHandler struct{}
 )
 
 var (
@@ -107,24 +94,7 @@ var (
 	DeleteSchedule     deleteScheduleHandler
 	PauseSchedule      pauseScheduleHandler
 	ResumeSchedule     resumeScheduleHandler
-	AgentRuntimeResume agentRuntimeResumeHandler
 )
-
-type scheduleRuntimeResumeEnqueuer interface {
-	EnqueueResumeEvent(context.Context, redis_dal.ResumeEvent) error
-}
-
-var buildScheduleAgentRuntimeResumeEnqueuer = func(context.Context) scheduleRuntimeResumeEnqueuer {
-	identity := botidentity.Current()
-	if !identity.Valid() {
-		return nil
-	}
-	client := redis_dal.GetRedisClient()
-	if client == nil {
-		return nil
-	}
-	return redis_dal.NewAgentRuntimeStore(client, identity)
-}
 
 func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	xcommand.RegisterTool(ins, CreateSchedule)
@@ -136,7 +106,7 @@ func RegisterTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 }
 
 func RegisterRuntimeTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
-	xcommand.RegisterTool(ins, AgentRuntimeResume)
+	_ = ins
 }
 
 func scheduleResultSpec(name, desc string, params *tools.Param) xcommand.ToolSpec {
@@ -190,10 +160,6 @@ func (createScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createScheduleArgs) error {
-	if tryDeferScheduleAgenticApproval(ctx, metaData, "create_schedule", resolveCreateScheduleApprovalSummary(args)) {
-		return nil
-	}
-
 	var runAt *time.Time
 	if strings.TrimSpace(args.RunAt) != "" {
 		t, err := parseScheduleTime(args.RunAt, strings.TrimSpace(args.Timezone))
@@ -385,10 +351,6 @@ func (deleteScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (deleteScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteScheduleArgs) error {
-	if tryDeferScheduleAgenticApproval(ctx, metaData, "delete_schedule", fmt.Sprintf("将删除 schedule `%s`", strings.TrimSpace(args.ID))) {
-		return nil
-	}
-
 	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
 	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
@@ -421,10 +383,6 @@ func (pauseScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (pauseScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args pauseScheduleArgs) error {
-	if tryDeferScheduleAgenticApproval(ctx, metaData, "pause_schedule", fmt.Sprintf("将暂停 schedule `%s`", strings.TrimSpace(args.ID))) {
-		return nil
-	}
-
 	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
 	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
@@ -457,10 +415,6 @@ func (resumeScheduleHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (resumeScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args resumeScheduleArgs) error {
-	if tryDeferScheduleAgenticApproval(ctx, metaData, "resume_schedule", fmt.Sprintf("将恢复 schedule `%s`", strings.TrimSpace(args.ID))) {
-		return nil
-	}
-
 	targetChatID := resolveToolScheduleTargetChatID(args.ChatScope, args.ChatID, metaData.ChatID)
 	if _, err := getToolScheduleTaskForTarget(ctx, targetChatID, args.ID); err != nil {
 		return err
@@ -478,77 +432,6 @@ func (resumeScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	}
 	metaData.SetExtra(scheduleToolResultKey, result)
 	return nil
-}
-
-func (agentRuntimeResumeHandler) ParseTool(raw string) (agentRuntimeResumeArgs, error) {
-	parsed := agentRuntimeResumeArgs{}
-	if err := utils.UnmarshalStringPre(raw, &parsed); err != nil {
-		return agentRuntimeResumeArgs{}, err
-	}
-	return parsed, nil
-}
-
-func (agentRuntimeResumeHandler) ToolSpec() xcommand.ToolSpec {
-	return scheduleResultSpec(
-		"agent_runtime_resume",
-		"内部工具：供 scheduler 恢复 agent runtime 的 waiting_schedule run",
-		tools.NewParams("object").
-			AddProp("run_id", &tools.Prop{Type: "string", Desc: "要恢复的 agent run ID"}).
-			AddProp("step_id", &tools.Prop{Type: "string", Desc: "关联的 step ID"}).
-			AddProp("revision", &tools.Prop{Type: "number", Desc: "当前 run revision"}).
-			AddProp("token", &tools.Prop{Type: "string", Desc: "可选 waiting token"}).
-			AddProp("summary", &tools.Prop{Type: "string", Desc: "可选恢复摘要"}).
-			AddProp("payload_json", &tools.Prop{Type: "object", Desc: "可选恢复 payload"}).
-			AddRequired("run_id").
-			AddRequired("revision"),
-	)
-}
-
-func (agentRuntimeResumeHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args agentRuntimeResumeArgs) error {
-	enqueuer := buildScheduleAgentRuntimeResumeEnqueuer(ctx)
-	if enqueuer == nil {
-		return fmt.Errorf("agent runtime resume enqueuer unavailable")
-	}
-	actorOpenID := ""
-	if metaData != nil {
-		actorOpenID = strings.TrimSpace(metaData.OpenID)
-	}
-	event := redis_dal.ResumeEvent{
-		RunID:       strings.TrimSpace(args.RunID),
-		StepID:      strings.TrimSpace(args.StepID),
-		Revision:    args.Revision,
-		Source:      "schedule",
-		Token:       strings.TrimSpace(args.Token),
-		Summary:     strings.TrimSpace(args.Summary),
-		PayloadJSON: append(json.RawMessage(nil), args.PayloadJSON...),
-		ActorOpenID: actorOpenID,
-		OccurredAt:  time.Now().UTC(),
-	}
-	if err := enqueuer.EnqueueResumeEvent(ctx, event); err != nil {
-		return err
-	}
-	if metaData != nil {
-		metaData.SetExtra(scheduleToolResultKey, fmt.Sprintf("Agent runtime schedule resume enqueued for run `%s`", event.RunID))
-	}
-	return nil
-}
-
-func tryDeferScheduleAgenticApproval(ctx context.Context, metaData *xhandler.BaseMetaData, toolName, summary string) bool {
-	return toolmeta.TryRecordDeferredApproval(ctx, metaData, toolName, toolmeta.DeferredApprovalOptions{
-		ApprovalSummary: summary,
-	})
-}
-
-func resolveCreateScheduleApprovalSummary(args createScheduleArgs) string {
-	name := strings.TrimSpace(args.Name)
-	switch args.Type {
-	case TaskTypeOnce:
-		return fmt.Sprintf("将创建单次 schedule「%s」", name)
-	case TaskTypeCron:
-		return fmt.Sprintf("将创建周期 schedule「%s」", name)
-	default:
-		return fmt.Sprintf("将创建 schedule「%s」", name)
-	}
 }
 
 func parseScheduleTime(s, timezone string) (time.Time, error) {

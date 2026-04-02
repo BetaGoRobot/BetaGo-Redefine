@@ -85,12 +85,6 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "music_search",
-		ApprovalSummary: resolveMusicSearchApprovalSummary(arg),
-	}) {
-		return nil
-	}
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())

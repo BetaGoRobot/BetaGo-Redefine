@@ -1,49 +1,13 @@
 package handlers
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
-
-func TestChatGenerationPlanGenerateReturnsNotConfiguredWithoutRegisteredExecutor(t *testing.T) {
-	agentruntime.SetChatGenerationPlanExecutor(nil)
-
-	_, err := (agentruntime.ChatGenerationPlan{}).Generate(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error when executor is not registered")
-	}
-	if !strings.Contains(err.Error(), "not configured") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestResolveChatExecutionModeUsesInteractionModeOverride(t *testing.T) {
-	meta := &xhandler.BaseMetaData{}
-	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeStandard})
-
-	if got := resolveChatExecutionMode(meta); got != intent.InteractionModeStandard {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeStandard)
-	}
-
-	meta.SetIntentAnalysis(&intent.IntentAnalysis{InteractionMode: intent.InteractionModeAgentic})
-	if got := resolveChatExecutionMode(meta); got != intent.InteractionModeAgentic {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeAgentic)
-	}
-}
-
-func TestResolveChatExecutionModeDefaultsToStandardWithoutDecision(t *testing.T) {
-	if got := resolveChatExecutionMode(&xhandler.BaseMetaData{}); got != intent.InteractionModeStandard {
-		t.Fatalf("resolveChatExecutionMode() = %q, want %q", got, intent.InteractionModeStandard)
-	}
-}
 
 func TestResolveStandardPromptMode(t *testing.T) {
 	useWorkspaceConfigPath(t)
@@ -80,13 +44,15 @@ func TestResolveStandardPromptMode(t *testing.T) {
 	}
 }
 
-func TestBuildStandardChatSystemPromptConstrainsAnthropomorphicParticles(t *testing.T) {
+func TestBuildStandardChatSystemPromptContainsV2CoreRules(t *testing.T) {
 	prompt := buildStandardChatSystemPrompt(standardPromptModeAmbient)
 	for _, want := range []string{
-		"少用语气词",
-		"不要为了显得亲近而堆砌“哟”“呀”“啦”这类口头禅",
-		"拟人感过强",
-		"只输出 JSON object",
+		"# 任务",
+		"# 输入",
+		"消息含 file_key 时",
+		"每个 @名字 后必须有一个空格",
+		"thought 仅用 1-2 句话说明",
+		"不得输出 JSON 以外内容",
 		`"decision"`,
 		`"thought"`,
 		`"reply"`,
@@ -102,9 +68,7 @@ func TestBuildStandardChatSystemPromptConstrainsAnthropomorphicParticles(t *test
 func TestBuildStandardChatSystemPromptGuidesMentionsAndThreadContinuation(t *testing.T) {
 	prompt := buildStandardChatSystemPrompt(standardPromptModeDirect)
 	for _, want := range []string{
-		"只有在需要某个具体成员响应",
-		"@姓名",
-		"<at user_id=\"open_id\">姓名</at>",
+		"默认应回答，不要轻易 skip",
 		"优先直接延续当前子话题",
 		"不要为了点名而重复 @",
 	} {
@@ -132,7 +96,6 @@ func TestBuildStandardChatUserPromptIncludesSelfIdentity(t *testing.T) {
 	for _, want := range []string{
 		"机器人身份",
 		"self_open_id: ou_bot_self",
-		"self_name: BetaGo",
 		"sender user_id/open_id 等于 self_open_id",
 		"mention target open_id 等于 self_open_id",
 	} {

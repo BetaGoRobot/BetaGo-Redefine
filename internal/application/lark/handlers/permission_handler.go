@@ -73,12 +73,6 @@ func (permissionManageHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	if targetOpenID == "" {
 		targetOpenID = actorOpenID
 	}
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "permission_manage",
-		ApprovalSummary: resolvePermissionManageApprovalSummary(actorOpenID, targetOpenID),
-	}) {
-		return nil
-	}
 
 	cardData, err := apppermission.BuildPermissionCardJSONWithOptions(ctx, currentChatID(data, metaData), actorOpenID, targetOpenID, apppermission.PermissionCardViewOptions{
 		LastModifierOpenID: actorOpenID,
