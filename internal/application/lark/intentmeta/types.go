@@ -41,16 +41,11 @@ type InteractionMode string
 
 const (
 	InteractionModeStandard InteractionMode = "standard"
-	InteractionModeAgentic  InteractionMode = "agentic"
 )
 
 func (m InteractionMode) Normalize() InteractionMode {
-	switch m {
-	case InteractionModeAgentic:
-		return InteractionModeAgentic
-	default:
-		return InteractionModeStandard
-	}
+	_ = m
+	return InteractionModeStandard
 }
 
 // IntentAnalysis 意图分析结果
@@ -108,16 +103,13 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 
 // DefaultReasoningEffort returns the mode-based fallback effort when the model does not provide one.
 func DefaultReasoningEffort(mode InteractionMode) responses.ReasoningEffort_Enum {
-	if mode.Normalize() == InteractionModeAgentic {
-		return responses.ReasoningEffort_medium
-	}
+	_ = mode
 	return responses.ReasoningEffort_minimal
 }
 
 // NormalizeReasoningEffort keeps only supported reasoning effort values.
 func NormalizeReasoningEffort(
 	effort responses.ReasoningEffort_Enum,
-	mode InteractionMode,
 ) responses.ReasoningEffort_Enum {
 	switch effort {
 	case responses.ReasoningEffort_minimal,
@@ -126,7 +118,7 @@ func NormalizeReasoningEffort(
 		responses.ReasoningEffort_high:
 		return effort
 	default:
-		return DefaultReasoningEffort(mode)
+		return responses.ReasoningEffort_minimal
 	}
 }
 
@@ -144,8 +136,9 @@ func (a *IntentAnalysis) Sanitize() {
 		a.SuggestAction = SuggestActionIgnore
 	}
 
-	a.InteractionMode = a.InteractionMode.Normalize()
-	a.ReasoningEffort = NormalizeReasoningEffort(a.ReasoningEffort, a.InteractionMode)
+	// Chat pipeline is standard-only.
+	a.InteractionMode = InteractionModeStandard
+	a.ReasoningEffort = NormalizeReasoningEffort(a.ReasoningEffort)
 
 	if a.ReplyConfidence < 0 {
 		a.ReplyConfidence = 0

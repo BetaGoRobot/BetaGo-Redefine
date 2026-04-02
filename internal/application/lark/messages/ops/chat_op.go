@@ -2,8 +2,8 @@ package ops
 
 import (
 	"context"
+	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
@@ -85,15 +85,6 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	chatID := *event.Event.Message.ChatId
 	openID := messageOpenID(event, meta)
 	decider := ratelimit.GetDecider()
-	observation, ok := observeRuntimeMessage(ctx, event, meta)
-	if ok && shouldDirectRouteRuntime(observation, agentruntime.TriggerTypeFollowUp, agentruntime.TriggerTypeReplyToBot) {
-		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeMention)
-		ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok,
-			agentruntime.TriggerTypeFollowUp,
-			agentruntime.TriggerTypeReplyToBot,
-		)
-		return xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
-	}
 
 	// 优先尝试使用意图识别结果
 	if analysis, ok := GetIntentAnalysisFromMeta(meta); ok {
@@ -183,4 +174,11 @@ func (r *ChatMsgOperator) runWithFallbackRate(ctx context.Context, event *larkim
 		)
 	}
 	return nil
+}
+
+func currentChatType(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Message.ChatType == nil {
+		return ""
+	}
+	return strings.TrimSpace(*event.Event.Message.ChatType)
 }

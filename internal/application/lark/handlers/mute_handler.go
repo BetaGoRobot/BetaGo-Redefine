@@ -83,14 +83,7 @@ func (muteHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if chatID == "" {
 		return errors.New("chat_id is required")
 	}
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "mute_robot",
-		ApprovalTitle:   resolveMuteApprovalTitle(arg),
-		ApprovalSummary: resolveMuteApprovalSummary(arg),
-	}) {
-		res = "已发起审批，等待确认后调整禁言。"
-		return nil
-	}
+
 	if arg.Cancel {
 		// 取消禁言
 		// 先检查是否已经取消禁言

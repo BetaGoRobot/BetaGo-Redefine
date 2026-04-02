@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -78,14 +77,9 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 
 	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 
-	msg := messageText(ctx, event)
+	msg := larkmsg.PreGetTextMsg(ctx, event).GetText()
 	msg = larkmsg.TrimAtMsg(ctx, msg)
-	observation, ok := observeRuntimeMessage(ctx, event, meta)
-	ctx = runtimeContextForObservedMessage(ctx, resolvedChatMode(meta), observation, ok,
-		agentruntime.TriggerTypeMention,
-		agentruntime.TriggerTypeReplyToBot,
-		agentruntime.TriggerTypeFollowUp,
-	)
+
 	// 记录回复
 	decider := ratelimit.GetDecider()
 	decider.RecordReply(ctx, *event.Event.Message.ChatId, ratelimit.TriggerTypeMention)

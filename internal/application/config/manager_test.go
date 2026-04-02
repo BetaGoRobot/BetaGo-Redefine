@@ -177,56 +177,12 @@ func TestGetAllConfigKeysIncludesStartupOnlyKeys(t *testing.T) {
 
 	expected := []string{
 		"lark_card_action_index",
-		"agent_runtime_resume_workers",
-		"agent_runtime_pending_initial_workers",
-		"agent_runtime_execution_lease_timeout_seconds",
-		"agent_runtime_execution_heartbeat_interval_seconds",
-		"agent_runtime_stale_run_legacy_timeout_seconds",
-		"agent_runtime_stale_run_sweep_interval_seconds",
 	}
 	for _, key := range expected {
 		if _, ok := set[key]; !ok {
 			t.Fatalf("expected startup-only config key %q in GetAllConfigKeys()", key)
 		}
 	}
-}
-
-func TestGetIntFallsBackToTomlForAgentRuntimeTuning(t *testing.T) {
-	oldIdentity := currentBotIdentity
-	oldConfig := currentBaseConfig
-	currentBotIdentity = func() botidentity.Identity { return botidentity.Identity{} }
-	currentBaseConfig = func() *infraConfig.BaseConfig {
-		return &infraConfig.BaseConfig{
-			RuntimeConfig: &infraConfig.RuntimeConfig{
-				AgentRuntimeResumeWorkers:                     4,
-				AgentRuntimePendingInitialWorkers:             6,
-				AgentRuntimeExecutionLeaseTimeoutSeconds:      210,
-				AgentRuntimeExecutionHeartbeatIntervalSeconds: 21,
-				AgentRuntimeStaleRunLegacyTimeoutSeconds:      2700,
-				AgentRuntimeStaleRunSweepIntervalSeconds:      9,
-			},
-		}
-	}
-	defer func() {
-		currentBotIdentity = oldIdentity
-		currentBaseConfig = oldConfig
-	}()
-
-	manager := NewManager()
-
-	assertInt := func(key ConfigKey, want int) {
-		t.Helper()
-		if got := manager.GetInt(context.Background(), key, "", ""); got != want {
-			t.Fatalf("GetInt(%q) = %d, want %d", key, got, want)
-		}
-	}
-
-	assertInt(ConfigKey("agent_runtime_resume_workers"), 4)
-	assertInt(ConfigKey("agent_runtime_pending_initial_workers"), 6)
-	assertInt(ConfigKey("agent_runtime_execution_lease_timeout_seconds"), 210)
-	assertInt(ConfigKey("agent_runtime_execution_heartbeat_interval_seconds"), 21)
-	assertInt(ConfigKey("agent_runtime_stale_run_legacy_timeout_seconds"), 2700)
-	assertInt(ConfigKey("agent_runtime_stale_run_sweep_interval_seconds"), 9)
 }
 
 func TestConfigDefaultDisplayValueSupportsStringDefaults(t *testing.T) {
@@ -278,10 +234,10 @@ func TestGetConfigEnumOptionsBuildsCandidatesFromBaseConfig(t *testing.T) {
 	}
 
 	modeOptions := GetConfigEnumOptions(KeyChatMode, "")
-	if len(modeOptions) != 2 {
-		t.Fatalf("expected 2 chat mode options, got %+v", modeOptions)
+	if len(modeOptions) != 1 {
+		t.Fatalf("expected 1 chat mode option, got %+v", modeOptions)
 	}
-	if modeOptions[0].Value != string(ChatModeStandard) || modeOptions[1].Value != string(ChatModeAgentic) {
+	if modeOptions[0].Value != string(ChatModeStandard) {
 		t.Fatalf("unexpected chat mode options: %+v", modeOptions)
 	}
 }

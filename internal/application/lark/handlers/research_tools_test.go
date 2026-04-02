@@ -16,13 +16,13 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 
 	researchReadURLFetcher = func(ctx context.Context, rawURL string) (researchFetchedDocument, error) {
 		return researchFetchedDocument{
-			FinalURL:    "https://example.com/articles/agentic",
+			FinalURL:    "https://example.com/articles/sample",
 			ContentType: "text/html; charset=utf-8",
-			Body: `<html><head><title>Agentic Runtime Notes</title><meta property="article:published_time" content="2026-03-22T08:00:00Z"></head><body><main><p>Agentic runtime needs durable turns.</p><p>Deep research needs read_url and evidence extraction.</p></main></body></html>`,
+			Body:        `<html><head><title>Agentic Runtime Notes</title><meta property="article:published_time" content="2026-03-22T08:00:00Z"></head><body><main><p>Agentic runtime needs durable turns.</p><p>Deep research needs read_url and evidence extraction.</p></main></body></html>`,
 		}, nil
 	}
 
-	arg, err := ResearchReadURL.ParseTool(`{"url":"https://example.com/articles/agentic","max_chars":64}`)
+	arg, err := ResearchReadURL.ParseTool(`{"url":"https://example.com/articles/sample","max_chars":64}`)
 	if err != nil {
 		t.Fatalf("ParseTool() error = %v", err)
 	}
@@ -36,7 +36,7 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 	if !strings.Contains(raw, `"title":"Agentic Runtime Notes"`) {
 		t.Fatalf("result = %q, want contain title", raw)
 	}
-	if !strings.Contains(raw, `"url":"https://example.com/articles/agentic"`) {
+	if !strings.Contains(raw, `"url":"https://example.com/articles/sample"`) {
 		t.Fatalf("result = %q, want contain canonical url", raw)
 	}
 	if !strings.Contains(raw, `"published_at":"2026-03-22T08:00:00Z"`) {

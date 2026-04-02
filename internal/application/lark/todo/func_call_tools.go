@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/todo"
@@ -168,10 +167,6 @@ func (createTodoHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (createTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args createTodoArgs) error {
-	if tryDeferTodoAgenticApproval(ctx, metaData, "create_todo", fmt.Sprintf("将创建待办「%s」", strings.TrimSpace(args.Title))) {
-		return nil
-	}
-
 	userName, err := larkuser.GetUserNameCache(ctx, metaData.ChatID, metaData.OpenID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("Get user info failed", zap.Error(err))
@@ -254,10 +249,6 @@ func (updateTodoHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (updateTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args updateTodoArgs) error {
-	if tryDeferTodoAgenticApproval(ctx, metaData, "update_todo", resolveUpdateTodoApprovalSummary(args)) {
-		return nil
-	}
-
 	req := &UpdateTodoRequest{ID: args.ID}
 	if args.Title != "" {
 		req.Title = &args.Title
@@ -357,28 +348,11 @@ func (deleteTodoHandler) ToolSpec() xcommand.ToolSpec {
 }
 
 func (deleteTodoHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, args deleteTodoArgs) error {
-	if tryDeferTodoAgenticApproval(ctx, metaData, "delete_todo", fmt.Sprintf("将删除待办 `%s`", strings.TrimSpace(args.ID))) {
-		return nil
-	}
-
 	if err := GetService().DeleteTodo(ctx, args.ID); err != nil {
 		return err
 	}
 	metaData.SetExtra(todoToolResultKey, fmt.Sprintf("✅ 待办已删除！ID: `%s`", args.ID))
 	return nil
-}
-
-func tryDeferTodoAgenticApproval(ctx context.Context, metaData *xhandler.BaseMetaData, toolName, summary string) bool {
-	return toolmeta.TryRecordDeferredApproval(ctx, metaData, toolName, toolmeta.DeferredApprovalOptions{
-		ApprovalSummary: summary,
-	})
-}
-
-func resolveUpdateTodoApprovalSummary(args updateTodoArgs) string {
-	if args.Status == TodoStatusDone {
-		return fmt.Sprintf("将完成待办 `%s`", strings.TrimSpace(args.ID))
-	}
-	return fmt.Sprintf("将更新待办 `%s`", strings.TrimSpace(args.ID))
 }
 
 func splitTags(input string) []string {

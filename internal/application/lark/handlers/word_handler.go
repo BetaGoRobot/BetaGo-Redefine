@@ -28,11 +28,15 @@ type WordAddArgs struct {
 
 type WordGetArgs struct{}
 
-type wordAddHandler struct{}
-type wordGetHandler struct{}
+type (
+	wordAddHandler struct{}
+	wordGetHandler struct{}
+)
 
-var WordAdd wordAddHandler
-var WordGet wordGetHandler
+var (
+	WordAdd wordAddHandler
+	WordGet wordGetHandler
+)
 
 const wordActionToolResultKey = "word_action_result"
 
@@ -95,12 +99,6 @@ func (wordAddHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 	logs.L().Ctx(ctx).Info("args", zap.Any("args", arg))
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "word_add",
-		ApprovalSummary: "将把复读词条「" + arg.Word + "」设置为权重 " + strconv.Itoa(arg.Rate),
-	}) {
-		return nil
-	}
 
 	ChatID := currentChatID(data, metaData)
 	if err := query.Q.RepeatWordsRateCustom.WithContext(ctx).Clauses(clause.OnConflict{

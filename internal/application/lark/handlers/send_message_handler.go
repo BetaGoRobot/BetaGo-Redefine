@@ -70,12 +70,7 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	if arg.ChatID != "" && !h.allowTargetChatOverride {
 		return fmt.Errorf("scheduled send_message cannot override chat_id")
 	}
-	if tryDeferAgenticApproval(ctx, metaData, agenticDeferredApprovalSpec{
-		ToolName:        "send_message",
-		ApprovalSummary: resolveSendMessageApprovalSummary(arg),
-	}) {
-		return nil
-	}
+
 	if arg.ChatID != "" {
 		targetChatID = arg.ChatID
 	}

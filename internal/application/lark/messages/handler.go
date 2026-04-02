@@ -19,7 +19,7 @@ type MessageHandler struct {
 	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 }
 
-// Handler 消息处理入口。它只在最前面做一次 standard / agentic 路由，后续各走各的 processor。
+// Handler 消息处理入口。
 var Handler *MessageHandler
 
 // ConfigManager 全局配置管理器（新代码应该使用依赖注入）
@@ -31,7 +31,6 @@ func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
 	}
 	handler := &MessageHandler{
 		processor: newMessageProcessorBase(cfgManager).
-			AddAsync(ops.NewAgentShadowOperator()).
 			AddAsync(&ops.ReplyChatOperator{}).
 			AddAsync(&ops.CommandOperator{}).
 			AddAsync(&ops.ChatMsgOperator{}),

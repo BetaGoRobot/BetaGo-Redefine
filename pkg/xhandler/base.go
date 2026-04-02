@@ -108,8 +108,6 @@ func (m *BaseMetaData) SetIntentAnalysis(analysis *intentmeta.IntentAnalysis) {
 	if m.intentAnalysis == nil {
 		return
 	}
-	mode := m.intentAnalysis.InteractionMode.Normalize()
-	m.interactionMode = &mode
 }
 
 // GetIntentAnalysis returns a defensive copy of the stored intent result.
@@ -120,27 +118,6 @@ func (m *BaseMetaData) GetIntentAnalysis() (*intentmeta.IntentAnalysis, bool) {
 		return nil, false
 	}
 	return cloneIntentAnalysis(m.intentAnalysis), true
-}
-
-// SetIntentInteractionMode stores the already-decided chat interaction mode for downstream consumers.
-func (m *BaseMetaData) SetIntentInteractionMode(mode intentmeta.InteractionMode) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	normalized := mode.Normalize()
-	m.interactionMode = &normalized
-}
-
-// IntentInteractionMode returns the precomputed interaction mode, preferring the explicit override.
-func (m *BaseMetaData) IntentInteractionMode() (intentmeta.InteractionMode, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.interactionMode != nil {
-		return m.interactionMode.Normalize(), true
-	}
-	if m.intentAnalysis == nil {
-		return intentmeta.InteractionModeStandard, false
-	}
-	return m.intentAnalysis.InteractionMode.Normalize(), true
 }
 
 func cloneIntentAnalysis(src *intentmeta.IntentAnalysis) *intentmeta.IntentAnalysis {

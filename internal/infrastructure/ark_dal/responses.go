@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -243,29 +242,12 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		if traceOutput == "" && res.IsErr() && res.Err() != nil {
 			traceOutput = strings.TrimSpace(res.Err().Error())
 		}
-		if deferred, ok := runtimecontext.PopDeferredToolCall(ctx); ok && !res.IsErr() {
-			if traceOutput == "" {
-				traceOutput = strings.TrimSpace(deferred.PlaceholderOutput)
-			}
-			r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
-				CallID:            callID,
-				FunctionName:      handlerName,
-				Arguments:         strings.TrimSpace(args),
-				Output:            traceOutput,
-				Pending:           true,
-				ApprovalType:      strings.TrimSpace(deferred.ApprovalType),
-				ApprovalTitle:     strings.TrimSpace(deferred.ApprovalTitle),
-				ApprovalSummary:   strings.TrimSpace(deferred.ApprovalSummary),
-				ApprovalExpiresAt: deferred.ApprovalExpiresAt.UTC(),
-			})
-		} else {
-			r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
-				CallID:       callID,
-				FunctionName: handlerName,
-				Arguments:    strings.TrimSpace(args),
-				Output:       traceOutput,
-			})
-		}
+		r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
+			CallID:       callID,
+			FunctionName: handlerName,
+			Arguments:    strings.TrimSpace(args),
+			Output:       traceOutput,
+		})
 		if res.IsErr() {
 			logs.L().Ctx(ctx).Error("function call failed",
 				zap.String("function_name", handlerName),

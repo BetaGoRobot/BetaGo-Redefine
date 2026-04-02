@@ -6,10 +6,6 @@ import (
 	"fmt"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
-	capdef "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/capability"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/runtimecutover"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime/runtimewire"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
@@ -35,7 +31,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 type appComponents struct {
@@ -51,64 +46,12 @@ type appComponents struct {
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
 var (
-	scheduler                     *scheduleapp.Scheduler
-	resumeWorker                  workerHandle
-	pendingInitialRunWorker       workerHandle
-	pendingScopeSweeper           workerHandle
-	staleRunSweeper               workerHandle
-	buildAgentRuntimeResumeWorker = func(ctx context.Context) workerHandle {
-		return runtimewire.BuildResumeWorker(ctx)
-	}
-	buildPendingInitialRunWorker = func(ctx context.Context) workerHandle {
-		return runtimewire.BuildPendingInitialRunWorker(ctx)
-	}
-	buildPendingScopeSweeper = func(ctx context.Context) workerHandle {
-		return runtimewire.BuildPendingScopeSweeper(ctx)
-	}
-	buildStaleRunSweeper = func(ctx context.Context) workerHandle {
-		return runtimewire.BuildStaleRunSweeper(ctx)
-	}
+	scheduler               *scheduleapp.Scheduler
+	resumeWorker            workerHandle
+	pendingInitialRunWorker workerHandle
+	pendingScopeSweeper     workerHandle
+	staleRunSweeper         workerHandle
 )
-
-func startAgentRuntimeResumeWorker(ctx context.Context) error {
-	worker := buildAgentRuntimeResumeWorker(ctx)
-	if worker == nil || !worker.Available() {
-		return fmt.Errorf("%w: agent runtime resume worker unavailable", appruntime.ErrDisabled)
-	}
-	resumeWorker = worker
-	resumeWorker.Start()
-	return nil
-}
-
-func startPendingInitialRunWorker(ctx context.Context) error {
-	worker := buildPendingInitialRunWorker(ctx)
-	if worker == nil || !worker.Available() {
-		return fmt.Errorf("%w: agent runtime pending initial worker unavailable", appruntime.ErrDisabled)
-	}
-	pendingInitialRunWorker = worker
-	pendingInitialRunWorker.Start()
-	return nil
-}
-
-func startPendingScopeSweeper(ctx context.Context) error {
-	worker := buildPendingScopeSweeper(ctx)
-	if worker == nil || !worker.Available() {
-		return fmt.Errorf("%w: agent runtime pending scope sweeper unavailable", appruntime.ErrDisabled)
-	}
-	pendingScopeSweeper = worker
-	pendingScopeSweeper.Start()
-	return nil
-}
-
-func startStaleRunSweeper(ctx context.Context) error {
-	worker := buildStaleRunSweeper(ctx)
-	if worker == nil || !worker.Available() {
-		return fmt.Errorf("%w: agent runtime stale run sweeper unavailable", appruntime.ErrDisabled)
-	}
-	staleRunSweeper = worker
-	staleRunSweeper.Start()
-	return nil
-}
 
 // buildApp 是当前单体进程的装配根。这里集中完成：
 // 1. 构造受控执行器和 handler 入口；
@@ -135,8 +78,6 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 // App 注册模块，避免对象创建和生命周期注册混在一起。
 func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
-	runtimewire.SetAgentRuntimeWorkerSettings(appruntime.AgentRuntimeWorkerConfigs(cfg))
-	runtimewire.SetAgentRuntimeTimingSettings(appruntime.AgentRuntimeTimingConfigs(cfg))
 
 	messageExecutor := appruntime.NewExecutor(executorConfigs["message"])
 	reactionExecutor := appruntime.NewExecutor(executorConfigs["reaction"])
@@ -144,14 +85,6 @@ func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 	chunkExecutor := appruntime.NewExecutor(executorConfigs["chunk"])
 	scheduleExecutor := appruntime.NewExecutor(executorConfigs["schedule"])
 
-	agentruntime.SetRuntimeAgenticCutoverBuilder(runtimecutover.BuildDefaultHandler)
-	// agentruntime.SetRuntimeStandardCutoverBuilder(runtimecutover.BuildDefaultStandardHandler)
-	agentruntime.SetDefaultChatToolProvider(handlers.BuildLarkTools)
-	agentruntime.SetDefaultChatCapabilityToolProvider(handlers.BuildRuntimeCapabilityTools)
-	agentruntime.SetChatGenerationPlanExecutor(agentruntime.NewDefaultChatGenerationPlanExecutor())
-	runtimewire.SetDefaultCapabilityProvider(func() []agentruntime.Capability {
-		return capdef.BuildToolCapabilities(handlers.BuildRuntimeCapabilityTools(), nil, (*larkim.P2MessageReceiveV1)(nil))
-	})
 	messageProcessor := messages.NewMessageProcessor(appconfig.GetManager())
 	reactionProcessor := reaction.NewReactionProcessor()
 	handlerSet := larkiface.NewHandlerSet(larkiface.HandlerSetOptions{
@@ -328,7 +261,6 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		managementAddr(cfg),
 		appruntime.ManagementShutdownTimeout(cfg),
 		app.Registry(),
-		runtimewire.PendingInitialMetricsProvider(context.Background()),
 	))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",
@@ -350,82 +282,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		},
 		Stats: components.scheduleExecutor.Stats,
 	}))
-	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
-		Name:     "agent_runtime_resume_worker",
-		Critical: false,
-		Start: func(ctx context.Context) error {
-			return startAgentRuntimeResumeWorker(ctx)
-		},
-		Stop: func(context.Context) error {
-			if resumeWorker != nil {
-				resumeWorker.Stop()
-			}
-			return nil
-		},
-		Stats: func() map[string]any {
-			if resumeWorker == nil {
-				return nil
-			}
-			return resumeWorker.Stats()
-		},
-	}))
-	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
-		Name:     "agent_runtime_pending_initial_worker",
-		Critical: false,
-		Start: func(ctx context.Context) error {
-			return startPendingInitialRunWorker(ctx)
-		},
-		Stop: func(context.Context) error {
-			if pendingInitialRunWorker != nil {
-				pendingInitialRunWorker.Stop()
-			}
-			return nil
-		},
-		Stats: func() map[string]any {
-			if pendingInitialRunWorker == nil {
-				return nil
-			}
-			return pendingInitialRunWorker.Stats()
-		},
-	}))
-	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
-		Name:     "agent_runtime_pending_scope_sweeper",
-		Critical: false,
-		Start: func(ctx context.Context) error {
-			return startPendingScopeSweeper(ctx)
-		},
-		Stop: func(context.Context) error {
-			if pendingScopeSweeper != nil {
-				pendingScopeSweeper.Stop()
-			}
-			return nil
-		},
-		Stats: func() map[string]any {
-			if pendingScopeSweeper == nil {
-				return nil
-			}
-			return pendingScopeSweeper.Stats()
-		},
-	}))
-	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
-		Name:     "agent_runtime_stale_run_sweeper",
-		Critical: false,
-		Start: func(ctx context.Context) error {
-			return startStaleRunSweeper(ctx)
-		},
-		Stop: func(context.Context) error {
-			if staleRunSweeper != nil {
-				staleRunSweeper.Stop()
-			}
-			return nil
-		},
-		Stats: func() map[string]any {
-			if staleRunSweeper == nil {
-				return nil
-			}
-			return staleRunSweeper.Stats()
-		},
-	}))
+
 	app.AddModule(appruntime.NewLarkWSModule(
 		cfg.LarkConfig.AppID,
 		cfg.LarkConfig.AppSecret,

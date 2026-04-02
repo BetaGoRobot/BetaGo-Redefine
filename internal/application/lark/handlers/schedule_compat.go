@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
@@ -136,10 +135,6 @@ func sendCompatibleText(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 		return nil
 	}
 	msgID := currentMessageID(data)
-	if rootMsgID, ok := rootAgenticReplyTargetMessageID(ctx); ok {
-		msgID = rootMsgID
-		replyInThread = true
-	}
 	if msgID != "" {
 		if replyMsgID, err := scheduleCompatReplyText(ctx, text, msgID, suffix, replyInThread); err == nil {
 			recordCompatibleReply(ctx, metaData, replyMsgID, "text")
@@ -183,12 +178,6 @@ func sendCompatibleCardWithMessageID(ctx context.Context, data *larkim.P2Message
 			return msgID, nil
 		}
 	}
-	if rootMsgID, ok := rootAgenticReplyTargetMessageID(ctx); ok {
-		if replyMsgID, err := scheduleCompatReplyCardWithMessageID(ctx, rootMsgID, cardContent, suffix, true); err == nil {
-			recordCompatibleReply(ctx, metaData, replyMsgID, "card")
-			return replyMsgID, nil
-		}
-	}
 	if msgID != "" {
 		replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
 		if replyMsgID, err := scheduleCompatReplyCardWithMessageID(ctx, msgID, cardContent, suffix, replyInThread); err == nil {
@@ -220,16 +209,6 @@ func sendCompatibleRawCard(ctx context.Context, data *larkim.P2MessageReceiveV1,
 				return err
 			}
 			recordCompatibleReply(ctx, metaData, msgID, "raw_card")
-			return nil
-		}
-	}
-	if rootMsgID, ok := rootAgenticReplyTargetMessageID(ctx); ok {
-		if resp, err := larkmsg.ReplyMsgRawContentType(ctx, rootMsgID, larkim.MsgTypeInteractive, content, suffix, true); err == nil {
-			replyMsgID := rootMsgID
-			if resp != nil && resp.Data != nil && resp.Data.MessageId != nil && *resp.Data.MessageId != "" {
-				replyMsgID = *resp.Data.MessageId
-			}
-			recordCompatibleReply(ctx, metaData, replyMsgID, "raw_card")
 			return nil
 		}
 	}
@@ -272,12 +251,6 @@ func sendCompatibleCardJSON(ctx context.Context, data *larkim.P2MessageReceiveV1
 			return nil
 		}
 	}
-	if rootMsgID, ok := rootAgenticReplyTargetMessageID(ctx); ok {
-		if replyMsgID, err := scheduleCompatReplyCardJSON(ctx, rootMsgID, cardData, suffix, true); err == nil {
-			recordCompatibleReply(ctx, metaData, replyMsgID, "card_json")
-			return nil
-		}
-	}
 	if msgID != "" {
 		replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
 		if replyMsgID, err := scheduleCompatReplyCardJSON(ctx, msgID, cardData, suffix, replyInThread); err == nil {
@@ -303,15 +276,5 @@ func compatibleCardReplyInThread(metaData *xhandler.BaseMetaData, replyInThread 
 	if metaData == nil || metaData.IsP2P {
 		return false
 	}
-	if mode, ok := metaData.IntentInteractionMode(); ok && mode == intent.InteractionModeAgentic {
-		return true
-	}
 	return replyInThread
-}
-
-func rootAgenticReplyTargetMessageID(ctx context.Context) (string, bool) {
-	if root, ok := runtimecontext.RootAgenticReplyTarget(ctx); ok && root.MessageID != "" {
-		return root.MessageID, true
-	}
-	return "", false
 }
