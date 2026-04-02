@@ -78,6 +78,20 @@ func TestBuildStandardChatSystemPromptGuidesMentionsAndThreadContinuation(t *tes
 	}
 }
 
+func TestBuildStandardChatSystemPromptGuidesFinanceToolDiscovery(t *testing.T) {
+	prompt := buildStandardChatSystemPrompt(standardPromptModeAmbient)
+	for _, want := range []string{
+		"优先使用金融工具而不是 web_search",
+		"先调用 finance_tool_discover",
+		"不要停在 discover 结果本身",
+		"结构化行情、新闻和指标查询优先用金融工具",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
+	}
+}
+
 func TestBuildStandardChatUserPromptCarriesRecentHistoryAndCurrentInput(t *testing.T) {
 	prompt := buildStandardChatUserPrompt(botidentity.Profile{}, []string{"[09:01] <A>: 第二条", "[09:02] <B>: 第三条"}, nil, "[09:03] <Alice>: 这里展开一下")
 	for _, want := range []string{"最近对话", "第二条", "第三条", "当前用户消息", "这里展开一下"} {

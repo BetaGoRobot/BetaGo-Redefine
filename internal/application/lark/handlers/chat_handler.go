@@ -156,8 +156,11 @@ func buildStandardChatSystemPrompt(mode standardPromptMode) string {
 - 需要最新/实时信息
 - 你不确定事实
 - 现有信息不足以可靠回答
-2. 工具一次只调用一个。
-3. 使用了外部信息时：
+2. 当用户问题涉及行情、财经新闻、宏观指标、证券代码、指数、黄金、期货、CPI、GDP、PMI 等金融/经济数据时，优先使用金融工具而不是 web_search。
+3. 如果你当前还不知道有哪些金融工具可用，先调用 finance_tool_discover；拿到结果后，继续调用其中最合适的只读金融工具，不要停在 discover 结果本身。
+4. 只有当现有金融工具明显不能覆盖需求时，才退回 web_search 补充背景信息；结构化行情、新闻和指标查询优先用金融工具。
+5. 工具一次只调用一个。
+6. 使用了外部信息时：
 - 把原文放进 reference_from_web / reference_from_history
 - reply 保持干净自然，不粘贴大段资料
 
@@ -387,7 +390,11 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 			}
 			chunk := &xmodel.MessageChunkLogV3{}
 			if len(resp.Hits.Hits) > 0 {
-				sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
+				err = sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
+				if err != nil {
+					logs.L().Ctx(ctx).Error("got invalid chunk", zap.Error(err), zap.String("raw", string(resp.Hits.Hits[0].Source)))
+					continue
+				}
 				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", *chunk.TimestampV2, chunk.Summary))
 			}
 		}
