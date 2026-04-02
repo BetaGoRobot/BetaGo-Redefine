@@ -18,7 +18,7 @@ import (
 
 const (
 	publicAPIURI       = "/api/public/"
-	defaultMaxAttempts = 5
+	defaultMaxAttempts = 10
 )
 
 type Client struct {
