@@ -38,12 +38,6 @@ func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
 	}
 }
 
-func (r *ReplyChatOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
-		IntentRecognizeFetcher,
-	}
-}
-
 // PreRun Music
 //
 //	@receiver r *MusicMsgOperator

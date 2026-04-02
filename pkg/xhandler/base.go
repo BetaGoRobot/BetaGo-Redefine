@@ -3,6 +3,7 @@ package xhandler
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
@@ -15,13 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Fetcher 定义需要提前获取数据的独立接口
-type Fetcher[T, K any] interface {
-	Name() string
-	Fetch(ctx context.Context, event *T, meta *K) error
-}
-
-type Operator[T, K any] interface {
+type Stage[T, K any] interface {
 	Name() string
 
 	PreRun(context.Context, *T, *K) error
@@ -30,12 +25,14 @@ type Operator[T, K any] interface {
 
 	MetaInit() *K
 
-	// Depends 返回此 Operator 依赖的 Fetcher 实例列表
-	Depends() []Fetcher[T, K]
+	// Depends 返回此 Stage 依赖的其他 Stage 实例列表
+	Depends() []Stage[T, K]
 
-	// FeatureInfo 返回功能信息，返回 nil 表示此 Operator 不受功能开关控制
+	// FeatureInfo 返回功能信息，返回 nil 表示此 Stage 不受功能开关控制
 	FeatureInfo() *FeatureInfo
 }
+
+type Operator[T, K any] = Stage[T, K]
 
 // FeatureInfo 功能信息
 type FeatureInfo struct {
@@ -55,7 +52,8 @@ type MetaDataWithOpenID interface {
 }
 
 type (
-	OperatorBase[T, K any] struct{}
+	StageBase[T, K any]    struct{}
+	OperatorBase[T, K any] = StageBase[T, K]
 	BaseMetaData           struct {
 		mu sync.RWMutex
 
@@ -195,7 +193,7 @@ type (
 
 		data           *T
 		metaData       *K
-		asyncStages    []Operator[T, K]
+		asyncStages    []Stage[T, K]
 		features       map[string]FeatureInfo // 自动收集的功能信息
 		onPanicFn      ProcPanicFunc[T, K]
 		deferFn        []ProcDeferFunc[T, K]
@@ -205,33 +203,33 @@ type (
 	}
 )
 
-func (op *OperatorBase[T, K]) Name() string {
+func (op *StageBase[T, K]) Name() string {
 	return "NotImplementBaseName"
 }
 
-func (op *OperatorBase[T, K]) PreRun(context.Context, *T, *K) error {
+func (op *StageBase[T, K]) PreRun(context.Context, *T, *K) error {
 	return nil
 }
 
-func (op *OperatorBase[T, K]) Run(context.Context, *T, *K) error {
+func (op *StageBase[T, K]) Run(context.Context, *T, *K) error {
 	return nil
 }
 
-func (op *OperatorBase[T, K]) PostRun(context.Context, *T, *K) error {
+func (op *StageBase[T, K]) PostRun(context.Context, *T, *K) error {
 	return nil
 }
 
-func (op *OperatorBase[T, K]) MetaInit() *K {
+func (op *StageBase[T, K]) MetaInit() *K {
 	return new(K)
 }
 
 // Depends 默认实现：无依赖
-func (op *OperatorBase[T, K]) Depends() []Fetcher[T, K] {
+func (op *StageBase[T, K]) Depends() []Stage[T, K] {
 	return nil
 }
 
 // FeatureInfo 默认实现：返回 nil，表示不受功能开关控制
-func (op *OperatorBase[T, K]) FeatureInfo() *FeatureInfo {
+func (op *StageBase[T, K]) FeatureInfo() *FeatureInfo {
 	return nil
 }
 
@@ -333,15 +331,15 @@ func panicAsError(recovered any) error {
 //	@receiver p
 //	@param stage
 //	@return *Processor[T]
-func (p *Processor[T, K]) AddAsync(stage Operator[T, K]) *Processor[T, K] {
+func (p *Processor[T, K]) AddAsync(stage Stage[T, K]) *Processor[T, K] {
 	p.asyncStages = append(p.asyncStages, stage)
 	p.collectFeatureInfo(stage)
 	return p
 }
 
-// collectFeatureInfo 收集 Operator 的 FeatureInfo
-func (p *Processor[T, K]) collectFeatureInfo(op Operator[T, K]) {
-	if fi := op.FeatureInfo(); fi != nil {
+// collectFeatureInfo 收集 Stage 的 FeatureInfo
+func (p *Processor[T, K]) collectFeatureInfo(stage Stage[T, K]) {
+	if fi := stage.FeatureInfo(); fi != nil {
 		if p.features == nil {
 			p.features = make(map[string]FeatureInfo)
 		}
@@ -380,11 +378,11 @@ func (p *Processor[T, K]) Run() {
 	_ = p.RunParallelStages()
 }
 
-// fetcherWrapper 包装 Fetcher 用于追踪执行状态
-type fetcherWrapper[T, K any] struct {
-	fetcher Fetcher[T, K]
-	done    chan struct{}
-	err     error
+type stageWrapper[T, K any] struct {
+	stage Stage[T, K]
+	deps  []*stageWrapper[T, K]
+	done  chan struct{}
+	err   error
 }
 
 // RunParallelStages  运行并行处理阶段（考虑依赖关系）
@@ -398,51 +396,42 @@ func (p *Processor[T, K]) RunParallelStages() error {
 	p.Context, span = otel.Start(p.Context)
 	defer span.End()
 
-	// 1. 收集所有依赖的 Fetcher（去重）
-	fetcherMap := make(map[string]*fetcherWrapper[T, K])
-
-	for _, op := range p.asyncStages {
-		deps := op.Depends()
-		for _, dep := range deps {
-			name := dep.Name()
-			if _, exists := fetcherMap[name]; !exists {
-				fetcherMap[name] = &fetcherWrapper[T, K]{
-					fetcher: dep,
-					done:    make(chan struct{}),
-				}
-			}
-		}
+	stageMap, err := p.compileStageDAG()
+	if err != nil {
+		return err
 	}
 
-	// 2. 启动所有 Fetchers（并行执行）
 	wg := &sync.WaitGroup{}
-	errorChan := make(chan error, len(p.asyncStages)+len(fetcherMap))
+	errorChan := make(chan error, len(stageMap))
 
-	for name, wrapper := range fetcherMap {
+	for name, wrapper := range stageMap {
 		wg.Add(1)
-		go func(w *fetcherWrapper[T, K], fetcherName string) {
+		go func(w *stageWrapper[T, K], stageName string) {
 			defer p.Defer()
 			defer close(w.done)
 			defer wg.Done()
 
-			// 检查 Fetcher 是否也有 FeatureInfo（如果它同时也是 Operator）
-			var err error
-			if opWithFeature, ok := any(w.fetcher).(interface{ FeatureInfo() *FeatureInfo }); ok {
-				if fi := opWithFeature.FeatureInfo(); fi != nil && p.featureChecker != nil {
-					var chatID, openID string
-					if metaWithOpenID, ok := any(p.metaData).(MetaDataWithOpenID); ok {
-						chatID = metaWithOpenID.GetChatID()
-						openID = metaWithOpenID.GetOpenID()
+			for _, dep := range w.deps {
+				logs.L().Ctx(p).Info("Waiting for dependency",
+					zap.String("stage", stageName),
+					zap.String("dependency", dep.stage.Name()))
+				<-dep.done
+				if dep.err != nil {
+					if errors.Is(dep.err, xerror.ErrStageSkip) {
+						continue
 					}
-					if !p.featureChecker(p, fi.ID, fi.Default, chatID, openID) {
-						w.err = errors.Wrap(xerror.ErrStageSkip, fetcherName+" feature blocked")
-						return
-					}
+					w.err = errors.Wrap(dep.err, stageName+" blocked by dependency "+dep.stage.Name())
+					errorChan <- w.err
+					logs.L().Ctx(p).Warn("Dependency stage failed, blocking downstream stage",
+						zap.String("stage", stageName),
+						zap.String("dependency", dep.stage.Name()),
+						zap.Error(dep.err))
+					return
 				}
 			}
 
-			logs.L().Ctx(p).Info("Starting fetcher", zap.String("fetcher", fetcherName))
-			err = w.fetcher.Fetch(p, p.data, p.metaData)
+			logs.L().Ctx(p).Info("Starting stage", zap.String("stage", stageName))
+			err := p.runSingleStage(p, w.stage)
 			w.err = err
 			if err != nil && !errors.Is(err, xerror.ErrStageSkip) {
 				errorChan <- err
@@ -450,43 +439,6 @@ func (p *Processor[T, K]) RunParallelStages() error {
 		}(wrapper, name)
 	}
 
-	// 3. 启动所有 Operators，每个 Operator 等待自己依赖的 Fetcher 完成
-	for _, op := range p.asyncStages {
-		wg.Add(1)
-		go func(operator Operator[T, K]) {
-			defer p.Defer()
-			defer wg.Done()
-
-			// 等待此 Operator 依赖的 Fetcher 完成
-			deps := operator.Depends()
-			for _, dep := range deps {
-				if wrapper, ok := fetcherMap[dep.Name()]; ok {
-					logs.L().Ctx(p).Info("Waiting for dependency",
-						zap.String("operator", operator.Name()),
-						zap.String("dependency", dep.Name()))
-					<-wrapper.done
-					// 如果依赖的 Fetcher 出错了，记录日志但继续执行（使用回退机制）
-					if wrapper.err != nil {
-						if !errors.Is(wrapper.err, xerror.ErrStageSkip) {
-							logs.L().Ctx(p).Warn("Dependency fetcher failed, will use fallback",
-								zap.String("operator", operator.Name()),
-								zap.String("dependency", dep.Name()),
-								zap.Error(wrapper.err))
-						}
-					}
-				}
-			}
-
-			// 执行 Operator
-			logs.L().Ctx(p).Info("Starting operator", zap.String("operator", operator.Name()))
-			err := p.runSingleOperator(p, operator)
-			if err != nil && !errors.Is(err, xerror.ErrStageSkip) {
-				errorChan <- err
-			}
-		}(op)
-	}
-
-	// 4. 等待所有完成
 	go func() {
 		defer close(errorChan)
 		wg.Wait()
@@ -495,59 +447,124 @@ func (p *Processor[T, K]) RunParallelStages() error {
 	var mergedErr error
 	for err := range errorChan {
 		if err != nil {
-			mergedErr = errors.Wrap(mergedErr, err.Error())
+			if mergedErr == nil {
+				mergedErr = err
+			} else {
+				mergedErr = errors.Wrap(mergedErr, err.Error())
+			}
 			logs.L().Ctx(p).Warn("error in async stages", zap.Error(err))
 		}
 	}
 	return mergedErr
 }
 
-// runSingleOperator 运行单个 Operator
-func (p *Processor[T, K]) runSingleOperator(ctx context.Context, op Operator[T, K]) error {
+func (p *Processor[T, K]) compileStageDAG() (map[string]*stageWrapper[T, K], error) {
+	nodes := make(map[string]*stageWrapper[T, K], len(p.asyncStages))
+	visiting := make(map[string]bool, len(p.asyncStages))
+
+	var visit func(Stage[T, K]) error
+	visit = func(stage Stage[T, K]) error {
+		if stage == nil {
+			return errors.New("nil stage")
+		}
+		name := stage.Name()
+		if name == "" {
+			return errors.New("stage name cannot be empty")
+		}
+		if visiting[name] {
+			return errors.Errorf("dependency cycle detected at stage %q", name)
+		}
+		if existing, ok := nodes[name]; ok {
+			if stageIdentity(existing.stage) != stageIdentity(stage) {
+				return errors.Errorf("duplicate stage name %q with different instances", name)
+			}
+			return nil
+		}
+
+		visiting[name] = true
+		node := &stageWrapper[T, K]{
+			stage: stage,
+			done:  make(chan struct{}),
+		}
+		nodes[name] = node
+		for _, dep := range stage.Depends() {
+			if err := visit(dep); err != nil {
+				delete(visiting, name)
+				return err
+			}
+			node.deps = append(node.deps, nodes[dep.Name()])
+		}
+		delete(visiting, name)
+		return nil
+	}
+
+	for _, stage := range p.asyncStages {
+		if err := visit(stage); err != nil {
+			return nil, err
+		}
+	}
+	return nodes, nil
+}
+
+func stageIdentity[T, K any](stage Stage[T, K]) string {
+	value := reflect.ValueOf(any(stage))
+	if !value.IsValid() {
+		return "<nil>"
+	}
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return fmt.Sprintf("%T@0x%x", stage, value.Pointer())
+	default:
+		return fmt.Sprintf("%T:%v", stage, stage)
+	}
+}
+
+// runSingleStage 运行单个 Stage
+func (p *Processor[T, K]) runSingleStage(ctx context.Context, stage Stage[T, K]) error {
 	var err error
 
 	// 自动检查功能开关
-	if fi := op.FeatureInfo(); fi != nil && p.featureChecker != nil {
+	if fi := stage.FeatureInfo(); fi != nil && p.featureChecker != nil {
 		var chatID, openID string
 		if metaWithOpenID, ok := any(p.metaData).(MetaDataWithOpenID); ok {
 			chatID = metaWithOpenID.GetChatID()
 			openID = metaWithOpenID.GetOpenID()
 		}
 		if !p.featureChecker(ctx, fi.ID, fi.Default, chatID, openID) {
-			return errors.Wrap(xerror.ErrStageSkip, op.Name()+" feature blocked")
+			return errors.Wrap(xerror.ErrStageSkip, stage.Name()+" feature blocked")
 		}
 	}
 
-	err = op.PreRun(ctx, p.data, p.metaData)
+	err = stage.PreRun(ctx, p.data, p.metaData)
 	if err != nil {
 		if errors.Is(err, xerror.ErrStageSkip) {
-			logs.L().Ctx(ctx).Info("Skipped pre run stage", zap.String("stage", op.Name()), zap.Error(err))
+			logs.L().Ctx(ctx).Info("Skipped pre run stage", zap.String("stage", stage.Name()), zap.Error(err))
 		} else {
 			otel.RecordError(trace.SpanFromContext(ctx), err)
-			logs.L().Ctx(ctx).Error("pre run stage error", zap.String("stage", op.Name()), zap.Error(err))
+			logs.L().Ctx(ctx).Error("pre run stage error", zap.String("stage", stage.Name()), zap.Error(err))
 		}
 		return err
 	}
 
-	logs.L().Ctx(ctx).Info("Run Handler", zap.String("handler", reflecting.GetFunctionName(op.Run)))
-	err = op.Run(ctx, p.data, p.metaData)
+	logs.L().Ctx(ctx).Info("Run Handler", zap.String("handler", reflecting.GetFunctionName(stage.Run)))
+	err = stage.Run(ctx, p.data, p.metaData)
 	if err != nil {
 		if errors.Is(err, xerror.ErrStageSkip) {
-			logs.L().Ctx(ctx).Info("run stage skipped", zap.String("stage", op.Name()), zap.Error(err))
+			logs.L().Ctx(ctx).Info("run stage skipped", zap.String("stage", stage.Name()), zap.Error(err))
 		} else {
 			otel.RecordError(trace.SpanFromContext(ctx), err)
-			logs.L().Ctx(ctx).Error("run stage error", zap.String("stage", op.Name()), zap.Error(err), zap.Stack("stack"))
+			logs.L().Ctx(ctx).Error("run stage error", zap.String("stage", stage.Name()), zap.Error(err), zap.Stack("stack"))
 		}
 		return err
 	}
 
-	err = op.PostRun(ctx, p.data, p.metaData)
+	err = stage.PostRun(ctx, p.data, p.metaData)
 	if err != nil {
 		otel.RecordError(trace.SpanFromContext(ctx), err)
 		if errors.Is(err, xerror.ErrStageSkip) {
-			logs.L().Ctx(ctx).Info("post run stage skipped", zap.String("stage", op.Name()), zap.Error(err))
+			logs.L().Ctx(ctx).Info("post run stage skipped", zap.String("stage", stage.Name()), zap.Error(err))
 		} else {
-			logs.L().Ctx(ctx).Error("post run stage error", zap.String("stage", op.Name()), zap.Error(err))
+			logs.L().Ctx(ctx).Error("post run stage error", zap.String("stage", stage.Name()), zap.Error(err))
 		}
 		return err
 	}

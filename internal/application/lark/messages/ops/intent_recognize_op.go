@@ -21,10 +21,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-var (
-	_ Op                                                                 = &IntentRecognizeOperator{}
-	_ xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] = &IntentRecognizeOperator{}
-)
+var _ Op = &IntentRecognizeOperator{}
 
 // IntentRecognizeOperator 意图识别 Operator（同时也是 Fetcher）
 //
@@ -42,8 +39,8 @@ type intentRecognizeConfig interface {
 	ChatMode() appconfig.ChatMode
 }
 
-// 全局单例 IntentRecognizeFetcher
-var IntentRecognizeFetcher = &IntentRecognizeOperator{}
+// 全局单例 IntentRecognizeStage
+var IntentRecognizeStage = &IntentRecognizeOperator{}
 
 const intentRecentContextLimit = 3
 
@@ -61,8 +58,31 @@ func (r *IntentRecognizeOperator) FeatureInfo() *xhandler.FeatureInfo {
 	}
 }
 
-// Fetch 实现 Fetcher 接口，执行意图识别
-func (r *IntentRecognizeOperator) Fetch(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
+// PreRun Repeat
+//
+//	@receiver r *ImitateMsgOperator
+//	@param ctx context.Context
+//	@param event *larkim.P2MessageReceiveV1
+//	@return err error
+//	@author heyuhengmatt
+//	@update 2024-07-17 01:35:35
+func (r *IntentRecognizeOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer otel.RecordErrorPtr(span, &err)
+
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
+	}
+
+	if err := skipIfMentioned(r.Name(), event); err != nil { // mentioned直接不过意图识别了就。
+		return err
+	}
+	return
+}
+
+// Run 执行意图识别，作为普通依赖 Stage 运行
+func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
@@ -165,22 +185,6 @@ func loadIntentRecentContext(ctx context.Context, event *larkim.P2MessageReceive
 		lines = lines[len(lines)-size:]
 	}
 	return lines, nil
-}
-
-// PreRun 意图识别前置检查（作为 Operator 时使用）
-func (r *IntentRecognizeOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	// 作为 Operator 时，直接跳过，因为已经作为 Fetcher 执行过了
-	return errors.Wrap(xerror.ErrStageSkip, r.Name()+" already executed as fetcher")
-}
-
-// Run 执行意图识别（作为 Operator 时使用）
-func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	return nil
-}
-
-// PostRun 意图识别后置处理（作为 Operator 时使用）
-func (r *IntentRecognizeOperator) PostRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
-	return nil
 }
 
 // GetIntentAnalysisFromMeta 从 meta 中获取意图分析结果
