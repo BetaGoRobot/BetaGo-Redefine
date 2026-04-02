@@ -29,12 +29,6 @@ func (r *CommandOperator) Name() string {
 	return "CommandOperator"
 }
 
-func (r *CommandOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
-		IntentRecognizeFetcher,
-	}
-}
-
 func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()

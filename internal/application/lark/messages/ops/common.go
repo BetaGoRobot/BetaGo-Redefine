@@ -20,8 +20,8 @@ import (
 )
 
 type (
-	OpBase = xhandler.OperatorBase[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
-	Op     = xhandler.Operator[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	OpBase = xhandler.StageBase[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	Op     = xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 )
 
 func messageText(ctx context.Context, event *larkim.P2MessageReceiveV1) string {

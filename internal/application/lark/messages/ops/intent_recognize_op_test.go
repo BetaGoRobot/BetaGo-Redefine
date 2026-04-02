@@ -18,7 +18,7 @@ type fakeIntentRecognizeAccessor struct {
 func (f fakeIntentRecognizeAccessor) IntentRecognitionEnabled() bool { return f.enabled }
 func (f fakeIntentRecognizeAccessor) ChatMode() appconfig.ChatMode   { return f.mode }
 
-func TestIntentRecognizeOperatorFetchStoresAnalysis(t *testing.T) {
+func TestIntentRecognizeOperatorRunStoresAnalysis(t *testing.T) {
 	op := &IntentRecognizeOperator{
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig {
 			return fakeIntentRecognizeAccessor{enabled: true, mode: appconfig.ChatModeStandard}
@@ -49,8 +49,8 @@ func TestIntentRecognizeOperatorFetchStoresAnalysis(t *testing.T) {
 
 	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
 	event := testMessageEvent("group", "oc_chat", "ou_actor")
-	if err := op.Fetch(context.Background(), event, meta); err != nil {
-		t.Fatalf("Fetch() error = %v", err)
+	if err := op.Run(context.Background(), event, meta); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
 	analysis, ok := GetIntentAnalysisFromMeta(meta)
 	if !ok {
@@ -61,7 +61,7 @@ func TestIntentRecognizeOperatorFetchStoresAnalysis(t *testing.T) {
 	}
 }
 
-func TestIntentRecognizeOperatorFetchSkipsWhenDisabled(t *testing.T) {
+func TestIntentRecognizeOperatorRunSkipsWhenDisabled(t *testing.T) {
 	op := &IntentRecognizeOperator{
 		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig {
 			return fakeIntentRecognizeAccessor{enabled: false, mode: appconfig.ChatModeStandard}
@@ -69,7 +69,7 @@ func TestIntentRecognizeOperatorFetchSkipsWhenDisabled(t *testing.T) {
 	}
 	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
 	event := testMessageEvent("group", "oc_chat", "ou_actor")
-	if err := op.Fetch(context.Background(), event, meta); err == nil {
+	if err := op.Run(context.Background(), event, meta); err == nil {
 		t.Fatal("expected stage skip error")
 	}
 }

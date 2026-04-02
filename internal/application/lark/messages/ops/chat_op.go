@@ -39,10 +39,10 @@ func (r *ChatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 	}
 }
 
-// Depends 声明此 Operator 依赖的 Fetcher
-func (r *ChatMsgOperator) Depends() []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
-	return []xhandler.Fetcher[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
-		IntentRecognizeFetcher,
+// Depends 声明此 Stage 依赖的其他 Stage
+func (r *ChatMsgOperator) Depends() []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
+		IntentRecognizeStage,
 	}
 }
 
