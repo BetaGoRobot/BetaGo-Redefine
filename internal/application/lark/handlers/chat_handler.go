@@ -413,9 +413,9 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		New(chatID, currentOpenID(event, metaData), event).
 		WithTools(larktools()).
 		WithHandlersOnly(BuildInjectableFinanceTools())
-	// if intent, ok := metaData.GetIntentAnalysis(); ok {
-	// 	dal = dal.Effort(intent.ReasoningEffort)
-	// }
+	if intent, ok := metaData.GetIntentAnalysis(); ok {
+		dal = dal.Effort(intent.ReasoningEffort)
+	}
 	iterSeq, err := dal.Do(ctx, systemPrompt, userPrompt, files...)
 	if err != nil {
 		return nil, err
