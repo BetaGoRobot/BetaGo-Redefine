@@ -396,7 +396,13 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 					logs.L().Ctx(ctx).Error("got invalid chunk", zap.Error(err), zap.String("raw", string(resp.Hits.Hits[0].Source)))
 					continue
 				}
-				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", *chunk.TimestampV2, chunk.Summary))
+				t := ""
+				if chunk.TimestampV2 != nil {
+					t = *chunk.TimestampV2
+				} else {
+					t = chunk.Timestamp
+				}
+				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", t, chunk.Summary))
 			}
 		}
 	}

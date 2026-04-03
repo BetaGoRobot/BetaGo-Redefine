@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	cardhandlers "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/card_handlers"
@@ -56,6 +57,8 @@ func RegisterBuiltins() {
 		RegisterSync(cardactionproto.ActionSchedulePause, handleScheduleAction)
 		RegisterSync(cardactionproto.ActionScheduleResume, handleScheduleAction)
 		RegisterSync(cardactionproto.ActionScheduleDelete, handleScheduleAction)
+		RegisterSync(cardactionproto.ActionScheduleEditConfirm, handleScheduleEditConfirm)
+		RegisterSync(cardactionproto.ActionScheduleEditCancel, handleScheduleEditCancel)
 		RegisterSync(cardactionproto.ActionWordChunksView, handleWordChunkView)
 		RegisterSync(cardactionproto.ActionWordChunkDetail, handleWordChunkDetail)
 	})
@@ -434,6 +437,91 @@ func handleScheduleAction(ctx context.Context, actionCtx *Context) (*callback.Ca
 		return InfoToast(message), nil
 	}
 	return InfoToastWithRawCardPayload(message, card), nil
+}
+
+func handleScheduleEditConfirm(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	editToken, _ := actionCtx.Action.String("edit_token")
+
+	if editToken == "" {
+		return ErrorToast("编辑令牌无效"), nil
+	}
+
+	edit, ok := scheduleapp.GetPendingEdit(editToken)
+	if !ok {
+		return ErrorToast("编辑令牌已过期，请重新发起编辑"), nil
+	}
+
+	// Verify the actor matches the edit initiator
+	actorOpenID := strings.TrimSpace(actionCtx.OpenID())
+	if edit.ActorOpenID != actorOpenID {
+		return ErrorToast("无权限执行此操作"), nil
+	}
+
+	// Build UpdateTaskRequest from pending edit
+	req := &scheduleapp.UpdateTaskRequest{
+		ID:          edit.TaskID,
+		ActorOpenID: actorOpenID,
+	}
+	if name, ok := edit.NewValues["name"].(string); ok {
+		req.Name = &name
+	}
+	if cronExpr, ok := edit.NewValues["cron_expr"].(string); ok {
+		req.CronExpr = &cronExpr
+	}
+	if timezone, ok := edit.NewValues["timezone"].(string); ok {
+		req.Timezone = &timezone
+	}
+	if runAt, ok := edit.NewValues["run_at"].(time.Time); ok {
+		req.RunAt = &runAt
+	}
+	if message, ok := edit.NewValues["message"].(string); ok {
+		req.Message = &message
+	}
+	if notifyOnError, ok := edit.NewValues["notify_on_error"].(bool); ok {
+		req.NotifyOnError = &notifyOnError
+	}
+	if notifyResult, ok := edit.NewValues["notify_result"].(bool); ok {
+		req.NotifyResult = &notifyResult
+	}
+
+	// Execute the update
+	task, err := scheduleapp.GetService().UpdateTask(ctx, req)
+	if err != nil {
+		return ErrorToast(err.Error()), nil
+	}
+
+	// Clean up pending edit
+	scheduleapp.DeletePendingEdit(editToken)
+
+	// Build result message
+	result := fmt.Sprintf("✅ Schedule 已更新！\n\n名称: %s\nID: `%s`", task.Name, task.ID)
+	if task.IsCron() {
+		result += fmt.Sprintf("\nCron: `%s`", task.CronExpr)
+		result += fmt.Sprintf("\n下次执行: %s", task.NextRunAt.Format("2006-01-02 15:04:05"))
+	} else if task.IsOnce() && task.RunAt != nil {
+		result += fmt.Sprintf("\n执行时间: %s", task.RunAt.Format("2006-01-02 15:04:05"))
+	}
+
+	// Build refreshed view card
+	view := scheduleapp.TaskCardViewState{
+		Mode: scheduleapp.TaskCardViewModeQuery,
+		ID:   task.ID,
+	}
+	card, cardErr := scheduleapp.BuildTaskCardPayloadForView(ctx, task.ChatID, view, false)
+	if cardErr != nil {
+		return InfoToast(result), nil
+	}
+	return InfoToastWithRawCardPayload(result, card), nil
+}
+
+func handleScheduleEditCancel(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
+	editToken, _ := actionCtx.Action.String("edit_token")
+
+	if editToken != "" {
+		scheduleapp.DeletePendingEdit(editToken)
+	}
+
+	return InfoToast("已取消编辑"), nil
 }
 
 func handleWordChunkView(ctx context.Context, actionCtx *Context) (*callback.CardActionTriggerResponse, error) {
