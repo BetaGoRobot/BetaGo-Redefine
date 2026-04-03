@@ -497,25 +497,28 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 			}
 		}
 	} else if data.Event.Message.ParentId != nil {
-		respMsg := larkmsg.GetMsgFullByID(ctx, *data.Event.Message.ParentId)
-		if len(respMsg.Data.Items) == 0 {
-			res = "没有找到引用的消息，无法撤回"
-			logs.L().Ctx(ctx).Error("RevertMessage", zap.String("MessageID", *data.Event.Message.ParentId), zap.Error(errors.New("No parent message found")))
-			return nil
-		}
-		for _, msg := range respMsg.Data.Items {
-			currentBot := botidentity.Current()
-			if msg.Sender.Id == nil || currentBot.BotOpenID == "" || *msg.Sender.Id != currentBot.BotOpenID {
+		parID := data.Event.Message.ParentId
+
+		currentBot := botidentity.Current()
+		for parID != nil {
+			resp := larkmsg.GetMsgFullByID(ctx, *parID)
+			if !resp.Success() {
+				logs.L().Ctx(ctx).Error("GetMsgFullByID", zap.Error(errors.New(resp.Error())), zap.String("MessageID", *parID))
+				return errors.New("Failed to get message details")
+			}
+			msg := resp.Data.Items[0]
+			parID = msg.ParentId
+			if msg.Sender.Id == nil || currentBot.AppID == "" || *msg.Sender.Id != currentBot.AppID {
 				res = "消息不是机器人发出的，不能撤回"
 				logs.L().Ctx(ctx).Error("RevertMessage", zap.String("MessageID", *msg.MessageId), zap.String("SenderID", *msg.Sender.Id), zap.String("CurrentBotOpenID", currentBot.BotOpenID))
 				continue
 			}
-			resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*data.Event.Message.ParentId).Build())
+			revertResp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*data.Event.Message.ParentId).Build())
 			if err != nil {
 				logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(err), zap.String("MessageID", *msg.MessageId))
 				continue
 			}
-			if !resp.Success() {
+			if !revertResp.Success() {
 				logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(errors.New(resp.Error())), zap.String("MessageID", *msg.MessageId))
 				continue
 			}
