@@ -18,6 +18,7 @@ import (
 
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/gg/gresult"
+	"github.com/bytedance/sonic"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 	"go.uber.org/zap"
@@ -33,12 +34,14 @@ type (
 
 		handlers               map[funcName]tools.HandlerFunc[T]
 		tools                  []*responses.ResponsesTool
+		dynamicTools           []*responses.ResponsesTool
 		lastCallID             callID
 		functionCallMap        map[callID]funcName
 		functionInput          map[callID]any
 		functionResult         map[callID]gresult.R[string]
 		pendingCapabilityCalls []CapabilityCallTrace
 		ignoredEventCounts     map[string]int
+		reasoningEffort        *responses.ResponsesReasoning
 
 		lastRespID string
 		textOutput textOutput
@@ -149,11 +152,15 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		},
 		handlers:               make(map[string]tools.HandlerFunc[T]),
 		tools:                  make([]*responses.ResponsesTool, 0),
+		dynamicTools:           make([]*responses.ResponsesTool, 0),
 		functionCallMap:        make(map[callID]funcName),
 		functionInput:          make(map[callID]any),
 		functionResult:         make(map[callID]gresult.R[string]),
 		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
 		ignoredEventCounts:     make(map[string]int),
+		reasoningEffort: &responses.ResponsesReasoning{
+			Effort: responses.ReasoningEffort_high, // 默认最大
+		},
 	}
 }
 
@@ -164,6 +171,21 @@ func (r *ResponsesImpl[T]) RegisterHandler(event string, handler tools.HandlerFu
 
 func (r *ResponsesImpl[T]) WithTools(tools *tools.Impl[T]) *ResponsesImpl[T] {
 	r.tools = append(r.tools, tools.Tools()...)
+	maps.Copy(r.handlers, tools.HandlerMap())
+	return r
+}
+
+func (r *ResponsesImpl[T]) Effort(t responses.ReasoningEffort_Enum) *ResponsesImpl[T] {
+	r.reasoningEffort = &responses.ResponsesReasoning{
+		Effort: t,
+	}
+	return r
+}
+
+func (r *ResponsesImpl[T]) WithHandlersOnly(tools *tools.Impl[T]) *ResponsesImpl[T] {
+	if tools == nil {
+		return r
+	}
 	maps.Copy(r.handlers, tools.HandlerMap())
 	return r
 }
@@ -209,6 +231,57 @@ func responseToolName(tool *responses.ResponsesTool) string {
 	return ""
 }
 
+type discoveredToolList struct {
+	Tools []discoveredToolSpec `json:"tools"`
+}
+
+type discoveredToolSpec struct {
+	ToolName    string       `json:"tool_name"`
+	Description string       `json:"description"`
+	Schema      *tools.Param `json:"schema"`
+}
+
+func additionalToolsFromToolResult(functionName, output string) []*responses.ResponsesTool {
+	if strings.TrimSpace(functionName) != "finance_tool_discover" {
+		return nil
+	}
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil
+	}
+
+	payload := discoveredToolList{}
+	if err := sonic.UnmarshalString(output, &payload); err != nil {
+		return nil
+	}
+
+	res := make([]*responses.ResponsesTool, 0, len(payload.Tools))
+	for _, item := range payload.Tools {
+		name := strings.TrimSpace(item.ToolName)
+		if name == "" || item.Schema == nil {
+			continue
+		}
+		res = append(res, responseFunctionTool(name, strings.TrimSpace(item.Description), item.Schema))
+	}
+	return res
+}
+
+func responseFunctionTool(name, description string, schema *tools.Param) *responses.ResponsesTool {
+	if strings.TrimSpace(name) == "" || schema == nil {
+		return nil
+	}
+	return &responses.ResponsesTool{
+		Union: &responses.ResponsesTool_ToolFunction{
+			ToolFunction: &responses.ToolFunction{
+				Name:        strings.TrimSpace(name),
+				Type:        responses.ToolType_function,
+				Description: gptr.Of(strings.TrimSpace(description)),
+				Parameters:  &responses.Bytes{Value: schema.JSON()},
+			},
+		},
+	}
+}
+
 func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Event) {
 	item := event.GetItem()
 	if call := item.GetItem().GetFunctionToolCall(); call != nil {
@@ -238,6 +311,7 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 	if handler, ok := r.handlers[handlerName]; ok {
 		res := handler(ctx, args, r.meta)
 		r.functionResult[callID] = res
+		r.dynamicTools = mergeResponseTools(r.dynamicTools, additionalToolsFromToolResult(handlerName, res.Value()))
 		traceOutput := strings.TrimSpace(res.Value())
 		if traceOutput == "" && res.IsErr() && res.Err() != nil {
 			traceOutput = strings.TrimSpace(res.Err().Error())
@@ -279,16 +353,14 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			PreviousResponseId: gptr.Of(r.lastRespID),
 			Input:              message,
 			Store:              gptr.Of(true),
-			Tools:              r.tools,
+			Tools:              mergeResponseTools(r.tools, r.dynamicTools),
+			Reasoning:          r.reasoningEffort,
+			Stream:             gptr.Of(true),
 			// Text: &responses.ResponsesText{
 			// 	Format: &responses.TextFormat{
 			// 		Type: responses.TextType_json_object,
 			// 	},
 			// },
-			// Reasoning: &responses.ResponsesReasoning{
-			// 	Effort: responses.ReasoningEffort_medium,
-			// },
-			Stream: gptr.Of(true),
 		})
 		if err != nil {
 			return
@@ -487,14 +559,12 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		},
 	}
 	req = &responses.ResponsesRequest{
-		Model: modelID,
-		Input: input,
-		Store: gptr.Of(true),
-		Tools: r.tools,
-		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_high,
-		},
-		Stream: gptr.Of(true),
+		Model:     modelID,
+		Input:     input,
+		Store:     gptr.Of(true),
+		Tools:     r.tools,
+		Reasoning: r.reasoningEffort,
+		Stream:    gptr.Of(true),
 	}
 
 	resp, err := CreateResponsesStream(ctx, req)

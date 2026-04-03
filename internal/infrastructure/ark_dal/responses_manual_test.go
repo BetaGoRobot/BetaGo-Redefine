@@ -99,6 +99,43 @@ func TestBuildTurnRequestDedupesAdditionalToolsByName(t *testing.T) {
 	}
 }
 
+func TestWithHandlersOnlyRegistersHiddenHandlersWithoutExposingTools(t *testing.T) {
+	visible := arktools.New[struct{}]().Add(
+		arktools.NewUnit[struct{}]().
+			Name("finance_tool_discover").
+			Desc("discover").
+			Params(arktools.NewParams("object")),
+	)
+	hidden := arktools.New[struct{}]().Add(
+		arktools.NewUnit[struct{}]().
+			Name("finance_market_data_get").
+			Desc("hidden finance tool").
+			Params(arktools.NewParams("object")),
+	)
+
+	turn := New[struct{}]("oc_chat", "ou_actor", nil).
+		WithTools(visible).
+		WithHandlersOnly(hidden)
+
+	req, err := turn.buildTurnRequest(ResponseTurnRequest{
+		ModelID:      "ep-test",
+		SystemPrompt: "system",
+		UserPrompt:   "user",
+	})
+	if err != nil {
+		t.Fatalf("buildTurnRequest() error = %v", err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("tool count = %d, want 1", len(req.Tools))
+	}
+	if req.Tools[0].GetToolFunction().GetName() != "finance_tool_discover" {
+		t.Fatalf("visible tool name = %q, want %q", req.Tools[0].GetToolFunction().GetName(), "finance_tool_discover")
+	}
+	if _, ok := turn.handlers["finance_market_data_get"]; !ok {
+		t.Fatal("expected hidden finance handler to be registered")
+	}
+}
+
 func testResponseFunctionTool(name string) *responses.ResponsesTool {
 	return &responses.ResponsesTool{
 		Union: &responses.ResponsesTool_ToolFunction{

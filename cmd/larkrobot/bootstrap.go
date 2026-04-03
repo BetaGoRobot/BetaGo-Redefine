@@ -45,13 +45,7 @@ type appComponents struct {
 
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
-var (
-	scheduler               *scheduleapp.Scheduler
-	resumeWorker            workerHandle
-	pendingInitialRunWorker workerHandle
-	pendingScopeSweeper     workerHandle
-	staleRunSweeper         workerHandle
-)
+var scheduler *scheduleapp.Scheduler
 
 // buildApp 是当前单体进程的装配根。这里集中完成：
 // 1. 构造受控执行器和 handler 入口；
@@ -288,13 +282,6 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		cfg.LarkConfig.AppSecret,
 		components.eventDispatcher,
 	))
-}
-
-type workerHandle interface {
-	Start()
-	Stop()
-	Stats() map[string]any
-	Available() bool
 }
 
 // newEventDispatcher 负责把运行时管理的 HandlerSet 绑定到当前订阅的

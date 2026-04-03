@@ -7,7 +7,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 )
 
-func TestGetIfInthreadForcesThreadInAgenticMode(t *testing.T) {
+func TestGetIfInthreadRespectsSceneDefaultWhenThreadingDisabled(t *testing.T) {
 	meta := &xhandler.BaseMetaData{}
 
 	if GetIfInthread(context.Background(), meta, false) {

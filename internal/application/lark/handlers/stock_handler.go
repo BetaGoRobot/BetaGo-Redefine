@@ -93,11 +93,11 @@ func (goldHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("hours", &arktools.Prop{
 				Type: "number",
-				Desc: "查询的小时数，默认1小时",
+				Desc: "查询的小时数，默认1小时, 必须传int",
 			}).
 			AddProp("days", &arktools.Prop{
 				Type: "number",
-				Desc: "查询的天数，默认30天",
+				Desc: "查询的天数，默认30天。必须传int",
 			}),
 		Result: func(metaData *xhandler.BaseMetaData) string {
 			result, _ := metaData.GetExtra("gold_result")

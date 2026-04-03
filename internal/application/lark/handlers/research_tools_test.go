@@ -18,7 +18,7 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 		return researchFetchedDocument{
 			FinalURL:    "https://example.com/articles/sample",
 			ContentType: "text/html; charset=utf-8",
-			Body:        `<html><head><title>Agentic Runtime Notes</title><meta property="article:published_time" content="2026-03-22T08:00:00Z"></head><body><main><p>Agentic runtime needs durable turns.</p><p>Deep research needs read_url and evidence extraction.</p></main></body></html>`,
+			Body:        `<html><head><title>Runtime Notes</title><meta property="article:published_time" content="2026-03-22T08:00:00Z"></head><body><main><p>Runtime orchestration needs durable turns.</p><p>Deep research needs read_url and evidence extraction.</p></main></body></html>`,
 		}, nil
 	}
 
@@ -33,7 +33,7 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 	}
 
 	raw, _ := meta.GetExtra(researchReadURLResultKey)
-	if !strings.Contains(raw, `"title":"Agentic Runtime Notes"`) {
+	if !strings.Contains(raw, `"title":"Runtime Notes"`) {
 		t.Fatalf("result = %q, want contain title", raw)
 	}
 	if !strings.Contains(raw, `"url":"https://example.com/articles/sample"`) {
@@ -42,7 +42,7 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 	if !strings.Contains(raw, `"published_at":"2026-03-22T08:00:00Z"`) {
 		t.Fatalf("result = %q, want contain published time", raw)
 	}
-	if !strings.Contains(raw, `Agentic runtime needs durable turns.`) {
+	if !strings.Contains(raw, `Runtime orchestration needs durable turns.`) {
 		t.Fatalf("result = %q, want contain extracted text", raw)
 	}
 	if !strings.Contains(raw, `"truncated":true`) {
@@ -52,7 +52,7 @@ func TestResearchReadURLHandleReadsHTMLAndReturnsStructuredResult(t *testing.T) 
 
 func TestResearchExtractEvidenceHandleFindsRelevantPassages(t *testing.T) {
 	arg, err := ResearchExtractEvidence.ParseTool(`{
-		"document_text":"Durable agent runtime keeps runs and steps. Deep research needs read_url, evidence extraction, and citations. A single web search is usually not enough.",
+		"document_text":"Durable runtime orchestration keeps runs and steps. Deep research needs read_url, evidence extraction, and citations. A single web search is usually not enough.",
 		"questions":["What does deep research need?"],
 		"max_quotes":2
 	}`)

@@ -43,6 +43,35 @@ func TestFinanceToolDiscoverFiltersAndReturnsStableSchema(t *testing.T) {
 	}
 }
 
+func TestFinanceToolDiscoverToolSpecUsesEnumsOnly(t *testing.T) {
+	spec := FinanceToolDiscover.ToolSpec()
+	if spec.Params == nil {
+		t.Fatal("expected discover params")
+	}
+	if _, ok := spec.Params.Props["query"]; ok {
+		t.Fatal("discover schema should not expose free-form query")
+	}
+
+	category := spec.Params.Props["category"]
+	if category == nil {
+		t.Fatal("expected category prop")
+	}
+	if got := len(category.Enum); got != 3 {
+		t.Fatalf("category enum count = %d, want 3", got)
+	}
+
+	toolNames := spec.Params.Props["tool_names"]
+	if toolNames == nil {
+		t.Fatal("expected tool_names prop")
+	}
+	if len(toolNames.Items) != 1 {
+		t.Fatalf("tool_names items len = %d, want 1", len(toolNames.Items))
+	}
+	if got := len(toolNames.Items[0].Enum); got != 3 {
+		t.Fatalf("tool_names enum count = %d, want 3", got)
+	}
+}
+
 func TestBuildLarkToolsIncludesDiscoverButNotInjectableFinanceTools(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	tools := BuildLarkTools()
