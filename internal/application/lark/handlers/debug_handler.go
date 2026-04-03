@@ -488,7 +488,8 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 			if currentBot.AppID != "" && *msg.Sender.Id == currentBot.AppID {
 				resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*msg.MessageId).Build())
 				if err != nil {
-					return err
+					logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(err), zap.String("MessageID", *msg.MessageId))
+					continue
 				}
 				if !resp.Success() {
 					logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(errors.New(resp.Error())), zap.String("MessageID", *msg.MessageId))
@@ -497,22 +498,27 @@ func handleDebugRevert(ctx context.Context, data *larkim.P2MessageReceiveV1, met
 		}
 	} else if data.Event.Message.ParentId != nil {
 		respMsg := larkmsg.GetMsgFullByID(ctx, *data.Event.Message.ParentId)
-		msg := respMsg.Data.Items[0]
-		if msg == nil {
-			res = "没有圈选消息，不能撤回"
-			return errors.New("No parent message found")
+		if len(respMsg.Data.Items) == 0 {
+			res = "没有找到引用的消息，无法撤回"
+			logs.L().Ctx(ctx).Error("RevertMessage", zap.String("MessageID", *data.Event.Message.ParentId), zap.Error(errors.New("No parent message found")))
+			return nil
 		}
-		currentBot := botidentity.Current()
-		if msg.Sender.Id == nil || currentBot.BotOpenID == "" || *msg.Sender.Id != currentBot.BotOpenID {
-			res = "消息不是机器人发出的，不能撤回"
-			return errors.New("Parent message is not sent by bot")
-		}
-		resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*data.Event.Message.ParentId).Build())
-		if err != nil {
-			return err
-		}
-		if !resp.Success() {
-			return errors.New(resp.Error())
+		for _, msg := range respMsg.Data.Items {
+			currentBot := botidentity.Current()
+			if msg.Sender.Id == nil || currentBot.BotOpenID == "" || *msg.Sender.Id != currentBot.BotOpenID {
+				res = "消息不是机器人发出的，不能撤回"
+				logs.L().Ctx(ctx).Error("RevertMessage", zap.String("MessageID", *msg.MessageId), zap.String("SenderID", *msg.Sender.Id), zap.String("CurrentBotOpenID", currentBot.BotOpenID))
+				continue
+			}
+			resp, err := lark_dal.Client().Im.Message.Delete(ctx, larkim.NewDeleteMessageReqBuilder().MessageId(*data.Event.Message.ParentId).Build())
+			if err != nil {
+				logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(err), zap.String("MessageID", *msg.MessageId))
+				continue
+			}
+			if !resp.Success() {
+				logs.L().Ctx(ctx).Error("DeleteMessage", zap.Error(errors.New(resp.Error())), zap.String("MessageID", *msg.MessageId))
+				continue
+			}
 		}
 	}
 	return nil
