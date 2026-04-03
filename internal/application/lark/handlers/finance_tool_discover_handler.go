@@ -31,17 +31,21 @@ func (financeToolDiscoverHandler) ToolSpec() xcommand.ToolSpec {
 		Name: "finance_tool_discover",
 		Desc: "发现可用的只读金融/经济工具，返回 tool_name、schema 和示例，供下一轮按需调用。",
 		Params: arktools.NewParams("object").
-			AddProp("query", &arktools.Prop{
-				Type: "string",
-				Desc: "按工具名、描述或示例做模糊搜索",
-			}).
 			AddProp("category", &arktools.Prop{
 				Type: "string",
-				Desc: "按分类过滤，支持 market、news、economy",
+				Desc: "按分类过滤，优先直接从枚举中选择",
+				Enum: financeToolDiscoverCategoryEnum(),
 			}).
 			AddProp("tool_names", &arktools.Prop{
 				Type: "array",
-				Desc: "按显式 tool_name 白名单过滤",
+				Desc: "按显式 tool_name 白名单过滤，优先直接从枚举中选择",
+				Items: []*arktools.Prop{
+					{
+						Type: "string",
+						Desc: "tool_name",
+						Enum: financeToolDiscoverToolNameEnum(),
+					},
+				},
 			}).
 			AddProp("limit", &arktools.Prop{
 				Type: "number",
@@ -54,6 +58,23 @@ func (financeToolDiscoverHandler) ToolSpec() xcommand.ToolSpec {
 	}
 }
 
+func financeToolDiscoverCategoryEnum() []any {
+	return []any{
+		string(aktool.FinanceToolCategoryMarketData),
+		string(aktool.FinanceToolCategoryNews),
+		string(aktool.FinanceToolCategoryEconomy),
+	}
+}
+
+func financeToolDiscoverToolNameEnum() []any {
+	catalog := aktool.FinanceToolCatalog()
+	values := make([]any, 0, len(catalog))
+	for _, def := range catalog {
+		values = append(values, def.Name)
+	}
+	return values
+}
+
 func (financeToolDiscoverHandler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, arg FinanceToolDiscoverArgs) error {
 	catalog := aktool.FinanceToolCatalog()
 	allowed := make(map[string]struct{}, len(arg.ToolNames))
@@ -62,7 +83,6 @@ func (financeToolDiscoverHandler) Handle(ctx context.Context, data *larkim.P2Mes
 			allowed[trimmed] = struct{}{}
 		}
 	}
-	query := strings.ToLower(strings.TrimSpace(arg.Query))
 	category := strings.ToLower(strings.TrimSpace(arg.Category))
 
 	items := make([]FinanceToolDiscoverItem, 0, len(catalog))
@@ -72,12 +92,6 @@ func (financeToolDiscoverHandler) Handle(ctx context.Context, data *larkim.P2Mes
 		}
 		if len(allowed) > 0 {
 			if _, ok := allowed[def.Name]; !ok {
-				continue
-			}
-		}
-		if query != "" {
-			searchSpace := strings.ToLower(def.Name + "\n" + def.Description + "\n" + string(def.Category) + "\n" + strings.Join(def.Examples, "\n"))
-			if !strings.Contains(searchSpace, query) {
 				continue
 			}
 		}

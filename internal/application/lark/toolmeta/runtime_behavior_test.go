@@ -2,7 +2,7 @@ package toolmeta
 
 import "testing"
 
-func TestLookupRuntimeBehaviorForAgenticTools(t *testing.T) {
+func TestLookupRuntimeBehaviorForRegisteredTools(t *testing.T) {
 	cases := []struct {
 		name                  string
 		wantSideEffectLevel   SideEffectLevel

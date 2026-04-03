@@ -83,6 +83,7 @@ func TestBuildStandardChatSystemPromptGuidesFinanceToolDiscovery(t *testing.T) {
 	for _, want := range []string{
 		"优先使用金融工具而不是 web_search",
 		"先调用 finance_tool_discover",
+		"只使用 category 或 tool_names 这类枚举参数",
 		"不要停在 discover 结果本身",
 		"结构化行情、新闻和指标查询优先用金融工具",
 	} {

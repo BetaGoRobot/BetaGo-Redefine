@@ -94,7 +94,7 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if arg.NoContext {
 		size = 0
 	}
-	return runStandardChat(ctx, event, chatType, &size, arg.Input)
+	return runStandardChat(ctx, event, metaData, chatType, &size, arg.Input)
 }
 
 func resolveStandardPromptMode(event *larkim.P2MessageReceiveV1) standardPromptMode {
@@ -157,10 +157,11 @@ func buildStandardChatSystemPrompt(mode standardPromptMode) string {
 - 你不确定事实
 - 现有信息不足以可靠回答
 2. 当用户问题涉及行情、财经新闻、宏观指标、证券代码、指数、黄金、期货、CPI、GDP、PMI 等金融/经济数据时，优先使用金融工具而不是 web_search。
-3. 如果你当前还不知道有哪些金融工具可用，先调用 finance_tool_discover；拿到结果后，继续调用其中最合适的只读金融工具，不要停在 discover 结果本身。
-4. 只有当现有金融工具明显不能覆盖需求时，才退回 web_search 补充背景信息；结构化行情、新闻和指标查询优先用金融工具。
-5. 工具一次只调用一个。
-6. 使用了外部信息时：
+3. 如果你当前还不知道有哪些金融工具可用，先调用 finance_tool_discover；只使用 category 或 tool_names 这类枚举参数，不要把用户原话改写后塞进 discover 参数。
+4. 拿到 finance_tool_discover 结果后，继续调用其中最合适的只读金融工具，不要停在 discover 结果本身。
+5. 只有当现有金融工具明显不能覆盖需求时，才退回 web_search 补充背景信息；结构化行情、新闻和指标查询优先用金融工具。
+6. 工具一次只调用一个。
+7. 使用了外部信息时：
 - 把原文放进 reference_from_web / reference_from_history
 - reply 保持干净自然，不粘贴大段资料
 
@@ -254,7 +255,7 @@ func pointerString(value *string) string {
 	return *value
 }
 
-func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chatType string, size *int, args ...string) (err error) {
+func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -292,14 +293,14 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chat
 	}
 
 	if chatType == MODEL_TYPE_REASON {
-		msgSeq, seqErr := GenerateChatSeq(ctx, event, accessor.ChatReasoningModel(), size, files, args...)
+		msgSeq, seqErr := GenerateChatSeq(ctx, event, metaData, accessor.ChatReasoningModel(), size, files, args...)
 		if seqErr != nil {
 			return seqErr
 		}
 		return larkmsg.SendAndUpdateStreamingCard(ctx, event.Event.Message, msgSeq)
 	}
 
-	msgSeq, err := GenerateChatSeq(ctx, event, accessor.ChatNormalModel(), size, files, args...)
+	msgSeq, err := GenerateChatSeq(ctx, event, metaData, accessor.ChatNormalModel(), size, files, args...)
 	if err != nil {
 		return err
 	}
@@ -332,7 +333,7 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, chat
 	return nil
 }
 
-func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
+func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -408,10 +409,14 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, mode
 		currentInput,
 	)
 
-	iterSeq, err := ark_dal.
-		New(chatID, currentOpenID(event, nil), event).
+	dal := ark_dal.
+		New(chatID, currentOpenID(event, metaData), event).
 		WithTools(larktools()).
-		Do(ctx, systemPrompt, userPrompt, files...)
+		WithHandlersOnly(BuildInjectableFinanceTools())
+	// if intent, ok := metaData.GetIntentAnalysis(); ok {
+	// 	dal = dal.Effort(intent.ReasoningEffort)
+	// }
+	iterSeq, err := dal.Do(ctx, systemPrompt, userPrompt, files...)
 	if err != nil {
 		return nil, err
 	}

@@ -85,6 +85,9 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 		"*ops.CommandOperator",
 		"*ops.ChatMsgOperator",
 	}
+	if len(stageTypes) != len(expected) {
+		t.Fatalf("unified pipeline stage count = %d, want %d; stages=%+v", len(stageTypes), len(expected), stageTypes)
+	}
 	for _, want := range expected {
 		found := false
 		for _, got := range stageTypes {
@@ -95,21 +98,6 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("expected stage %q in unified pipeline, got %+v", want, stageTypes)
-		}
-	}
-
-	unexpected := []string{
-		"*ops.AgentShadowOperator",
-		"*ops.StandardCommandOperator",
-		"*ops.AgenticCommandOperator",
-		"*ops.AgenticReplyChatOperator",
-		"*ops.AgenticChatMsgOperator",
-	}
-	for _, bad := range unexpected {
-		for _, got := range stageTypes {
-			if got == bad {
-				t.Fatalf("unexpected legacy split stage %q in unified pipeline", bad)
-			}
 		}
 	}
 }

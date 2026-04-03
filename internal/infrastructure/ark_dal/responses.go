@@ -41,6 +41,7 @@ type (
 		functionResult         map[callID]gresult.R[string]
 		pendingCapabilityCalls []CapabilityCallTrace
 		ignoredEventCounts     map[string]int
+		reasoningEffort        *responses.ResponsesReasoning
 
 		lastRespID string
 		textOutput textOutput
@@ -157,6 +158,9 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		functionResult:         make(map[callID]gresult.R[string]),
 		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
 		ignoredEventCounts:     make(map[string]int),
+		reasoningEffort: &responses.ResponsesReasoning{
+			Effort: responses.ReasoningEffort_high, // 默认最大
+		},
 	}
 }
 
@@ -167,6 +171,21 @@ func (r *ResponsesImpl[T]) RegisterHandler(event string, handler tools.HandlerFu
 
 func (r *ResponsesImpl[T]) WithTools(tools *tools.Impl[T]) *ResponsesImpl[T] {
 	r.tools = append(r.tools, tools.Tools()...)
+	maps.Copy(r.handlers, tools.HandlerMap())
+	return r
+}
+
+func (r *ResponsesImpl[T]) Effort(t responses.ReasoningEffort_Enum) *ResponsesImpl[T] {
+	r.reasoningEffort = &responses.ResponsesReasoning{
+		Effort: t,
+	}
+	return r
+}
+
+func (r *ResponsesImpl[T]) WithHandlersOnly(tools *tools.Impl[T]) *ResponsesImpl[T] {
+	if tools == nil {
+		return r
+	}
 	maps.Copy(r.handlers, tools.HandlerMap())
 	return r
 }
@@ -335,15 +354,13 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			Input:              message,
 			Store:              gptr.Of(true),
 			Tools:              mergeResponseTools(r.tools, r.dynamicTools),
+			Reasoning:          r.reasoningEffort,
+			Stream:             gptr.Of(true),
 			// Text: &responses.ResponsesText{
 			// 	Format: &responses.TextFormat{
 			// 		Type: responses.TextType_json_object,
 			// 	},
 			// },
-			// Reasoning: &responses.ResponsesReasoning{
-			// 	Effort: responses.ReasoningEffort_medium,
-			// },
-			Stream: gptr.Of(true),
 		})
 		if err != nil {
 			return
@@ -542,14 +559,12 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		},
 	}
 	req = &responses.ResponsesRequest{
-		Model: modelID,
-		Input: input,
-		Store: gptr.Of(true),
-		Tools: r.tools,
-		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_high,
-		},
-		Stream: gptr.Of(true),
+		Model:     modelID,
+		Input:     input,
+		Store:     gptr.Of(true),
+		Tools:     r.tools,
+		Reasoning: r.reasoningEffort,
+		Stream:    gptr.Of(true),
 	}
 
 	resp, err := CreateResponsesStream(ctx, req)

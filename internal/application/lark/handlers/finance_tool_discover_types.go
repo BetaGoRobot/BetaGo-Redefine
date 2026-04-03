@@ -3,7 +3,6 @@ package handlers
 import arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 
 type FinanceToolDiscoverArgs struct {
-	Query     string   `json:"query"`
 	Category  string   `json:"category"`
 	ToolNames []string `json:"tool_names"`
 	Limit     int      `json:"limit"`
