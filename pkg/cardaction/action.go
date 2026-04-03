@@ -60,6 +60,8 @@ const (
 	ActionSchedulePause          = "schedule.pause"
 	ActionScheduleResume         = "schedule.resume"
 	ActionScheduleDelete         = "schedule.delete"
+	ActionScheduleEditConfirm    = "schedule.edit_confirm"
+	ActionScheduleEditCancel     = "schedule.edit_cancel"
 	ActionWordChunksView         = "wordcount.chunks.view"
 	ActionWordChunkDetail        = "wordcount.chunk.detail"
 	ActionAgentRuntimeResume     = "agent.runtime.resume"
