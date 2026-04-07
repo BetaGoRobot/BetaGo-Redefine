@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -18,12 +19,15 @@ import (
 	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/vectorstores"
 	vectoropensearch "github.com/tmc/langchaingo/vectorstores/opensearch"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/pkg/errgroup"
 	"go.uber.org/zap"
 )
 
-var cli *RAGSystem
-var retrieverWarnOnce sync.Once
-var defaultClient Client = noopClient{reason: "retriever not initialized"}
+var (
+	cli               *RAGSystem
+	retrieverWarnOnce sync.Once
+	defaultClient     Client = noopClient{reason: "retriever not initialized"}
+)
 
 const (
 	IndexNamePrefix = "langchaingo_default"
@@ -126,6 +130,28 @@ type Config struct {
 	OpenSearchUsername   string
 	OpenSearchPassword   string
 }
+type arkMultiModalEmbeddingClient struct{}
+
+func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts []string) ([][]float32, error) {
+	eg := errgroup.Group{}
+	result := make([][]float32, len(texts))
+	mu := sync.Mutex{}
+	for idx, text := range texts {
+		eg.Go(
+			func() error {
+				embedding, _, err := ark_dal.EmbeddingText(ctx, text)
+				mu.Lock()
+				defer mu.Unlock()
+				result[idx] = embedding
+				return err
+			},
+		)
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
 // NewRAGSystem 是 RAGSystem 的构造函数，负责初始化所有客户端和组件
 // 这是我们的第一个“原子能力”：系统初始化
@@ -145,7 +171,7 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 		return nil, fmt.Errorf("创建 OpenAI 客户端失败: %w", err)
 	}
 
-	embedder, err := embeddings.NewEmbedder(llm)
+	embedder, err := embeddings.NewEmbedder(&arkMultiModalEmbeddingClient{})
 	if err != nil {
 		return nil, fmt.Errorf("创建 Embedder 失败: %w", err)
 	}
