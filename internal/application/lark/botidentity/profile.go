@@ -35,7 +35,7 @@ func PromptIdentityLines(profile Profile) []string {
 	lines := []string{
 		fmt.Sprintf("self_open_id: %s", strings.TrimSpace(profile.BotOpenID)),
 		fmt.Sprintf("self_app_id: %s", strings.TrimSpace(profile.AppID)),
-		fmt.Sprintf("self_name: %s。这是你的昵称，历史记录里对你的称呼都是不准确的。这个昵称和你的能力完全无关，只是昵称。", strings.TrimSpace(profile.BotName)),
+		fmt.Sprintf("self_name: %s。这是你的昵称，历史记录里对你的称呼可能是历史的、不准确的。这个昵称和你的能力完全无关，只是昵称。", strings.TrimSpace(profile.BotName)),
 		"如果历史里的 sender user_id/open_id 等于 self_open_id，那条消息就是你自己之前发的。",
 		"如果 mention target open_id 等于 self_open_id，那是在 @你。",
 	}
