@@ -159,12 +159,13 @@ type MinioConfigInner struct {
 type ArkConfig struct {
 	APIKey string `json:"api_key" yaml:"api_key" toml:"api_key"`
 
-	VisionModel    string `json:"vision_model" yaml:"vision_model" toml:"vision_model"`
-	ReasoningModel string `json:"reasoning_model" yaml:"reasoning_model" toml:"reasoning_model"`
-	NormalModel    string `json:"normal_model" yaml:"normal_model" toml:"normal_model"`
-	EmbeddingModel string `json:"embedding_model" yaml:"embedding_model" toml:"embedding_model"`
-	ChunkModel     string `json:"chunk_model" yaml:"chunk_model" toml:"chunk_model"`
-	LiteModel      string `json:"lite_model" yaml:"lite_model" toml:"lite_model"`
+	VisionModel         string `json:"vision_model" yaml:"vision_model" toml:"vision_model"`
+	ReasoningModel      string `json:"reasoning_model" yaml:"reasoning_model" toml:"reasoning_model"`
+	NormalModel         string `json:"normal_model" yaml:"normal_model" toml:"normal_model"`
+	EmbeddingModel      string `json:"embedding_model" yaml:"embedding_model" toml:"embedding_model"`
+	ChunkModel          string `json:"chunk_model" yaml:"chunk_model" toml:"chunk_model"`
+	LiteModel           string `json:"lite_model" yaml:"lite_model" toml:"lite_model"`
+	BatchEmbeddingModel string `json:"batch_embedding_model" yaml:"batch_embedding_model" toml:"batch_embedding_model"`
 }
 
 type LarkConfig struct {

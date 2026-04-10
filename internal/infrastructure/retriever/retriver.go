@@ -30,8 +30,8 @@ var (
 )
 
 const (
-	IndexNamePrefix = "langchaingo_default"
-	vectorDimension = 2560
+	IndexNamePrefix = "langchaingo_v2"
+	vectorDimension = 2048
 )
 
 type Client interface {
@@ -140,15 +140,26 @@ func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts 
 		eg.Go(
 			func() error {
 				embedding, _, err := ark_dal.EmbeddingText(ctx, text)
+				if err != nil {
+					return err
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				result[idx] = embedding
-				return err
+				return nil
 			},
 		)
 	}
 	if err := eg.Wait(); err != nil {
+		logs.L().Ctx(ctx).Error("got error in create embedding", zap.Error(err))
 		return nil, err
+	}
+	// Truncate all embeddings to vectorDimension (2048) to match langchaingo index expectation.
+	// The original embeddings from ark_dal.EmbeddingText are 2560-dim; we keep the first 2048 dims.
+	for i := range result {
+		if len(result[i]) > vectorDimension {
+			result[i] = result[i][:vectorDimension]
+		}
 	}
 	return result, nil
 }
@@ -217,14 +228,11 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 	if utils.IsDevChan() {
 		return nil
 	}
-	indexName := IndexNamePrefix + "_" + suffix
+	indexName := indexNameForSuffix(suffix)
 	logs.L().Ctx(ctx).Info("正在为索引准备...", zap.String("indexName", indexName))
 	// 确保索引存在且维度正确
 	// CreateIndex 是幂等的，如果索引已存在，会返回错误，我们可以检查并忽略特定错误，或者简单地尝试添加
-	_, err := rs.store.CreateIndex(ctx, indexName, func(indexMap *map[string]interface{}) {
-		// 动态设置向量维度
-		(*indexMap)["mappings"].(map[string]interface{})["properties"].(map[string]interface{})["contentVector"].(map[string]interface{})["dimension"] = vectorDimension
-	})
+	_, err := rs.store.CreateIndex(ctx, indexName, mutateIndexMap)
 	if err != nil {
 		// 如果索引已存在，通常会报错，这里可以根据实际错误类型进行更精细的判断
 		logs.L().Ctx(ctx).Warn("创建索引时出现问题 (可能已存在): %v", zap.String("indexName", indexName), zap.Error(err))
@@ -244,7 +252,7 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 	if !rs.ready() {
 		return nil, nil
 	}
-	indexName := IndexNamePrefix + "_" + suffix
+	indexName := indexNameForSuffix(suffix)
 	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query))
 	// 创建一个临时的检索器来执行查询
 	retriever := vectorstores.ToRetriever(rs.store, k, vectorstores.WithNameSpace(indexName))
@@ -261,7 +269,7 @@ func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query strin
 	if !rs.ready() {
 		return "", nil, nil
 	}
-	indexName := IndexNamePrefix + "_" + suffix
+	indexName := indexNameForSuffix(suffix)
 	// 1. 使用召回能力获取上下文文档
 	contextDocs, err := rs.RecallDocs(ctx, indexName, query, k)
 	if err != nil {
@@ -294,4 +302,12 @@ func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query strin
 	}
 
 	return answer, contextDocs, nil
+}
+
+func indexNameForSuffix(suffix string) string {
+	return IndexNamePrefix + "_" + suffix
+}
+
+func mutateIndexMap(indexMap *map[string]interface{}) {
+	(*indexMap)["mappings"].(map[string]interface{})["properties"].(map[string]interface{})["contentVector"].(map[string]interface{})["dimension"] = vectorDimension
 }

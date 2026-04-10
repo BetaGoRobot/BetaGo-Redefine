@@ -17,7 +17,8 @@ type MessageIndex struct {
 	ChatName             string          `json:"chat_name"`
 	CreateTime           string          `json:"create_time"`
 	CreateTimeV2         string          `json:"create_time_v2"`
-	Message              []float32       `json:"message"`
+	Message              []float32       `json:"message,omitempty"`
+	MessageV2            []float32       `json:"message_v2,omitempty"`
 	OpenID               string          `json:"user_id"`
 	UserName             string          `json:"user_name"`
 	RawMessage           string          `json:"raw_message"`
@@ -53,7 +54,8 @@ type MessageChunkLogV3 struct {
 	InteractionAnalysis *InteractionAnalysis `json:"interaction_analysis"`
 	Outcomes            *Outcome             `json:"outcomes"`
 
-	ConversationEmbedding []float32 `json:"conversation_embedding"`
+	ConversationEmbedding   []float32 `json:"conversation_embedding,omitempty"`
+	ConversationEmbeddingV2 []float32 `json:"conversation_embedding_v2,omitempty"`
 
 	MsgList     []string `json:"msg_list"`
 	OpenIDs     []string `json:"user_ids,omitempty"`

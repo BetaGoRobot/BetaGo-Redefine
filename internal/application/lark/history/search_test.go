@@ -36,7 +36,7 @@ func TestBuildHybridSearchQueryIncludesMetadataFilters(t *testing.T) {
 		[]map[string]any{
 			{
 				"knn": map[string]any{
-					"message": map[string]any{"vector": []float32{0.1, 0.2}, "k": 7, "boost": 2.0},
+					"message_v2": map[string]any{"vector": []float32{0.1, 0.2}, "k": 7, "boost": 2.0},
 				},
 			},
 		},
@@ -90,6 +90,63 @@ func TestBuildHybridSearchQueryIncludesMetadataFilters(t *testing.T) {
 	}
 	if len(shouldClauses) != 2 {
 		t.Fatalf("should clauses = %d, want 2", len(shouldClauses))
+	}
+}
+
+func TestBuildVectorQueryClausesUsesV2MessageField(t *testing.T) {
+	clauses := buildVectorQueryClauses(messageVectorFieldV2, [][]float32{{0.1, 0.2}}, 7)
+	if len(clauses) != 1 {
+		t.Fatalf("len(clauses) = %d, want 1", len(clauses))
+	}
+	knn, ok := clauses[0]["knn"].(map[string]any)
+	if !ok {
+		t.Fatalf("clause = %#v, want knn map", clauses[0])
+	}
+	if _, ok := knn["message_v2"]; !ok {
+		t.Fatalf("knn fields = %#v, want message_v2", knn)
+	}
+}
+
+func TestBuildVectorQueryClausesV2FieldConfirmed(t *testing.T) {
+	// Verify that message_v2 is used and legacy message field is absent
+	clauses := buildVectorQueryClauses(messageVectorFieldV2, [][]float32{{0.1, 0.2}, {0.3, 0.4}}, 5)
+	if len(clauses) != 2 {
+		t.Fatalf("len(clauses) = %d, want 2", len(clauses))
+	}
+	for i, clause := range clauses {
+		knn, ok := clause["knn"].(map[string]any)
+		if !ok {
+			t.Fatalf("clause[%d] = %#v, want knn map", i, clause)
+		}
+		if _, ok := knn["message_v2"]; !ok {
+			t.Fatalf("clause[%d] knn fields = %#v, want message_v2", i, knn)
+		}
+		if _, ok := knn["message"]; ok {
+			t.Fatalf("clause[%d] knn fields = %#v, want no legacy message field", i, knn)
+		}
+	}
+}
+
+func TestMergeSearchResultsRoundRobinDedupsMessageIDAcrossV2AndRetriever(t *testing.T) {
+	got := mergeSearchResults(3,
+		[]*SearchResult{
+			{MessageID: "v2-1"},
+			{MessageID: "same"},
+		},
+		[]*SearchResult{
+			{MessageID: "retriever-1"},
+			{MessageID: "same"},
+			{MessageID: "retriever-2"},
+		},
+	)
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	want := []string{"v2-1", "retriever-1", "same"}
+	for i, item := range got {
+		if item.MessageID != want[i] {
+			t.Fatalf("got[%d] = %q, want %q", i, item.MessageID, want[i])
+		}
 	}
 }
 

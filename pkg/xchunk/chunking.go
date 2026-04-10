@@ -472,7 +472,7 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 		logs.L().Ctx(ctx).Error("embedding error", zap.String("groupID", chunk.GroupID), zap.Error(err))
 		return
 	}
-	chunkLog.ConversationEmbedding = Normalize(embedding)
+	chunkLog.ConversationEmbeddingV2 = Normalize(embedding)
 	searchCtx, searchSpan := otel.StartNamed(ctx, "chunk.search.insert",
 		trace.WithAttributes(attribute.String("index.name", config.Get().OpensearchConfig.LarkChunkIndex)),
 	)

@@ -461,7 +461,7 @@ func searchChunkLogsPage(ctx context.Context, query wordChunkQuery) (wordChunkSe
 
 	req := elastic.NewSearchRequest().
 		Query(boolQuery).
-		FetchSourceIncludeExclude([]string{}, []string{"conversation_embedding", "msg_list"}).
+		FetchSourceIncludeExclude([]string{}, []string{"conversation_embedding", "conversation_embedding_v2", "msg_list"}).
 		SortBy(chunkSorter(query.Sort)).
 		From(query.Offset).
 		Size(query.Limit)

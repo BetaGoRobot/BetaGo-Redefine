@@ -5,7 +5,6 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,8 +37,7 @@ func EmbeddingText(ctx context.Context, input string) (embedded []float32, token
 				Text: &input,
 			},
 		},
-		Model:      cfg.EmbeddingModel,
-		Dimensions: gptr.Of(2560),
+		Model: cfg.EmbeddingModel,
 	}
 	resp, err := runtime.CreateMultiModalEmbeddings(
 		ctx,
