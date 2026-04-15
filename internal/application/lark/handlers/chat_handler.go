@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,6 +110,123 @@ func buildCorrectionsContext(ctx context.Context, chatID string) string {
 func getChatPersona(ctx context.Context, chatID string) string {
 	cfgManager := appconfig.GetManager()
 	return cfgManager.GetString(ctx, appconfig.KeyChatPersona, chatID, "")
+}
+
+// expandMissingParents fetches missing parent messages for reply chains and
+// expands thread context for the current message if it's a topic or reply.
+func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
+	if len(msgList) == 0 && currentMsgThreadID == "" && currentMsgParentID == "" {
+		return msgList, nil
+	}
+
+	haveIDs := make(map[string]bool)
+	for _, msg := range msgList {
+		haveIDs[msg.MessageID] = true
+	}
+
+	var needIDs []string
+
+	// Expand current message's parent if it's a reply
+	if currentMsgParentID != "" && !haveIDs[currentMsgParentID] {
+		needIDs = append(needIDs, currentMsgParentID)
+	}
+
+	// Collect missing parents from existing messages
+	for _, msg := range msgList {
+		if msg.ParentID != "" && !haveIDs[msg.ParentID] {
+			needIDs = append(needIDs, msg.ParentID)
+		}
+	}
+
+	// Deduplicate
+	seen := make(map[string]bool)
+	uniqueIDs := make([]string, 0, len(needIDs))
+	for _, id := range needIDs {
+		if !seen[id] {
+			seen[id] = true
+			uniqueIDs = append(uniqueIDs, id)
+		}
+	}
+
+	// If current message is a topic, fetch all messages in that thread
+	var threadMsgs history.OpensearchMsgLogList
+	if currentMsgThreadID != "" {
+		threadQuery := osquery.Bool().Must(
+			osquery.Term("thread_id", currentMsgThreadID),
+		)
+		if cutoffTime != "" {
+			threadQuery = osquery.Bool().Must(
+				osquery.Term("thread_id", currentMsgThreadID),
+				osquery.Range("create_time_v2").Gte(cutoffTime),
+			)
+		}
+		threadMsgs, _ = history.New(ctx).
+			Index(index).
+			Query(threadQuery).
+			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+			Size(100).Sort("create_time_v2", "asc").GetMsg()
+	}
+
+	if len(uniqueIDs) == 0 && len(threadMsgs) == 0 {
+		return msgList, nil
+	}
+
+	// Fetch missing parent messages
+	var parentMsgs history.OpensearchMsgLogList
+	if len(uniqueIDs) > 0 {
+		var parentQuery *osquery.BoolQuery
+		if cutoffTime != "" {
+			parentQuery = osquery.Bool().Must(
+				osquery.Terms("message_id", uniqueIDs),
+				osquery.Range("create_time_v2").Gte(cutoffTime),
+			)
+		} else {
+			parentQuery = osquery.Bool().Must(
+				osquery.Terms("message_id", uniqueIDs),
+			)
+		}
+		parentMsgs, _ = history.New(ctx).
+			Index(index).
+			Query(parentQuery).
+			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+			Size(uint64(len(uniqueIDs))).Sort("create_time_v2", "asc").GetMsg()
+	}
+
+	// Merge all fetched messages
+	msgIDToIdx := make(map[string]int, len(msgList))
+	for i, msg := range msgList {
+		msgIDToIdx[msg.MessageID] = i
+	}
+
+	appendIfNew := func(msg *history.OpensearchMsgLog) {
+		if msg == nil {
+			return
+		}
+		if _, exists := msgIDToIdx[msg.MessageID]; !exists {
+			msgList = append(msgList, msg)
+			msgIDToIdx[msg.MessageID] = len(msgList) - 1
+		}
+	}
+
+	for _, msg := range threadMsgs {
+		appendIfNew(msg)
+	}
+	for _, msg := range parentMsgs {
+		appendIfNew(msg)
+	}
+
+	// Re-sort by create_time_v2 ascending
+	slices.SortFunc(msgList, func(a, b *history.OpensearchMsgLog) int {
+		if a.CreateTimeV2 < b.CreateTimeV2 {
+			return -1
+		}
+		if a.CreateTimeV2 > b.CreateTimeV2 {
+			return 1
+		}
+		return 0
+	})
+
+	return msgList, nil
 }
 
 func getChatExtraContext(ctx context.Context, chatID string) string {
@@ -415,35 +533,38 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	// Apply history cutoff if configured
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 
+	// Wait 30s for OpenSearch to index the current message before querying
+	// This handles the indexing delay for reply/thread context
+	time.Sleep(30 * time.Second)
+
 	// Get current message's thread context for expansion
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
-	// Use PG-first approach: PG as source of truth for relationships,
-	// OpenSearch for content with retry on missing data
-	messageList, err := history.GetMsgFromPG(ctx, chatID, cutoffTime, *size, currentMsgThreadID, currentMsgParentID)
+	var query *osquery.BoolQuery
+	if cutoffTime != "" {
+		query = osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	} else {
+		query = osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range("create_time_v2").Lte(time.Now()),
+		)
+	}
+	messageList, err := history.New(ctx).
+		Query(query).
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
 	if err != nil {
-		logs.L().Ctx(ctx).Warn("GetMsgFromPG error, falling back to OpenSearch query", zap.Error(err))
-		// Fallback to old OpenSearch-based approach
-		var query *osquery.BoolQuery
-		if cutoffTime != "" {
-			query = osquery.Bool().Must(
-				osquery.Term("chat_id", chatID),
-				osquery.Range("create_time_v2").Gte(cutoffTime),
-			)
-		} else {
-			query = osquery.Bool().Must(
-				osquery.Term("chat_id", chatID),
-				osquery.Range("create_time_v2").Lte(time.Now()),
-			)
-		}
-		messageList, err = history.New(ctx).
-			Query(query).
-			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
-			Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
-		if err != nil {
-			return
-		}
+		return
+	}
+
+	// Expand: fetch missing parent messages and expand thread context for current message
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, currentMsgThreadID, currentMsgParentID)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
 	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {

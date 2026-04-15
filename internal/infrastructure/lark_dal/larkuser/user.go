@@ -160,9 +160,9 @@ func GetUserMemberFromChat(ctx context.Context, chatID, openID string) (member *
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	memberMap, err := GetUserMapFromChatIDCache(ctx, chatID)
+	memberMap, err := GetUserMapFromChatIDCacheWithRedis(ctx, chatID)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("GetUserMapFromChatIDCache error", zap.String("chatID", chatID), zap.Error(err))
+		logs.L().Ctx(ctx).Error("GetUserMapFromChatIDCacheWithRedis error", zap.String("chatID", chatID), zap.Error(err))
 		return
 	}
 	return memberMap[openID], err
