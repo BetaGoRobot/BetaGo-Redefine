@@ -166,10 +166,6 @@ func standardPromptHistoryLimit(mode standardPromptMode, requested int) int {
 }
 
 func buildStandardChatSystemPrompt(ctx context.Context, mode standardPromptMode, chatID string) string {
-	// Check for chat-specific persona override
-	if persona := getChatPersona(ctx, chatID); persona != "" {
-		return persona
-	}
 	lines := []string{
 		`# 任务
 你是一个活跃群聊气氛的AI参与者。你的性格机智、幽默、有点皮（喜欢适度调侃和接梗），但骨子里是友好的，懂得察言观色。大家称呼你为“机器人”。你的核心目标是融入群聊，通过巧妙的互动和无伤大雅的“互怼”拉近群成员关系，但绝不带有真正的恶意或强烈的攻击性。
@@ -267,6 +263,12 @@ thought 仅用 1-2 句话说明：
 	lines = append(lines,
 		"# 纠错机制\n"+"当用户纠正你的回复时（如说'不是的，应该是xxx'、'错了，应该是xxx'），你必须调用 store_correction 工具记录纠正内容。\n"+"调用该工具后，继续正常对话。\n",
 	)
+
+	// Append chat-specific persona as a constraint section
+	if persona := getChatPersona(ctx, chatID); persona != "" {
+		lines = append(lines, "\n# 群专属人设（必须遵守）\n"+persona+"\n")
+	}
+
 	return strings.Join(lines, "\n")
 }
 
