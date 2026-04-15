@@ -505,6 +505,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	if intent, ok := metaData.GetIntentAnalysis(); ok {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
+	logs.L().Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
 	iterSeq, err := dal.Do(ctx, systemPrompt, userPrompt, files...)
 	if err != nil {
 		return nil, err
