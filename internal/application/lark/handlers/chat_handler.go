@@ -87,18 +87,21 @@ func buildCorrectionsContext(ctx context.Context, chatID string) string {
 	var lines []string
 	lines = append(lines, "\n\n=== 历史纠正记录 ===")
 	for _, c := range corrections {
-		userName := c.UserName
-		if userName == "" {
-			userName = "用户"
+		// 过滤缺失元信息的纠正记录，直接丢弃
+		if c.UserID == "" || c.UserName == "" || c.OriginalContext == "" || c.Correction == "" {
+			continue
 		}
 		// 格式与聊天记录一致: [时间](open_id) <用户名>: 原始回复 → 纠正回复
 		if c.Reason != "" {
 			lines = append(lines, fmt.Sprintf("[%s](%s) <%s>: 纠正: %s → 正确: %s (原因: %s)",
-				c.Timestamp, c.UserID, userName, c.OriginalContext, c.Correction, c.Reason))
+				c.Timestamp, c.UserID, c.UserName, c.OriginalContext, c.Correction, c.Reason))
 		} else {
 			lines = append(lines, fmt.Sprintf("[%s](%s) <%s>: 纠正: %s → 正确: %s",
-				c.Timestamp, c.UserID, userName, c.OriginalContext, c.Correction))
+				c.Timestamp, c.UserID, c.UserName, c.OriginalContext, c.Correction))
 		}
+	}
+	if len(lines) == 1 { // 只有标题行，没有有效数据
+		return ""
 	}
 	return strings.Join(lines, "\n")
 }
@@ -516,7 +519,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	if intent, ok := metaData.GetIntentAnalysis(); ok {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
-	logs.L().Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
+	logs.L().Ctx(ctx).Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
 	iterSeq, err := dal.Do(ctx, systemPrompt, userPrompt, files...)
 	if err != nil {
 		return nil, err
