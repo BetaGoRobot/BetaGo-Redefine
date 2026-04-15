@@ -52,6 +52,7 @@ type HybridSearchRequest struct {
 	MessageType string   `json:"message_type,omitempty"`
 	StartTime   string   `json:"start_time,omitempty"`
 	EndTime     string   `json:"end_time,omitempty"`
+	CutoffTime  string   `json:"cutoff_time,omitempty"` // RFC3339, messages before this time are excluded
 }
 
 type EmbeddingFunc func(ctx context.Context, text string) (vector []float32, tokenUsage model.Usage, err error)
@@ -294,6 +295,14 @@ func buildHybridSearchFilters(req HybridSearchRequest, now time.Time) ([]map[str
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": parseEndTime.Value().Format(time.RFC3339)}}})
 		} else {
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": now.Add(-7 * 24 * time.Hour).Format(time.RFC3339)}}})
+		}
+	}
+	// Apply cutoff time if set (history cutoff - messages before this time are excluded)
+	if req.CutoffTime != "" {
+		if parseCutoffTime := parseTimeFormat(req.CutoffTime, time.RFC3339); !parseCutoffTime.IsErr() {
+			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"gte": parseCutoffTime.Value().Format(time.RFC3339)}}})
+		} else if parseCutoffTimeAlt := parseTimeFormat(req.CutoffTime, time.DateTime); !parseCutoffTimeAlt.IsErr() {
+			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"gte": parseCutoffTimeAlt.Value().Format(time.RFC3339)}}})
 		}
 	}
 	return filters, nil
