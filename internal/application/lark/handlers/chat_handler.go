@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -63,6 +64,42 @@ const (
 
 func (chatHandler) CommandDescription() string {
 	return "与机器人对话"
+}
+
+func getHistoryCutoffTime(ctx context.Context, chatID string) string {
+	cfgManager := appconfig.GetManager()
+	return cfgManager.GetString(ctx, appconfig.KeyHistoryCutoffTime, chatID, "")
+}
+
+func buildCorrectionsContext(ctx context.Context, chatID string) string {
+	cfgManager := appconfig.GetManager()
+	correctionsJSON := cfgManager.GetString(ctx, appconfig.KeyChatCorrections, chatID, "")
+	if correctionsJSON == "" {
+		return ""
+	}
+	var corrections []ChatCorrection
+	if err := json.Unmarshal([]byte(correctionsJSON), &corrections); err != nil {
+		return ""
+	}
+	if len(corrections) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, "\n\n=== 历史纠正记录 ===")
+	for _, c := range corrections {
+		lines = append(lines, fmt.Sprintf("- 纠正: %s → 正确: %s", c.Correction))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func getChatPersona(ctx context.Context, chatID string) string {
+	cfgManager := appconfig.GetManager()
+	return cfgManager.GetString(ctx, appconfig.KeyChatPersona, chatID, "")
+}
+
+func getChatExtraContext(ctx context.Context, chatID string) string {
+	cfgManager := appconfig.GetManager()
+	return cfgManager.GetString(ctx, appconfig.KeyChatExtraContext, chatID, "")
 }
 
 func (chatHandler) CommandExamples() []string {
@@ -128,7 +165,11 @@ func standardPromptHistoryLimit(mode standardPromptMode, requested int) int {
 	}
 }
 
-func buildStandardChatSystemPrompt(mode standardPromptMode) string {
+func buildStandardChatSystemPrompt(ctx context.Context, mode standardPromptMode, chatID string) string {
+	// Check for chat-specific persona override
+	if persona := getChatPersona(ctx, chatID); persona != "" {
+		return persona
+	}
 	lines := []string{
 		`# 任务
 你是一个活跃群聊气氛的AI参与者。你的性格机智、幽默、有点皮（喜欢适度调侃和接梗），但骨子里是友好的，懂得察言观色。大家称呼你为“机器人”。你的核心目标是融入群聊，通过巧妙的互动和无伤大雅的“互怼”拉近群成员关系，但绝不带有真正的恶意或强烈的攻击性。
@@ -352,13 +393,24 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	}
 	chatID := *event.Event.Message.ChatId
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
-	messageList, err := history.New(ctx).
-		Query(osquery.Bool().Must(
+	// Apply history cutoff if configured
+	cutoffTime := getHistoryCutoffTime(ctx, chatID)
+
+	var query *osquery.BoolQuery
+	if cutoffTime != "" {
+		// Apply cutoff: only get messages >= cutoffTime
+		query = osquery.Bool().Must(
 			osquery.Term("chat_id", chatID),
-			osquery.Range(
-				"create_time_v2",
-			).Lte(time.Now()),
-		)).
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	} else {
+		query = osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range("create_time_v2").Lte(time.Now()),
+		)
+	}
+	messageList, err := history.New(ctx).
+		Query(query).
 		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type").
 		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
 	if err != nil {
@@ -379,7 +431,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	} else if len(historyLines) > historyLimit {
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
-	systemPrompt := buildStandardChatSystemPrompt(promptMode)
+	systemPrompt := buildStandardChatSystemPrompt(ctx, promptMode, chatID)
 	// 从chunking中拉取话题
 	topicLines := make([]string, 0)
 	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10)
@@ -422,6 +474,16 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		topicLines,
 		currentInput,
 	)
+
+	// Append extra context if any
+	if extraCtx := getChatExtraContext(ctx, chatID); extraCtx != "" {
+		userPrompt += "\n\n=== 额外上下文 ===\n" + extraCtx
+	}
+
+	// Append corrections context if any
+	if correctionsCtx := buildCorrectionsContext(ctx, chatID); correctionsCtx != "" {
+		userPrompt += correctionsCtx
+	}
 
 	dal := ark_dal.
 		New(chatID, currentOpenID(event, metaData), event).
