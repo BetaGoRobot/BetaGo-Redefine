@@ -120,7 +120,7 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 
 	if len(queryText) > 0 {
 		wg.Go(func() {
-			docs, err := retriever.Cli().RecallDocs(ctx, req.ChatID, queryText, req.TopK)
+			docs, err := retriever.Cli().RecallDocs(ctx, req.ChatID, queryText, req.TopK, req.CutoffTime, req.EndTime)
 			if err != nil {
 				retErr = fmt.Errorf("retriever 召回失败: %w", err)
 				return

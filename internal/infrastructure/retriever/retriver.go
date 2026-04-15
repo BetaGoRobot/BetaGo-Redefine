@@ -3,10 +3,12 @@ package retriever
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -14,6 +16,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	opensearchgo "github.com/opensearch-project/opensearch-go"
+	"github.com/bytedance/sonic"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/schema"
@@ -36,7 +39,7 @@ const (
 
 type Client interface {
 	AddDocuments(ctx context.Context, suffix string, docs []schema.Document) error
-	RecallDocs(ctx context.Context, suffix string, query string, k int) ([]schema.Document, error)
+	RecallDocs(ctx context.Context, suffix string, query string, k int, startTime string, endTime string) ([]schema.Document, error)
 	AnswerQuery(ctx context.Context, suffix string, query string, k int, chatID string) (string, []schema.Document, error)
 }
 
@@ -48,7 +51,7 @@ func (n noopClient) AddDocuments(context.Context, string, []schema.Document) err
 	return nil
 }
 
-func (n noopClient) RecallDocs(context.Context, string, string, int) ([]schema.Document, error) {
+func (n noopClient) RecallDocs(context.Context, string, string, int, string, string) ([]schema.Document, error) {
 	return nil, nil
 }
 
@@ -113,6 +116,7 @@ type RAGSystem struct {
 	llm      *openai.LLM
 	embedder *embeddings.EmbedderImpl
 	store    *vectoropensearch.Store
+	osClient *opensearchgo.Client
 }
 
 func (rs *RAGSystem) ready() bool {
@@ -213,6 +217,7 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 		llm:      llm,
 		embedder: embedder,
 		store:    &store,
+		osClient: osClient,
 	}, nil
 }
 
@@ -248,21 +253,113 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 	return nil
 }
 
-func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string, k int) ([]schema.Document, error) {
-	if !rs.ready() {
+func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string, k int, startTime string, endTime string) ([]schema.Document, error) {
+	if !rs.ready() || rs.osClient == nil {
 		return nil, nil
 	}
 	indexName := indexNameForSuffix(suffix)
-	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query))
-	// 创建一个临时的检索器来执行查询
-	retriever := vectorstores.ToRetriever(rs.store, k, vectorstores.WithNameSpace(indexName))
+	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query), zap.String("startTime", startTime), zap.String("endTime", endTime))
 
-	retrievedDocs, err := retriever.GetRelevantDocuments(ctx, query)
+	// 1. 生成查询向量
+	vec, _, err := ark_dal.EmbeddingText(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("从检索器获取文档失败: %w", err)
+		return nil, fmt.Errorf("生成查询向量失败: %w", err)
+	}
+	// 截断到 vectorDimension
+	if len(vec) > vectorDimension {
+		vec = vec[:vectorDimension]
 	}
 
-	return retrievedDocs, nil
+	// 2. 构建带有时间过滤的 OpenSearch 查询
+	mustClauses := []map[string]any{
+		{
+			"knn": map[string]any{
+				"contentVector": map[string]any{
+					"vector": vec,
+					"k":      k,
+				},
+			},
+		},
+	}
+
+	// 添加时间过滤
+	if startTime != "" || endTime != "" {
+		timeRange := map[string]any{}
+		if startTime != "" {
+			if t, err := time.Parse(time.RFC3339, startTime); err == nil {
+				timeRange["gte"] = t.Format(time.RFC3339)
+			} else if t, err := time.Parse("2006-01-02", startTime); err == nil {
+				timeRange["gte"] = t.Format(time.RFC3339)
+			}
+		}
+		if endTime != "" {
+			if t, err := time.Parse(time.RFC3339, endTime); err == nil {
+				timeRange["lte"] = t.Format(time.RFC3339)
+			} else if t, err := time.Parse("2006-01-02", endTime); err == nil {
+				timeRange["lte"] = t.Format(time.RFC3339)
+			}
+		}
+		if len(timeRange) > 0 {
+			mustClauses = append(mustClauses, map[string]any{
+				"range": map[string]any{
+					"timestamp_v2": timeRange,
+				},
+			})
+		}
+	}
+
+	searchQuery := map[string]any{
+		"size": k,
+		"query": map[string]any{
+			"bool": map[string]any{
+				"must": mustClauses,
+			},
+		},
+		"_source": []string{"content", "metadata"},
+	}
+
+	queryBytes, _ := json.Marshal(searchQuery)
+	resp, err := rs.osClient.Search(
+		rs.osClient.Search.WithContext(ctx),
+		rs.osClient.Search.WithIndex(indexName),
+		rs.osClient.Search.WithBody(strings.NewReader(string(queryBytes))),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("OpenSearch 查询失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.IsError() {
+		return nil, fmt.Errorf("OpenSearch 查询错误: %s", resp.String())
+	}
+
+	var searchResp struct {
+		Hits struct {
+			Hits []struct {
+				Source json.RawMessage `json:"_source"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("解析搜索结果失败: %w", err)
+	}
+
+	docs := make([]schema.Document, 0, len(searchResp.Hits.Hits))
+	for _, hit := range searchResp.Hits.Hits {
+		var doc struct {
+			Content string                 `json:"content"`
+			Meta    map[string]any        `json:"metadata"`
+		}
+		if err := sonic.Unmarshal(hit.Source, &doc); err != nil {
+			continue
+		}
+		docs = append(docs, schema.Document{
+			PageContent: doc.Content,
+			Metadata:     doc.Meta,
+		})
+	}
+
+	return docs, nil
 }
 
 func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query string, k int, chatID string) (string, []schema.Document, error) {
@@ -271,7 +368,7 @@ func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query strin
 	}
 	indexName := indexNameForSuffix(suffix)
 	// 1. 使用召回能力获取上下文文档
-	contextDocs, err := rs.RecallDocs(ctx, indexName, query, k)
+	contextDocs, err := rs.RecallDocs(ctx, indexName, query, k, "", "")
 	if err != nil {
 		return "", nil, fmt.Errorf("RAG - 检索失败: %w", err)
 	}

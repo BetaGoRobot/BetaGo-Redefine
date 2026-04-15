@@ -437,18 +437,26 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
 	systemPrompt := buildStandardChatSystemPrompt(ctx, promptMode, chatID)
-	// 从chunking中拉取话题
+	// 从chunking中拉取话题（应用 cutoff time 过滤）
 	topicLines := make([]string, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10)
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
 	if err != nil {
 		logs.L().Ctx(ctx).Error("RecallDocs err", zap.Error(err))
 	}
 	for _, doc := range docs {
 		msgID, ok := doc.Metadata["msg_id"]
 		if ok {
+			// 构建 chunk 查询（应用 cutoff time 过滤）
+			chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
+			if cutoffTime != "" {
+				chunkQuery = osquery.Bool().Must(
+					osquery.Term("msg_ids", msgID),
+					osquery.Range("timestamp_v2").Gte(cutoffTime),
+				)
+			}
 			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 				Search().Sort("timestamp_v2", osquery.OrderDesc).
-				Query(osquery.Bool().Must(osquery.Term("msg_ids", msgID))).
+				Query(chunkQuery).
 				Size(1),
 			)
 			if searchErr != nil {
