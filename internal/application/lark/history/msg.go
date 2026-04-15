@@ -569,6 +569,7 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 
 // GetMsgFromPG queries PG for message relationships first, then fetches content from OpenSearch.
 // This approach uses PG as source of truth for relationships and OpenSearch only for content.
+// Returns error if PG has insufficient data, so caller can fall back to OpenSearch.
 func GetMsgFromPG(ctx context.Context, chatID string, cutoffTime string, size int, currentMsgThreadID string, currentMsgParentID string) (OpensearchMsgLogList, error) {
 	_, span := otel.Start(ctx)
 	defer span.End()
@@ -597,8 +598,10 @@ func GetMsgFromPG(ctx context.Context, chatID string, cutoffTime string, size in
 		return nil, fmt.Errorf("query PG for message meta failed: %w", err)
 	}
 
-	if len(pgMessages) == 0 {
-		return nil, nil
+	// If PG has no data or very few messages, fall back to OpenSearch
+	// PG might not have complete data yet, so we use OpenSearch as backup
+	if len(pgMessages) < size/2 {
+		return nil, fmt.Errorf("PG has insufficient data (%d messages), fallback to OpenSearch", len(pgMessages))
 	}
 
 	// 2. Build ID list and expand relationships from PG
