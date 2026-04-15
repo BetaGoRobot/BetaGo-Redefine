@@ -3,11 +3,13 @@ package larkuser
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/cache"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/bytedance/sonic"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -170,6 +172,67 @@ func GetUserMapFromChatIDCache(ctx context.Context, chatID string) (memberMap ma
 	return cache.GetOrExecute(ctx, chatMemberCacheKey(chatID), func() (map[string]*larkim.ListMember, error) {
 		return GetUserMapFromChatID(ctx, chatID)
 	})
+}
+
+// GetUserMapFromChatIDCacheWithRedis uses Redis as backing store with forced TTL.
+// Data is fetched from Lark API, stored in Redis with forced expiration (default 24h),
+// and also kept in local memory cache for fast access.
+// This handles large groups (1000+ members) by avoiding repeated API calls.
+func GetUserMapFromChatIDCacheWithRedis(ctx context.Context, chatID string) (memberMap map[string]*larkim.ListMember, err error) {
+	rdb := redis_dal.GetRedisClient()
+	cacheKey := chatMemberCacheKey(chatID)
+
+	// If Redis is available, try it first
+	if rdb != nil {
+		// Try Redis first
+		val, err := rdb.Get(ctx, cacheKey).Result()
+		if err == nil && val != "" {
+			// Redis hit
+			var members map[string]*larkim.ListMember
+			if err := sonic.UnmarshalString(val, &members); err == nil {
+				logs.L().Ctx(ctx).Debug("GetUserMapFromChatIDCacheWithRedis: Redis hit",
+					zap.String("chatID", chatID), zap.Int("memberCount", len(members)))
+				// Also populate local cache for fast access
+				cache.GetOrExecute(ctx, cacheKey, func() (map[string]*larkim.ListMember, error) {
+					return members, nil
+				})
+				return members, nil
+			}
+		} else if err != nil && err.Error() != "redis: nil" {
+			logs.L().Ctx(ctx).Warn("GetUserMapFromChatIDCacheWithRedis: Redis get error",
+				zap.String("chatID", chatID), zap.Error(err))
+		}
+	}
+
+	// Redis miss - fetch from API (or fallback to memory-only cache if Redis unavailable)
+	memberMap, err = GetUserMapFromChatID(ctx, chatID)
+	if err != nil {
+		// If Redis failed, fallback to memory-only cache
+		if rdb == nil {
+			return GetUserMapFromChatIDCache(ctx, chatID)
+		}
+		return nil, err
+	}
+
+	// Store in Redis with forced TTL
+	if rdb != nil {
+		if data, err := sonic.MarshalString(memberMap); err == nil {
+			if err := rdb.Set(ctx, cacheKey, data, 24*time.Hour).Err(); err != nil {
+				logs.L().Ctx(ctx).Warn("GetUserMapFromChatIDCacheWithRedis: Redis set error",
+					zap.String("chatID", chatID), zap.Error(err))
+			} else {
+				logs.L().Ctx(ctx).Debug("GetUserMapFromChatIDCacheWithRedis: cached to Redis",
+					zap.String("chatID", chatID), zap.Int("memberCount", len(memberMap)), zap.Duration("ttl", 24*time.Hour))
+			}
+		}
+	}
+
+	// Also populate local memory cache for fast access
+	cache.GetOrExecute(ctx, cacheKey, func() (map[string]*larkim.ListMember, error) {
+		return memberMap, nil
+	})
+
+	return memberMap, nil
 }
 
 func GetUserMapFromChatID(ctx context.Context, chatID string) (memberMap map[string]*larkim.ListMember, err error) {
