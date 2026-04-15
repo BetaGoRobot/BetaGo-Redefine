@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,6 +115,98 @@ func getChatPersona(ctx context.Context, chatID string) string {
 func getChatExtraContext(ctx context.Context, chatID string) string {
 	cfgManager := appconfig.GetManager()
 	return cfgManager.GetString(ctx, appconfig.KeyChatExtraContext, chatID, "")
+}
+
+// expandMissingParents fetches parent messages that are not in the current messageList.
+// This ensures reply chains are complete when displaying thread context.
+func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string) (history.OpensearchMsgLogList, error) {
+	if len(msgList) == 0 {
+		return msgList, nil
+	}
+
+	// Build set of message IDs we already have
+	haveIDs := make(map[string]bool)
+	for _, msg := range msgList {
+		haveIDs[msg.MessageID] = true
+	}
+
+	// Collect parent IDs that we don't have
+	var missingParentIDs []string
+	for _, msg := range msgList {
+		if msg.ParentID != "" && !haveIDs[msg.ParentID] {
+			missingParentIDs = append(missingParentIDs, msg.ParentID)
+		}
+	}
+
+	if len(missingParentIDs) == 0 {
+		return msgList, nil
+	}
+
+	// Deduplicate
+	seen := make(map[string]bool)
+	uniqueParentIDs := make([]string, 0, len(missingParentIDs))
+	for _, id := range missingParentIDs {
+		if !seen[id] {
+			seen[id] = true
+			uniqueParentIDs = append(uniqueParentIDs, id)
+		}
+	}
+
+	// Fetch missing parent messages
+	// Build query: message_id IN (parentIDs) with optional cutoff
+	var parentQuery *osquery.BoolQuery
+	if cutoffTime != "" {
+		parentQuery = osquery.Bool().Must(
+			osquery.Terms("message_id", uniqueParentIDs),
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	} else {
+		parentQuery = osquery.Bool().Must(
+			osquery.Terms("message_id", uniqueParentIDs),
+		)
+	}
+
+	parentMsgs, err := history.New(ctx).
+		Index(index).
+		Query(parentQuery).
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+		Size(uint64(len(uniqueParentIDs))).Sort("create_time_v2", "asc").GetMsg()
+	if err != nil {
+		return msgList, err
+	}
+
+	if len(parentMsgs) == 0 {
+		return msgList, nil
+	}
+
+	// Merge parent messages into original list
+	// Build map of messageID -> position for dedup
+	msgIDToIdx := make(map[string]int, len(msgList))
+	for i, msg := range msgList {
+		msgIDToIdx[msg.MessageID] = i
+	}
+
+	// Only add parents that aren't already in the list
+	for _, parent := range parentMsgs {
+		if _, exists := msgIDToIdx[parent.MessageID]; !exists {
+			msgList = append(msgList, parent)
+			msgIDToIdx[parent.MessageID] = len(msgList) - 1
+		}
+	}
+
+	// Re-sort by create_time_v2 ascending (chronological order for thread display)
+	// We need to re-sort because GetMsg returns in reverse chronological order
+	slices.SortFunc(msgList, func(a, b *history.OpensearchMsgLog) int {
+		if a.CreateTimeV2 < b.CreateTimeV2 {
+			return -1
+		}
+		if a.CreateTimeV2 > b.CreateTimeV2 {
+			return 1
+		}
+		return 0
+	})
+
+	return msgList, nil
 }
 
 func (chatHandler) CommandExamples() []string {
@@ -430,10 +523,17 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	}
 	messageList, err := history.New(ctx).
 		Query(query).
-		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type").
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
 		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
 	if err != nil {
 		return
+	}
+
+	// Expand: fetch missing parent messages for reply chains
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
+		// Continue with original list even if expansion fails
 	}
 	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
@@ -442,7 +542,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
 	currentInput := fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())
-	historyLines := messageList.ToLines()
+	historyLines := messageList.ToThreadLines()
 	promptMode := resolveStandardPromptMode(event)
 	historyLimit := standardPromptHistoryLimit(promptMode, *size)
 	if historyLimit == 0 {

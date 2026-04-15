@@ -328,12 +328,160 @@ func (o OpensearchMsgLogList) ToLines() (msgList []string) {
 	return
 }
 
+// ToThreadLines converts messages to lines with thread/reply structure.
+// Topics (ThreadID != "") are grouped together with indentation.
+// Non-topic reply chains are grouped by temporary thread keys.
+func (o OpensearchMsgLogList) ToThreadLines() []string {
+	if len(o) == 0 {
+		return nil
+	}
+
+	// Build messageID -> index map for parent lookup
+	idToIdx := make(map[string]int, len(o))
+	for i, msg := range o {
+		idToIdx[msg.MessageID] = i
+	}
+
+	// Assign temporary thread keys to group reply chains
+	// Returns the thread key and whether this message is a reply within the result set
+	type threadAssign struct {
+		ThreadKey string
+		IsReply   bool
+		Depth     int
+	}
+	threadAssigns := make([]threadAssign, len(o))
+
+	// Track which messages are roots (not replied to by any other message in result)
+	isRepliedTo := make(map[string]bool)
+	for _, msg := range o {
+		if msg.ParentID != "" {
+			isRepliedTo[msg.ParentID] = true
+		}
+	}
+
+	// First pass: assign thread keys
+	for i, msg := range o {
+		if msg.ThreadID != "" {
+			// This is a topic group message
+			threadAssigns[i] = threadAssign{
+				ThreadKey: msg.ThreadID,
+				IsReply:   false,
+				Depth:     0,
+			}
+		} else if msg.ParentID == "" {
+			// Root message (no parent), not in a topic
+			threadAssigns[i] = threadAssign{
+				ThreadKey: msg.MessageID, // Use own ID as key
+				IsReply:   false,
+				Depth:     0,
+			}
+		} else {
+			// Has parent - need to determine depth and thread key
+			parentIdx, parentExists := idToIdx[msg.ParentID]
+			if parentExists {
+				// Direct parent is in result set - inherit thread key and increase depth
+				parentAssign := threadAssigns[parentIdx]
+				threadAssigns[i] = threadAssign{
+					ThreadKey: parentAssign.ThreadKey,
+					IsReply:   true,
+					Depth:     parentAssign.Depth + 1,
+				}
+			} else {
+				// Parent not in result set - this is a root of a missing chain
+				// Generate temp key based on parent
+				threadAssigns[i] = threadAssign{
+					ThreadKey: "orphan:" + msg.ParentID,
+					IsReply:   false,
+					Depth:     0,
+				}
+			}
+		}
+	}
+
+	// Group by thread key, maintaining reverse chronological order (as returned by OpenSearch)
+	type threadGroup struct {
+		msgs    []*OpensearchMsgLog
+		depths  []int
+		isReply []bool
+	}
+	groups := make(map[string]*threadGroup)
+
+	// Messages are already in reverse chronological order (newest first)
+	// We want to present them grouped, with replies indented under their parent
+	// Since OpenSearch returns newest first, and FilterMessage reverses to oldest first,
+	// o is in chronological order (oldest first)
+	for i, msg := range o {
+		key := threadAssigns[i].ThreadKey
+		if groups[key] == nil {
+			groups[key] = &threadGroup{}
+		}
+		groups[key].msgs = append(groups[key].msgs, msg)
+		groups[key].depths = append(groups[key].depths, threadAssigns[i].Depth)
+		groups[key].isReply = append(groups[key].isReply, threadAssigns[i].IsReply)
+	}
+
+	// Build output lines
+	var lines []string
+
+	// Track which thread keys we've already added headers for
+	addedThreadHeader := make(map[string]bool)
+
+	for i, msg := range o {
+		assign := threadAssigns[i]
+
+		// Add thread header for topic groups (ThreadID != "")
+		if msg.ThreadID != "" && !addedThreadHeader[msg.ThreadID] {
+			if len(lines) > 0 {
+				lines = append(lines, "") // blank line before new topic
+			}
+			lines = append(lines, fmt.Sprintf("=== 话题讨论 [%s] ===", msg.ThreadID))
+			addedThreadHeader[msg.ThreadID] = true
+		}
+
+		// Format the message line with indentation for replies
+		baseLine := fmt.Sprintf("[%s](%s) <%s>: %s",
+			msg.CreateTime, msg.OpenID, msg.UserName, strings.Join(msg.MsgList, ";"))
+
+		if assign.Depth == 0 && !assign.IsReply {
+			lines = append(lines, baseLine)
+		} else {
+			// Indent with └ to show reply relationship
+			indent := strings.Repeat("  ", assign.Depth) + "└ "
+			lines = append(lines, indent+baseLine)
+		}
+
+		// If this is a reply to a message not in result set, note it
+		if msg.ParentID != "" && !isRepliedTo[msg.MessageID] {
+			parentIdx, parentExists := idToIdx[msg.ParentID]
+			if !parentExists {
+				// Parent is outside result window
+				lines = append(lines, strings.Repeat("  ", assign.Depth+1)+"   (回复对象不在当前历史范围内)")
+			} else {
+				// Check if parent was processed - if parent is newer (later in chronological order)
+				// it would have been processed already, so we show this as continuation
+				if parentIdx < i {
+					// Parent is earlier in our list (older message)
+					parentMsg := o[parentIdx]
+					lines = append(lines, strings.Repeat("  ", assign.Depth+1)+fmt.Sprintf("   (回复: %s)", strings.Join(parentMsg.MsgList, ";")))
+				}
+			}
+		}
+	}
+
+	return lines
+}
+
 type OpensearchMsgLog struct {
 	CreateTime  string            `json:"create_time"`
+	CreateTimeV2 string           `json:"create_time_v2"`
 	OpenID      string            `json:"user_id"`
 	UserName    string            `json:"user_name"`
 	MsgList     []string          `json:"msg_list"`
 	MentionList []*larkim.Mention `json:"mention_list"`
+	MessageID   string            `json:"message_id"`
+	ParentID    string            `json:"parent_id"`
+	RootID      string            `json:"root_id"`
+	ThreadID    string            `json:"thread_id"`
 }
 
 func (o *OpensearchMsgLog) ToLine() (msgList string) {
@@ -397,11 +545,16 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 			}
 		}
 		l := &OpensearchMsgLog{
-			CreateTime:  res.CreateTime,
+			CreateTime:   res.CreateTime,
+			CreateTimeV2: res.CreateTimeV2,
 			OpenID:      res.OpenID,
 			UserName:    res.UserName,
 			MsgList:     tmpList,
 			MentionList: mentions,
+			MessageID:   res.MessageID,
+			ParentID:    res.ParentID,
+			RootID:      res.RootID,
+			ThreadID:    res.ThreadID,
 		}
 		if r := l.ToLine(); r != "" {
 			msgList = append(msgList, l)
