@@ -87,7 +87,18 @@ func buildCorrectionsContext(ctx context.Context, chatID string) string {
 	var lines []string
 	lines = append(lines, "\n\n=== 历史纠正记录 ===")
 	for _, c := range corrections {
-		lines = append(lines, fmt.Sprintf("- 纠正: %s → 正确: %s", c.Correction))
+		userName := c.UserName
+		if userName == "" {
+			userName = "用户"
+		}
+		// 格式与聊天记录一致: [时间](open_id) <用户名>: 原始回复 → 纠正回复
+		if c.Reason != "" {
+			lines = append(lines, fmt.Sprintf("[%s](%s) <%s>: 纠正: %s → 正确: %s (原因: %s)",
+				c.Timestamp, c.UserID, userName, c.OriginalContext, c.Correction, c.Reason))
+		} else {
+			lines = append(lines, fmt.Sprintf("[%s](%s) <%s>: 纠正: %s → 正确: %s",
+				c.Timestamp, c.UserID, userName, c.OriginalContext, c.Correction))
+		}
 	}
 	return strings.Join(lines, "\n")
 }

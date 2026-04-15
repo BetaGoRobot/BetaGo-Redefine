@@ -8,6 +8,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -27,6 +28,7 @@ type StoreCorrectionArgs struct {
 type ChatCorrection struct {
 	Timestamp        string `json:"timestamp"`
 	UserID           string `json:"user_id"`
+	UserName         string `json:"user_name"`
 	OriginalContext  string `json:"original_context"`
 	Correction       string `json:"correction"`
 	Reason           string `json:"reason,omitempty"`
@@ -81,10 +83,13 @@ func (chatCorrectionHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	if chatID == "" {
 		return fmt.Errorf("chat_id is required")
 	}
+	// 获取用户名
+	userName, _ := larkuser.GetUserNameCache(ctx, chatID, openID)
 
 	correction := ChatCorrection{
 		Timestamp:       time.Now().Format(time.RFC3339),
 		UserID:          openID,
+		UserName:        userName,
 		OriginalContext: arg.OriginalContext,
 		Correction:      arg.Correction,
 		Reason:          arg.Reason,
