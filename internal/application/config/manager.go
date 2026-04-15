@@ -47,6 +47,12 @@ const (
 	// 业务开关
 	KeyMusicCardInThread ConfigKey = "music_card_in_thread"
 	KeyWithDrawReplace   ConfigKey = "with_draw_replace"
+
+	// 历史挡板与纠错配置
+	KeyHistoryCutoffTime ConfigKey = "history_cutoff_time"
+	KeyChatCorrections  ConfigKey = "chat_corrections"
+	KeyChatExtraContext ConfigKey = "chat_extra_context"
+	KeyChatPersona      ConfigKey = "chat_persona"
 )
 
 // ConfigScope 配置作用域
