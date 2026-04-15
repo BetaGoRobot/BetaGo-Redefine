@@ -41,7 +41,7 @@ func (historySearchHandler) ParseTool(raw string) (HistorySearchArgs, error) {
 func (historySearchHandler) ToolSpec() xcommand.ToolSpec {
 	return xcommand.ToolSpec{
 		Name: "search_history",
-		Desc: "在当前 chat_id 范围内搜索历史对话，支持关键词和用户/消息类型等元数据过滤.你可以检索近1年的消息",
+		Desc: "在当前 chat_id 范围内搜索历史对话，支持关键词和用户/消息类型等元数据过滤.你可以检索近1年的消息；，如果单次检索的数据不够，你可以适当增加、分段多次检索",
 		Params: arktools.NewParams("object").
 			AddProp("keywords", &arktools.Prop{
 				Type: "string",
@@ -69,7 +69,7 @@ func (historySearchHandler) ToolSpec() xcommand.ToolSpec {
 			}).
 			AddProp("top_k", &arktools.Prop{
 				Type: "number",
-				Desc: "返回的结果数量",
+				Desc: "返回的结果数量.默认50",
 			}),
 		Result: func(metaData *xhandler.BaseMetaData) string {
 			result, _ := metaData.GetExtra("search_result")

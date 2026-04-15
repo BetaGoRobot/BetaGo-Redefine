@@ -65,7 +65,7 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 
 	logs.L().Ctx(ctx).Info("开始混合搜索", zap.String("req", utils.MustMarshalString(req)))
 	if req.TopK <= 0 {
-		req.TopK = 5
+		req.TopK = 50
 	}
 
 	queryTerms := make([]string, 0)
