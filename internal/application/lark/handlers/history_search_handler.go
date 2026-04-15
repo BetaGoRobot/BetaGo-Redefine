@@ -83,6 +83,8 @@ func (historySearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	if chatID == "" {
 		return fmt.Errorf("chat_id is required for search_history")
 	}
+	// 自动应用 history cutoff time
+	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 	res, err := historyHybridSearchFn(ctx,
 		history.HybridSearchRequest{
 			QueryText:   splitByComma(arg.Keywords),
@@ -93,6 +95,7 @@ func (historySearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 			ChatID:      chatID,
 			StartTime:   arg.StartTime,
 			EndTime:     arg.EndTime,
+			CutoffTime:  cutoffTime,
 		}, ark_dal.EmbeddingText)
 	if err != nil {
 		return err
