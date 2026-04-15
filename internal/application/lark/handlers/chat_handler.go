@@ -119,6 +119,7 @@ func getChatExtraContext(ctx context.Context, chatID string) string {
 
 // expandMissingParents fetches missing parent messages for reply chains and
 // expands thread context for the current message if it's a topic or reply.
+// If a query returns empty, it retries once after 30s to handle indexing delay.
 func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
 	if len(msgList) == 0 && currentMsgThreadID == "" && currentMsgParentID == "" {
 		return msgList, nil
@@ -131,12 +132,6 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 
 	// Collect IDs we need to fetch
 	var needIDs []string
-
-	// 1. Expand current message's thread if it's a topic
-	if currentMsgThreadID != "" {
-		// Query all messages in this thread (from the index, not by message_id)
-		// We do this via a separate code path below
-	}
 
 	// 2. Expand current message's parent if it's a reply
 	if currentMsgParentID != "" && !haveIDs[currentMsgParentID] {
@@ -160,6 +155,29 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 		}
 	}
 
+	// Helper to fetch with retry
+	fetchWithRetry := func(query *osquery.BoolQuery, size int) (history.OpensearchMsgLogList, error) {
+		msgs, err := history.New(ctx).
+			Index(index).
+			Query(query).
+			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+			Size(uint64(size)).Sort("create_time_v2", "asc").GetMsg()
+		if err != nil {
+			return msgs, err
+		}
+		if len(msgs) == 0 {
+			// Retry once after 30s
+			logs.L().Ctx(ctx).Info("expandMissingParents: query returned empty, retrying in 30s...")
+			time.Sleep(30 * time.Second)
+			msgs, err = history.New(ctx).
+				Index(index).
+				Query(query).
+				Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+				Size(uint64(size)).Sort("create_time_v2", "asc").GetMsg()
+		}
+		return msgs, err
+	}
+
 	// If current message is a topic, also fetch all messages in that thread
 	var threadMsgs history.OpensearchMsgLogList
 	if currentMsgThreadID != "" {
@@ -172,11 +190,7 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 				osquery.Range("create_time_v2").Gte(cutoffTime),
 			)
 		}
-		threadMsgs, _ = history.New(ctx).
-			Index(index).
-			Query(threadQuery).
-			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
-			Size(100).Sort("create_time_v2", "asc").GetMsg()
+		threadMsgs, _ = fetchWithRetry(threadQuery, 100)
 	}
 
 	if len(uniqueIDs) == 0 && len(threadMsgs) == 0 {
@@ -197,11 +211,7 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 				osquery.Terms("message_id", uniqueIDs),
 			)
 		}
-		parentMsgs, _ = history.New(ctx).
-			Index(index).
-			Query(parentQuery).
-			Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
-			Size(uint64(len(uniqueIDs))).Sort("create_time_v2", "asc").GetMsg()
+		parentMsgs, _ = fetchWithRetry(parentQuery, len(uniqueIDs))
 	}
 
 	// Merge all fetched messages
