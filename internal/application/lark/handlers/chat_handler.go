@@ -168,7 +168,7 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 		if len(msgs) == 0 {
 			// Retry once after 30s
 			logs.L().Ctx(ctx).Info("expandMissingParents: query returned empty, retrying in 30s...")
-			time.Sleep(30 * time.Second)
+			time.Sleep(15 * time.Second)
 			msgs, err = history.New(ctx).
 				Index(index).
 				Query(query).
