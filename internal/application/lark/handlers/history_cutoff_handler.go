@@ -22,10 +22,6 @@ type SetHistoryCutoffArgs struct {
 	Timestamp string `json:"timestamp"` // RFC3339 format
 }
 
-type forgetCommandArgs struct {
-	Timestamp string
-}
-
 type historyCutoffHandler struct{}
 
 var SetHistoryCutoff historyCutoffHandler
@@ -44,22 +40,22 @@ func (historyCutoffHandler) ParseTool(raw string) (SetHistoryCutoffArgs, error) 
 	return parsed, nil
 }
 
-func (historyCutoffHandler) ParseCLI(args []string) (forgetCommandArgs, error) {
+func (historyCutoffHandler) ParseCLI(args []string) (SetHistoryCutoffArgs, error) {
 	argMap, input := parseArgs(args...)
 	ts := strings.TrimSpace(argMap["timestamp"])
 	if ts == "" {
 		ts = strings.TrimSpace(input) // fallback to positional arg
 	}
 	if ts == "" {
-		return forgetCommandArgs{}, fmt.Errorf("usage: /bb forget <YYYY-MM-DD>")
+		return SetHistoryCutoffArgs{}, fmt.Errorf("usage: /bb forget <YYYY-MM-DD>")
 	}
 	// Parse various date formats
 	for _, format := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02"} {
 		if t, err := time.Parse(format, ts); err == nil {
-			return forgetCommandArgs{Timestamp: t.Format(time.RFC3339)}, nil
+			return SetHistoryCutoffArgs{Timestamp: t.Format(time.RFC3339)}, nil
 		}
 	}
-	return forgetCommandArgs{}, fmt.Errorf("invalid date format: %s, use YYYY-MM-DD", ts)
+	return SetHistoryCutoffArgs{}, fmt.Errorf("invalid date format: %s, use YYYY-MM-DD", ts)
 }
 
 func (historyCutoffHandler) ToolSpec() xcommand.ToolSpec {

@@ -129,7 +129,16 @@ func RegisterLarkCommands(root *xcommand.Command[*larkim.P2MessageReceiveV1]) *x
 			newTypedCmd("oneword", handlers.OneWord),
 		).
 		AddSubCommand(
-			newTypedCmd("bb", handlers.Chat),
+			newCmd("bb", larkCommandNilFunc).
+				AddDescription("与机器人对话").
+				AddExamples("/bb 今天天气怎么样", "/bb --r 帮我总结").
+				SetDefaultSubCommand("chat").
+				AddSubCommand(
+					newTypedCmd("chat", handlers.Chat),
+				).
+				AddSubCommand(
+					newTypedCmd("forget", handlers.SetHistoryCutoff),
+				),
 		).
 		AddSubCommand(
 			newTypedCmd("mute", handlers.Mute),
