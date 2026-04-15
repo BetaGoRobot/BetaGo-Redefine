@@ -75,6 +75,10 @@ func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetCh
 	xcommand.RegisterTool(ins, ConfigSet)
 	xcommand.RegisterTool(ins, ConfigDelete)
 
+	xcommand.RegisterTool(ins, SetHistoryCutoff)
+	xcommand.RegisterTool(ins, StoreCorrection)
+	xcommand.RegisterTool(ins, SetChatContext)
+
 	xcommand.RegisterTool(ins, FeatureList)
 	xcommand.RegisterTool(ins, FeatureBlock)
 	xcommand.RegisterTool(ins, FeatureUnblock)
