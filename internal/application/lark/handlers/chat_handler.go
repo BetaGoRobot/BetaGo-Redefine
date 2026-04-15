@@ -264,6 +264,9 @@ thought 仅用 1-2 句话说明：
 			"如果上下文不够或更像主动插话，请优先保持克制，必要时直接 skip。",
 		)
 	}
+	lines = append(lines,
+		"# 纠错机制\n"+"当用户纠正你的回复时（如说'不是的，应该是xxx'、'错了，应该是xxx'），你必须调用 store_correction 工具记录纠正内容。\n"+"调用该工具后，继续正常对话。\n",
+	)
 	return strings.Join(lines, "\n")
 }
 
