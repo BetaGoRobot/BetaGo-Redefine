@@ -163,11 +163,11 @@ func musicDetailAudioSection(view MusicDetailCardView) map[string]any {
 		"disabled":          false,
 		"show_progress_bar": true,
 		"show_time":         true,
-		"time_display":      "default",
+		"time_display":      "both",
 		"time_position":     "end",
-		"style":            "normal",
-		"padding":          "12px",
-		"width":            "default",
+		"style":             "normal",
+		"padding":           "12px",
+		"width":             "default",
 		"fallback": map[string]any{
 			"tag": "fallback_text",
 			"text": map[string]any{
