@@ -100,11 +100,6 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	// 如果请求语音模式且是单曲搜索，直接发送语音
-	if arg.Voice && arg.Type == MusicSearchTypeSong {
-		return sendMusicVoice(ctx, data, metaData, arg.Keywords)
-	}
-
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
 	send := func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
@@ -114,7 +109,12 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		return larkmsg.PatchCard(patchCtx, cardContent, msgID)
 	}
 
-	if arg.Type == MusicSearchTypeAlbum {
+	if arg.Type == "" || arg.Type == MusicSearchTypeSong {
+		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
+			Scene: neteaseapi.MusicListSceneSongSearch,
+			Query: arg.Keywords,
+		}, send, patch)
+	} else if arg.Type == MusicSearchTypeAlbum {
 		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListSceneAlbumSearch,
 			Query: arg.Keywords,
@@ -123,12 +123,6 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListScenePlaylistDetail,
 			Query: arg.Keywords,
-		}, send, patch)
-	} else if arg.Type == MusicSearchTypeSong {
-		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
-			Scene:       neteaseapi.MusicListSceneSongSearch,
-			Query:       arg.Keywords,
-			VoiceAction: arg.Voice,
 		}, send, patch)
 	} else {
 		err = errors.New("unknown search type")
@@ -166,14 +160,14 @@ func sendMusicVoice(ctx context.Context, data *larkim.P2MessageReceiveV1, metaDa
 	}
 
 	// 转换为 opus 格式（飞书语音消息需要 opus）
-	opusData, err := larkimg.ConvertMp3ToOpus(ctx, audioData)
+	opusData, durationMs, err := larkimg.ConvertMp3ToOpus(ctx, audioData)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("convert to opus failed", zap.Error(err))
 		return err
 	}
 
 	// 上传到 Lark
-	fileKey, err := larkimg.UploadAudio(ctx, bytes.NewReader(opusData), song.Name+".opus", 0)
+	fileKey, err := larkimg.UploadAudio(ctx, bytes.NewReader(opusData), song.Name+".opus", durationMs)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("upload audio to lark failed", zap.Error(err))
 		return err

@@ -58,13 +58,15 @@ func (v *MusicListCardVars) SetCardBaseVars(base CardBaseVars) {
 }
 
 type MusicListCardItem struct {
-	Field1      string            `json:"field_1,omitempty"`
-	Field2      ImageKeyRef       `json:"field_2,omitempty"`
-	Field3      string            `json:"field_3,omitempty"`
-	CommentTime string            `json:"comment_time,omitempty"`
+	Field1       string            `json:"field_1,omitempty"`
+	Field2       ImageKeyRef       `json:"field_2,omitempty"`
+	Field3       string            `json:"field_3,omitempty"`
+	CommentTime  string            `json:"comment_time,omitempty"`
 	ButtonInfo  string            `json:"button_info,omitempty"`
 	ElementID   string            `json:"element_id,omitempty"`
 	ButtonVal   map[string]string `json:"button_val,omitempty"`
+	Button2Info string            `json:"button2_info,omitempty"`
+	Button2Val  map[string]string `json:"button2_val,omitempty"`
 
 	Filled bool `json:"-"`
 }

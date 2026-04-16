@@ -44,11 +44,10 @@ type (
 )
 
 type MusicListRequest struct {
-	Scene       MusicListScene
-	Query       string
-	Page        int
-	PageSize    int
-	VoiceAction bool // 如果为true，使用语音播放Action而不是卡片播放
+	Scene    MusicListScene
+	Query    string
+	Page     int
+	PageSize int
 }
 
 type musicListCardData struct {
@@ -334,7 +333,7 @@ func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicLis
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType, r.request.VoiceAction))
+	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType))
 	if imageKey != "" {
 		state.item.ImageKey = imageKey
 		line.Field2 = larktpl.ImageKeyRef{ImgKey: imageKey}
@@ -539,18 +538,12 @@ func collectMusicItems[T any](ctx context.Context, resList []*T, transFunc music
 	return filtered
 }
 
-func musicListButtonConfigFor(resourceType CommentType, voiceAction bool) musicListButtonConfig {
+func musicListButtonConfigFor(resourceType CommentType) musicListButtonConfig {
 	switch resourceType {
 	case CommentTypeSong:
-		buttonName := "点击播放"
-		actionName := cardaction.ActionMusicPlay
-		if voiceAction {
-			buttonName = "播放语音"
-			actionName = cardaction.ActionMusicVoicePlay
-		}
 		return musicListButtonConfig{
-			ButtonName: buttonName,
-			ActionName: actionName,
+			ButtonName: "点击播放",
+			ActionName: cardaction.ActionMusicPlay,
 		}
 	case CommentTypeAlbum:
 		return musicListButtonConfig{
@@ -571,13 +564,19 @@ func newMusicListCardItem(item *SearchMusicItem, button musicListButtonConfig) l
 		buttonInfo = "歌曲无效"
 	}
 
-	return larktpl.MusicListCardItem{
+	cardItem := larktpl.MusicListCardItem{
 		Field1:     genMusicTitle(item.Name, item.ArtistName),
 		Field2:     larktpl.ImageKeyRef{ImgKey: item.ImageKey},
 		ButtonInfo: buttonInfo,
 		ElementID:  strconv.Itoa(item.ID),
 		ButtonVal:  cardaction.New(button.ActionName).WithID(strconv.Itoa(item.ID)).Payload(),
 	}
+
+	// 始终添加"播放语音"按钮
+	cardItem.Button2Info = "播放语音"
+	cardItem.Button2Val = cardaction.New(cardaction.ActionMusicVoicePlay).WithID(strconv.Itoa(item.ID)).Payload()
+
+	return cardItem
 }
 
 func newMusicListCardLoadingItem(item *SearchMusicItem) larktpl.MusicListCardItem {
@@ -593,6 +592,7 @@ func newMusicListCardLoadingItem(item *SearchMusicItem) larktpl.MusicListCardIte
 		Field3:      "加载中",
 		CommentTime: "加载中",
 		ButtonInfo:  "加载中",
+		Button2Info: "播放语音",
 		ElementID:   elementID,
 	}
 }

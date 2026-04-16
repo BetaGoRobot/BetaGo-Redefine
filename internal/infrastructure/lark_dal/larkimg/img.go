@@ -628,7 +628,7 @@ func UploadAudio(ctx context.Context, audioReader io.Reader, fileName string, du
 	req := larkim.NewCreateFileReqBuilder().
 		Body(
 			larkim.NewCreateFileReqBodyBuilder().
-				FileType("mp3").
+				FileType("opus").
 				FileName(fileName).
 				Duration(durationMs).
 				File(audioReader).
@@ -675,8 +675,9 @@ func GetAudioFromURL(ctx context.Context, audioURL string) (audioData []byte, er
 //	@param ctx context.Context
 //	@param mp3Data mp3 音频数据
 //	@return opusData opus 音频数据
+//	@return durationMs 音频时长，单位毫秒
 //	@return err error
-func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, err error) {
+func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, durationMs int, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -686,7 +687,7 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, err
 	mp3File, err := os.CreateTemp(tmpDir, "betago_*.mp3")
 	if err != nil {
 		logs.L().Ctx(ctx).Error("create temp mp3 file failed", zap.Error(err))
-		return nil, errors.New("创建临时文件失败")
+		return nil, 0, errors.New("创建临时文件失败")
 	}
 	defer os.Remove(mp3File.Name())
 	defer mp3File.Close()
@@ -694,7 +695,7 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, err
 	opusFile, err := os.CreateTemp(tmpDir, "betago_*.opus")
 	if err != nil {
 		logs.L().Ctx(ctx).Error("create temp opus file failed", zap.Error(err))
-		return nil, errors.New("创建临时文件失败")
+		return nil, 0, errors.New("创建临时文件失败")
 	}
 	defer os.Remove(opusFile.Name())
 	defer opusFile.Close()
@@ -702,24 +703,49 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, err
 	// 写入 mp3 数据
 	if _, err := mp3File.Write(mp3Data); err != nil {
 		logs.L().Ctx(ctx).Error("write mp3 data failed", zap.Error(err))
-		return nil, errors.New("写入 mp3 数据失败")
+		return nil, 0, errors.New("写入 mp3 数据失败")
 	}
 	mp3File.Close()
+
+	// 先获取 mp3 时长
+	durationMs, err = getAudioDuration(mp3File.Name())
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("get mp3 duration failed, will probe opus", zap.Error(err))
+	}
 
 	// 执行 ffmpeg 转换
 	cmd := exec.Command("ffmpeg", "-y", "-i", mp3File.Name(), "-c:a", "libopus", "-b:a", "128k", opusFile.Name())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("ffmpeg convert failed", zap.Error(err), zap.String("output", string(output)))
-		return nil, errors.New("ffmpeg 转换失败")
+		return nil, 0, errors.New("ffmpeg 转换失败")
+	}
+
+	// 如果之前没获取到时长，尝试从 opus 获取
+	if durationMs == 0 {
+		durationMs, _ = getAudioDuration(opusFile.Name())
 	}
 
 	// 读取 opus 数据
 	opusData, err = os.ReadFile(opusFile.Name())
 	if err != nil {
 		logs.L().Ctx(ctx).Error("read opus file failed", zap.Error(err))
-		return nil, errors.New("读取 opus 文件失败")
+		return nil, 0, errors.New("读取 opus 文件失败")
 	}
 
-	return opusData, nil
+	return opusData, durationMs, nil
+}
+
+// getAudioDuration 获取音频文件的时长（毫秒）
+func getAudioDuration(filePath string) (int, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, err
+	}
+	var duration float64
+	if _, err := fmt.Sscanf(string(output), "%f", &duration); err != nil {
+		return 0, err
+	}
+	return int(duration * 1000), nil
 }
