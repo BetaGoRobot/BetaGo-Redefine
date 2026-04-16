@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -162,11 +163,20 @@ func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) 
 	result, err := s.service.ExecuteTask(ctx, task)
 	otel.RecordError(span, err)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("Scheduled task execution failed",
-			zap.Error(err),
-			zap.String("task_id", task.ID),
-			zap.String("task_name", task.Name),
-			zap.String("tool_name", task.ToolName))
+		if strings.Contains(err.Error(), "Bot/User can NOT be out of the chat.") {
+			logs.L().Ctx(ctx).Warn("Scheduled task execution failed, bot/user is out of the chat",
+				zap.Error(err),
+				zap.String("task_id", task.ID),
+				zap.String("task_name", task.Name),
+				zap.String("tool_name", task.ToolName))
+			err = nil
+		} else {
+			logs.L().Ctx(ctx).Error("Scheduled task execution failed",
+				zap.Error(err),
+				zap.String("task_id", task.ID),
+				zap.String("task_name", task.Name),
+				zap.String("tool_name", task.ToolName))
+		}
 	} else {
 		logs.L().Ctx(ctx).Info("Scheduled task executed successfully",
 			zap.String("task_id", task.ID),
