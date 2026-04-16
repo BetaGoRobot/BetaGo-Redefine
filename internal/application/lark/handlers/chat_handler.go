@@ -535,7 +535,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 
 	// Wait 30s for OpenSearch to index the current message before querying
 	// This handles the indexing delay for reply/thread context
-	time.Sleep(30 * time.Second)
+	// time.Sleep(30 * time.Second)
 
 	// Get current message's thread context for expansion
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
