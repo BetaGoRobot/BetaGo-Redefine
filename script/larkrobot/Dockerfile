@@ -12,8 +12,7 @@ RUN apk update && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
-RUN apk add vips-dev g++ ffmpeg
-
+RUN apk add vips-dev g++
 
 FROM prebuild AS builder
 
@@ -43,5 +42,7 @@ COPY --from=builder /app/larkrobot /larkrobot
 # COPY --from=builder /app/assets/images /data/images
 
 WORKDIR /
+
+RUN apk update && apk add ffmpeg
 
 CMD ["./larkrobot"]
