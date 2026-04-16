@@ -127,7 +127,9 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 			Reasoning: &responses.ResponsesReasoning{
 				Effort: reasoningEffort,
 			},
-			Stream: gptr.Of(true),
+			Stream:             gptr.Of(true),
+			ParallelToolCalls:  gptr.Of(true),
+			MaxToolCalls:       gptr.Of(int64(10)),
 		}, nil
 	}
 
@@ -155,7 +157,9 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: reasoningEffort,
 		},
-		Stream: gptr.Of(true),
+		Stream:             gptr.Of(true),
+		ParallelToolCalls:  gptr.Of(true),
+		MaxToolCalls:       gptr.Of(int64(10)),
 	}, nil
 }
 

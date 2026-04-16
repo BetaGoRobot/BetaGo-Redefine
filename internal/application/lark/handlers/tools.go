@@ -93,6 +93,8 @@ func registerBaseTools(ins *tools.Impl[larkim.P2MessageReceiveV1], allowTargetCh
 	xcommand.RegisterTool(ins, ImageGet)
 	xcommand.RegisterTool(ins, ImageDelete)
 
+	xcommand.RegisterTool(ins, AddEmojiReaction)
+
 	xcommand.RegisterTool(ins, RateLimitStats)
 	xcommand.RegisterTool(ins, RateLimitList)
 

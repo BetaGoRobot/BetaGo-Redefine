@@ -559,12 +559,14 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		},
 	}
 	req = &responses.ResponsesRequest{
-		Model:     modelID,
-		Input:     input,
-		Store:     gptr.Of(true),
-		Tools:     r.tools,
-		Reasoning: r.reasoningEffort,
-		Stream:    gptr.Of(true),
+		Model:             modelID,
+		Input:             input,
+		Store:             gptr.Of(true),
+		Tools:             r.tools,
+		Reasoning:         r.reasoningEffort,
+		Stream:            gptr.Of(true),
+		ParallelToolCalls: gptr.Of(true),
+		MaxToolCalls:      gptr.Of(int64(10)),
 	}
 
 	resp, err := CreateResponsesStream(ctx, req)
