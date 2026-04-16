@@ -167,7 +167,7 @@ func musicDetailAudioSection(view MusicDetailCardView) map[string]any {
 		"time_position":     "end",
 		"style":             "normal",
 		"padding":           "12px",
-		"width":             "default",
+		"width":             "fill",
 		"fallback": map[string]any{
 			"tag": "fallback_text",
 			"text": map[string]any{
