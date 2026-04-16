@@ -27,6 +27,10 @@ type RecordReactionOperator struct {
 	OpBase
 }
 
+func (r *RecordReactionOperator) Name() string {
+	return "RecordReaction"
+}
+
 // Run  Repeat
 //
 //	@receiver r

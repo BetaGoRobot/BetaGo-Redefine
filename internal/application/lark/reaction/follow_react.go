@@ -24,6 +24,10 @@ type FollowReactionOperator struct {
 	OpBase
 }
 
+func (r *FollowReactionOperator) Name() string {
+	return "FollowReaction"
+}
+
 // Run  Repeat
 //
 //	@receiver r
