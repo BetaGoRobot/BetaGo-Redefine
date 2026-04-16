@@ -52,7 +52,15 @@ func HandleSubmit(ctx context.Context, cardAction *callback.CardActionTriggerEve
 	ExecuteRawCommandFromCard(ctx, cardAction, srcCmd)
 }
 
-func GetCardMusicByPage(ctx context.Context, musicID, page int) *larktpl.TemplateCardContent {
+func GetCardMusicByPage(ctx context.Context, musicID, page int) larkmsg.RawCard {
+	view := buildMusicDetailCardView(ctx, musicID, page)
+	if view == nil {
+		return nil
+	}
+	return BuildMusicDetailRawCard(ctx, *view)
+}
+
+func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDetailCardView {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("musicID").Int(musicID))
 	defer span.End()
@@ -119,7 +127,6 @@ func GetCardMusicByPage(ctx context.Context, musicID, page int) *larktpl.Templat
 	}
 
 	playerURL := utils.BuildURL(res)
-	// eg: page = 1
 	quotaRemain := maxPageSize
 	lyricList := strings.Split(lyrics, "\n")
 	newList := make([]string, 0)
@@ -140,35 +147,95 @@ func GetCardMusicByPage(ctx context.Context, musicID, page int) *larktpl.Templat
 			newList = append(newList, l)
 		}
 	}
-
 	lyrics = strings.Join(newList, "\n")
 
-	return larktpl.NewCardContentWithData(ctx, larktpl.SingleSongDetailTemplate, &larktpl.SingleSongDetailCardVars{
-		Lyrics:    lyrics,
-		Title:     songDetail.Name,
-		SubTitle:  songDetail.Ar[0].Name,
-		ImgKey:    larktpl.ImageKeyRef{ImgKey: imageKey},
-		PlayerURL: playerURL,
+	audioFileKey := ""
+	audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
+	if err == nil {
+		opusData, durationMs, err := larkimg.ConvertMp3ToOpus(ctx, audioData)
+		if err == nil {
+			fileKey, err := larkimg.UploadAudio(ctx, bytes.NewReader(opusData), songDetail.Name+".opus", durationMs)
+			if err == nil {
+				audioFileKey = fileKey
+			} else {
+				logs.L().Ctx(ctx).Warn("upload audio failed", zap.Error(err))
+			}
+		} else {
+			logs.L().Ctx(ctx).Warn("convert to opus failed", zap.Error(err))
+		}
+	} else {
+		logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))
+	}
+
+	subtitle := ""
+	if len(songDetail.Ar) > 0 {
+		subtitle = songDetail.Ar[0].Name
+	}
+	view := &MusicDetailCardView{
+		Lyrics:       lyrics,
+		Title:        songDetail.Name,
+		Subtitle:     subtitle,
+		ImageKey:     imageKey,
+		PlayerURL:    playerURL,
+		AudioFileKey: audioFileKey,
+		AudioID:      "music_" + strconv.Itoa(musicID),
 		FullLyricsButton: cardaction.New(cardaction.ActionMusicLyrics).
 			WithID(strconv.Itoa(musicID)).
 			Payload(),
 		RefreshID: cardaction.New(cardaction.ActionMusicRefresh).
 			WithID(strconv.Itoa(musicID)).
 			Payload(),
-	})
+	}
+	return view
 }
 
-func SendMusicCard(ctx context.Context, metaData *xhandler.BaseMetaData, musicID int, msgID string, page int) {
+func PatchMusicCard(ctx context.Context, musicID int, msgID string, page int) {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("musicID").Int(musicID))
+	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
-	card := GetCardMusicByPage(ctx, musicID, page)
-	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
-	err := larkmsg.ReplyCard(ctx, card, msgID, "_music"+strconv.Itoa(musicID), utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
-	if err != nil {
+	view := buildMusicDetailCardView(ctx, musicID, page)
+	if view == nil {
 		return
 	}
+	if err := patchMusicDetailCardContent(ctx, msgID, *view); err != nil {
+		logs.L().Ctx(ctx).Error("patch music detail card failed", zap.Error(err))
+	}
+}
+
+func patchMusicDetailCardContent(ctx context.Context, msgID string, view MusicDetailCardView) error {
+	content, err := BuildMusicDetailRawCard(ctx, view).JSON()
+	if err != nil {
+		return fmt.Errorf("marshal music detail raw card failed: %w", err)
+	}
+	if err := larkmsg.PatchRawCard(ctx, msgID, content); err == nil {
+		return nil
+	} else if shouldRetryMusicCardWithoutAudio(err, view.AudioFileKey) {
+		logs.L().Ctx(ctx).Warn("music detail card audio unsupported, retry without audio element", zap.Error(err))
+		view.AudioFileKey = ""
+		content, marshalErr := BuildMusicDetailRawCard(ctx, view).JSON()
+		if marshalErr != nil {
+			return fmt.Errorf("marshal fallback music detail raw card failed: %w", marshalErr)
+		}
+		if retryErr := larkmsg.PatchRawCard(ctx, msgID, content); retryErr != nil {
+			return retryErr
+		}
+		return nil
+	} else {
+		return err
+	}
+}
+
+func shouldRetryMusicCardWithoutAudio(err error, audioFileKey string) bool {
+	if err == nil || strings.TrimSpace(audioFileKey) == "" {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "audio elem don't support forward") || strings.Contains(msg, "ErrCode: 300260")
+}
+
+func SendMusicCard(ctx context.Context, _ *xhandler.BaseMetaData, musicID int, msgID string, page int) {
+	PatchMusicCard(ctx, musicID, msgID, page)
 }
 
 func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID string, msgID string) {
@@ -253,28 +320,7 @@ func HandleWithDraw(ctx context.Context, cardAction *callback.CardActionTriggerE
 }
 
 func HandleRefreshMusic(ctx context.Context, musicID int, msgID string) {
-	ctx, span := otel.Start(ctx)
-	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
-	defer span.End()
-
-	card := GetCardMusicByPage(ctx, musicID, 1)
-	resp, err := lark_dal.Client().Im.V1.Message.Patch(
-		ctx, larkim.NewPatchMessageReqBuilder().
-			MessageId(msgID).
-			Body(
-				larkim.NewPatchMessageReqBodyBuilder().
-					Content(card.String()).
-					Build(),
-			).
-			Build(),
-	)
-	if err != nil {
-		return
-	}
-	if !resp.Success() {
-		logs.L().Ctx(ctx).Error("Refresh music card error", zap.Error(err))
-		return
-	}
+	PatchMusicCard(ctx, musicID, msgID, 1)
 }
 
 func HandleRefreshObj(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {

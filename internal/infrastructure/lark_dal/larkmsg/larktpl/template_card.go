@@ -67,6 +67,7 @@ type MusicListCardItem struct {
 	ButtonVal   map[string]string `json:"button_val,omitempty"`
 	Button2Info string            `json:"button2_info,omitempty"`
 	Button2Val  map[string]string `json:"button2_val,omitempty"`
+	AudioElement string           `json:"audio_element,omitempty"` // markdown with <audio> tag for inline audio
 
 	Filled bool `json:"-"`
 }
@@ -80,6 +81,7 @@ type SingleSongDetailCardVars struct {
 	PlayerURL        string            `json:"player_url"`
 	FullLyricsButton map[string]string `json:"full_lyrics_button"`
 	RefreshID        map[string]string `json:"refresh_id"`
+	AudioElement     string            `json:"audio_element,omitempty"` // markdown with <audio> tag
 }
 
 func (v *SingleSongDetailCardVars) SetCardBaseVars(base CardBaseVars) {

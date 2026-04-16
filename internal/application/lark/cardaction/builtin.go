@@ -1,7 +1,6 @@
 package cardaction
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	appratelimit "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
@@ -80,12 +78,7 @@ func handleMusicPlay(ctx context.Context, actionCtx *Context) (AsyncTask, error)
 			logs.L().Ctx(runCtx).Error("[handleMusicPlay] Atoi musicID failed...", zap.Error(err))
 			return
 		}
-		cardhandlers.SendMusicCard(runCtx, actionCtx.MetaData, musicIDInt, listMsgID, 1)
-
-		// 撤回列表卡片
-		if err := larkmsg.DeleteMessage(runCtx, listMsgID); err != nil {
-			logs.L().Ctx(runCtx).Warn("[handleMusicPlay] withdraw list card failed", zap.Error(err))
-		}
+		cardhandlers.PatchMusicCard(runCtx, musicIDInt, listMsgID, 1)
 	}, nil
 }
 
@@ -103,54 +96,9 @@ func handleMusicVoicePlay(ctx context.Context, actionCtx *Context) (AsyncTask, e
 			return
 		}
 
-		// 获取歌曲URL
-		musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(runCtx, musicIDInt)
-		if err != nil || musicURL == "" {
-			logs.L().Ctx(runCtx).Error("[handleMusicVoicePlay] get music url failed", zap.Error(err))
-			return
-		}
+		cardhandlers.PatchMusicCard(runCtx, musicIDInt, listMsgID, 1)
 
-		// 获取歌曲信息（用于文件名）
-		songName := "song"
-		songs, err := neteaseapi.NetEaseGCtx.SearchMusicByKeyWord(runCtx, musicURL)
-		if err == nil && len(songs) > 0 {
-			songName = songs[0].Name
-		}
-
-		// 下载音频
-		audioData, err := larkimg.GetAudioFromURL(runCtx, musicURL)
-		if err != nil {
-			logs.L().Ctx(runCtx).Error("[handleMusicVoicePlay] download audio failed", zap.Error(err))
-			return
-		}
-
-		// 转换为 opus 格式（飞书语音消息需要 opus）
-		opusData, durationMs, err := larkimg.ConvertMp3ToOpus(runCtx, audioData)
-		if err != nil {
-			logs.L().Ctx(runCtx).Error("[handleMusicVoicePlay] convert to opus failed", zap.Error(err))
-			return
-		}
-
-		// 上传到 Lark
-		fileKey, err := larkimg.UploadAudio(runCtx, bytes.NewReader(opusData), songName+".opus", durationMs)
-		if err != nil {
-			logs.L().Ctx(runCtx).Error("[handleMusicVoicePlay] upload audio failed", zap.Error(err))
-			return
-		}
-
-		// 发送语音消息
-		_, err = larkmsg.ReplyMsgAudio(runCtx, fileKey, listMsgID, "_musicVoice", false)
-		if err != nil {
-			logs.L().Ctx(runCtx).Error("[handleMusicVoicePlay] reply audio failed", zap.Error(err))
-			return
-		}
-
-		// 撤回列表卡片
-		if err := larkmsg.DeleteMessage(runCtx, listMsgID); err != nil {
-			logs.L().Ctx(runCtx).Warn("[handleMusicVoicePlay] withdraw list card failed", zap.Error(err))
-		}
-
-		logs.L().Ctx(runCtx).Info("[handleMusicVoicePlay] voice sent successfully", zap.Int("music_id", musicIDInt))
+		logs.L().Ctx(runCtx).Info("[handleMusicVoicePlay] detail card patched", zap.Int("music_id", musicIDInt))
 	}, nil
 }
 
