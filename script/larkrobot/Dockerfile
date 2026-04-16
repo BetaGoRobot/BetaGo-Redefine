@@ -12,7 +12,7 @@ RUN apk update && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
-RUN apk add vips-dev g++
+RUN apk add vips-dev g++ ffmpeg
 
 
 FROM prebuild AS builder

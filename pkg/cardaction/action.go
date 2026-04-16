@@ -32,6 +32,7 @@ const (
 	LegacyTypeField      = "type"
 
 	ActionMusicPlay              = "music.play"
+	ActionMusicVoicePlay         = "music.voice_play"
 	ActionMusicAlbum             = "music.album"
 	ActionMusicLyrics            = "music.lyrics"
 	ActionMusicRefresh           = "music.refresh"

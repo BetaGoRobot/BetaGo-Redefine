@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -608,4 +610,116 @@ func GetMsgImages(ctx context.Context, msgID, fileKey, fileType string) (file io
 		return nil, errors.New(resp.Error())
 	}
 	return resp.File, nil
+}
+
+// UploadAudio 上传音频文件到 Lark 并返回 file_key
+//
+//	@param ctx context.Context
+//	@param audioReader 音频文件内容
+//	@param fileName 文件名（带后缀，如 "song.mp3"）
+//	@param durationMs 音频时长，单位毫秒
+//	@return fileKey 文件key，用于发送音频消息
+//	@return err error
+func UploadAudio(ctx context.Context, audioReader io.Reader, fileName string, durationMs int) (fileKey string, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	req := larkim.NewCreateFileReqBuilder().
+		Body(
+			larkim.NewCreateFileReqBodyBuilder().
+				FileType("mp3").
+				FileName(fileName).
+				Duration(durationMs).
+				File(audioReader).
+				Build(),
+		).
+		Build()
+	resp, err := lark_dal.Client().Im.File.Create(ctx, req)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("UploadAudio error", zap.Error(err))
+		return "", err
+	}
+	if !resp.Success() {
+		return "", errors.New("upload audio failed: " + resp.Error())
+	}
+	if resp.Data == nil || resp.Data.FileKey == nil {
+		return "", errors.New("upload audio returned empty file_key")
+	}
+	return *resp.Data.FileKey, nil
+}
+
+// GetAudioFromURL 从 URL 下载音频文件
+func GetAudioFromURL(ctx context.Context, audioURL string) (audioData []byte, err error) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(otel.PreviewAttrs("audio_url", audioURL, 256)...)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	audioResp, err := xrequest.Req().SetDoNotParseResponse(true).Get(audioURL)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("get audio from url error", zap.Error(err))
+		return nil, err
+	}
+
+	audioData, err = io.ReadAll(audioResp.RawBody())
+	if err != nil {
+		logs.L().Ctx(ctx).Error("read audio data error", zap.Error(err))
+		return nil, err
+	}
+	return audioData, nil
+}
+
+// ConvertMp3ToOpus 将 mp3 音频转换为 opus 格式（使用 ffmpeg）
+//
+//	@param ctx context.Context
+//	@param mp3Data mp3 音频数据
+//	@return opusData opus 音频数据
+//	@return err error
+func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	// 创建临时文件
+	tmpDir := os.TempDir()
+	mp3File, err := os.CreateTemp(tmpDir, "betago_*.mp3")
+	if err != nil {
+		logs.L().Ctx(ctx).Error("create temp mp3 file failed", zap.Error(err))
+		return nil, errors.New("创建临时文件失败")
+	}
+	defer os.Remove(mp3File.Name())
+	defer mp3File.Close()
+
+	opusFile, err := os.CreateTemp(tmpDir, "betago_*.opus")
+	if err != nil {
+		logs.L().Ctx(ctx).Error("create temp opus file failed", zap.Error(err))
+		return nil, errors.New("创建临时文件失败")
+	}
+	defer os.Remove(opusFile.Name())
+	defer opusFile.Close()
+
+	// 写入 mp3 数据
+	if _, err := mp3File.Write(mp3Data); err != nil {
+		logs.L().Ctx(ctx).Error("write mp3 data failed", zap.Error(err))
+		return nil, errors.New("写入 mp3 数据失败")
+	}
+	mp3File.Close()
+
+	// 执行 ffmpeg 转换
+	cmd := exec.Command("ffmpeg", "-y", "-i", mp3File.Name(), "-c:a", "libopus", "-b:a", "128k", opusFile.Name())
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("ffmpeg convert failed", zap.Error(err), zap.String("output", string(output)))
+		return nil, errors.New("ffmpeg 转换失败")
+	}
+
+	// 读取 opus 数据
+	opusData, err = os.ReadFile(opusFile.Name())
+	if err != nil {
+		logs.L().Ctx(ctx).Error("read opus file failed", zap.Error(err))
+		return nil, errors.New("读取 opus 文件失败")
+	}
+
+	return opusData, nil
 }

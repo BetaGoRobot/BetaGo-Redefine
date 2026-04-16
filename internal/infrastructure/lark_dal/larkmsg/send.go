@@ -178,3 +178,38 @@ func RecoverMsgEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) {
 		SendRecoveredMsg(ctx, err, *event.Event.Message.MessageId)
 	}
 }
+
+// CreateMsgAudioRaw 发送音频消息到指定群组或对话
+//
+//	@param ctx context.Context
+//	@param fileKey 音频文件的key，通过 UploadAudio 获取
+//	@param chatID 群组ID
+//	@param suffix 日志追踪后缀
+//	@return error
+func CreateMsgAudioRaw(ctx context.Context, fileKey, chatID, suffix string) error {
+	_, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, nil) }()
+
+	content := fmt.Sprintf(`{"file_key":"%s"}`, fileKey)
+	_, err := createMsgRawContentTypeByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, larkim.MsgTypeAudio, content, "", suffix)
+	return err
+}
+
+// ReplyMsgAudio 回复音频消息
+//
+//	@param ctx context.Context
+//	@param fileKey 音频文件的key
+//	@param msgID 要回复的消息ID
+//	@param suffix 日志追踪后缀
+//	@param inThread 是否在thread内回复
+//	@return *larkim.ReplyMessageResp
+//	@return error
+func ReplyMsgAudio(ctx context.Context, fileKey, msgID, suffix string, inThread bool) (resp *larkim.ReplyMessageResp, err error) {
+	_, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	content := fmt.Sprintf(`{"file_key":"%s"}`, fileKey)
+	return ReplyMsgRawContentType(ctx, msgID, larkim.MsgTypeAudio, content, suffix, inThread)
+}

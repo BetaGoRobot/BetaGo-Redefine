@@ -44,10 +44,11 @@ type (
 )
 
 type MusicListRequest struct {
-	Scene    MusicListScene
-	Query    string
-	Page     int
-	PageSize int
+	Scene       MusicListScene
+	Query       string
+	Page        int
+	PageSize    int
+	VoiceAction bool // 如果为true，使用语音播放Action而不是卡片播放
 }
 
 type musicListCardData struct {
@@ -333,7 +334,7 @@ func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicLis
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType))
+	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType, r.request.VoiceAction))
 	if imageKey != "" {
 		state.item.ImageKey = imageKey
 		line.Field2 = larktpl.ImageKeyRef{ImgKey: imageKey}
@@ -538,12 +539,18 @@ func collectMusicItems[T any](ctx context.Context, resList []*T, transFunc music
 	return filtered
 }
 
-func musicListButtonConfigFor(resourceType CommentType) musicListButtonConfig {
+func musicListButtonConfigFor(resourceType CommentType, voiceAction bool) musicListButtonConfig {
 	switch resourceType {
 	case CommentTypeSong:
+		buttonName := "点击播放"
+		actionName := cardaction.ActionMusicPlay
+		if voiceAction {
+			buttonName = "播放语音"
+			actionName = cardaction.ActionMusicVoicePlay
+		}
 		return musicListButtonConfig{
-			ButtonName: "点击播放",
-			ActionName: cardaction.ActionMusicPlay,
+			ButtonName: buttonName,
+			ActionName: actionName,
 		}
 	case CommentTypeAlbum:
 		return musicListButtonConfig{

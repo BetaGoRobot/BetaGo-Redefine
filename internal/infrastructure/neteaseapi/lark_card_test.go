@@ -152,7 +152,7 @@ func TestNewMusicListCardItemMarksUnavailableSong(t *testing.T) {
 		ID:         7,
 		Name:       "无版权歌曲",
 		ArtistName: "测试歌手",
-	}, musicListButtonConfigFor(CommentTypeSong))
+	}, musicListButtonConfigFor(CommentTypeSong, false))
 
 	if item.ButtonInfo != "歌曲无效" {
 		t.Fatalf("expected unavailable song label, got %q", item.ButtonInfo)
