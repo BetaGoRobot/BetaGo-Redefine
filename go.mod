@@ -10,7 +10,7 @@ require (
 	github.com/bytedance/mockey v1.4.5
 	github.com/bytedance/sonic v1.15.0
 	github.com/defensestation/osquery v1.0.0
-	github.com/dlclark/regexp2 v1.11.5
+	github.com/dlclark/regexp2 v1.12.0
 	github.com/eko/gocache/lib/v4 v4.2.3
 	github.com/eko/gocache/store/go_cache/v4 v4.2.4
 	github.com/enescakir/emoji v1.0.0
