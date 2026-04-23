@@ -45,10 +45,7 @@ func (r *FollowReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 	}
 	realRate := appconfig.NewAccessor(ctx, chatID, reactionOpenID(event, meta)).ReactionFollowDefaultRate()
 	if utils.Prob(float64(realRate) / 100) {
-		_, err = larkmsg.AddReaction(ctx, *event.Event.ReactionType.EmojiType, *event.Event.MessageId)
-		if err != nil {
-			return err
-		}
+		larkmsg.AddReactionAsync(ctx, *event.Event.ReactionType.EmojiType, *event.Event.MessageId)
 	}
 
 	return

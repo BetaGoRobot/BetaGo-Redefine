@@ -10,13 +10,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	pkgerrors "github.com/pkg/errors"
-	"go.uber.org/zap"
 )
 
 type (
@@ -89,14 +87,7 @@ func requireMentionOrP2P(opName string, event *larkim.P2MessageReceiveV1) error 
 }
 
 func withProgressReaction(ctx context.Context, msgID string) func() {
-	reactionID, err := larkmsg.AddReaction(ctx, "OnIt", msgID)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("Add reaction to msg failed", zap.Error(err))
-		return func() {}
-	}
-	return func() {
-		larkmsg.RemoveReactionAsync(ctx, reactionID, msgID)
-	}
+	return larkmsg.AddReactionWithCallback(ctx, "OnIt", msgID)
 }
 
 func addDoneReactionIfNeeded(ctx context.Context, msgID string, meta *xhandler.BaseMetaData) {
