@@ -120,6 +120,8 @@ func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []
 	return music.Data, nil
 }
 
+var commonMusicExtensions = []string{".mp3", ".flac", ".m4a", ".wav", ".ogg", ".aac"}
+
 func musicObjectKey(musicID int, rawURL string) string {
 	ext := filepath.Ext(rawURL)
 	if parsedURL, err := url.Parse(rawURL); err == nil {
@@ -128,6 +130,16 @@ func musicObjectKey(musicID int, rawURL string) string {
 		}
 	}
 	return "music/" + songIDString(musicID) + ext
+}
+
+func tryGetMusicURLFromMinio(ctx context.Context, musicID int) string {
+	for _, ext := range commonMusicExtensions {
+		objKey := "music/" + songIDString(musicID) + ext
+		if u, err := miniodal.TryGetFile(ctx, "cloudmusic", objKey); err == nil && u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 func ensureMusicPresignedURL(ctx context.Context, item *musicData) (string, error) {
@@ -483,10 +495,28 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 		}
 		songIDs = append(songIDs, searchRes.Result.Songs[idx].ID)
 	}
-	urlByID, err := neteaseCtx.GetMusicURLByIDs(ctx, songIDs...)
-	if err != nil {
-		return nil, err
+
+	urlByID := make(map[int]string, len(songIDs))
+	missingIDs := make([]int, 0, len(songIDs))
+
+	for _, id := range songIDs {
+		if u := tryGetMusicURLFromMinio(ctx, id); u != "" {
+			urlByID[id] = u
+		} else {
+			missingIDs = append(missingIDs, id)
+		}
 	}
+
+	if len(missingIDs) > 0 {
+		fetched, err := neteaseCtx.GetMusicURLByIDs(ctx, missingIDs...)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range fetched {
+			urlByID[k] = v
+		}
+	}
+
 	imageKeyByID := asyncUploadPics(ctx, searchRes)
 	result = make([]*SearchMusicItem, 0, len(searchRes.Result.Songs))
 	for idx := range searchRes.Result.Songs {
