@@ -23,7 +23,7 @@ require (
 	github.com/kevinmatthe/zaplog v0.1.6
 	github.com/larksuite/oapi-sdk-go/v3 v3.6.1
 	github.com/lib/pq v1.12.3
-	github.com/minio/minio-go/v7 v7.0.100
+	github.com/minio/minio-go/v7 v7.1.0
 	github.com/olivere/elastic/v7 v7.0.32
 	github.com/opensearch-project/opensearch-go v1.1.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
@@ -53,7 +53,10 @@ require (
 	gorm.io/plugin/dbresolver v1.6.2
 )
 
-require github.com/oklog/ulid/v2 v2.1.1 // indirect
+require (
+	github.com/oklog/ulid/v2 v2.1.1 // indirect
+	github.com/zeebo/xxh3 v1.1.0 // indirect
+)
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect
