@@ -1,16 +1,13 @@
-//go:build !custom_skip_vips
+//go:build custom_skip_vips
 
 package utils
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"os"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/h2non/bimg"
 	"go.uber.org/zap"
 )
 
@@ -22,9 +19,6 @@ func ResizeIMGFromReader(ctx context.Context, r io.ReadCloser) (output []byte) {
 		logs.L().Ctx(ctx).Error("read image error", zap.Error(err))
 		return
 	}
-	newImage, err := bimg.NewImage(imgBody).Resize(512, 512)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
-	return newImage
+
+	return imgBody
 }

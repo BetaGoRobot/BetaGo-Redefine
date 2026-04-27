@@ -17,6 +17,7 @@ require (
 	github.com/go-openapi/runtime v0.29.4
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gotify/go-api-client/v2 v2.0.4
+	github.com/h2non/bimg v1.1.9
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/jinzhu/copier v0.4.0
 	github.com/kevinmatthe/zaplog v0.1.6
