@@ -8,7 +8,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.6
-	github.com/bytedance/sonic v1.15.0
+	github.com/bytedance/sonic v1.15.1
 	github.com/defensestation/osquery v1.0.0
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/eko/gocache/lib/v4 v4.2.3
@@ -59,7 +59,7 @@ require (
 	filippo.io/edwards25519 v1.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic/loader v0.5.0 // indirect
+	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
