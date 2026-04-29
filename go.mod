@@ -54,7 +54,9 @@ require (
 )
 
 require (
+	github.com/hraban/opus v0.0.0-20251117090126-c76ea7e21bf3 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
+	github.com/tosone/minimp3 v1.0.2 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 )
 
