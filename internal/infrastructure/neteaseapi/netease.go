@@ -1,9 +1,11 @@
 package neteaseapi
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -243,8 +245,23 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 		return map[int]string{}, nil
 	}
 
-	batches := utils.Chunk(ids, normalizeBatchSize(batchSize))
+	// Check cache first, similar to AsyncGetSearchRes
 	musicIDURL := make(map[int]string, len(ids))
+	missingIDs := make([]int, 0, len(ids))
+
+	for _, id := range ids {
+		if u := tryGetMusicURLFromMinio(ctx, id); u != "" {
+			musicIDURL[id] = u
+		} else {
+			missingIDs = append(missingIDs, id)
+		}
+	}
+
+	if len(missingIDs) == 0 {
+		return musicIDURL, nil
+	}
+
+	batches := utils.Chunk(missingIDs, normalizeBatchSize(batchSize))
 	var mu sync.Mutex
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -300,10 +317,37 @@ func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID int) (url 
 	return "", fmt.Errorf("song %d url not found", ID)
 }
 
+func tryGetDetailFromMinio(ctx context.Context, musicID int) *MusicDetail {
+	objKey := "detail/" + songIDString(musicID) + ".json"
+	client := miniodal.GetInternalClient()
+	if client == nil {
+		return nil
+	}
+	obj, err := client.GetObject(ctx, "cloudmusic", objKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil
+	}
+	defer obj.Close()
+	data, err := io.ReadAll(obj)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var detail MusicDetail
+	if err := sonic.Unmarshal(data, &detail); err != nil {
+		return nil
+	}
+	return &detail
+}
+
 func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID int) (musicDetail *MusicDetail) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Int("songID", musicID))
 	defer span.End()
+
+	// Try cache first
+	if cached := tryGetDetailFromMinio(ctx, musicID); cached != nil {
+		return cached
+	}
 
 	musicDetail, err := neteaseCtx.getDetailByIDs(ctx, []int{musicID})
 	if err != nil {
@@ -313,6 +357,16 @@ func (neteaseCtx *NetEaseContext) GetDetail(ctx context.Context, musicID int) (m
 	if len(musicDetail.Songs) == 0 {
 		return nil
 	}
+
+	// Cache the detail
+	if data, err := sonic.Marshal(musicDetail); err == nil {
+		miniodal.New(miniodal.Internal).Upload(ctx).
+			WithContentType("application/json").
+			SkipDedup(false).
+			WithReader(io.NopCloser(bytes.NewReader(data))).
+			Do("cloudmusic", "detail/"+songIDString(musicID)+".json", minio.PutObjectOptions{}).Err()
+	}
+
 	for _, song := range musicDetail.Songs {
 		picURL := song.Al.PicURL
 		err := miniodal.New(miniodal.Internal).Upload(ctx).
@@ -396,10 +450,37 @@ func (neteaseCtx *NetEaseContext) getDetailByIDs(ctx context.Context, musicIDs [
 	return musicDetail, nil
 }
 
+func tryGetLyricsFromMinio(ctx context.Context, songID int) (string, string) {
+	objKey := "lyrics/" + songIDString(songID) + ".txt"
+	client := miniodal.GetInternalClient()
+	if client == nil {
+		return "", ""
+	}
+	obj, err := client.GetObject(ctx, "cloudmusic", objKey, minio.GetObjectOptions{})
+	if err != nil {
+		return "", ""
+	}
+	defer obj.Close()
+	data, err := io.ReadAll(obj)
+	if err != nil || len(data) == 0 {
+		return "", ""
+	}
+	lyricsURL, err := miniodal.PresignGetObject(ctx, "cloudmusic", objKey, time.Minute*5)
+	if err != nil {
+		return "", ""
+	}
+	return string(data), lyricsURL
+}
+
 func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID int) (lyrics string, lyricsURL string) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Int("songID", songID))
 	defer span.End()
+
+	// Try cache first
+	if cachedLyrics, cachedURL := tryGetLyricsFromMinio(ctx, songID); cachedLyrics != "" {
+		return cachedLyrics, cachedURL
+	}
 
 	resp, err := xhttp.HttpClient.R().
 		SetFormDataFromValues(
@@ -425,15 +506,25 @@ func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID int) (ly
 		logs.L().Ctx(ctx).Warn("Unknown error", zap.Error(err))
 		return
 	}
+
+	// Upload raw JSON for reference
 	lyricsURL, err = miniodal.New(miniodal.Internal).Upload(ctx).
 		WithContentType(xmodel.ContentTypePlainText.String()).
 		WithData([]byte(body)).
 		Do("cloudmusic", "lyrics/"+songIDString(songID)+".json", minio.PutObjectOptions{}).PreSignURL()
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
-		return
 	}
+
 	lyricsMerged := mergeLyrics(searchLyrics.Lrc.Lyric, searchLyrics.Tlyric.Lyric)
+
+	// Cache the parsed lyrics as text
+	miniodal.New(miniodal.Internal).Upload(ctx).
+		WithContentType(xmodel.ContentTypePlainText.String()).
+		SkipDedup(false).
+		WithReader(io.NopCloser(strings.NewReader(lyricsMerged))).
+		Do("cloudmusic", "lyrics/"+songIDString(songID)+".txt", minio.PutObjectOptions{}).Err()
+
 	return lyricsMerged, lyricsURL
 }
 

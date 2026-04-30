@@ -124,6 +124,10 @@ func internalCli() *minio.Client {
 	return defaultBackend.Client(Internal)
 }
 
+func GetInternalClient() *minio.Client {
+	return internalCli()
+}
+
 func externalCli() *minio.Client {
 	return defaultBackend.Client(External)
 }
