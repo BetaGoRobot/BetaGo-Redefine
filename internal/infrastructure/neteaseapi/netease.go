@@ -268,7 +268,10 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 	group.SetLimit(musicURLConcurrencyFor(len(batches)))
 	for _, batch := range batches {
 		group.Go(func() error {
-			rawItems, err := fetchMusicURLBatch(groupCtx, neteaseCtx.cookies, batch)
+			ctx, span := otel.Start(groupCtx)
+			span.SetAttributes(attribute.Int("batchSize", normalizeBatchSize(batchSize)))
+			defer span.End()
+			rawItems, err := fetchMusicURLBatch(ctx, neteaseCtx.cookies, batch)
 			if err != nil {
 				return err
 			}

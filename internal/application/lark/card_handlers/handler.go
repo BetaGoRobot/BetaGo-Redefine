@@ -62,6 +62,12 @@ func GetCardMusicByPage(ctx context.Context, musicID, page int) larkmsg.RawCard 
 }
 
 func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDetailCardView {
+	return buildMusicDetailCardViewWithAudio(ctx, musicID, page, true)
+}
+
+// buildMusicDetailCardViewWithAudio builds the view and optionally uploads audio synchronously.
+// skipAudioUpload: true = skip audio upload (for fast initial display), false = upload audio inline (blocking).
+func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, skipAudioUpload bool) *MusicDetailCardView {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("musicID").Int(musicID))
 	defer span.End()
@@ -178,16 +184,19 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 	lyrics = strings.Join(newList, "\n")
 
 	audioFileKey := ""
-	audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
-	if err == nil {
-		fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songDetail.Name+".opus")
+	if !skipAudioUpload {
+		// Synchronous audio upload - blocking, only used when explicitly requested
+		audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
 		if err == nil {
-			audioFileKey = fileKey
+			fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songDetail.Name+".opus")
+			if err == nil {
+				audioFileKey = fileKey
+			} else {
+				logs.L().Ctx(ctx).Warn("convert+upload to opus failed", zap.Error(err))
+			}
 		} else {
-			logs.L().Ctx(ctx).Warn("convert+upload to opus failed", zap.Error(err))
+			logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))
 		}
-	} else {
-		logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))
 	}
 
 	subtitle := ""
@@ -221,9 +230,72 @@ func PatchMusicCard(ctx context.Context, musicID int, msgID string, page int) {
 	if view == nil {
 		return
 	}
+
+	// Patch card WITHOUT audio first (fast)
 	if err := patchMusicDetailCardContent(ctx, msgID, *view); err != nil {
 		logs.L().Ctx(ctx).Error("patch music detail card failed", zap.Error(err))
+		return
 	}
+
+	// Async upload audio and patch card with audio (slow, non-blocking)
+	go func() {
+		bgCtx := context.Background()
+		AsyncUploadAudioAndPatch(bgCtx, musicID, msgID, page, view.PlayerURL, view.Title)
+	}()
+}
+
+// AsyncUploadAudioAndPatch uploads audio and patches the card with audio element.
+// Call this in a goroutine after sending a card built with skipAudioUpload=true.
+func AsyncUploadAudioAndPatch(ctx context.Context, musicID int, msgID string, page int, playerURL string, songName string) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(
+		attribute.Key("msgID").String(msgID),
+		attribute.Key("musicID").Int(musicID),
+	)
+	defer span.End()
+
+	// Get fresh music URL (not the presigned JSON URL)
+	musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: get music URL failed", zap.Error(err))
+		return
+	}
+
+	if strings.TrimSpace(musicURL) == "" {
+		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: empty musicURL, skipping")
+		return
+	}
+
+	audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: get audio from url failed", zap.Error(err))
+		return
+	}
+
+	if len(audioData) == 0 {
+		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: audio data is empty, skipping")
+		return
+	}
+
+	fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songName+".opus")
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: convert+upload to opus failed", zap.Error(err))
+		return
+	}
+
+	// Rebuild view with audio and patch
+	view := buildMusicDetailCardViewWithAudio(ctx, musicID, page, true)
+	view.AudioFileKey = fileKey
+
+	if err := patchMusicDetailCardContent(ctx, msgID, *view); err != nil {
+		logs.L().Ctx(ctx).Error("AsyncUploadAudioAndPatch: patch card failed", zap.Error(err))
+		return
+	}
+
+	logs.L().Ctx(ctx).Info("AsyncUploadAudioAndPatch: card patched with audio",
+		zap.String("msgID", msgID),
+		zap.Int("musicID", musicID),
+		zap.String("audioKey", fileKey))
 }
 
 func patchMusicDetailCardContent(ctx context.Context, msgID string, view MusicDetailCardView) error {
