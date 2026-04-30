@@ -152,16 +152,11 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 	audioFileKey := ""
 	audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
 	if err == nil {
-		opusData, durationMs, err := larkimg.ConvertMp3ToOpus(ctx, audioData)
+		fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songDetail.Name+".opus")
 		if err == nil {
-			fileKey, err := larkimg.UploadAudio(ctx, bytes.NewReader(opusData), songDetail.Name+".opus", durationMs)
-			if err == nil {
-				audioFileKey = fileKey
-			} else {
-				logs.L().Ctx(ctx).Warn("upload audio failed", zap.Error(err))
-			}
+			audioFileKey = fileKey
 		} else {
-			logs.L().Ctx(ctx).Warn("convert to opus failed", zap.Error(err))
+			logs.L().Ctx(ctx).Warn("convert+upload to opus failed", zap.Error(err))
 		}
 	} else {
 		logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))

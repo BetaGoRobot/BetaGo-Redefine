@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
@@ -160,16 +159,9 @@ func sendMusicVoice(ctx context.Context, data *larkim.P2MessageReceiveV1, metaDa
 	}
 
 	// 转换为 opus 格式（飞书语音消息需要 opus）
-	opusData, durationMs, err := larkimg.ConvertMp3ToOpus(ctx, audioData)
+	fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, song.Name+".opus")
 	if err != nil {
-		logs.L().Ctx(ctx).Error("convert to opus failed", zap.Error(err))
-		return err
-	}
-
-	// 上传到 Lark
-	fileKey, err := larkimg.UploadAudio(ctx, bytes.NewReader(opusData), song.Name+".opus", durationMs)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("upload audio to lark failed", zap.Error(err))
+		logs.L().Ctx(ctx).Error("convert+upload to opus failed", zap.Error(err))
 		return err
 	}
 

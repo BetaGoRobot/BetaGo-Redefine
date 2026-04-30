@@ -625,15 +625,16 @@ func UploadAudio(ctx context.Context, audioReader io.Reader, fileName string, du
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
+	bodyBuilder := larkim.NewCreateFileReqBodyBuilder().
+		FileType("opus").
+		FileName(fileName).
+		File(audioReader)
+	if durationMs > 0 {
+		bodyBuilder = bodyBuilder.Duration(durationMs)
+	}
+
 	req := larkim.NewCreateFileReqBuilder().
-		Body(
-			larkim.NewCreateFileReqBodyBuilder().
-				FileType("opus").
-				FileName(fileName).
-				Duration(durationMs).
-				File(audioReader).
-				Build(),
-		).
+		Body(bodyBuilder.Build()).
 		Build()
 	resp, err := lark_dal.Client().Im.File.Create(ctx, req)
 	if err != nil {
@@ -682,70 +683,266 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, dur
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	// 创建临时文件
-	tmpDir := os.TempDir()
-	mp3File, err := os.CreateTemp(tmpDir, "betago_*.mp3")
+	// 先获取 mp3 时长（不落盘、不依赖 ffprobe；直接解析帧头）
+	durationMs, err = probeMp3DurationMs(mp3Data)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("create temp mp3 file failed", zap.Error(err))
-		return nil, 0, errors.New("创建临时文件失败")
-	}
-	defer os.Remove(mp3File.Name())
-	defer mp3File.Close()
-
-	opusFile, err := os.CreateTemp(tmpDir, "betago_*.opus")
-	if err != nil {
-		logs.L().Ctx(ctx).Error("create temp opus file failed", zap.Error(err))
-		return nil, 0, errors.New("创建临时文件失败")
-	}
-	defer os.Remove(opusFile.Name())
-	defer opusFile.Close()
-
-	// 写入 mp3 数据
-	if _, err := mp3File.Write(mp3Data); err != nil {
-		logs.L().Ctx(ctx).Error("write mp3 data failed", zap.Error(err))
-		return nil, 0, errors.New("写入 mp3 数据失败")
-	}
-	mp3File.Close()
-
-	// 先获取 mp3 时长
-	durationMs, err = getAudioDuration(mp3File.Name())
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("get mp3 duration failed, will probe opus", zap.Error(err))
+		logs.L().Ctx(ctx).Warn("probe mp3 duration failed", zap.Error(err))
+		durationMs = 0
 	}
 
-	// 执行 ffmpeg 转换
-	cmd := exec.Command("ffmpeg", "-y", "-i", mp3File.Name(), "-c:a", "libopus", "-b:a", "128k", opusFile.Name())
-	output, err := cmd.CombinedOutput()
+	// 执行 ffmpeg 转换：stdin 读 mp3，stdout 输出 Ogg Opus
+	cmd := exec.CommandContext(ctx,
+		ffmpegBin(),
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", "pipe:0",
+		"-c:a", "libopus",
+		"-b:a", "128k",
+		"-f", "opus",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(mp3Data)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	opusData, err = cmd.Output()
 	if err != nil {
-		logs.L().Ctx(ctx).Error("ffmpeg convert failed", zap.Error(err), zap.String("output", string(output)))
+		logs.L().Ctx(ctx).Error("ffmpeg convert failed", zap.Error(err), zap.String("stderr", stderr.String()))
 		return nil, 0, errors.New("ffmpeg 转换失败")
-	}
-
-	// 如果之前没获取到时长，尝试从 opus 获取
-	if durationMs == 0 {
-		durationMs, _ = getAudioDuration(opusFile.Name())
-	}
-
-	// 读取 opus 数据
-	opusData, err = os.ReadFile(opusFile.Name())
-	if err != nil {
-		logs.L().Ctx(ctx).Error("read opus file failed", zap.Error(err))
-		return nil, 0, errors.New("读取 opus 文件失败")
 	}
 
 	return opusData, durationMs, nil
 }
 
-// getAudioDuration 获取音频文件的时长（毫秒）
-func getAudioDuration(filePath string) (int, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
-	output, err := cmd.CombinedOutput()
+// ConvertMp3ToOpusAndUpload 将 mp3 直接流式转换为 Ogg Opus 并上传到 Lark
+//
+// 注意：该实现不落盘；ffmpeg 通过 stdout 直接产生 Ogg Opus 数据，UploadAudio 直接消费 reader。
+func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName string) (fileKey string, durationMs int, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	// 先 probe 出时长，供 UploadAudio 填充 duration（不填则无法展示具体时长）
+	durationMs, err = probeMp3DurationMs(mp3Data)
 	if err != nil {
-		return 0, err
+		logs.L().Ctx(ctx).Warn("probe mp3 duration failed, will upload without duration", zap.Error(err))
+		durationMs = 0
 	}
-	var duration float64
-	if _, err := fmt.Sscanf(string(output), "%f", &duration); err != nil {
-		return 0, err
+
+	cmdCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx,
+		ffmpegBin(),
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", "pipe:0",
+		"-c:a", "libopus",
+		"-b:a", "128k",
+		"-f", "opus",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(mp3Data)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("create ffmpeg stdout pipe failed", zap.Error(err))
+		return "", 0, errors.New("创建 ffmpeg 管道失败")
 	}
-	return int(duration * 1000), nil
+	defer stdout.Close()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		logs.L().Ctx(ctx).Error("start ffmpeg failed", zap.Error(err), zap.String("stderr", stderr.String()))
+		return "", 0, errors.New("启动 ffmpeg 失败")
+	}
+
+	fileKey, err = UploadAudio(ctx, stdout, fileName, durationMs)
+	if err != nil {
+		// 上传失败时主动取消 ffmpeg，避免 stdout 无人消费导致 ffmpeg 阻塞
+		cancel()
+		_ = cmd.Wait()
+		return "", durationMs, err
+	}
+
+	if err := cmd.Wait(); err != nil {
+		logs.L().Ctx(ctx).Error("ffmpeg exited with error", zap.Error(err), zap.String("stderr", stderr.String()))
+		return "", durationMs, errors.New("ffmpeg 转换失败")
+	}
+	return fileKey, durationMs, nil
+}
+
+// probeMp3DurationMs 解析 mp3 帧头统计时长（毫秒）。
+//
+// 说明：ffprobe 对非 seekable 输入（pipe）常返回 N/A；这里用纯内存解析规避该限制。
+func probeMp3DurationMs(mp3Data []byte) (int, error) {
+	off := 0
+	if len(mp3Data) >= 10 && string(mp3Data[:3]) == "ID3" {
+		sz := syncsafeInt(mp3Data[6:10])
+		off = 10 + sz
+		if off > len(mp3Data) {
+			off = 0
+		}
+	}
+
+	var (
+		sampleRate    int
+		totalSamples  int64
+		foundFirstFrm bool
+	)
+	for i := off; i+4 <= len(mp3Data); {
+		// sync word: 11 bits set
+		if mp3Data[i] != 0xFF || (mp3Data[i+1]&0xE0) != 0xE0 {
+			i++
+			continue
+		}
+
+		h := uint32(mp3Data[i])<<24 | uint32(mp3Data[i+1])<<16 | uint32(mp3Data[i+2])<<8 | uint32(mp3Data[i+3])
+		verID := (h >> 19) & 0x3
+		layerID := (h >> 17) & 0x3
+		bitrateIdx := (h >> 12) & 0xF
+		srIdx := (h >> 10) & 0x3
+		padding := int((h >> 9) & 0x1)
+
+		// 仅支持 Layer III；其它 layer 直接跳过
+		if layerID != 0x1 {
+			i++
+			continue
+		}
+
+		ver := mpegVersionFromID(verID)
+		if ver == mpegVersionInvalid {
+			i++
+			continue
+		}
+
+		sr := sampleRateFrom(ver, srIdx)
+		if sr == 0 {
+			i++
+			continue
+		}
+		brKbps := bitrateKbpsFrom(ver, bitrateIdx)
+		if brKbps == 0 {
+			i++
+			continue
+		}
+
+		frameLen := frameLengthBytes(ver, brKbps, sr, padding)
+		if frameLen <= 0 {
+			i++
+			continue
+		}
+		if i+frameLen > len(mp3Data) {
+			break
+		}
+
+		if !foundFirstFrm {
+			foundFirstFrm = true
+			sampleRate = sr
+		} else if sampleRate != sr {
+			// 异常：采样率变化，仍按首帧采样率计算（避免返回 0）
+		}
+
+		totalSamples += int64(samplesPerFrame(ver))
+		i += frameLen
+	}
+
+	if !foundFirstFrm || sampleRate == 0 || totalSamples == 0 {
+		return 0, errors.New("invalid mp3 data")
+	}
+	return int(totalSamples * 1000 / int64(sampleRate)), nil
+}
+
+type mpegVersion int
+
+const (
+	mpegVersionInvalid mpegVersion = iota
+	mpegVersion25
+	mpegVersion2
+	mpegVersion1
+)
+
+func mpegVersionFromID(verID uint32) mpegVersion {
+	switch verID {
+	case 0:
+		return mpegVersion25
+	case 2:
+		return mpegVersion2
+	case 3:
+		return mpegVersion1
+	default:
+		return mpegVersionInvalid
+	}
+}
+
+func sampleRateFrom(ver mpegVersion, srIdx uint32) int {
+	if srIdx == 3 {
+		return 0
+	}
+	switch ver {
+	case mpegVersion1:
+		return []int{44100, 48000, 32000}[srIdx]
+	case mpegVersion2:
+		return []int{22050, 24000, 16000}[srIdx]
+	case mpegVersion25:
+		return []int{11025, 12000, 8000}[srIdx]
+	default:
+		return 0
+	}
+}
+
+func bitrateKbpsFrom(ver mpegVersion, bitrateIdx uint32) int {
+	if bitrateIdx == 0 || bitrateIdx == 15 {
+		return 0
+	}
+	// Layer III bitrate table
+	if ver == mpegVersion1 {
+		// MPEG1 Layer III
+		return []int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0}[bitrateIdx]
+	}
+	// MPEG2/2.5 Layer III
+	return []int{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0}[bitrateIdx]
+}
+
+func frameLengthBytes(ver mpegVersion, bitrateKbps, sampleRate, padding int) int {
+	if bitrateKbps <= 0 || sampleRate <= 0 {
+		return 0
+	}
+	if ver == mpegVersion1 {
+		// 144 * (bitrate/8) / sampleRate  => 144000 * kbps / sampleRate
+		return (144000*bitrateKbps)/sampleRate + padding
+	}
+	// MPEG2/2.5 Layer III
+	return (72000*bitrateKbps)/sampleRate + padding
+}
+
+func samplesPerFrame(ver mpegVersion) int {
+	if ver == mpegVersion1 {
+		return 1152
+	}
+	return 576
+}
+
+func syncsafeInt(b []byte) int {
+	// ID3v2 syncsafe integer (4 bytes, 7 bits each)
+	if len(b) < 4 {
+		return 0
+	}
+	return int(b[0]&0x7F)<<21 | int(b[1]&0x7F)<<14 | int(b[2]&0x7F)<<7 | int(b[3]&0x7F)
+}
+
+func ffmpegBin() string {
+	return resolveBin("/usr/bin/ffmpeg", "ffmpeg")
+}
+
+func resolveBin(preferredPath, name string) string {
+	if preferredPath != "" {
+		if _, err := os.Stat(preferredPath); err == nil {
+			return preferredPath
+		}
+	}
+	if p, err := exec.LookPath(name); err == nil && p != "" {
+		return p
+	}
+	// 兜底：让 exec 自己按 PATH 解析（或直接失败并返回 stderr）
+	return name
 }
