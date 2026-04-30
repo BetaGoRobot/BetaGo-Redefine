@@ -296,7 +296,7 @@ type SearchLyrics struct {
 }
 
 type MusicDetail struct {
-	Songs      []*MusicDetailSong `json:"songs"`
+	Songs      []MusicDetailSong `json:"songs"`
 	Privileges []struct {
 		ID                 int         `json:"id"`
 		Fee                int         `json:"fee"`

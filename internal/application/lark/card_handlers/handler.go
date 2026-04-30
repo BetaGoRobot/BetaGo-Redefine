@@ -79,11 +79,11 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 		return musicURL, nil
 	})
 
-	songDetailFuture := xfuture.New(ctx, func(ctx context.Context) (*neteaseapi.MusicDetailSong, error) {
+	songDetailFuture := xfuture.New(ctx, func(ctx context.Context) (neteaseapi.MusicDetailSong, error) {
 		detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
 		if detail == nil || len(detail.Songs) == 0 {
 			logs.L().Ctx(ctx).Error("Failed to get music detail", zap.Int("music_id", musicID))
-			return nil, nil
+			return neteaseapi.MusicDetailSong{}, nil
 		}
 		return detail.Songs[0], nil
 	})
