@@ -296,84 +296,7 @@ type SearchLyrics struct {
 }
 
 type MusicDetail struct {
-	Songs []struct {
-		Name string `json:"name"`
-		ID   int    `json:"id"`
-		Pst  int    `json:"pst"`
-		T    int    `json:"t"`
-		Ar   []struct {
-			ID    int           `json:"id"`
-			Name  string        `json:"name"`
-			Tns   []interface{} `json:"tns"`
-			Alias []interface{} `json:"alias"`
-		} `json:"ar"`
-		Alia []interface{} `json:"alia"`
-		Pop  int           `json:"pop"`
-		St   int           `json:"st"`
-		Rt   string        `json:"rt"`
-		Fee  int           `json:"fee"`
-		V    int           `json:"v"`
-		Crbt interface{}   `json:"crbt"`
-		Cf   string        `json:"cf"`
-		Al   struct {
-			ID     int           `json:"id"`
-			Name   string        `json:"name"`
-			PicURL string        `json:"picUrl"`
-			Tns    []interface{} `json:"tns"`
-			PicStr string        `json:"pic_str"`
-			Pic    int64         `json:"pic"`
-		} `json:"al"`
-		Dt int `json:"dt"`
-		H  struct {
-			Br   int `json:"br"`
-			Fid  int `json:"fid"`
-			Size int `json:"size"`
-			Vd   int `json:"vd"`
-			Sr   int `json:"sr"`
-		} `json:"h"`
-		M struct {
-			Br   int `json:"br"`
-			Fid  int `json:"fid"`
-			Size int `json:"size"`
-			Vd   int `json:"vd"`
-			Sr   int `json:"sr"`
-		} `json:"m"`
-		L struct {
-			Br   int `json:"br"`
-			Fid  int `json:"fid"`
-			Size int `json:"size"`
-			Vd   int `json:"vd"`
-			Sr   int `json:"sr"`
-		} `json:"l"`
-		Sq                   interface{}   `json:"sq"`
-		Hr                   interface{}   `json:"hr"`
-		A                    interface{}   `json:"a"`
-		Cd                   string        `json:"cd"`
-		No                   int           `json:"no"`
-		RtURL                interface{}   `json:"rtUrl"`
-		Ftype                int           `json:"ftype"`
-		RtUrls               []interface{} `json:"rtUrls"`
-		DjID                 int           `json:"djId"`
-		Copyright            int           `json:"copyright"`
-		SID                  int           `json:"s_id"`
-		Mark                 int           `json:"mark"`
-		OriginCoverType      int           `json:"originCoverType"`
-		OriginSongSimpleData interface{}   `json:"originSongSimpleData"`
-		TagPicList           interface{}   `json:"tagPicList"`
-		ResourceState        bool          `json:"resourceState"`
-		Version              int           `json:"version"`
-		SongJumpInfo         interface{}   `json:"songJumpInfo"`
-		EntertainmentTags    interface{}   `json:"entertainmentTags"`
-		AwardTags            interface{}   `json:"awardTags"`
-		Single               int           `json:"single"`
-		NoCopyrightRcmd      interface{}   `json:"noCopyrightRcmd"`
-		Mv                   int           `json:"mv"`
-		Rtype                int           `json:"rtype"`
-		Rurl                 interface{}   `json:"rurl"`
-		Mst                  int           `json:"mst"`
-		Cp                   int           `json:"cp"`
-		PublishTime          int           `json:"publishTime"`
-	} `json:"songs"`
+	Songs      []*MusicDetailSong `json:"songs"`
 	Privileges []struct {
 		ID                 int         `json:"id"`
 		Fee                int         `json:"fee"`
@@ -415,6 +338,85 @@ type MusicDetail struct {
 		} `json:"chargeInfoList"`
 	} `json:"privileges"`
 	Code int `json:"code"`
+}
+
+type MusicDetailSong struct {
+	Name string `json:"name"`
+	ID   int    `json:"id"`
+	Pst  int    `json:"pst"`
+	T    int    `json:"t"`
+	Ar   []struct {
+		ID    int           `json:"id"`
+		Name  string        `json:"name"`
+		Tns   []interface{} `json:"tns"`
+		Alias []interface{} `json:"alias"`
+	} `json:"ar"`
+	Alia []interface{} `json:"alia"`
+	Pop  int           `json:"pop"`
+	St   int           `json:"st"`
+	Rt   string        `json:"rt"`
+	Fee  int           `json:"fee"`
+	V    int           `json:"v"`
+	Crbt interface{}   `json:"crbt"`
+	Cf   string        `json:"cf"`
+	Al   struct {
+		ID     int           `json:"id"`
+		Name   string        `json:"name"`
+		PicURL string        `json:"picUrl"`
+		Tns    []interface{} `json:"tns"`
+		PicStr string        `json:"pic_str"`
+		Pic    int64         `json:"pic"`
+	} `json:"al"`
+	Dt int `json:"dt"`
+	H  struct {
+		Br   int `json:"br"`
+		Fid  int `json:"fid"`
+		Size int `json:"size"`
+		Vd   int `json:"vd"`
+		Sr   int `json:"sr"`
+	} `json:"h"`
+	M struct {
+		Br   int `json:"br"`
+		Fid  int `json:"fid"`
+		Size int `json:"size"`
+		Vd   int `json:"vd"`
+		Sr   int `json:"sr"`
+	} `json:"m"`
+	L struct {
+		Br   int `json:"br"`
+		Fid  int `json:"fid"`
+		Size int `json:"size"`
+		Vd   int `json:"vd"`
+		Sr   int `json:"sr"`
+	} `json:"l"`
+	Sq                   interface{}   `json:"sq"`
+	Hr                   interface{}   `json:"hr"`
+	A                    interface{}   `json:"a"`
+	Cd                   string        `json:"cd"`
+	No                   int           `json:"no"`
+	RtURL                interface{}   `json:"rtUrl"`
+	Ftype                int           `json:"ftype"`
+	RtUrls               []interface{} `json:"rtUrls"`
+	DjID                 int           `json:"djId"`
+	Copyright            int           `json:"copyright"`
+	SID                  int           `json:"s_id"`
+	Mark                 int           `json:"mark"`
+	OriginCoverType      int           `json:"originCoverType"`
+	OriginSongSimpleData interface{}   `json:"originSongSimpleData"`
+	TagPicList           interface{}   `json:"tagPicList"`
+	ResourceState        bool          `json:"resourceState"`
+	Version              int           `json:"version"`
+	SongJumpInfo         interface{}   `json:"songJumpInfo"`
+	EntertainmentTags    interface{}   `json:"entertainmentTags"`
+	AwardTags            interface{}   `json:"awardTags"`
+	Single               int           `json:"single"`
+	NoCopyrightRcmd      interface{}   `json:"noCopyrightRcmd"`
+	Mv                   int           `json:"mv"`
+	Rtype                int           `json:"rtype"`
+	Rurl                 interface{}   `json:"rurl"`
+	Mst                  int           `json:"mst"`
+	Cp                   int           `json:"cp"`
+	PublishTime          int           `json:"publishTime"`
 }
 
 // NetEaseAPIBaseURL 网易云API基础URL

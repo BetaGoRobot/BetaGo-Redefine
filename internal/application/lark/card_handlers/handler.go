@@ -23,6 +23,7 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xfuture"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/minio/minio-go/v7"
 
@@ -69,27 +70,40 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 		maxSingleLineLen = 48
 		maxPageSize      = 18
 	)
-	musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
-	if err != nil {
-		logs.L().Ctx(ctx).Error("Failed to get music URL", zap.Error(err))
-		return nil
-	}
+	musicURLFuture := xfuture.New(ctx, func(ctx context.Context) (string, error) {
+		musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
+		if err != nil {
+			logs.L().Ctx(ctx).Error("Failed to get music URL", zap.Error(err))
+			return "", err
+		}
+		return musicURL, nil
+	})
 
-	detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
-	if detail == nil || len(detail.Songs) == 0 {
-		logs.L().Ctx(ctx).Error("Failed to get music detail", zap.Int("music_id", musicID))
+	songDetailFuture := xfuture.New(ctx, func(ctx context.Context) (*neteaseapi.MusicDetailSong, error) {
+		detail := neteaseapi.NetEaseGCtx.GetDetail(ctx, musicID)
+		if detail == nil || len(detail.Songs) == 0 {
+			logs.L().Ctx(ctx).Error("Failed to get music detail", zap.Int("music_id", musicID))
+			return nil, nil
+		}
+		return detail.Songs[0], nil
+	})
+
+	lyricFuture := xfuture.New2(ctx, func(ctx context.Context) (string, string, error) {
+		lyrics, lyricsURL := neteaseapi.NetEaseGCtx.GetLyrics(ctx, musicID)
+		lyrics = utils.TrimLyrics(lyrics)
+		return lyrics, lyricsURL, nil
+	})
+
+	songDetail, err := songDetailFuture.WaitFirst()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to get picture URL", zap.Error(err))
 		return nil
 	}
-	songDetail := detail.Songs[0]
-	picURL := songDetail.Al.PicURL
-	imageKey, ossURL, err := larkimg.UploadPicAllinOne(ctx, picURL, musicID, true)
+	imageKey, ossURL, err := larkimg.UploadPicAllinOne(ctx, songDetail.Al.PicURL, musicID, true)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
 		return nil
 	}
-
-	lyrics, lyricsURL := neteaseapi.NetEaseGCtx.GetLyrics(ctx, musicID)
-	lyrics = utils.TrimLyrics(lyrics)
 
 	artistNameList := make([]map[string]string, 0)
 	for _, ar := range songDetail.Ar {
@@ -104,6 +118,20 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 		Album      string
 		Artist     []map[string]string
 		Duration   int
+	}
+
+	lyricRes, err := lyricFuture.WaitFirst()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to get lyrics", zap.Error(err))
+		return nil
+	}
+	lyrics := lyricRes.T
+	lyricsURL := lyricRes.K
+
+	musicURL, err := musicURLFuture.WaitFirst()
+	if err != nil {
+		logs.L().Ctx(ctx).Error("Failed to get music URL", zap.Error(err))
+		return nil
 	}
 
 	targetURL := &resultURL{
