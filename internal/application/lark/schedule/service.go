@@ -14,6 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/holiday"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	scheduleinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schedule"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -79,6 +80,8 @@ type CreateTaskRequest struct {
 	ToolArgs        string
 	NotifyOnError   bool
 	NotifyResult    bool
+	SkipWeekends    bool
+	SkipHolidays    bool
 }
 
 type UpdateTaskRequest struct {
@@ -92,6 +95,8 @@ type UpdateTaskRequest struct {
 	ToolArgs      *string
 	NotifyOnError *bool
 	NotifyResult  *bool
+	SkipWeekends  *bool
+	SkipHolidays  *bool
 }
 
 type ListTasksRequest struct {
@@ -197,6 +202,8 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 	task.SourceMessageID = strings.TrimSpace(req.SourceMessageID)
 	task.NotifyOnError = req.NotifyOnError
 	task.NotifyResult = req.NotifyResult
+	task.SkipWeekends = req.SkipWeekends
+	task.SkipHolidays = req.SkipHolidays
 	if task.ToolName == "send_message" {
 		task.NotifyResult = false
 	}
@@ -426,6 +433,14 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 		updates["notify_result"] = *req.NotifyResult
 		task.NotifyResult = *req.NotifyResult
 	}
+	if req.SkipWeekends != nil {
+		updates["skip_weekends"] = *req.SkipWeekends
+		task.SkipWeekends = *req.SkipWeekends
+	}
+	if req.SkipHolidays != nil {
+		updates["skip_holidays"] = *req.SkipHolidays
+		task.SkipHolidays = *req.SkipHolidays
+	}
 
 	// Recompute NextRunAt if time-related fields changed
 	if req.CronExpr != nil || req.Timezone != nil || req.RunAt != nil {
@@ -503,6 +518,38 @@ func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledT
 		if err != nil {
 			return false, err
 		}
+
+		// 检查是否需要跳过周末或节假日
+		skipWeekends := task.SkipWeekends
+		skipHolidays := task.SkipHolidays
+
+		if skipWeekends || skipHolidays {
+			// 检查下一个执行时间是否为工作日
+			isWorkday, err := holiday.IsWorkdayCheck(ctx, nextRunAt)
+			if err != nil {
+				// 降级处理：API不可用时仍然执行任务
+				logs.L().Warn("Failed to check workday, skip this check",
+					zap.Error(err),
+					zap.Time("next_run", nextRunAt),
+					zap.String("task_id", task.ID))
+			} else if !isWorkday {
+				// 如果不是工作日，获取下一个工作日
+				nextWorkday, err := holiday.GetNextWorkdayForSchedule(ctx, nextRunAt)
+				if err != nil {
+					logs.L().Error("Failed to get next workday",
+						zap.Error(err),
+						zap.Time("next_run", nextRunAt),
+						zap.String("task_id", task.ID))
+					return false, err
+				}
+				nextRunAt = nextWorkday
+				logs.L().Info("Skip non-workday, reschedule to next workday",
+					zap.Time("original_run", nextRunAt),
+					zap.Time("new_run", nextWorkday),
+					zap.String("task_id", task.ID))
+			}
+		}
+
 		updates["next_run_at"] = nextRunAt
 		task.NextRunAt = nextRunAt
 	}

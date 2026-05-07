@@ -110,7 +110,6 @@ func TestGetNextHoliday(t *testing.T) {
 		require.NotNil(t, info)
 		assert.NotEmpty(t, info.Holiday.Holiday.Name)
 		assert.NotEmpty(t, info.Holiday.Holiday.Date)
-		assert.GreaterOrEqual(t, info.Holiday.Days, 0)
 	})
 
 	t.Run("不指定日期查询下一个节假日", func(t *testing.T) {

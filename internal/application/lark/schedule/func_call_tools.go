@@ -30,6 +30,8 @@ type createScheduleArgs struct {
 	ToolArgs      json.RawMessage `json:"tool_args"`
 	NotifyOnError bool            `json:"notify_on_error"`
 	NotifyResult  bool            `json:"notify_result"`
+	SkipWeekends  bool            `json:"skip_weekends"`
+	SkipHolidays  bool            `json:"skip_holidays"`
 }
 
 type listSchedulesArgs struct {
@@ -89,6 +91,8 @@ type editScheduleArgs struct {
 	Message       *string `json:"message,omitempty"`
 	NotifyOnError *bool   `json:"notify_on_error,omitempty"`
 	NotifyResult  *bool   `json:"notify_result,omitempty"`
+	SkipWeekends  *bool   `json:"skip_weekends,omitempty"`
+	SkipHolidays  *bool   `json:"skip_holidays,omitempty"`
 	ChatScope     TaskChatScope `json:"chat_scope"`
 	ChatID        string        `json:"chat_id"`
 }
@@ -172,6 +176,8 @@ func (createScheduleHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("tool_args", &tools.Prop{Type: "object", Desc: "工具参数对象。使用 tool_name 时传入"}).
 			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否额外发一条错误通知"}).
 			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "工具返回文本结果时是否额外发送结果通知"}).
+			AddProp("skip_weekends", &tools.Prop{Type: "boolean", Desc: "是否跳过周末（周六日）"}).
+			AddProp("skip_holidays", &tools.Prop{Type: "boolean", Desc: "是否跳过法定节假日"}).
 			AddRequired("name").
 			AddRequired("type"),
 	)
@@ -201,6 +207,8 @@ func (createScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 		ToolArgs:        string(args.ToolArgs),
 		NotifyOnError:   args.NotifyOnError,
 		NotifyResult:    args.NotifyResult,
+		SkipWeekends:    args.SkipWeekends,
+		SkipHolidays:    args.SkipHolidays,
 	})
 	if err != nil {
 		return err
@@ -490,6 +498,8 @@ func (editScheduleHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("message", &tools.Prop{Type: "string", Desc: "新的消息内容"}).
 			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否通知"}).
 			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "执行结果是否通知"}).
+			AddProp("skip_weekends", &tools.Prop{Type: "boolean", Desc: "是否跳过周末（周六日）"}).
+			AddProp("skip_holidays", &tools.Prop{Type: "boolean", Desc: "是否跳过法定节假日"}).
 			AddRequired("id"),
 	)
 }
@@ -567,6 +577,12 @@ func buildEditNewValues(args editScheduleArgs, task *model.ScheduledTask) map[st
 	}
 	if args.NotifyResult != nil {
 		values[editFieldNotifyResult] = *args.NotifyResult
+	}
+	if args.SkipWeekends != nil {
+		values[editFieldSkipWeekends] = *args.SkipWeekends
+	}
+	if args.SkipHolidays != nil {
+		values[editFieldSkipHolidays] = *args.SkipHolidays
 	}
 
 	return values

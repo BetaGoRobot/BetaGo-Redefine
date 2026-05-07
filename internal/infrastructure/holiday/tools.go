@@ -136,10 +136,6 @@ func (queryDateInfoHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		if info.Holiday.Wage > 1 {
 			result += fmt.Sprintf("薪资倍数: %d倍\n", info.Holiday.Wage)
 		}
-
-		if info.Holiday.Reason != "" {
-			result += fmt.Sprintf("调休说明: %s\n", info.Holiday.Reason)
-		}
 	}
 
 	metaData.SetExtra(holidayToolResultKey, result)
@@ -188,18 +184,20 @@ func (queryNextHolidayHandler) Handle(ctx context.Context, data *larkim.P2Messag
 	result += fmt.Sprintf("节假日: %s\n", info.Holiday.Holiday.Name)
 	result += fmt.Sprintf("日期: %s\n", info.Holiday.Holiday.Date)
 
-	if info.Holiday.Days > 0 {
-		result += fmt.Sprintf("距离: %d 天\n", info.Holiday.Days)
-	} else if info.Holiday.Days == 0 {
-		result += fmt.Sprintf("就是今天！🎉\n")
+	// 计算距离天数
+	now := time.Now()
+	if holidayDate, err := time.Parse("2006-01-02", info.Holiday.Holiday.Date); err == nil {
+		days := int(holidayDate.Sub(now).Hours() / 24)
+		if days > 0 {
+			result += fmt.Sprintf("距离: %d 天\n", days)
+		} else if days == 0 {
+			result += fmt.Sprintf("就是今天！🎉\n")
+		}
 	}
 
 	if info.Workday != nil {
 		result += fmt.Sprintf("\n⚠️ 调休提醒\n")
 		result += fmt.Sprintf("调休日期: %s\n", info.Workday.Holiday.Date)
-		if info.Workday.Days > 0 {
-			result += fmt.Sprintf("距离调休: %d 天\n", info.Workday.Days)
-		}
 	}
 
 	metaData.SetExtra(holidayToolResultKey, result)
