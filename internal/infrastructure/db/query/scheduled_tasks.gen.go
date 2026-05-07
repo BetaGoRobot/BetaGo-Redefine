@@ -48,6 +48,8 @@ func newScheduledTask(db *gorm.DB, opts ...gen.DOOption) scheduledTask {
 	_scheduledTask.AppID = field.NewString(tableName, "app_id")
 	_scheduledTask.BotOpenID = field.NewString(tableName, "bot_open_id")
 	_scheduledTask.SourceMessageID = field.NewString(tableName, "source_message_id")
+	_scheduledTask.SkipWeekends = field.NewBool(tableName, "skip_weekends")
+	_scheduledTask.SkipHolidays = field.NewBool(tableName, "skip_holidays")
 
 	_scheduledTask.fillFieldMap()
 
@@ -81,6 +83,8 @@ type scheduledTask struct {
 	AppID           field.String // 创建该调度任务的飞书应用 AppID
 	BotOpenID       field.String // 创建该调度任务的机器人 OpenID
 	SourceMessageID field.String // 创建/触发该任务的来源消息 ID
+	SkipWeekends    field.Bool   // 是否跳过周末（周六日）
+	SkipHolidays    field.Bool   // 是否跳过法定节假日
 
 	fieldMap map[string]field.Expr
 }
@@ -120,6 +124,8 @@ func (s *scheduledTask) updateTableName(table string) *scheduledTask {
 	s.AppID = field.NewString(table, "app_id")
 	s.BotOpenID = field.NewString(table, "bot_open_id")
 	s.SourceMessageID = field.NewString(table, "source_message_id")
+	s.SkipWeekends = field.NewBool(table, "skip_weekends")
+	s.SkipHolidays = field.NewBool(table, "skip_holidays")
 
 	s.fillFieldMap()
 
@@ -148,7 +154,7 @@ func (s *scheduledTask) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (s *scheduledTask) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 23)
+	s.fieldMap = make(map[string]field.Expr, 25)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["name"] = s.Name
 	s.fieldMap["type"] = s.Type
@@ -172,6 +178,8 @@ func (s *scheduledTask) fillFieldMap() {
 	s.fieldMap["app_id"] = s.AppID
 	s.fieldMap["bot_open_id"] = s.BotOpenID
 	s.fieldMap["source_message_id"] = s.SourceMessageID
+	s.fieldMap["skip_weekends"] = s.SkipWeekends
+	s.fieldMap["skip_holidays"] = s.SkipHolidays
 }
 
 func (s scheduledTask) clone(db *gorm.DB) scheduledTask {

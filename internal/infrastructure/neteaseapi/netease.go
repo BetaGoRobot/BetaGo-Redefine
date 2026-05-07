@@ -97,6 +97,8 @@ func musicURLConcurrencyFor(batchCount int) int {
 }
 
 func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []int) ([]*musicData, error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
 	if len(musicIDs) == 0 {
 		return nil, nil
 	}

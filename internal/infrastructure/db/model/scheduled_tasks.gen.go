@@ -35,6 +35,8 @@ type ScheduledTask struct {
 	AppID           string     `gorm:"column:app_id;not null;comment:创建该调度任务的飞书应用 AppID" json:"app_id"`                     // 创建该调度任务的飞书应用 AppID
 	BotOpenID       string     `gorm:"column:bot_open_id;not null;comment:创建该调度任务的机器人 OpenID" json:"bot_open_id"`           // 创建该调度任务的机器人 OpenID
 	SourceMessageID string     `gorm:"column:source_message_id;not null;comment:创建/触发该任务的来源消息 ID" json:"source_message_id"` // 创建/触发该任务的来源消息 ID
+	SkipWeekends    bool       `gorm:"column:skip_weekends;not null;comment:是否跳过周末（周六日）" json:"skip_weekends"`              // 是否跳过周末（周六日）
+	SkipHolidays    bool       `gorm:"column:skip_holidays;not null;comment:是否跳过法定节假日" json:"skip_holidays"`                // 是否跳过法定节假日
 }
 
 // TableName ScheduledTask's table name
