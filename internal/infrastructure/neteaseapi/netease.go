@@ -123,7 +123,7 @@ func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []
 	return music.Data, nil
 }
 
-var commonMusicExtensions = []string{".mp3", ".flac", ".m4a", ".wav", ".ogg", ".aac"}
+var commonMusicExtensions = []string{".mp3", ".flac"}
 
 func musicObjectKey(musicID int, rawURL string) string {
 	ext := filepath.Ext(rawURL)
