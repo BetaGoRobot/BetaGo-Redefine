@@ -25,6 +25,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
 	"github.com/bytedance/sonic"
 	"github.com/dlclark/regexp2"
+	"github.com/kevinmatthe/kinetic"
 	"github.com/minio/minio-go/v7"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -531,6 +532,9 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 }
 
 func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) (result []*SearchMusicItem, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	songIDs := make([]int, 0, len(searchRes.Result.Songs))
 	for idx := range searchRes.Result.Songs {
 		if searchRes.Result.Songs[idx].ID == 0 {
@@ -778,29 +782,21 @@ type uploadedPic struct {
 func asyncUploadPics(ctx context.Context, musicInfos SearchMusic) map[int]string {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
-	var (
-		c   = make(chan uploadedPic, len(musicInfos.Result.Songs))
-		wg  = &sync.WaitGroup{}
-		m   = make(map[int]string, len(musicInfos.Result.Songs))
-		sem = make(chan struct{}, defaultPictureConcurrency)
-	)
-	go func(ctx context.Context) {
-		defer close(c)
-		defer wg.Wait()
-
-		for _, m := range musicInfos.Result.Songs {
-			if m.ID == 0 || strings.TrimSpace(m.Al.PicURL) == "" {
-				continue
-			}
-			wg.Add(1)
-			go func(song Song) {
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				uploadPicWorker(ctx, wg, song.Al.PicURL, song.ID, c)
-			}(m)
-		}
-	}(ctx)
-	for res := range c {
+	m := make(map[int]string, len(musicInfos.Result.Songs))
+	p := kinetic.NewResultPool[uploadedPic](len(musicInfos.Result.Songs))
+	for _, m := range musicInfos.Result.Songs {
+		p.Go(
+			func() uploadedPic {
+				imgKey, _, err := larkimg.UploadPicAllinOne(ctx, m.Al.PicURL, m.ID, true)
+				if err != nil {
+					logs.L().Ctx(ctx).Warn("upload pic to lark error", zap.Error(err))
+				}
+				return uploadedPic{imageKey: imgKey, musicID: m.ID}
+			},
+		)
+	}
+	results := p.Wait()
+	for _, res := range results {
 		m[res.musicID] = res.imageKey
 	}
 	return m

@@ -250,6 +250,8 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/jtolds/gls v4.20.0+incompatible h1:xdiiI2gbIgH/gLH7ADydsJ1uDOEzR8yvV7C0MuV77Wo=
 github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
+github.com/kevinmatthe/kinetic v0.0.0-20260508084110-85d655c5082e h1:hChn89zuAyrpPaNjT2PlqmICcQ7ifmudqGKs9NjkhN4=
+github.com/kevinmatthe/kinetic v0.0.0-20260508084110-85d655c5082e/go.mod h1:dP4v9bwS29tFrnZ3RNzh+231k3no9zyTS6/zCC3g9xI=
 github.com/kevinmatthe/zaplog v0.1.6 h1:cyR7DsDJpPsjiNvC62bpQ60yVxhnoNhcEjx0bWnIQl4=
 github.com/kevinmatthe/zaplog v0.1.6/go.mod h1:FbqhP1gER743qvaiZ3xq4hAZxukoS7UyLOOvc49YIWw=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
