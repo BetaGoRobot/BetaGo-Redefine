@@ -251,13 +251,24 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 	// Check cache first, similar to AsyncGetSearchRes
 	musicIDURL := make(map[int]string, len(ids))
 	missingIDs := make([]int, 0, len(ids))
+	lock := sync.Mutex{}
 
+	p := kinetic.NewContextPool(ctx, len(ids))
 	for _, id := range ids {
-		if u := tryGetMusicURLFromMinio(ctx, id); u != "" {
-			musicIDURL[id] = u
-		} else {
-			missingIDs = append(missingIDs, id)
-		}
+		p.Go(func(ctx context.Context) error {
+			url := tryGetMusicURLFromMinio(ctx, id)
+			lock.Lock()
+			defer lock.Unlock()
+			if url != "" {
+				musicIDURL[id] = url
+			} else {
+				missingIDs = append(missingIDs, id)
+			}
+			return nil
+		})
+	}
+	if err := p.Wait(); err != nil {
+		return nil, err
 	}
 
 	if len(missingIDs) == 0 {
