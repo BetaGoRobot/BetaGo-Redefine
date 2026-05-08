@@ -32,7 +32,7 @@ RUN cd cmd/larkrobot && \
     go build -o /app/larkrobot
 
 
-FROM kevinmatt/libvips AS runner
+FROM kevinmatt/deps AS runner
 
 COPY --from=builder /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.7/deps/cppjieba/dict /go/pkg/mod/github.com/yanyiwu/gojieba@v1.4.7/deps/cppjieba/dict
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -42,7 +42,5 @@ COPY --from=builder /app/larkrobot /larkrobot
 # COPY --from=builder /app/assets/images /data/images
 
 WORKDIR /
-
-RUN apk update && apk add ffmpeg
 
 CMD ["./larkrobot"]
