@@ -3,6 +3,7 @@ package xhandler
 import (
 	"fmt"
 	stdlog "log"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
@@ -20,12 +21,13 @@ func init() {
 	metrics.ExposeMetadata(true)
 }
 
-// truncateLabel 截断标签值，防止高基数标签爆炸
+// truncateLabel 截断标签值，防止高基数标签爆炸，按 rune 截断避免切烂 UTF-8
 func truncateLabel(v string) string {
-	if len(v) <= labelMaxLen {
-		return v
+	runes := []rune(v)
+	if len(runes) <= labelMaxLen {
+		return strings.ToValidUTF8(v, "�")
 	}
-	return v[:labelMaxLen] + "..."
+	return strings.ToValidUTF8(string(runes[:labelMaxLen]), "�") + "..."
 }
 
 // InitMetrics enables VictoriaMetrics push mode. If pushURL is empty, metrics

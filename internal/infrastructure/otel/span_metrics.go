@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	stdlog "log"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -46,12 +47,18 @@ func initSpanMetrics() {
 	}
 }
 
-// truncateLabel 截断标签值，防止高基数标签爆炸
+// truncateLabel 截断标签值，防止高基数标签爆炸，按 rune 截断避免切烂 UTF-8
 func truncateLabel(v string) string {
-	if len(v) <= labelMaxLen {
-		return v
+	runes := []rune(v)
+	if len(runes) <= labelMaxLen {
+		return sanitizeUTF8(v)
 	}
-	return v[:labelMaxLen] + "..."
+	return sanitizeUTF8(string(runes[:labelMaxLen])) + "..."
+}
+
+// sanitizeUTF8 移除无效 UTF-8 字节，防止 gRPC 序列化失败
+func sanitizeUTF8(s string) string {
+	return strings.ToValidUTF8(s, "�")
 }
 
 // spanMetricsProcessor 是一个 SpanProcessor，在 span 结束时
