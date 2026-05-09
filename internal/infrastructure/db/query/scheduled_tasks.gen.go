@@ -82,7 +82,6 @@ type scheduledTask struct {
 	AppID           field.String // 创建该调度任务的飞书应用 AppID
 	BotOpenID       field.String // 创建该调度任务的机器人 OpenID
 	SourceMessageID field.String // 创建/触发该任务的来源消息 ID
-	SkipWeekends    field.Bool   // 是否跳过周末（周六日）
 	SkipHolidays    field.Bool   // 是否跳过法定节假日
 
 	fieldMap map[string]field.Expr
@@ -152,7 +151,7 @@ func (s *scheduledTask) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (s *scheduledTask) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 25)
+	s.fieldMap = make(map[string]field.Expr, 24)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["name"] = s.Name
 	s.fieldMap["type"] = s.Type
