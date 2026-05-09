@@ -3,16 +3,31 @@ package xhandler
 import (
 	"fmt"
 	stdlog "log"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/VictoriaMetrics/metrics"
 )
 
+const (
+	// labelMaxLen 标签值最大长度，超长截断防标签爆炸
+	labelMaxLen = 64
+)
+
 var metricsEnabled bool
 
 func init() {
 	metrics.ExposeMetadata(true)
+}
+
+// truncateLabel 截断标签值，防止高基数标签爆炸，按 rune 截断避免切烂 UTF-8
+func truncateLabel(v string) string {
+	runes := []rune(v)
+	if len(runes) <= labelMaxLen {
+		return strings.ToValidUTF8(v, "�")
+	}
+	return strings.ToValidUTF8(string(runes[:labelMaxLen]), "�") + "..."
 }
 
 // InitMetrics enables VictoriaMetrics push mode. If pushURL is empty, metrics
@@ -33,8 +48,9 @@ func InitMetrics(pushURL string, pushInterval time.Duration, instance string) {
 	metricsEnabled = true
 }
 
-// RecordStageExecution records metrics for a single stage execution.
-// If InitMetrics was not called (or called with empty pushURL), this is a no-op.
+// RecordStageExecution records metrics for a single stage execution via VM push.
+// OTel metrics are handled automatically by the spanMetricsProcessor SpanProcessor,
+// which extracts span attributes and records them as OTel metrics.
 func RecordStageExecution(stageName, chatName string, skipped bool, profile botidentity.Profile, startTime time.Time) {
 	if !metricsEnabled {
 		return
@@ -44,9 +60,11 @@ func RecordStageExecution(stageName, chatName string, skipped bool, profile boti
 	if skipped {
 		skippedStr = "true"
 	}
-	counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
+	chatName = truncateLabel(chatName)
+
+	counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, truncateLabel(profile.BotName))
 	metrics.GetOrCreateCounter(counterName).Inc()
 
-	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
+	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, truncateLabel(profile.BotName))
 	metrics.GetOrCreatePrometheusHistogram(histogramName).UpdateDuration(startTime)
 }
