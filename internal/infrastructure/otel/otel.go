@@ -14,8 +14,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/metric"
 	log2 "go.opentelemetry.io/otel/sdk/log"
+	metricsdk "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
@@ -26,8 +29,10 @@ import (
 func init() {
 	tracerProvider = noop.NewTracerProvider()
 	loggerProvider = log2.NewLoggerProvider()
+	meterProvider = metricsdk.NewMeterProvider()
 	OtelTracer = tracerProvider.Tracer("betago")
 	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
 }
 
 const (
@@ -39,6 +44,7 @@ const (
 var (
 	tracerProvider trace.TracerProvider
 	loggerProvider *log2.LoggerProvider
+	meterProvider  *metricsdk.MeterProvider
 )
 
 func OtelProvider() trace.TracerProvider {
@@ -47,6 +53,10 @@ func OtelProvider() trace.TracerProvider {
 
 func LoggerProvider() *log2.LoggerProvider {
 	return loggerProvider
+}
+
+func MeterProvider() metric.MeterProvider {
+	return meterProvider
 }
 
 func T() trace.Tracer {
@@ -131,11 +141,18 @@ func Init(config *config.OtelConfig) {
 		setNoop("log exporter init failed: " + err.Error())
 		return
 	}
+	mp, err := newMeterProvider(config)
+	if err != nil {
+		setNoop("metric exporter init failed: " + err.Error())
+		return
+	}
 
 	tracerProvider = tp
 	loggerProvider = lp
+	meterProvider = mp
 	OtelTracer = tracerProvider.Tracer(config.TracerName)
 	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
 }
 
 // BetaGoOtelTracer a
@@ -146,8 +163,10 @@ var (
 func setNoop(reason string) {
 	tracerProvider = noop.NewTracerProvider()
 	loggerProvider = log2.NewLoggerProvider()
+	meterProvider = metricsdk.NewMeterProvider()
 	OtelTracer = tracerProvider.Tracer("betago")
 	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
 	stdlog.Printf("[WARN] otel disabled, falling back to noop: %s", reason)
 }
 
@@ -194,5 +213,19 @@ func newLoggerProvider(config *config.OtelConfig) (*log2.LoggerProvider, error) 
 	return log2.NewLoggerProvider(
 		log2.WithResource(newResource(config)),
 		log2.WithProcessor(processor),
+	), nil
+}
+
+func newMeterProvider(config *config.OtelConfig) (*metricsdk.MeterProvider, error) {
+	ctx := context.Background()
+	exporter, err := otlpmetricgrpc.New(
+		ctx, otlpmetricgrpc.WithEndpoint(config.CollectorEndpoint), otlpmetricgrpc.WithInsecure(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return metricsdk.NewMeterProvider(
+		metricsdk.WithResource(newResource(config)),
+		metricsdk.WithReader(metricsdk.NewPeriodicReader(exporter)),
 	), nil
 }
