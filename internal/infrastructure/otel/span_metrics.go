@@ -13,8 +13,8 @@ const (
 	// labelMaxLen 标签值最大长度，超长截断防高基数标签爆炸
 	labelMaxLen = 64
 
-	metricSpanDurationName = "betago_span_duration_seconds"
-	metricSpanCountName    = "betago_span_total"
+	metricSpanDurationName = "span_duration_seconds"
+	metricSpanCountName    = "span_total"
 )
 
 var (
