@@ -310,7 +310,8 @@ func (queryYearHolidaysHandler) Handle(ctx context.Context, data *larkim.P2Messa
 	result := fmt.Sprintf("📅 %s年节假日安排\n\n", year)
 
 	count := 0
-	for date, holiday := range info.Holiday {
+	holidaySorted := utils.SortMapToSlice(info.Holiday)
+	for date, holiday := range holidaySorted {
 		if holiday.Holiday {
 			count++
 			result += fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, date)
