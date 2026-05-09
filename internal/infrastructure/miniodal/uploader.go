@@ -76,6 +76,9 @@ func (d *Uploader) SkipDedup(dedup bool) *Uploader {
 }
 
 func FileExists(ctx context.Context, bucketName, objName string) (found bool, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	client := internalCli()
 	if client == nil {
 		return false, nil
