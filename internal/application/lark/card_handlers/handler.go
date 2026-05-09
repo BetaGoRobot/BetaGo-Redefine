@@ -154,7 +154,7 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		WithContentType(xmodel.ContentTypePlainText.String()).
 		SkipDedup(false).
 		WithReader(io.NopCloser(bytes.NewReader(utils.MustMarshal(targetURL)))).
-		Do("cloudmusic", "info/"+strconv.Itoa(musicID)+".json", minio.PutObjectOptions{}).PreSignURL()
+		Do("cloudmusic", "info/"+strconv.Itoa(musicID)+".json", minio.PutObjectOptions{}).PreSignURL(ctx)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to upload to minio", zap.Error(err))
 		return nil

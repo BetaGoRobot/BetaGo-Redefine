@@ -136,7 +136,7 @@ func DownImgFromMsgAsync(ctx context.Context, msgID, fileType, fileKey string) (
 			logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", fileKey), zap.String("file_type", fileType))
 			return
 		}
-		u, preSignErr := res.PreSignURL()
+		u, preSignErr := res.PreSignURL(ctx)
 		if preSignErr != nil {
 			logs.L().Ctx(ctx).Warn("get presign url error", zap.Error(preSignErr))
 			return
@@ -460,7 +460,7 @@ func UploadPicAllinOne(ctx context.Context, imageURL string, musicIDInt int, upl
 				logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", "picture/"+musicID+filepath.Ext(imageURL)), zap.String("file_type", ContentTypeImgJPEG.String()))
 				return
 			}
-			u, err := res.PreSignURL()
+			u, err := res.PreSignURL(ctx)
 			if err != nil {
 				logs.L().Ctx(ctx).Error("get presign url error", zap.Error(err))
 			}

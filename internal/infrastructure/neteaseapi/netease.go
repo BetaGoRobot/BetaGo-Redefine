@@ -29,7 +29,6 @@ import (
 	"github.com/minio/minio-go/v7"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 type CommentType string
@@ -39,8 +38,8 @@ const (
 	CommentTypeAlbum CommentType = "3"
 
 	defaultMusicURLBatchSize   = 1
-	defaultMusicURLConcurrency = 4
-	defaultPictureConcurrency  = 4
+	defaultMusicURLConcurrency = 10
+	defaultPictureConcurrency  = 10
 )
 
 var warnOnce sync.Once
@@ -162,7 +161,7 @@ func ensureMusicPresignedURL(ctx context.Context, item *musicData) (string, erro
 		WithContentType(xmodel.ContentTypeAudio.String()).
 		WithURL(item.URL).
 		Do(cacheBucket, objKey, minio.PutObjectOptions{}).
-		PreSignURL()
+		PreSignURL(ctx)
 }
 
 func Init() {
@@ -261,12 +260,12 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 		p.Go(func(ctx context.Context) error {
 			url := tryGetMusicURLFromMinio(ctx, id)
 			mu.Lock()
-			defer mu.Unlock()
 			if url != "" {
 				musicIDURL[id] = url
 			} else {
 				missingIDs = append(missingIDs, id)
 			}
+			mu.Unlock()
 			return nil
 		})
 	}
@@ -278,44 +277,46 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 		return musicIDURL, nil
 	}
 
-	batches := utils.Chunk(missingIDs, normalizeBatchSize(batchSize))
-	
+	batches := utils.Chunk(musicIDs, normalizeBatchSize(batchSize))
 
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(musicURLConcurrencyFor(len(batches)))
+	fetchPool := kinetic.NewContextPool(ctx, musicURLConcurrencyFor(len(batches)))
 	for _, batch := range batches {
-		group.Go(func() error {
-			ctx, span := otel.Start(groupCtx)
-			span.SetAttributes(attribute.Int("batchSize", normalizeBatchSize(batchSize)))
-			defer span.End()
-			rawItems, err := fetchMusicURLBatch(ctx, neteaseCtx.cookies, batch)
-			if err != nil {
-				return err
-			}
-			localResults := make(map[int]string, len(rawItems))
-			for _, item := range rawItems {
-				if item == nil || item.ID == 0 {
-					continue
-				}
-				signedURL, err := ensureMusicPresignedURL(groupCtx, item)
+		fetchPool.Go(
+			func(ctx context.Context) error {
+				subCtx, span := otel.Start(ctx)
+				span.SetAttributes(attribute.Int("batchSize", normalizeBatchSize(batchSize)))
+				defer span.End()
+
+				rawItems, err := fetchMusicURLBatch(subCtx, neteaseCtx.cookies, batch)
 				if err != nil {
 					return err
 				}
-				if signedURL == "" {
-					continue
-				}
-				localResults[item.ID] = signedURL
-			}
 
-			mu.Lock()
-			for musicID, signedURL := range localResults {
-				musicIDURL[musicID] = signedURL
-			}
-			mu.Unlock()
-			return nil
-		})
+				localResults := make(map[int]string, len(rawItems))
+				for _, item := range rawItems { // TODO: 这个循环改成并行..
+					if item == nil || item.ID == 0 {
+						continue
+					}
+					signedURL, err := ensureMusicPresignedURL(subCtx, item)
+					if err != nil {
+						return err
+					}
+					if signedURL == "" {
+						continue
+					}
+					localResults[item.ID] = signedURL
+				}
+
+				mu.Lock()
+				for musicID, signedURL := range localResults {
+					musicIDURL[musicID] = signedURL
+				}
+				mu.Unlock()
+				return nil
+			},
+		)
 	}
-	if err := group.Wait(); err != nil {
+	if err := fetchPool.Wait(); err != nil {
 		return nil, err
 	}
 	return musicIDURL, nil
@@ -482,7 +483,7 @@ func (neteaseCtx *NetEaseContext) GetLyrics(ctx context.Context, songID int) (ly
 	lyricsURL, err = miniodal.New(miniodal.Internal).Upload(ctx).
 		WithContentType(xmodel.ContentTypePlainText.String()).
 		WithData([]byte(body)).
-		Do(cacheBucket, "lyrics/"+songIDString(songID)+".json", minio.PutObjectOptions{}).PreSignURL()
+		Do(cacheBucket, "lyrics/"+songIDString(songID)+".json", minio.PutObjectOptions{}).PreSignURL(ctx)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("[PreUploadMusic] Get minio url failed...", zap.Error(err))
 	}
@@ -556,30 +557,34 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 		}
 		songIDs = append(songIDs, searchRes.Result.Songs[idx].ID)
 	}
-
 	urlByID := make(map[int]string, len(songIDs))
-	missingIDs := make([]int, 0, len(songIDs))
 
-	for _, id := range songIDs {
-		if u := tryGetMusicURLFromMinio(ctx, id); u != "" {
-			urlByID[id] = u
-		} else {
-			missingIDs = append(missingIDs, id)
-		}
+	urlFuture := kinetic.Go(
+		func() (map[int]string, error) {
+			return neteaseCtx.GetMusicURLByIDs(ctx, songIDs...)
+		},
+		kinetic.WithContext(ctx),
+	)
+
+	imageFuture := kinetic.Go(
+		func() (map[int]string, error) {
+			return asyncUploadPics(ctx, searchRes), nil
+		},
+		kinetic.WithContext(ctx),
+	)
+	fetched, err := urlFuture.Get()
+	if err != nil {
+		return nil, err
 	}
 
-	if len(missingIDs) > 0 {
-		fetched, err := neteaseCtx.GetMusicURLByIDs(ctx, missingIDs...)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range fetched {
-			urlByID[k] = v
-		}
+	for k, v := range fetched {
+		urlByID[k] = v
+	}
+	imageKeyByID, err := imageFuture.Get()
+	if err != nil {
+		return nil, err
 	}
 
-	imageKeyByID := asyncUploadPics(ctx, searchRes)
-	result = make([]*SearchMusicItem, 0, len(searchRes.Result.Songs))
 	for idx := range searchRes.Result.Songs {
 		song := &searchRes.Result.Songs[idx]
 		if song.ID == 0 {
@@ -594,6 +599,7 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 			SongURL:    urlByID[song.ID],
 		})
 	}
+
 	return result, nil
 }
 

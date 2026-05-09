@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/shorter"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kevinmatthe/zaplog"
 	"github.com/minio/minio-go/v7"
@@ -20,7 +21,7 @@ type Uploader struct {
 	*Dal
 	info        minio.UploadInfo
 	skipDup     bool // 是否跳过重复文件的上传
-	innerData   []byte
+	innerData   bytes.Buffer
 	contentType string
 }
 
@@ -33,11 +34,7 @@ type UploaderX[T any] struct {
 type UploaderReader UploaderX[io.ReadCloser]
 
 func (d *Uploader) WithReader(r io.ReadCloser) *UploaderReader {
-	// 先给读完
-	innerData, _ := io.ReadAll(r)
-	d.innerData = innerData
-	newReader := io.NopCloser(bytes.NewReader(d.innerData))
-	return &UploaderReader{Uploader: d, r: newReader}
+	return &UploaderReader{Uploader: d, r: io.NopCloser(io.TeeReader(r, &d.innerData))}
 }
 
 func (d *Uploader) WithURL(url string) *UploaderReader {
@@ -46,15 +43,11 @@ func (d *Uploader) WithURL(url string) *UploaderReader {
 	if err != nil {
 		logs.L().Ctx(d).Error("Get file failed", zaplog.Error(err))
 	}
-	innerData, _ := io.ReadAll(resp.RawResponse.Body)
-	d.innerData = innerData
-	newReader := io.NopCloser(bytes.NewReader(d.innerData))
-	return &UploaderReader{Uploader: d, r: newReader}
+	return &UploaderReader{Uploader: d, r: io.NopCloser(io.TeeReader(resp.RawResponse.Body, &d.innerData))}
 }
 
 func (d *Uploader) WithData(data []byte) *UploaderReader {
-	d.innerData = data
-	return &UploaderReader{Uploader: d, r: io.NopCloser(bytes.NewReader(d.innerData))}
+	return &UploaderReader{Uploader: d, r: io.NopCloser(io.TeeReader(bytes.NewReader(data), &d.innerData))}
 }
 
 func (d *Uploader) WithContentType(typ string) *Uploader {
@@ -63,7 +56,7 @@ func (d *Uploader) WithContentType(typ string) *Uploader {
 }
 
 func (d *Uploader) Data() []byte {
-	return d.innerData
+	return d.innerData.Bytes()
 }
 
 func (d *Uploader) ContentType() string {
@@ -157,6 +150,10 @@ func PresignGetObjectShortURL(ctx context.Context, bucketName, objName string, e
 }
 
 func (d *UploaderReader) Do(bucketName, objName string, opts minio.PutObjectOptions) *Res[*UploaderReader] {
+	var span trace.Span
+	d.Context, span = otel.Start(d.Context)
+	defer span.End()
+
 	defer d.r.Close()
 	client := internalCli()
 	if client == nil {

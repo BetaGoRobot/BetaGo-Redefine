@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/shorter"
 	"github.com/minio/minio-go/v7"
 )
@@ -38,17 +39,20 @@ func (r Res[T]) Unwrap() (T, string, string, error) {
 	return r.val, r.bucket, r.key, r.err
 }
 
-func (r Res[T]) PreSignURL() (url string, err error) {
+func (r Res[T]) PreSignURL(ctx context.Context) (url string, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	client := externalCli() // 签名一定走外网
 	if client == nil {
 		return "", ErrUnavailable()
 	}
-	u, err := client.PresignedGetObject(r.Val(), r.bucket, r.key, expireDuration(), nil)
+	u, err := client.PresignedGetObject(ctx, r.bucket, r.key, expireDuration(), nil)
 	if err != nil {
 		return "", err
 	}
 	rawURL := u.String()
-	newURL := shorter.GenAKAKutt(r.Val(), u)
+	newURL := shorter.GenAKAKutt(ctx, u)
 	if newURL == nil {
 		return rawURL, nil
 	}

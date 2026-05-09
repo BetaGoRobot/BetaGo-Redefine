@@ -20,14 +20,14 @@ func TestUploadFile(t *testing.T) {
 	dal := New(Internal)
 	url, err := dal.Upload(ctx).WithData([]byte("test data")).Do(
 		"tmp", "test_0212-14.txt", minio.PutObjectOptions{},
-	).PreSignURL()
+	).PreSignURL(ctx)
 	if err != nil {
 		t.Fatalf("Upload failed: %v", err)
 	}
 	fmt.Println(url)
 	url, err = dal.Upload(ctx).SkipDedup(true).WithData([]byte("test data123456")).Do(
 		"tmp", "test_0212-14.txt", minio.PutObjectOptions{},
-	).PreSignURL()
+	).PreSignURL(ctx)
 	if err != nil {
 		t.Fatalf("Upload failed: %v", err)
 	}

@@ -177,7 +177,7 @@ func (neteaseCtx *NetEaseContext) LoginNetEaseQR(ctx context.Context) (err error
 		WithContentType(xmodel.ContentTypeImgPNG.String()).
 		WithReader(qrImgReadCloser(ctx, neteaseCtx.qrStruct.qrBase64)).
 		Do("cloudmusic", "QRCode/"+strconv.Itoa(int(time.Now().Unix()))+".png", minio.PutObjectOptions{}).
-		PreSignURL()
+		PreSignURL(ctx)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("upload QRCode failed", zap.Error(err))
 		return err
