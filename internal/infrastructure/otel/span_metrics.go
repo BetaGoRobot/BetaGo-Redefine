@@ -23,6 +23,7 @@ var (
 )
 
 func init() {
+	// noop: initSpanMetrics will be called again after Init sets up the real MeterProvider
 	initSpanMetrics()
 }
 

@@ -153,6 +153,7 @@ func Init(config *config.OtelConfig) {
 	OtelTracer = tracerProvider.Tracer(config.TracerName)
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetMeterProvider(meterProvider)
+	initSpanMetrics()
 }
 
 // BetaGoOtelTracer a
