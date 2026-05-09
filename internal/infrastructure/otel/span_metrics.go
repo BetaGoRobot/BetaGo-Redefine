@@ -89,6 +89,7 @@ func (p *spanMetricsProcessor) OnEnd(s tracesdk.ReadOnlySpan) {
 	ctx := context.Background()
 	spanCount.Add(ctx, 1, opt)
 	spanDuration.Record(ctx, duration, opt)
+	stdlog.Printf("[DEBUG] span_metrics: name=%s duration=%.3fs attrs=%d", name, duration, len(attrs))
 }
 
 func (p *spanMetricsProcessor) ForceFlush(ctx context.Context) error { return nil }
