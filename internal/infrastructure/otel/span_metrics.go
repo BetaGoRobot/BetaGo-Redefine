@@ -15,7 +15,7 @@ const (
 	labelMaxLen = 64
 
 	metricSpanDurationName = "span_duration_seconds"
-	metricSpanCountName    = "span_total"
+	metricSpanCountName    = "span_execution"
 )
 
 var (
