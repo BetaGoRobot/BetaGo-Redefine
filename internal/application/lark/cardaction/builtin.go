@@ -506,6 +506,12 @@ func handleScheduleEditConfirm(ctx context.Context, actionCtx *Context) (*callba
 	if notifyResult, ok := edit.NewValues["notify_result"].(bool); ok {
 		req.NotifyResult = &notifyResult
 	}
+	if skipWeekends, ok := edit.NewValues["skip_weekends"].(bool); ok {
+		req.SkipWeekends = &skipWeekends
+	}
+	if skipHolidays, ok := edit.NewValues["skip_holidays"].(bool); ok {
+		req.SkipHolidays = &skipHolidays
+	}
 
 	// Execute the update
 	task, err := scheduleapp.GetService().UpdateTask(ctx, req)
