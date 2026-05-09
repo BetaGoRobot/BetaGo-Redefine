@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
@@ -29,6 +30,7 @@ import (
 	larkiface "github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 )
@@ -104,6 +106,9 @@ func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
 func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) {
 	app.AddModule(newRecoverModule("otel", false, func() {
 		otel.Init(cfg.OtelConfig)
+	}))
+	app.AddModule(newRecoverModule("vm_metrics", false, func() {
+		initVMMetrics(cfg.VMConfig)
 	}))
 	app.AddModule(newRecoverModule("logging", true, func() {
 		logs.Init()
@@ -255,6 +260,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		managementAddr(cfg),
 		appruntime.ManagementShutdownTimeout(cfg),
 		app.Registry(),
+		appruntime.PrometheusProvider{},
 	))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",
@@ -293,4 +299,12 @@ func newEventDispatcher(handlerSet *larkiface.HandlerSet) *dispatcher.EventDispa
 		OnP2MessageReceiveV1(handlerSet.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(handlerSet.AuditV6Handler).
 		OnP2CardActionTrigger(handlerSet.CardActionHandler)
+}
+
+func initVMMetrics(cfg *infraConfig.VMConfig) {
+	if cfg == nil {
+		return
+	}
+	pushInterval := time.Duration(cfg.PushInterval) * time.Second
+	xhandler.InitMetrics(cfg.PushURL, pushInterval, cfg.Instance)
 }

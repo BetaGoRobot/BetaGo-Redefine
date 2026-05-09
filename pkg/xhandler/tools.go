@@ -10,15 +10,22 @@ func NewBaseMetaDataWithChatIDOpenID(ctx context.Context, chatID, openID string)
 	chat, err := larkchat.GetChatInfoCache(ctx, chatID)
 	if err != nil {
 		return &BaseMetaData{
-			ChatID: chatID,
-			OpenID: openID,
+			ChatID:   chatID,
+			OpenID:   openID,
+			ChatName: "unknown",
 		}
 	}
 	isP2P := *chat.ChatMode == "p2p"
+	chatName := "unknown"
+	if isP2P {
+		chatName = "p2p"
+	} else if chat.Name != nil && *chat.Name != "" {
+		chatName = *chat.Name
+	}
 	return &BaseMetaData{
-		ChatID: chatID,
-		OpenID: openID,
-
-		IsP2P: isP2P,
+		ChatID:   chatID,
+		OpenID:   openID,
+		IsP2P:    isP2P,
+		ChatName: chatName,
 	}
 }

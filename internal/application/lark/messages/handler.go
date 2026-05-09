@@ -8,6 +8,7 @@ import (
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -108,9 +109,23 @@ func init() {
 }
 
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
+	chatID := *event.Event.Message.ChatId
+	isP2P := *event.Event.Message.ChatType == "p2p"
+	chatName := resolveChatName(chatID, isP2P)
 	return &xhandler.BaseMetaData{
-		ChatID: *event.Event.Message.ChatId,
-		IsP2P:  *event.Event.Message.ChatType == "p2p",
-		OpenID: botidentity.MessageSenderOpenID(event),
+		ChatID:   chatID,
+		IsP2P:    isP2P,
+		ChatName: chatName,
+		OpenID:   botidentity.MessageSenderOpenID(event),
 	}
+}
+
+func resolveChatName(chatID string, isP2P bool) string {
+	if isP2P {
+		return "p2p"
+	}
+	if name := larkchat.GetChatName(context.Background(), chatID); name != "" {
+		return name
+	}
+	return "unknown"
 }

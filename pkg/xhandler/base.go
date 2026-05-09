@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -60,6 +62,7 @@ type (
 		ChatID      string
 		OpenID      string
 		IsP2P       bool
+		ChatName    string
 		Refresh     bool
 		IsCommand   bool
 		MainCommand string
@@ -521,7 +524,22 @@ func stageIdentity[T, K any](stage Stage[T, K]) string {
 
 // runSingleStage 运行单个 Stage
 func (p *Processor[T, K]) runSingleStage(ctx context.Context, stage Stage[T, K]) error {
+	start := time.Now()
+	stageName := stage.Name()
+	var chatName string
+	if meta, ok := any(p.metaData).(*BaseMetaData); ok && meta != nil {
+		chatName = meta.ChatName
+	}
+	if chatName == "" {
+		chatName = "unknown"
+	}
+
 	var err error
+
+	defer func() {
+		skipped := errors.Is(err, xerror.ErrStageSkip)
+		RecordStageExecution(stageName, chatName, skipped, botidentity.CurrentProfile(ctx), start)
+	}()
 
 	// 自动检查功能开关
 	if fi := stage.FeatureInfo(); fi != nil && p.featureChecker != nil {

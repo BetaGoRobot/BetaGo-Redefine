@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/BetaGoRobot/go_utils v0.0.4
 	github.com/RealAlexandreAI/json-repair v0.0.15
+	github.com/VictoriaMetrics/metrics v1.43.2
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.6
@@ -60,6 +61,8 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/valyala/fastrand v1.1.0 // indirect
+	github.com/valyala/histogram v1.2.0 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 )
 
