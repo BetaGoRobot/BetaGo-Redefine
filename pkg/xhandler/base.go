@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -537,7 +538,7 @@ func (p *Processor[T, K]) runSingleStage(ctx context.Context, stage Stage[T, K])
 
 	defer func() {
 		skipped := errors.Is(err, xerror.ErrStageSkip)
-		RecordStageExecution(stageName, chatName, skipped, start)
+		RecordStageExecution(stageName, chatName, skipped, botidentity.CurrentProfile(ctx), start)
 	}()
 
 	// 自动检查功能开关

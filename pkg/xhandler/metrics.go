@@ -5,6 +5,7 @@ import (
 	stdlog "log"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/VictoriaMetrics/metrics"
 )
 
@@ -34,7 +35,7 @@ func InitMetrics(pushURL string, pushInterval time.Duration, instance string) {
 
 // RecordStageExecution records metrics for a single stage execution.
 // If InitMetrics was not called (or called with empty pushURL), this is a no-op.
-func RecordStageExecution(stageName, chatName string, skipped bool, startTime time.Time) {
+func RecordStageExecution(stageName, chatName string, skipped bool, profile botidentity.Profile, startTime time.Time) {
 	if !metricsEnabled {
 		return
 	}
@@ -43,10 +44,9 @@ func RecordStageExecution(stageName, chatName string, skipped bool, startTime ti
 	if skipped {
 		skippedStr = "true"
 	}
-
-	counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q}`, stageName, chatName, skippedStr)
+	counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
 	metrics.GetOrCreateCounter(counterName).Inc()
 
-	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q}`, stageName, chatName, skippedStr)
+	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
 	metrics.GetOrCreatePrometheusHistogram(histogramName).UpdateDuration(startTime)
 }
