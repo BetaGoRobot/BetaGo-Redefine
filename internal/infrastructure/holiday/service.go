@@ -10,6 +10,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/cache"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
+	"github.com/go-resty/resty/v2"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
@@ -19,37 +21,30 @@ const (
 	apiBaseURL = "http://timor.tech/api/holiday"
 )
 
-// DateInfo 日期信息
-type DateInfo struct {
-	Date string `json:"date"`     // 日期 YYYY-MM-DD (可能不存在)
-	Type int    `json:"type"`     // 类型：0=工作日、1=周末、2=节假日
-	Name string `json:"name"`     // 节假日名称（如果有）
-	Week int    `json:"week"`     // 星期几（1-7）
-}
-
 // HolidayInfo 节假日信息
 type HolidayInfo struct {
-	Date    string `json:"date"`     // 日期 YYYY-MM-DD
-	Name    string `json:"name"`     // 节假日名称
-	Holiday bool   `json:"holiday"`  // 是否为节假日
-	Wage    int    `json:"wage"`     // 薪资倍数（1-3）
-	Reason  string `json:"reason"`   // 调休原因（如果是调休）
+	Date    string `json:"date"`    // 日期 YYYY-MM-DD
+	Name    string `json:"name"`    // 节假日名称
+	Holiday bool   `json:"holiday"` // 是否为节假日
+	Wage    int    `json:"wage"`    // 薪资倍数（1-3）
+	Rest    int    `json:"rest"`    // 距离天数
 }
 
-// NextHolidayInfo 下一个节假日信息
-type NextHolidayInfo struct {
-	Holiday HolidayInfo `json:"holiday"` // 下一个节假日信息
-	Days    int         `json:"days"`    // 距离天数
-	Workday *HolidayInfo `json:"workday,omitempty"` // 如果之前有调休，返回调休信息
+// DateInfo 日期信息
+type DateInfo struct {
+	Date string `json:"date"` // 日期 YYYY-MM-DD (可能不存在)
+	Type int    `json:"type"` // 类型：0=工作日、1=周末、2=节假日、3=调休
+	Name string `json:"name"` // 节假日名称（如果有）
+	Week int    `json:"week"` // 星期几（1-7）
 }
 
 // NextWorkdayInfo 下一个工作日信息
 type NextWorkdayInfo struct {
-	Date string `json:"date"`     // 日期 YYYY-MM-DD
-	Type int    `json:"type"`     // 类型：0=工作日、1=周末、2=节假日
-	Name string `json:"name"`     // 名称
-	Days int    `json:"days"`     // 距离天数（可能不存在）
-	Week int    `json:"week"`     // 星期几（1-7）
+	Date string `json:"date"` // 日期 YYYY-MM-DD
+	Type int    `json:"type"` // 类型：0=工作日、1=周末、2=节假日、3=调休
+	Name string `json:"name"` // 名称
+	Rest int    `json:"rest"` // 距离天数
+	Week int    `json:"week"` // 星期几（1-7）
 }
 
 // API响应结构
@@ -60,14 +55,14 @@ type holidayInfoResponse struct {
 }
 
 type nextHolidayResponse struct {
-	Code     int             `json:"code"`
-	Holiday  NextHolidayInfo `json:"holiday"`
-	Workday  *NextHolidayInfo `json:"workday,omitempty"`
+	Code    int          `json:"code"`
+	Holiday HolidayInfo  `json:"holiday"`
+	Workday *HolidayInfo `json:"workday,omitempty"`
 }
 
 type nextWorkdayResponse struct {
-	Code    int              `json:"code"`
-	Workday NextWorkdayInfo  `json:"workday"`
+	Code    int             `json:"code"`
+	Workday NextWorkdayInfo `json:"workday"`
 }
 
 type yearHolidaysResponse struct {
@@ -83,17 +78,15 @@ type ttsResponse struct {
 
 // Service 节假日服务
 type Service struct {
-	client *httpclient
+	client *resty.Client
 }
 
-var (
-	globalService *Service
-)
+var globalService *Service
 
 // initService 初始化节假日服务
 func initService() {
 	globalService = &Service{
-		client: newHTTPClient(),
+		client: xhttp.HttpClient,
 	}
 }
 
@@ -121,8 +114,8 @@ func (s *Service) IsWorkday(ctx context.Context, date time.Time) (bool, error) {
 	}
 
 	// 工作日判断：type=0表示工作日
-	// type字段：0=工作日、1=周末、2=节假日
-	isWorkday := info.Type.Type == 0
+	// type字段：0=工作日、1=周末、2=节假日、3=调休
+	isWorkday := info.Type.Type == 0 || info.Type.Type == 3
 
 	span.SetAttributes(attribute.Bool("holiday.is_workday", isWorkday))
 	return isWorkday, nil
@@ -145,12 +138,15 @@ func (s *Service) GetDateInfo(ctx context.Context, date string) (*holidayInfoRes
 	result, err := cache.GetOrExecute(ctx, cacheKey, func() (*holidayInfoResponse, error) {
 		url := fmt.Sprintf("%s/info/%s", apiBaseURL, date)
 		var res holidayInfoResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return nil, err
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get holiday info",
 			zap.Error(err),
@@ -178,12 +174,15 @@ func (s *Service) GetNextHoliday(ctx context.Context, date string) (*nextHoliday
 	result, err := cache.GetOrExecute(ctx, cacheKey, func() (*nextHolidayResponse, error) {
 		url := fmt.Sprintf("%s/next/%s", apiBaseURL, date)
 		var res nextHolidayResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return nil, err
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get next holiday",
 			zap.Error(err),
@@ -211,12 +210,15 @@ func (s *Service) GetNextWorkday(ctx context.Context, date string) (*nextWorkday
 	result, err := cache.GetOrExecute(ctx, cacheKey, func() (*nextWorkdayResponse, error) {
 		url := fmt.Sprintf("%s/workday/next/%s", apiBaseURL, date)
 		var res nextWorkdayResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return nil, err
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get next workday",
 			zap.Error(err),
@@ -244,12 +246,15 @@ func (s *Service) GetYearHolidays(ctx context.Context, year string) (*yearHolida
 	result, err := cache.GetOrExecute(ctx, cacheKey, func() (*yearHolidaysResponse, error) {
 		url := fmt.Sprintf("%s/year/%s", apiBaseURL, year)
 		var res yearHolidaysResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return nil, err
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get year holidays",
 			zap.Error(err),
@@ -284,12 +289,15 @@ func (s *Service) GetTTS(ctx context.Context, ttsType string) (string, error) {
 	cacheKey := "holiday:tts:" + ttsType
 	result, err := cache.GetOrExecute(ctx, cacheKey, func() (string, error) {
 		var res ttsResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return "", err
 		}
 		return res.TTS, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get TTS",
 			zap.Error(err),
@@ -325,7 +333,11 @@ func (s *Service) BatchGetDateInfo(ctx context.Context, dates []string) (map[str
 
 		// 调用API
 		var res map[string]holidayInfoResponse
-		if err := s.client.GetJSON(ctx, url, &res); err != nil {
+		_, err := s.client.R().
+			SetHeader("User-Agent", "Mozilla/5.0").
+			SetResult(&res).
+			Get(url)
+		if err != nil {
 			return nil, err
 		}
 
@@ -338,7 +350,6 @@ func (s *Service) BatchGetDateInfo(ctx context.Context, dates []string) (map[str
 
 		return output, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to batch get date info",
 			zap.Error(err),

@@ -26,6 +26,8 @@ const (
 	editFieldMessage      = "message"
 	editFieldNotifyOnError = "notify_on_error"
 	editFieldNotifyResult = "notify_result"
+	editFieldSkipWeekends = "skip_weekends"
+	editFieldSkipHolidays = "skip_holidays"
 )
 
 // buildEditChangeLines builds the per-field change description lines from newValues vs task.
@@ -63,6 +65,12 @@ func buildEditChangeLines(newValues map[string]any, task *model.ScheduledTask, l
 	}
 	if notifyResult, ok := newValues[editFieldNotifyResult].(bool); ok {
 		lines = append(lines, fmt.Sprintf("- 结果通知: `%v` → `%v`", task.NotifyResult, notifyResult))
+	}
+	if skipWeekends, ok := newValues[editFieldSkipWeekends].(bool); ok {
+		lines = append(lines, fmt.Sprintf("- 跳过周末: `%v` → `%v`", task.SkipWeekends, skipWeekends))
+	}
+	if skipHolidays, ok := newValues[editFieldSkipHolidays].(bool); ok {
+		lines = append(lines, fmt.Sprintf("- 跳过节假日: `%v` → `%v`", task.SkipHolidays, skipHolidays))
 	}
 	return lines
 }

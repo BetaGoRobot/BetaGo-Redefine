@@ -43,13 +43,15 @@ type batchQueryArgs struct {
 
 // ========== 工具处理器 ==========
 
-type queryDateInfoHandler struct{}
-type queryNextHolidayHandler struct{}
-type queryNextWorkdayHandler struct{}
-type queryYearHolidaysHandler struct{}
-type queryTTSHandler struct{}
-type batchQueryHandler struct{}
-type checkWorkdayHandler struct{}
+type (
+	queryDateInfoHandler     struct{}
+	queryNextHolidayHandler  struct{}
+	queryNextWorkdayHandler  struct{}
+	queryYearHolidaysHandler struct{}
+	queryTTSHandler          struct{}
+	batchQueryHandler        struct{}
+	checkWorkdayHandler      struct{}
+)
 
 var (
 	QueryDateInfo       queryDateInfoHandler
@@ -136,10 +138,6 @@ func (queryDateInfoHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		if info.Holiday.Wage > 1 {
 			result += fmt.Sprintf("薪资倍数: %d倍\n", info.Holiday.Wage)
 		}
-
-		if info.Holiday.Reason != "" {
-			result += fmt.Sprintf("调休说明: %s\n", info.Holiday.Reason)
-		}
 	}
 
 	metaData.SetExtra(holidayToolResultKey, result)
@@ -185,21 +183,23 @@ func (queryNextHolidayHandler) Handle(ctx context.Context, data *larkim.P2Messag
 
 	// 构建结果
 	result := fmt.Sprintf("🎊 下一个节假日\n\n")
-	result += fmt.Sprintf("节假日: %s\n", info.Holiday.Holiday.Name)
-	result += fmt.Sprintf("日期: %s\n", info.Holiday.Holiday.Date)
+	result += fmt.Sprintf("节假日: %s\n", info.Holiday.Name)
+	result += fmt.Sprintf("日期: %s\n", info.Holiday.Date)
 
-	if info.Holiday.Days > 0 {
-		result += fmt.Sprintf("距离: %d 天\n", info.Holiday.Days)
-	} else if info.Holiday.Days == 0 {
-		result += fmt.Sprintf("就是今天！🎉\n")
+	// 计算距离天数
+	now := time.Now()
+	if holidayDate, err := time.Parse("2006-01-02", info.Holiday.Date); err == nil {
+		days := int(holidayDate.Sub(now).Hours() / 24)
+		if days > 0 {
+			result += fmt.Sprintf("距离: %d 天\n", days)
+		} else if days == 0 {
+			result += fmt.Sprintf("就是今天！🎉\n")
+		}
 	}
 
 	if info.Workday != nil {
 		result += fmt.Sprintf("\n⚠️ 调休提醒\n")
-		result += fmt.Sprintf("调休日期: %s\n", info.Workday.Holiday.Date)
-		if info.Workday.Days > 0 {
-			result += fmt.Sprintf("距离调休: %d 天\n", info.Workday.Days)
-		}
+		result += fmt.Sprintf("调休日期: %s\n", info.Workday.Date)
 	}
 
 	metaData.SetExtra(holidayToolResultKey, result)
@@ -259,9 +259,9 @@ func (queryNextWorkdayHandler) Handle(ctx context.Context, data *larkim.P2Messag
 		result += fmt.Sprintf("说明: %s\n", info.Workday.Name)
 	}
 
-	if info.Workday.Days > 0 {
-		result += fmt.Sprintf("距离: %d 天\n", info.Workday.Days)
-	} else if info.Workday.Days == 0 {
+	if info.Workday.Rest > 0 {
+		result += fmt.Sprintf("距离: %d 天\n", info.Workday.Rest)
+	} else if info.Workday.Rest == 0 {
 		result += fmt.Sprintf("就是今天！\n")
 	}
 
@@ -310,7 +310,8 @@ func (queryYearHolidaysHandler) Handle(ctx context.Context, data *larkim.P2Messa
 	result := fmt.Sprintf("📅 %s年节假日安排\n\n", year)
 
 	count := 0
-	for date, holiday := range info.Holiday {
+	holidaySorted := utils.SortMapToSlice(info.Holiday)
+	for date, holiday := range holidaySorted {
 		if holiday.Holiday {
 			count++
 			result += fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, date)
