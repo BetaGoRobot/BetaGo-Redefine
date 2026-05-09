@@ -48,5 +48,5 @@ func RecordStageExecution(stageName, chatName string, skipped bool, startTime ti
 	metrics.GetOrCreateCounter(counterName).Inc()
 
 	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q}`, stageName, chatName, skippedStr)
-	metrics.GetOrCreateHistogram(histogramName).UpdateDuration(startTime)
+	metrics.GetOrCreatePrometheusHistogram(histogramName).UpdateDuration(startTime)
 }
