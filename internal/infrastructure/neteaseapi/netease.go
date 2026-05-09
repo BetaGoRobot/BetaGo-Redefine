@@ -136,6 +136,9 @@ func musicObjectKey(musicID int, rawURL string) string {
 }
 
 func tryGetMusicURLFromMinio(ctx context.Context, musicID int) string {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	for _, ext := range commonMusicExtensions {
 		objKey := "music/" + songIDString(musicID) + ext
 		if u, err := miniodal.TryGetFile(ctx, cacheBucket, objKey); err == nil && u != "" {
