@@ -14,7 +14,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/go_utils/reflecting"
 	"github.com/pkg/errors"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -535,21 +534,10 @@ func (p *Processor[T, K]) runSingleStage(ctx context.Context, stage Stage[T, K])
 		chatName = "unknown"
 	}
 
-	// 为每个 stage 创建子 span，用于 OTel spanmetrics 采集
-	ctx, span := otel.StartNamed(ctx, stageName,
-		trace.WithAttributes(
-			attribute.String("chat_name", chatName),
-		),
-	)
-	defer span.End()
-
 	var err error
 
 	defer func() {
 		skipped := errors.Is(err, xerror.ErrStageSkip)
-		if skipped {
-			span.SetAttributes(attribute.Bool("skipped", true))
-		}
 		RecordStageExecution(stageName, chatName, skipped, botidentity.CurrentProfile(ctx), start)
 	}()
 

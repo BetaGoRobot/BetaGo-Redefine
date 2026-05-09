@@ -1,47 +1,31 @@
 package xhandler
 
 import (
-	"context"
 	"fmt"
 	stdlog "log"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/VictoriaMetrics/metrics"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
-var (
-	metricsEnabled bool
-
-	otelStageCounter   metric.Int64Counter
-	otelStageHistogram metric.Float64Histogram
+const (
+	// labelMaxLen 标签值最大长度，超长截断防标签爆炸
+	labelMaxLen = 64
 )
+
+var metricsEnabled bool
 
 func init() {
 	metrics.ExposeMetadata(true)
-	initOtelInstruments()
 }
 
-func initOtelInstruments() {
-	meter := otel.MeterProvider().Meter("betago/xhandler")
-	var err error
-	otelStageCounter, err = meter.Int64Counter(
-		"betago_stage_execution_total",
-		metric.WithDescription("Total number of stage executions"),
-	)
-	if err != nil {
-		stdlog.Printf("[WARN] failed to create otel stage counter: %v", err)
+// truncateLabel 截断标签值，防止高基数标签爆炸
+func truncateLabel(v string) string {
+	if len(v) <= labelMaxLen {
+		return v
 	}
-	otelStageHistogram, err = meter.Float64Histogram(
-		"betago_stage_duration_seconds",
-		metric.WithDescription("Duration of stage execution in seconds"),
-	)
-	if err != nil {
-		stdlog.Printf("[WARN] failed to create otel stage histogram: %v", err)
-	}
+	return v[:labelMaxLen] + "..."
 }
 
 // InitMetrics enables VictoriaMetrics push mode. If pushURL is empty, metrics
@@ -62,38 +46,23 @@ func InitMetrics(pushURL string, pushInterval time.Duration, instance string) {
 	metricsEnabled = true
 }
 
-// RecordStageExecution records metrics for a single stage execution via both
-// VictoriaMetrics push and OTel metrics SDK.
+// RecordStageExecution records metrics for a single stage execution via VM push.
+// OTel metrics are handled automatically by the spanMetricsProcessor SpanProcessor,
+// which extracts span attributes and records them as OTel metrics.
 func RecordStageExecution(stageName, chatName string, skipped bool, profile botidentity.Profile, startTime time.Time) {
+	if !metricsEnabled {
+		return
+	}
+
 	skippedStr := "false"
 	if skipped {
 		skippedStr = "true"
 	}
+	chatName = truncateLabel(chatName)
 
-	// VictoriaMetrics push
-	if metricsEnabled {
-		counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
-		metrics.GetOrCreateCounter(counterName).Inc()
+	counterName := fmt.Sprintf(`betago_stage_execution_total{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, truncateLabel(profile.BotName))
+	metrics.GetOrCreateCounter(counterName).Inc()
 
-		histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, profile.BotName)
-		metrics.GetOrCreatePrometheusHistogram(histogramName).UpdateDuration(startTime)
-	}
-
-	// OTel metrics
-	duration := time.Since(startTime).Seconds()
-	recordOtelMetrics(context.Background(), stageName, chatName, skippedStr, profile.BotName, duration)
-}
-
-func recordOtelMetrics(ctx context.Context, stageName, chatName, skippedStr, botName string, duration float64) {
-	if otelStageCounter == nil || otelStageHistogram == nil {
-		return
-	}
-	attrs := []attribute.KeyValue{
-		attribute.String("stage", stageName),
-		attribute.String("chat_name", chatName),
-		attribute.String("skipped", skippedStr),
-		attribute.String("bot_name", botName),
-	}
-	otelStageCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
-	otelStageHistogram.Record(ctx, duration, metric.WithAttributes(attrs...))
+	histogramName := fmt.Sprintf(`betago_stage_duration_seconds{stage=%q,chat_name=%q,skipped=%q,bot_name=%q}`, stageName, chatName, skippedStr, truncateLabel(profile.BotName))
+	metrics.GetOrCreatePrometheusHistogram(histogramName).UpdateDuration(startTime)
 }

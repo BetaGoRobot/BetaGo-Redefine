@@ -181,6 +181,7 @@ func newTracerProvider(config *config.OtelConfig) (*tracesdk.TracerProvider, err
 	tp := tracesdk.NewTracerProvider(
 		tracesdk.WithBatcher(exp),
 		tracesdk.WithResource(newResource(config)),
+		tracesdk.WithSpanProcessor(&spanMetricsProcessor{}),
 	)
 	return tp, nil
 }
