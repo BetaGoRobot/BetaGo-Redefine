@@ -39,7 +39,6 @@ func NewScheduledTask(name, taskType, chatID, creatorID, toolName, toolArgs, tim
 		CreatedAt: now,
 		UpdatedAt: now,
 		// 工作日配置默认为 false
-		SkipWeekends: false,
 		SkipHolidays: false,
 	}
 }

@@ -95,7 +95,6 @@ type UpdateTaskRequest struct {
 	ToolArgs      *string
 	NotifyOnError *bool
 	NotifyResult  *bool
-	SkipWeekends  *bool
 	SkipHolidays  *bool
 }
 
@@ -202,7 +201,6 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest) (*mode
 	task.SourceMessageID = strings.TrimSpace(req.SourceMessageID)
 	task.NotifyOnError = req.NotifyOnError
 	task.NotifyResult = req.NotifyResult
-	task.SkipWeekends = req.SkipWeekends
 	task.SkipHolidays = req.SkipHolidays
 	if task.ToolName == "send_message" {
 		task.NotifyResult = false
@@ -433,10 +431,6 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 		updates["notify_result"] = *req.NotifyResult
 		task.NotifyResult = *req.NotifyResult
 	}
-	if req.SkipWeekends != nil {
-		updates["skip_weekends"] = *req.SkipWeekends
-		task.SkipWeekends = *req.SkipWeekends
-	}
 	if req.SkipHolidays != nil {
 		updates["skip_holidays"] = *req.SkipHolidays
 		task.SkipHolidays = *req.SkipHolidays
@@ -520,10 +514,9 @@ func (s *Service) ClaimTaskExecution(ctx context.Context, task *model.ScheduledT
 		}
 
 		// 检查是否需要跳过周末或节假日
-		skipWeekends := task.SkipWeekends
 		skipHolidays := task.SkipHolidays
 
-		if skipWeekends || skipHolidays {
+		if skipHolidays {
 			// 检查下一个执行时间是否为工作日
 			isWorkday, err := holiday.IsWorkdayCheck(ctx, nextRunAt)
 			if err != nil {
