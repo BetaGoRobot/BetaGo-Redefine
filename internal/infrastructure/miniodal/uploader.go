@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/shorter"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
@@ -90,6 +91,9 @@ func FileExists(ctx context.Context, bucketName, objName string) (found bool, er
 }
 
 func TryGetFile(ctx context.Context, bucketName, objName string) (url string, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	client := externalCli()
 	if client == nil {
 		return "", nil
@@ -97,7 +101,7 @@ func TryGetFile(ctx context.Context, bucketName, objName string) (url string, er
 	if found, err := FileExists(ctx, bucketName, objName); err != nil {
 		return "", err
 	} else if found {
-		u, err := client.PresignedGetObject(ctx, bucketName, objName, time.Minute*5, nil)
+		u, err := client.PresignedGetObject(ctx, bucketName, objName, time.Hour*24*7, nil)
 		if err != nil {
 			return "", err
 		}
@@ -107,6 +111,9 @@ func TryGetFile(ctx context.Context, bucketName, objName string) (url string, er
 }
 
 func PresignGetObject(ctx context.Context, bucketName, objName string, expire time.Duration) (string, error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	client := externalCli()
 	if client == nil {
 		return "", ErrUnavailable()
@@ -129,6 +136,8 @@ func PresignGetObject(ctx context.Context, bucketName, objName string, expire ti
 }
 
 func PresignGetObjectShortURL(ctx context.Context, bucketName, objName string, expire time.Duration) (string, error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
 	rawURL, err := PresignGetObject(ctx, bucketName, objName, expire)
 	if err != nil || rawURL == "" {
 		return rawURL, err
