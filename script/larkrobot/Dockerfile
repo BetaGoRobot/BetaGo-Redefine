@@ -22,15 +22,14 @@ COPY go.mod go.sum ./
 
 RUN go mod download
 
-COPY . .
-
 RUN go install github.com/BetaGoRobot/go_utils/cmd/tools/warmup@master
+
+COPY . .
 
 RUN warmup .
 
 RUN cd cmd/larkrobot && \
     go build -o /app/larkrobot
-
 
 FROM kevinmatt/deps AS runner
 

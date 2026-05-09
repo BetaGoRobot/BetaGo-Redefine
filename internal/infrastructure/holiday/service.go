@@ -23,34 +23,28 @@ const (
 
 // HolidayInfo 节假日信息
 type HolidayInfo struct {
-	Date    string `json:"date"`     // 日期 YYYY-MM-DD
-	Name    string `json:"name"`     // 节假日名称
-	Holiday bool   `json:"holiday"`  // 是否为节假日
-	Wage    int    `json:"wage"`     // 薪资倍数（1-3）
-	Rest    int    `json:"rest"`     // 休息天数
+	Date    string `json:"date"`    // 日期 YYYY-MM-DD
+	Name    string `json:"name"`    // 节假日名称
+	Holiday bool   `json:"holiday"` // 是否为节假日
+	Wage    int    `json:"wage"`    // 薪资倍数（1-3）
+	Rest    int    `json:"rest"`    // 距离天数
 }
 
 // DateInfo 日期信息
 type DateInfo struct {
-	Date string `json:"date"`     // 日期 YYYY-MM-DD (可能不存在)
-	Type int    `json:"type"`     // 类型：0=工作日、1=周末、2=节假日
-	Name string `json:"name"`     // 节假日名称（如果有）
-	Week int    `json:"week"`     // 星期几（1-7）
-}
-
-// NextHolidayInfo 下一个节假日信息
-type NextHolidayInfo struct {
-	Holiday HolidayInfo  `json:"holiday"` // 下一个节假日信息
-	Workday *HolidayInfo `json:"workday,omitempty"` // 如果之前有调休，返回调休信息
+	Date string `json:"date"` // 日期 YYYY-MM-DD (可能不存在)
+	Type int    `json:"type"` // 类型：0=工作日、1=周末、2=节假日、3=调休
+	Name string `json:"name"` // 节假日名称（如果有）
+	Week int    `json:"week"` // 星期几（1-7）
 }
 
 // NextWorkdayInfo 下一个工作日信息
 type NextWorkdayInfo struct {
-	Date string `json:"date"`     // 日期 YYYY-MM-DD
-	Type int    `json:"type"`     // 类型：0=工作日、1=周末、2=节假日
-	Name string `json:"name"`     // 名称
-	Days int    `json:"days"`     // 距离天数（可能不存在）
-	Week int    `json:"week"`     // 星期几（1-7）
+	Date string `json:"date"` // 日期 YYYY-MM-DD
+	Type int    `json:"type"` // 类型：0=工作日、1=周末、2=节假日、3=调休
+	Name string `json:"name"` // 名称
+	Rest int    `json:"rest"` // 距离天数
+	Week int    `json:"week"` // 星期几（1-7）
 }
 
 // API响应结构
@@ -61,14 +55,14 @@ type holidayInfoResponse struct {
 }
 
 type nextHolidayResponse struct {
-	Code     int              `json:"code"`
-	Holiday  NextHolidayInfo  `json:"holiday"`
-	Workday  *NextHolidayInfo `json:"workday,omitempty"`
+	Code    int          `json:"code"`
+	Holiday HolidayInfo  `json:"holiday"`
+	Workday *HolidayInfo `json:"workday,omitempty"`
 }
 
 type nextWorkdayResponse struct {
-	Code    int              `json:"code"`
-	Workday NextWorkdayInfo  `json:"workday"`
+	Code    int             `json:"code"`
+	Workday NextWorkdayInfo `json:"workday"`
 }
 
 type yearHolidaysResponse struct {
@@ -87,9 +81,7 @@ type Service struct {
 	client *resty.Client
 }
 
-var (
-	globalService *Service
-)
+var globalService *Service
 
 // initService 初始化节假日服务
 func initService() {
@@ -122,8 +114,8 @@ func (s *Service) IsWorkday(ctx context.Context, date time.Time) (bool, error) {
 	}
 
 	// 工作日判断：type=0表示工作日
-	// type字段：0=工作日、1=周末、2=节假日
-	isWorkday := info.Type.Type == 0
+	// type字段：0=工作日、1=周末、2=节假日、3=调休
+	isWorkday := info.Type.Type == 0 || info.Type.Type == 3
 
 	span.SetAttributes(attribute.Bool("holiday.is_workday", isWorkday))
 	return isWorkday, nil
@@ -155,7 +147,6 @@ func (s *Service) GetDateInfo(ctx context.Context, date string) (*holidayInfoRes
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get holiday info",
 			zap.Error(err),
@@ -192,7 +183,6 @@ func (s *Service) GetNextHoliday(ctx context.Context, date string) (*nextHoliday
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get next holiday",
 			zap.Error(err),
@@ -229,7 +219,6 @@ func (s *Service) GetNextWorkday(ctx context.Context, date string) (*nextWorkday
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get next workday",
 			zap.Error(err),
@@ -266,7 +255,6 @@ func (s *Service) GetYearHolidays(ctx context.Context, year string) (*yearHolida
 		}
 		return &res, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get year holidays",
 			zap.Error(err),
@@ -310,7 +298,6 @@ func (s *Service) GetTTS(ctx context.Context, ttsType string) (string, error) {
 		}
 		return res.TTS, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to get TTS",
 			zap.Error(err),
@@ -363,7 +350,6 @@ func (s *Service) BatchGetDateInfo(ctx context.Context, dates []string) (map[str
 
 		return output, nil
 	})
-
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to batch get date info",
 			zap.Error(err),

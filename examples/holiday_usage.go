@@ -27,19 +27,19 @@ func main() {
 		fmt.Printf("错误: %v\n", err)
 		return
 	}
-	fmt.Printf("\n下一个节假日: %s\n", nextHoliday.Holiday.Holiday.Name)
-	fmt.Printf("日期: %s\n", nextHoliday.Holiday.Holiday.Date)
-	fmt.Printf("距离: %d 天\n", nextHoliday.Holiday.Days)
+	fmt.Printf("\n下一个节假日: %s\n", nextHoliday.Holiday.Name)
+	fmt.Printf("日期: %s\n", nextHoliday.Holiday.Date)
+	fmt.Printf("距离: %d 天\n", nextHoliday.Holiday.Rest)
 
 	// 示例3: 获取下一个工作日
-	nextWorkday, err := holiday.GetNextWorkdayForSchedule(ctx, today)
+	nextWorkday, err := svc.GetNextWorkday(ctx, "")
 	if err != nil {
 		fmt.Printf("错误: %v\n", err)
 		return
 	}
-	fmt.Printf("\n下一个工作日: %s (%s)\n",
-		nextWorkday.Format("2006-01-02"),
-		nextWorkday.Weekday())
+	fmt.Printf("\n下一个工作日: %s\n", nextWorkday.Workday.Date)
+	fmt.Printf("日期: %s\n", nextWorkday.Workday.Date)
+	fmt.Printf("距离: %d 天\n", nextWorkday.Workday.Rest)
 
 	// 示例4: 查询年度节假日
 	yearHolidays, err := svc.GetYearHolidays(ctx, "2026")
