@@ -30,6 +30,7 @@ type BaseConfig struct {
 	KuttConfig           *KuttConfig           `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
 	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
 	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
+	VMConfig             *VMConfig             `json:"vm_config" yaml:"vm_config" toml:"vm_config"`
 }
 
 type RuntimeConfig struct {
@@ -176,6 +177,13 @@ type LarkConfig struct {
 	BotOpenID            string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
 	BootstrapAdminOpenID string `json:"bootstrap_admin_open_id" yaml:"bootstrap_admin_open_id" toml:"bootstrap_admin_open_id"`
 	WithDrawReplace      bool   `json:"with_draw_replace" yaml:"with_draw_replace" toml:"with_draw_replace"`
+}
+
+// VMConfig VictoriaMetrics push 配置
+type VMConfig struct {
+	PushURL      string `json:"push_url" yaml:"push_url" toml:"push_url"`
+	PushInterval int    `json:"push_interval_seconds" yaml:"push_interval_seconds" toml:"push_interval_seconds"`
+	Instance     string `json:"instance" yaml:"instance" toml:"instance"`
 }
 
 func NewConfigs() *BaseConfig {
