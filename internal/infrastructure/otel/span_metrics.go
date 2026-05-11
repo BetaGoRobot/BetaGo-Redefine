@@ -2,7 +2,6 @@ package otel
 
 import (
 	"context"
-	stdlog "log"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -36,14 +35,15 @@ func initSpanMetrics() {
 		metric.WithDescription("Total number of span executions"),
 	)
 	if err != nil {
-		stdlog.Printf("[WARN] failed to create otel span counter: %v", err)
+		panic(err)
 	}
 	spanDuration, err = meter.Float64Histogram(
 		metricSpanDurationName,
 		metric.WithDescription("Duration of span execution in seconds"),
+		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300),
 	)
 	if err != nil {
-		stdlog.Printf("[WARN] failed to create otel span histogram: %v", err)
+		panic(err)
 	}
 }
 
@@ -89,7 +89,6 @@ func (p *spanMetricsProcessor) OnEnd(s tracesdk.ReadOnlySpan) {
 	ctx := context.Background()
 	spanCount.Add(ctx, 1, opt)
 	spanDuration.Record(ctx, duration, opt)
-	stdlog.Printf("[DEBUG] span_metrics: name=%s duration=%.3fs attrs=%d", name, duration, len(attrs))
 }
 
 func (p *spanMetricsProcessor) ForceFlush(ctx context.Context) error { return nil }
