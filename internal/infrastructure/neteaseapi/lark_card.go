@@ -28,8 +28,8 @@ const (
 	maxMusicListPageSize        = 100
 	musicListStreamPatchWindow  = 500 * time.Millisecond
 
-	musicListPaginationElementID = "music_list_pagination"
-	musicListFooterElementID     = "music_list_footer"
+	musicListPaginationElementID = "ml_pagination"
+	musicListFooterElementID     = "ml_footer"
 	musicListLoadingImageKey     = "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g"
 )
 
