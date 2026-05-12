@@ -23,6 +23,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xrequest"
 	"github.com/bytedance/sonic"
+	"github.com/kevinmatthe/kinetic"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/minio/minio-go/v7"
@@ -437,28 +438,59 @@ func UploadPicAllinOne(ctx context.Context, imageURL string, musicIDInt int, upl
 	defer func() { otel.RecordError(span, err) }()
 
 	musicID := strconv.Itoa(musicIDInt)
-	imgKey, err := checkDBCache(ctx, musicID)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("get lark img from db error", zap.String("musicID", musicID))
-		// db 缓存未找到，准备resize上传
-		var picData []byte
-		picData, err = GetAndResizePicFromURL(ctx, imageURL)
-		if err != nil {
-			logs.L().Ctx(ctx).Error("resize pic from url error", zap.Error(err))
-			return
-		}
+	lazyPicData := kinetic.NewLazy(
+		func() ([]byte, error) {
+			picData, err := GetAndResizePicFromURL(ctx, imageURL)
+			if err != nil {
+				logs.L().Ctx(ctx).Error("resize pic from url error", zap.Error(err))
+				return nil, err
+			}
+			return picData, nil
+		},
+	)
 
-		imgKey, err = Upload2Lark(ctx, musicID, io.NopCloser(bytes.NewReader(picData)))
+	imgKeyFuture := kinetic.Go(func() (string, error) {
+		imgKey, err := checkDBCache(ctx, musicID)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("upload pic to lark error", zap.Error(err))
-			return
+			logs.L().Ctx(ctx).Warn("get lark img from db error", zap.String("musicID", musicID))
+			// db 缓存未找到，准备resize上传
+			var picData []byte
+			picData, err = lazyPicData.Get()
+			if err != nil {
+				logs.L().Ctx(ctx).Error("resize pic from url error", zap.Error(err))
+				return "", err
+			}
+
+			imgKey, err = Upload2Lark(ctx, musicID, io.NopCloser(bytes.NewReader(picData)))
+			if err != nil {
+				logs.L().Ctx(ctx).Error("upload pic to lark error", zap.Error(err))
+				return "", err
+			}
 		}
-		if uploadOSS {
+		return imgKey, nil
+	}, kinetic.WithContext(ctx))
+
+	urlFuture := kinetic.Go(func() (string, error) {
+		u, err := miniodal.TryGetFile(ctx, "cloudmusic", "picture/"+musicID+filepath.Ext(imageURL))
+		if err != nil {
+			logs.L().Ctx(ctx).Warn("get pic from minio error", zap.String("imageURL", imageURL))
+			err = nil
+		}
+		if u != "" {
+			ossURL = u
+		} else if uploadOSS {
+			picData, err := lazyPicData.Get()
+			if err != nil {
+				logs.L().Ctx(ctx).Error("resize pic from url error", zap.Error(err))
+				return "", err
+			}
 			dal := miniodal.New(miniodal.Internal)
-			res := dal.Upload(ctx).WithContentType(ContentTypeImgJPEG.String()).WithData(picData).Do("cloudmusic", "picture/"+musicID+filepath.Ext(imageURL), minio.PutObjectOptions{})
+			res := dal.Upload(ctx).
+				WithContentType(ContentTypeImgJPEG.String()).
+				WithData(picData).Do("cloudmusic", "picture/"+musicID+filepath.Ext(imageURL), minio.PutObjectOptions{})
 			if res.Err() != nil {
 				logs.L().Ctx(ctx).Warn("upload pic to minio error", zap.String("file_key", "picture/"+musicID+filepath.Ext(imageURL)), zap.String("file_type", ContentTypeImgJPEG.String()))
-				return
+				return "", err
 			}
 			u, err := res.PreSignURL(ctx)
 			if err != nil {
@@ -468,14 +500,16 @@ func UploadPicAllinOne(ctx context.Context, imageURL string, musicIDInt int, upl
 				zap.String("url", u))
 			ossURL = u
 		}
-	}
-	u, err := miniodal.TryGetFile(ctx, "cloudmusic", "picture/"+musicID+filepath.Ext(imageURL))
+		return ossURL, nil
+	}, kinetic.WithContext(ctx))
+
+	ossURL, err = urlFuture.Get()
 	if err != nil {
-		logs.L().Ctx(ctx).Warn("get pic from minio error", zap.String("imageURL", imageURL), zap.String("imageKey", imgKey))
-		err = nil
+		return
 	}
-	if u != "" {
-		ossURL = u
+	imgKey, err := imgKeyFuture.Get()
+	if err != nil {
+		return "", "", err
 	}
 	return imgKey, ossURL, err
 }
