@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/bytedance/sonic"
@@ -50,6 +51,9 @@ type KuttResp struct {
 }
 
 func GenAKAKutt(ctx context.Context, u *url.URL) (newURL *url.URL) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	
 	expires := ExpireTime{
 		Value: 30,
 		Unit:  TimeUnitsDay,
