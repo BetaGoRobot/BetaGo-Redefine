@@ -16,6 +16,7 @@ import (
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -177,13 +178,13 @@ func handleMusicListPage(ctx context.Context, actionCtx *Context) (AsyncTask, er
 			Query:    query,
 			Page:     page,
 			PageSize: pageSize,
-		}, func(sendCtx context.Context, cardData any) (string, error) {
-			if err := larkmsg.PatchCardJSON(sendCtx, msgID, cardData); err != nil {
+		}, func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
+			if err := larkmsg.PatchCard(sendCtx, cardContent, msgID); err != nil {
 				return "", err
 			}
 			return msgID, nil
-		}, func(updateCtx context.Context, cardID, elementID string, sequence int, elementJSON string) error {
-			return larkmsg.UpdateCardElement(updateCtx, cardID, elementID, sequence, elementJSON)
+		}, func(patchCtx context.Context, patchMsgID string, cardContent *larktpl.TemplateCardContent) error {
+			return larkmsg.PatchCard(patchCtx, cardContent, patchMsgID)
 		})
 		if err != nil {
 			logs.L().Ctx(runCtx).Warn("stream music list page card failed", zap.String("message_id", msgID), zap.Error(err))

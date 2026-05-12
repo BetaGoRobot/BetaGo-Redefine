@@ -2,11 +2,11 @@ package neteaseapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/alicebob/miniredis/v2"
@@ -32,37 +32,32 @@ func TestMusicListRendererIncludesPaginationPayload(t *testing.T) {
 		},
 	})
 
-	card := renderer.RawCard(context.Background())
-	cardJSON, _ := json.Marshal(card)
-	cardStr := string(cardJSON)
+	vars := renderer.vars()
 
-	// Verify page info text
-	if !contains(cardStr, "第 2 / 3 页") {
-		t.Fatalf("expected page info text '第 2 / 3 页', got %s", cardStr)
+	if got := len(vars.ObjectList1); got != 2 {
+		t.Fatalf("expected 2 visible items, got %d", got)
 	}
-
-	// Verify prev/next pagination buttons exist with correct action
-	if !contains(cardStr, cardactionproto.ActionMusicListPage) {
-		t.Fatalf("expected pagination action %q in card", cardactionproto.ActionMusicListPage)
+	if vars.ObjectList1[0].Field1 != "加载中" || vars.ObjectList1[1].Field1 != "加载中" {
+		t.Fatalf("expected initial loading placeholders, got %#v", vars.ObjectList1)
 	}
-
-	// Verify scene is present
-	if !contains(cardStr, string(MusicListScenePlaylistDetail)) {
-		t.Fatalf("expected scene %q in card", MusicListScenePlaylistDetail)
+	if got := vars.PageInfoText; got != "第 2 / 3 页" {
+		t.Fatalf("expected page info text, got %#v", got)
 	}
-
-	// Verify loading placeholders
-	if !contains(cardStr, "加载中") {
-		t.Fatalf("expected loading placeholder in card")
+	if vars.PrevPageVal[cardactionproto.ActionField] != cardactionproto.ActionMusicListPage {
+		t.Fatalf("expected prev action %q, got %#v", cardactionproto.ActionMusicListPage, vars.PrevPageVal)
 	}
-
-	// Verify element_ids on rows (page 2, size 2 → items 3,4)
-	if !contains(cardStr, "m_3") || !contains(cardStr, "m_4") {
-		t.Fatalf("expected element_ids m_3 and m_4 in card, got %s", cardStr)
+	if vars.PrevPageVal[cardactionproto.PageField] != "1" {
+		t.Fatalf("expected prev page to be 1, got %#v", vars.PrevPageVal[cardactionproto.PageField])
+	}
+	if vars.NextPageVal[cardactionproto.PageField] != "3" {
+		t.Fatalf("expected next page to be 3, got %#v", vars.NextPageVal[cardactionproto.PageField])
+	}
+	if vars.NextPageVal[cardactionproto.SceneField] != string(MusicListScenePlaylistDetail) {
+		t.Fatalf("expected scene %q, got %#v", MusicListScenePlaylistDetail, vars.NextPageVal[cardactionproto.SceneField])
 	}
 }
 
-func TestMusicListStreamFallbackRevealsMonotonicProgress(t *testing.T) {
+func TestMusicListStreamRevealsMonotonicProgress(t *testing.T) {
 	previousProvider := NetEaseGCtx
 	NetEaseGCtx = fakeMusicListProvider{}
 	defer func() { NetEaseGCtx = previousProvider }()
@@ -86,27 +81,39 @@ func TestMusicListStreamFallbackRevealsMonotonicProgress(t *testing.T) {
 	})
 
 	var resolvedCounts []int
-	if err := renderer.streamCurrentPageFallback(context.Background(), &musicListStreamGuard{}, "om_msg_1", func(ctx context.Context, cardData any) (string, error) {
-		cardJSON, _ := json.Marshal(cardData)
-		cardStr := string(cardJSON)
-
-		// Count how many rows are resolved (have music title markdown)
+	if err := renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string) (string, error) {
 		resolved := 0
-		for _, name := range []string{"s1", "s2", "s3", "s4", "s5"} {
-			if contains(cardStr, "**"+name+"**") {
+		for _, item := range vars.ObjectList1 {
+			if item != nil && item.Field1 != "加载中" {
 				resolved++
 			}
 		}
 		resolvedCounts = append(resolvedCounts, resolved)
-		return "om_msg_1", nil
+		if messageID == "" {
+			return "om_msg_1", nil
+		}
+		return messageID, nil
 	}); err != nil {
-		t.Fatalf("stream fallback: %v", err)
+		t.Fatalf("stream current page: %v", err)
 	}
 	if len(resolvedCounts) < 2 {
 		t.Fatalf("expected at least placeholder and final updates, got %v", resolvedCounts)
 	}
+	if resolvedCounts[0] != 0 {
+		t.Fatalf("expected first update to be placeholder-only, got %v", resolvedCounts)
+	}
 	if resolvedCounts[len(resolvedCounts)-1] != 5 {
 		t.Fatalf("expected final update to resolve all items, got %v", resolvedCounts)
+	}
+	last := -1
+	for _, got := range resolvedCounts {
+		if got < last {
+			t.Fatalf("expected monotonic progress, got %v", resolvedCounts)
+		}
+		if got < 0 || got > 5 {
+			t.Fatalf("expected resolved count in [0,5], got %v", resolvedCounts)
+		}
+		last = got
 	}
 }
 
@@ -131,6 +138,7 @@ func TestMusicListStreamGuardCancelsViaRedisLease(t *testing.T) {
 		t.Fatalf("guard should be active before cancel, got %v", err)
 	}
 
+	// 模拟回调打到其他实例: 当前进程没有本地 cancel 注册，只剩下 Redis lease。
 	activeMusicListStreams.Delete("om_msg_test")
 	CancelMusicListStream(context.Background(), "om_msg_test")
 
@@ -139,34 +147,15 @@ func TestMusicListStreamGuardCancelsViaRedisLease(t *testing.T) {
 	}
 }
 
-func TestBuildMusicListFilledRowUnavailableSong(t *testing.T) {
-	row := buildMusicListFilledRow(&SearchMusicItem{
+func TestNewMusicListCardItemMarksUnavailableSong(t *testing.T) {
+	item := newMusicListCardItem(&SearchMusicItem{
 		ID:         7,
 		Name:       "无版权歌曲",
 		ArtistName: "测试歌手",
-	}, CommentTypeSong, "", "")
+	}, musicListButtonConfigFor(CommentTypeSong))
 
-	rowJSON, _ := json.Marshal(row)
-	rowStr := string(rowJSON)
-
-	if !contains(rowStr, "歌曲无效") {
-		t.Fatalf("expected unavailable song label, got %s", rowStr)
-	}
-}
-
-func TestMusicRowElementID(t *testing.T) {
-	tests := []struct {
-		item *SearchMusicItem
-		want string
-	}{
-		{&SearchMusicItem{ID: 123}, "m_123"},
-		{&SearchMusicItem{ID: 0}, ""},
-		{nil, ""},
-	}
-	for _, tt := range tests {
-		if got := musicRowElementID(tt.item); got != tt.want {
-			t.Errorf("musicRowElementID(%v) = %q, want %q", tt.item, got, tt.want)
-		}
+	if item.ButtonInfo != "歌曲无效" {
+		t.Fatalf("expected unavailable song label, got %q", item.ButtonInfo)
 	}
 }
 
@@ -193,17 +182,4 @@ func clearMusicListTestStreams() {
 		activeMusicListStreams.Delete(key)
 		return true
 	})
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || jsonContains(s, substr))
-}
-
-func jsonContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -8,6 +8,7 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -100,28 +101,28 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
-	send := func(sendCtx context.Context, cardData any) (string, error) {
-		return sendCompatibleCardJSONWithMessageID(sendCtx, data, metaData, cardData, "_musicSearch", replyInThread)
+	send := func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
+		return sendCompatibleCardWithMessageID(sendCtx, data, metaData, cardContent, "_musicSearch", replyInThread)
 	}
-	update := func(updateCtx context.Context, cardID, elementID string, sequence int, elementJSON string) error {
-		return larkmsg.UpdateCardElement(updateCtx, cardID, elementID, sequence, elementJSON)
+	patch := func(patchCtx context.Context, msgID string, cardContent *larktpl.TemplateCardContent) error {
+		return larkmsg.PatchCard(patchCtx, cardContent, msgID)
 	}
 
 	if arg.Type == "" || arg.Type == MusicSearchTypeSong {
 		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListSceneSongSearch,
 			Query: arg.Keywords,
-		}, send, update)
+		}, send, patch)
 	} else if arg.Type == MusicSearchTypeAlbum {
 		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListSceneAlbumSearch,
 			Query: arg.Keywords,
-		}, send, update)
+		}, send, patch)
 	} else if arg.Type == MusicSearchTypePlaylist {
 		err = neteaseapi.StreamMusicListCardForRequest(ctx, neteaseapi.MusicListRequest{
 			Scene: neteaseapi.MusicListScenePlaylistDetail,
 			Query: arg.Keywords,
-		}, send, update)
+		}, send, patch)
 	} else {
 		err = errors.New("unknown search type")
 	}

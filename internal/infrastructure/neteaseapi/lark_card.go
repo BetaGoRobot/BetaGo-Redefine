@@ -7,19 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -27,10 +23,6 @@ const (
 	defaultMusicListPageSize    = 5
 	maxMusicListPageSize        = 100
 	musicListStreamPatchWindow  = 500 * time.Millisecond
-
-	musicListPaginationElementID = "music_list_pagination"
-	musicListFooterElementID     = "music_list_footer"
-	musicListLoadingImageKey     = "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g"
 )
 
 var activeMusicListStreams sync.Map
@@ -46,11 +38,10 @@ const (
 
 type musicItemTransFunc[T any] func(context.Context, *T) *SearchMusicItem
 
-// MusicListCardSender sends a card and returns the message ID.
-type MusicListCardSender func(ctx context.Context, cardData any) (messageID string, err error)
-
-// MusicListCardUpdater updates a single element in a card by element_id with a streaming sequence.
-type MusicListCardUpdater func(ctx context.Context, cardID, elementID string, sequence int, elementJSON string) error
+type (
+	MusicListCardSender  func(context.Context, *larktpl.TemplateCardContent) (string, error)
+	MusicListCardPatcher func(context.Context, string, *larktpl.TemplateCardContent) error
+)
 
 type MusicListRequest struct {
 	Scene    MusicListScene
@@ -72,9 +63,8 @@ type musicListButtonConfig struct {
 }
 
 type musicListLineState struct {
-	item    *SearchMusicItem
-	element map[string]any
-	filled  bool
+	item *SearchMusicItem
+	line larktpl.MusicListCardItem
 }
 
 type musicListCardRenderer struct {
@@ -101,7 +91,7 @@ func MusicItemTransAlbum(_ context.Context, albumItem *Album) *SearchMusicItem {
 	}
 }
 
-func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musicItemTransFunc[T], resourceType CommentType, keywords ...string) (larkmsg.RawCard, error) {
+func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musicItemTransFunc[T], resourceType CommentType, keywords ...string) (*larktpl.TemplateCardContent, error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 
@@ -117,10 +107,10 @@ func BuildMusicListCard[T any](ctx context.Context, resList []*T, transFunc musi
 		items:        items,
 	})
 	renderer.resolveCurrentPage(ctx)
-	return renderer.RawCard(ctx), nil
+	return renderer.Card(ctx), nil
 }
 
-func BuildMusicListCardForRequest(ctx context.Context, req MusicListRequest) (larkmsg.RawCard, error) {
+func BuildMusicListCardForRequest(ctx context.Context, req MusicListRequest) (*larktpl.TemplateCardContent, error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 
@@ -131,10 +121,10 @@ func BuildMusicListCardForRequest(ctx context.Context, req MusicListRequest) (la
 
 	renderer := newMusicListCardRenderer(data)
 	renderer.resolveCurrentPage(ctx)
-	return renderer.RawCard(ctx), nil
+	return renderer.Card(ctx), nil
 }
 
-func StreamMusicListCardForRequest(ctx context.Context, req MusicListRequest, send MusicListCardSender, update MusicListCardUpdater) error {
+func StreamMusicListCardForRequest(ctx context.Context, req MusicListRequest, send MusicListCardSender, patch MusicListCardPatcher) error {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 
@@ -147,7 +137,7 @@ func StreamMusicListCardForRequest(ctx context.Context, req MusicListRequest, se
 	_, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	err = renderer.streamCurrentPage(context.WithoutCancel(ctx), send, update, cancel)
+	err = renderer.streamCurrentPage(context.WithoutCancel(ctx), send, patch, cancel)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -162,9 +152,8 @@ func newMusicListCardRenderer(data musicListCardData) *musicListCardRenderer {
 			continue
 		}
 		lines = append(lines, &musicListLineState{
-			item:    item,
-			element: buildMusicListLoadingRow(item),
-			filled:  false,
+			item: item,
+			line: newMusicListCardLoadingItem(item),
 		})
 	}
 
@@ -179,124 +168,59 @@ func newMusicListCardRenderer(data musicListCardData) *musicListCardRenderer {
 	}
 }
 
-func (r *musicListCardRenderer) RawCard(ctx context.Context) larkmsg.RawCard {
-	return r.buildRawCard(ctx)
+func (r *musicListCardRenderer) Card(ctx context.Context) *larktpl.TemplateCardContent {
+	return larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, r.vars())
 }
 
-func (r *musicListCardRenderer) buildRawCard(ctx context.Context) larkmsg.RawCard {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	currentPage := r.currentPageLocked()
-	totalPages := r.totalPagesLocked()
-
-	elements := make([]any, 0, len(r.lines)+2)
-
-	start, end := currentMusicListRange(len(r.lines), r.request.Page, r.request.PageSize)
-	for i := start; i < end; i++ {
-		elements = append(elements, r.lines[i].element)
-	}
-
-	elements = append(elements, r.buildPaginationElement(currentPage, totalPages))
-	elements = append(elements, r.buildFooterElement(ctx))
-
-	return larkmsg.RawCard{
-		"schema": "2.0",
-		"config": map[string]any{
-			"update_multi":   true,
-			"enable_forward": false,
-		},
-		"header": map[string]any{
-			"template": "blue",
-			"title":    larkmsg.PlainText(formatMusicListQuery(r.displayTitle)),
-		},
-		"body": map[string]any{
-			"direction":          "vertical",
-			"horizontal_spacing": "8px",
-			"vertical_spacing":   "8px",
-			"padding":            "12px",
-			"elements":           elements,
-		},
+func (r *musicListCardRenderer) vars() *larktpl.MusicListCardVars {
+	currentPage := r.currentPage()
+	totalPages := r.totalPages()
+	return &larktpl.MusicListCardVars{
+		ObjectList1:  r.snapshotCurrentPageLines(),
+		Query:        formatMusicListQuery(r.displayTitle),
+		PageInfoText: fmt.Sprintf("第 %d / %d 页", currentPage, totalPages),
+		CurrentPage:  currentPage,
+		TotalPages:   totalPages,
+		HasPrev:      currentPage <= 1,
+		HasNext:      currentPage >= totalPages,
+		PrevPageVal:  r.pagePayload(currentPage - 1),
+		NextPageVal:  r.pagePayload(currentPage + 1),
 	}
 }
 
-func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send MusicListCardSender, update MusicListCardUpdater, cancel context.CancelFunc) error {
+func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send MusicListCardSender, patch MusicListCardPatcher, cancel context.CancelFunc) error {
 	streamGuard := &musicListStreamGuard{}
 	defer streamGuard.Release(context.Background())
 
-	// 1. Send initial card with loading placeholders
-	messageID, err := send(ctx, r.buildRawCard(ctx))
+	return r.streamCurrentPageVars(ctx, streamGuard, func(vars *larktpl.MusicListCardVars, messageID string) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return messageID, err
+		}
+		card := larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, vars)
+		if messageID == "" {
+			nextMessageID, err := send(ctx, card)
+			if err != nil {
+				return "", err
+			}
+			streamGuard.Register(ctx, nextMessageID, cancel)
+			return nextMessageID, nil
+		}
+		if err := streamGuard.EnsureActive(ctx); err != nil {
+			return messageID, err
+		}
+		return messageID, patch(ctx, messageID, card)
+	})
+}
+
+func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string) (string, error)) error {
+	pageStates := r.currentPageStates()
+	messageID, err := emit(r.vars(), "")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(messageID) == "" {
 		return errors.New("empty message id for music list card")
 	}
-	streamGuard.Register(ctx, messageID, cancel)
-
-	// 2. Convert message_id to card_id for cardKit APIs
-	cardID, err := larkmsg.IdConvert(ctx, messageID)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("id_convert failed, falling back to full patch", zap.String("message_id", messageID), zap.Error(err))
-		return r.streamCurrentPageFallback(ctx, streamGuard, messageID, send)
-	}
-
-	// 3. Enable streaming mode
-	var seq atomic.Int64
-	seq.Store(time.Now().UnixMilli())
-
-	if err := larkmsg.BatchUpdateCard(ctx, cardID, int(seq.Add(1)), `[{"action":"partial_update_setting","params":{"settings":"{\"config\":{\"streaming_mode\":true}}"}}]`); err != nil {
-		logs.L().Ctx(ctx).Warn("enable streaming mode failed, falling back to full patch", zap.String("card_id", cardID), zap.Error(err))
-		return r.streamCurrentPageFallback(ctx, streamGuard, messageID, send)
-	}
-
-	// 4. Resolve each line in parallel and update individually via cardKit
-	pageStates := r.currentPageStates()
-	if len(pageStates) == 0 {
-		_ = larkmsg.BatchUpdateCard(ctx, cardID, int(seq.Add(1)), `[{"action":"partial_update_setting","params":{"settings":"{\"config\":{\"streaming_mode\":false}}"}}]`)
-		return nil
-	}
-
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(musicListResolveConcurrency)
-
-	for _, state := range pageStates {
-		state := state
-		group.Go(func() error {
-			if err := groupCtx.Err(); err != nil {
-				return err
-			}
-			r.resolveLine(groupCtx, state)
-
-			if err := groupCtx.Err(); err != nil {
-				return err
-			}
-			if err := streamGuard.EnsureActive(groupCtx); err != nil {
-				return err
-			}
-
-			// Update this single element via cardKit
-			elementJSON := mustMarshalElement(state.element)
-			elementID := musicRowElementID(state.item)
-			if elementID != "" && elementJSON != "" {
-				if err := update(groupCtx, cardID, elementID, int(seq.Add(1)), elementJSON); err != nil {
-					logs.L().Ctx(groupCtx).Warn("update card element failed", zap.String("element_id", elementID), zap.Error(err))
-				}
-			}
-			return nil
-		})
-	}
-
-	resolveErr := group.Wait()
-
-	// 5. Disable streaming mode
-	_ = larkmsg.BatchUpdateCard(context.WithoutCancel(ctx), cardID, int(seq.Add(1)), `[{"action":"partial_update_setting","params":{"settings":"{\"config\":{\"streaming_mode\":false}}"}}]`)
-
-	return resolveErr
-}
-
-func (r *musicListCardRenderer) streamCurrentPageFallback(ctx context.Context, streamGuard *musicListStreamGuard, messageID string, send MusicListCardSender) error {
-	pageStates := r.currentPageStates()
 	if len(pageStates) == 0 {
 		return nil
 	}
@@ -337,11 +261,7 @@ func (r *musicListCardRenderer) streamCurrentPageFallback(ctx context.Context, s
 		if !pendingPatch {
 			return nil
 		}
-		cardData := r.buildRawCard(ctx)
-		if _, err := send(ctx, cardData); err != nil {
-			return err
-		}
-		pendingPatch = false
+		emit(r.vars(), messageID)
 		return nil
 	}
 
@@ -390,300 +310,52 @@ func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicLis
 	}
 
 	item := state.item
-	var imageKey string
-	var commentContent string
-	var commentTime string
-
-	g, gCtx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		if strings.TrimSpace(item.ImageKey) != "" || strings.TrimSpace(item.PicURL) == "" {
-			return nil
-		}
-		uploadedKey, _, err := larkimg.UploadPicAllinOne(gCtx, item.PicURL, item.ID, true)
+	imageKey := strings.TrimSpace(item.ImageKey)
+	if imageKey == "" && strings.TrimSpace(item.PicURL) != "" {
+		uploadedKey, _, err := larkimg.UploadPicAllinOne(ctx, item.PicURL, item.ID, true)
 		if err != nil {
-			logs.L().Ctx(gCtx).Warn("upload music list picture failed", zap.Int("music_id", item.ID), zap.Error(err))
-			return nil
+			logs.L().Ctx(ctx).Warn("upload music list picture failed", zap.Int("music_id", item.ID), zap.Error(err))
+		} else {
+			imageKey = uploadedKey
 		}
-		imageKey = uploadedKey
-		return nil
-	})
+	}
 
-	g.Go(func() error {
-		comment, err := NetEaseGCtx.GetComment(gCtx, r.resourceType, strconv.Itoa(item.ID))
-		if err != nil {
-			logs.L().Ctx(gCtx).Error("GetComment Error", zap.Int("music_id", item.ID), zap.Error(err))
-			return nil
-		}
-		if comment != nil && len(comment.Data.Comments) > 0 {
-			commentContent = trimMusicComment(comment.Data.Comments[0].Content)
-			commentTime = comment.Data.Comments[0].TimeStr
-		}
-		return nil
-	})
-
-	_ = g.Wait()
-
-	if imageKey != "" {
-		item.ImageKey = imageKey
+	commentContent := ""
+	commentTime := ""
+	comment, err := NetEaseGCtx.GetComment(ctx, r.resourceType, strconv.Itoa(item.ID))
+	if err != nil {
+		logs.L().Ctx(ctx).Error("GetComment Error", zap.Int("music_id", item.ID), zap.Error(err))
+	} else if comment != nil && len(comment.Data.Comments) > 0 {
+		commentContent = trimMusicComment(comment.Data.Comments[0].Content)
+		commentTime = comment.Data.Comments[0].TimeStr
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state.element = buildMusicListFilledRow(item, r.resourceType, commentContent, commentTime)
-	state.filled = true
+	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType))
+	if imageKey != "" {
+		state.item.ImageKey = imageKey
+		line.Field2 = larktpl.ImageKeyRef{ImgKey: imageKey}
+	}
+	line.Field3 = commentContent
+	line.CommentTime = commentTime
+	line.Filled = true
+	state.line = line
 }
 
-// --- RawCard element builders ---
+func (r *musicListCardRenderer) snapshotCurrentPageLines() []*larktpl.MusicListCardItem {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
-func musicRowElementID(item *SearchMusicItem) string {
-	if item == nil || item.ID == 0 {
-		return ""
+	pageStates := r.currentPageStatesLocked()
+	lines := make([]*larktpl.MusicListCardItem, 0, len(pageStates))
+	for idx := range pageStates {
+		lineCopy := pageStates[idx].line
+		lines = append(lines, &lineCopy)
 	}
-	return "m_" + strconv.Itoa(item.ID)
+	return lines
 }
-
-func buildMusicListLoadingRow(item *SearchMusicItem) map[string]any {
-	elementID := musicRowElementID(item)
-	imgCol := map[string]any{
-		"tag":      "column",
-		"width":    "auto",
-		"elements": []any{buildImgElement(musicListLoadingImageKey)},
-	}
-	textCol := map[string]any{
-		"tag":      "column",
-		"width":    "weighted",
-		"weight":   3,
-		"elements": buildLoadingTextElements(),
-	}
-	row := map[string]any{
-		"tag":                "column_set",
-		"horizontal_spacing": "8px",
-		"flex_mode":          "bisect",
-		"columns":            []any{imgCol, textCol},
-	}
-	if elementID != "" {
-		row["element_id"] = elementID
-	}
-	return row
-}
-
-func buildMusicListFilledRow(item *SearchMusicItem, resourceType CommentType, commentContent, commentTime string) map[string]any {
-	elementID := musicRowElementID(item)
-	buttonCfg := musicListButtonConfigFor(resourceType)
-
-	buttonInfo := buttonCfg.ButtonName
-	if buttonCfg.ActionName == cardaction.ActionMusicPlay && strings.TrimSpace(item.SongURL) == "" {
-		buttonInfo = "歌曲无效"
-	}
-
-	imgKey := strings.TrimSpace(item.ImageKey)
-	if imgKey == "" {
-		imgKey = musicListLoadingImageKey
-	}
-
-	rightElements := []any{
-		map[string]any{
-			"tag":     "markdown",
-			"content": genMusicTitle(item.Name, item.ArtistName),
-		},
-	}
-	if commentContent != "" {
-		rightElements = append(rightElements, map[string]any{
-			"tag":  "div",
-			"text": map[string]any{"tag": "plain_text", "content": commentContent, "text_size": "notation", "text_color": "grey"},
-		})
-	}
-	if commentTime != "" {
-		rightElements = append(rightElements, map[string]any{
-			"tag":  "div",
-			"text": map[string]any{"tag": "plain_text", "content": commentTime, "text_size": "notation", "text_color": "grey"},
-		})
-	}
-
-	imgCol := map[string]any{
-		"tag":      "column",
-		"width":    "auto",
-		"elements": []any{buildImgElement(imgKey)},
-	}
-	textCol := map[string]any{
-		"tag":              "column",
-		"width":            "weighted",
-		"weight":           3,
-		"elements":         rightElements,
-		"vertical_spacing": "4px",
-	}
-	btnCol := map[string]any{
-		"tag":      "column",
-		"width":    "auto",
-		"elements": []any{buildButtonElement(buttonInfo, buttonCfg.ActionName, item.ID), buildButtonElement("播放语音", cardaction.ActionMusicVoicePlay, item.ID)},
-	}
-
-	row := map[string]any{
-		"tag":                "column_set",
-		"horizontal_spacing": "8px",
-		"flex_mode":          "bisect",
-		"columns":            []any{imgCol, textCol, btnCol},
-	}
-	if elementID != "" {
-		row["element_id"] = elementID
-	}
-	return row
-}
-
-func buildImgElement(imgKey string) map[string]any {
-	return map[string]any{
-		"tag":           "img",
-		"img_key":       imgKey,
-		"corner_radius": "4px",
-	}
-}
-
-func buildLoadingTextElements() []any {
-	return []any{
-		map[string]any{
-			"tag":     "markdown",
-			"content": "加载中",
-		},
-		map[string]any{
-			"tag":  "div",
-			"text": map[string]any{"tag": "plain_text", "content": "加载中", "text_size": "notation", "text_color": "grey"},
-		},
-	}
-}
-
-func buildButtonElement(label, actionName string, musicID int) map[string]any {
-	return map[string]any{
-		"tag":  "button",
-		"text": map[string]any{"tag": "plain_text", "content": label},
-		"type": "primary",
-		"size": "tiny",
-		"behaviors": []any{map[string]any{
-			"type":  "callback",
-			"value": larkmsg.StringMapToAnyMap(cardaction.New(actionName).WithID(strconv.Itoa(musicID)).Payload()),
-		}},
-	}
-}
-
-func (r *musicListCardRenderer) buildPaginationElement(currentPage, totalPages int) map[string]any {
-	columns := make([]any, 0, 3)
-
-	if currentPage > 1 {
-		columns = append(columns, map[string]any{
-			"tag":      "column",
-			"width":    "auto",
-			"elements": []any{buildPaginationButton("上一页", r.pagePayload(currentPage-1))},
-		})
-	}
-
-	columns = append(columns, map[string]any{
-		"tag":      "column",
-		"width":    "weighted",
-		"weight":   1,
-		"elements": []any{map[string]any{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": fmt.Sprintf("第 %d / %d 页", currentPage, totalPages), "text_align": "center"}}},
-	})
-
-	if currentPage < totalPages {
-		columns = append(columns, map[string]any{
-			"tag":      "column",
-			"width":    "auto",
-			"elements": []any{buildPaginationButton("下一页", r.pagePayload(currentPage+1))},
-		})
-	}
-
-	return map[string]any{
-		"tag":                "column_set",
-		"element_id":        musicListPaginationElementID,
-		"horizontal_spacing": "8px",
-		"flex_mode":          "bisect",
-		"columns":            columns,
-	}
-}
-
-func buildPaginationButton(label string, payload map[string]string) map[string]any {
-	if len(payload) == 0 {
-		return map[string]any{
-			"tag":      "button",
-			"text":     map[string]any{"tag": "plain_text", "content": label},
-			"type":     "default",
-			"size":     "tiny",
-			"disabled": true,
-		}
-	}
-	return map[string]any{
-		"tag":  "button",
-		"text": map[string]any{"tag": "plain_text", "content": label},
-		"type": "default",
-		"size": "tiny",
-		"behaviors": []any{map[string]any{
-			"type":  "callback",
-			"value": larkmsg.StringMapToAnyMap(payload),
-		}},
-	}
-}
-
-func (r *musicListCardRenderer) buildFooterElement(ctx context.Context) map[string]any {
-	traceID := ""
-	spanCtx := oteltrace.SpanContextFromContext(ctx)
-	if spanCtx.HasTraceID() {
-		traceID = spanCtx.TraceID().String()
-	}
-	traceURL := ""
-	if traceID != "" {
-		traceURL = utils.GenTraceURL(traceID)
-	}
-
-	footerColumns := make([]any, 0, 3)
-
-	footerColumns = append(footerColumns, map[string]any{
-		"tag":      "column",
-		"width":    "weighted",
-		"weight":   1,
-		"elements": []any{map[string]any{"tag": "div", "text": map[string]any{"tag": "plain_text", "content": "更新于 " + time.Now().In(utils.UTC8Loc()).Format(time.DateTime), "text_size": "notation", "text_color": "grey"}}},
-	})
-
-	footerColumns = append(footerColumns, map[string]any{
-		"tag":   "column",
-		"width": "auto",
-		"elements": []any{map[string]any{
-			"tag":  "button",
-			"text": map[string]any{"tag": "plain_text", "content": "撤回"},
-			"type": "danger_filled",
-			"size": "tiny",
-			"behaviors": []any{map[string]any{
-				"type":  "callback",
-				"value": map[string]any{cardaction.ActionField: cardaction.ActionCardWithdraw},
-			}},
-		}},
-	})
-
-	if traceURL != "" {
-		footerColumns = append(footerColumns, map[string]any{
-			"tag":   "column",
-			"width": "auto",
-			"elements": []any{map[string]any{
-				"tag":  "button",
-				"text": map[string]any{"tag": "plain_text", "content": "Trace"},
-				"type": "primary",
-				"size": "tiny",
-				"behaviors": []any{map[string]any{
-					"type":        "open_url",
-					"default_url": traceURL,
-				}},
-			}},
-		})
-	}
-
-	return map[string]any{
-		"tag":                "column_set",
-		"element_id":        musicListFooterElementID,
-		"horizontal_spacing": "8px",
-		"columns":            footerColumns,
-	}
-}
-
-// --- State accessors ---
 
 func (r *musicListCardRenderer) currentPageStates() []*musicListLineState {
 	r.mu.RLock()
@@ -699,11 +371,15 @@ func (r *musicListCardRenderer) currentPageStatesLocked() []*musicListLineState 
 	return r.lines[start:end]
 }
 
-func (r *musicListCardRenderer) totalPagesLocked() int {
+func (r *musicListCardRenderer) totalPages() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return totalMusicListPages(len(r.lines), r.request.PageSize)
 }
 
-func (r *musicListCardRenderer) currentPageLocked() int {
+func (r *musicListCardRenderer) currentPage() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return clampMusicListPage(r.request.Page, totalMusicListPages(len(r.lines), r.request.PageSize))
 }
 
@@ -711,7 +387,7 @@ func (r *musicListCardRenderer) pagePayload(targetPage int) map[string]string {
 	if targetPage <= 0 {
 		return nil
 	}
-	totalPages := r.totalPagesLocked()
+	totalPages := r.totalPages()
 	if targetPage > totalPages || r.request.Scene == "" || strings.TrimSpace(r.request.Query) == "" {
 		return nil
 	}
@@ -722,8 +398,6 @@ func (r *musicListCardRenderer) pagePayload(targetPage int) map[string]string {
 		WithValue(cardaction.PageSizeField, strconv.Itoa(r.request.PageSize)).
 		Payload()
 }
-
-// --- Data loading ---
 
 func loadMusicListCardData(ctx context.Context, req MusicListRequest) (musicListCardData, error) {
 	req = normalizeMusicListRequest(req)
@@ -864,8 +538,6 @@ func collectMusicItems[T any](ctx context.Context, resList []*T, transFunc music
 	return filtered
 }
 
-// --- Helpers ---
-
 func musicListButtonConfigFor(resourceType CommentType) musicListButtonConfig {
 	switch resourceType {
 	case CommentTypeSong:
@@ -886,12 +558,43 @@ func musicListButtonConfigFor(resourceType CommentType) musicListButtonConfig {
 	}
 }
 
-func mustMarshalElement(element map[string]any) string {
-	b, err := sonic.Marshal(element)
-	if err != nil {
-		return ""
+func newMusicListCardItem(item *SearchMusicItem, button musicListButtonConfig) larktpl.MusicListCardItem {
+	buttonInfo := button.ButtonName
+	if button.ActionName == cardaction.ActionMusicPlay && strings.TrimSpace(item.SongURL) == "" {
+		buttonInfo = "歌曲无效"
 	}
-	return string(b)
+
+	cardItem := larktpl.MusicListCardItem{
+		Field1:     genMusicTitle(item.Name, item.ArtistName),
+		Field2:     larktpl.ImageKeyRef{ImgKey: item.ImageKey},
+		ButtonInfo: buttonInfo,
+		ElementID:  strconv.Itoa(item.ID),
+		ButtonVal:  cardaction.New(button.ActionName).WithID(strconv.Itoa(item.ID)).Payload(),
+	}
+
+	// 始终添加"播放语音"按钮
+	cardItem.Button2Info = "播放语音"
+	cardItem.Button2Val = cardaction.New(cardaction.ActionMusicVoicePlay).WithID(strconv.Itoa(item.ID)).Payload()
+
+	return cardItem
+}
+
+func newMusicListCardLoadingItem(item *SearchMusicItem) larktpl.MusicListCardItem {
+	elementID := ""
+	if item != nil && item.ID != 0 {
+		elementID = strconv.Itoa(item.ID)
+	}
+	return larktpl.MusicListCardItem{
+		Field1: "加载中",
+		Field2: larktpl.ImageKeyRef{
+			ImgKey: "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g",
+		},
+		Field3:      "加载中",
+		CommentTime: "加载中",
+		ButtonInfo:  "加载中",
+		Button2Info: "播放语音",
+		ElementID:   elementID,
+	}
 }
 
 func normalizeMusicListRequest(req MusicListRequest) MusicListRequest {

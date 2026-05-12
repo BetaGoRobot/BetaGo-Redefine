@@ -347,7 +347,7 @@ func SendAlbumCard(ctx context.Context, metaData *xhandler.BaseMetaData, albumID
 		return
 	}
 	accessor := appconfig.NewAccessorFromMeta(ctx, metaData)
-	err = larkmsg.ReplyCardJSON(ctx, msgID, cardContent, "_album", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
+	err = larkmsg.ReplyCard(ctx, cardContent, msgID, "_album", utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread()))
 	if err != nil {
 		return
 	}

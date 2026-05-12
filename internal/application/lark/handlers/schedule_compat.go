@@ -278,39 +278,3 @@ func compatibleCardReplyInThread(metaData *xhandler.BaseMetaData, replyInThread 
 	}
 	return replyInThread
 }
-
-func sendCompatibleCardJSONWithMessageID(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cardData any, suffix string, replyInThread bool) (string, error) {
-	ctx = context.WithoutCancel(ctx)
-	if runtimecontext.ShouldSuppressCompatibleOutput(ctx) {
-		return "", nil
-	}
-	msgID := currentMessageID(data)
-	if msgID != "" {
-		if metaData != nil && metaData.Refresh {
-			if err := scheduleCompatPatchCardJSON(ctx, msgID, cardData); err != nil {
-				return msgID, err
-			}
-			recordCompatibleReply(ctx, metaData, msgID, "card_json")
-			return msgID, nil
-		}
-	}
-	if msgID != "" {
-		replyInThread = compatibleCardReplyInThread(metaData, replyInThread)
-		if replyMsgID, err := scheduleCompatReplyCardJSON(ctx, msgID, cardData, suffix, replyInThread); err == nil {
-			recordCompatibleReply(ctx, metaData, replyMsgID, "card_json")
-			return replyMsgID, nil
-		}
-	}
-
-	chatID := currentChatID(data, metaData)
-	if chatID == "" {
-		return "", errors.New("chat_id is required")
-	}
-	compatMsgID := fmt.Sprintf("schedule-compat-cardjson-%d", time.Now().UnixNano())
-	replyMsgID, err := scheduleCompatCreateCardJSON(ctx, chatID, cardData, compatMsgID, suffix)
-	if err != nil {
-		return "", err
-	}
-	recordCompatibleReply(ctx, metaData, replyMsgID, "card_json")
-	return replyMsgID, nil
-}
