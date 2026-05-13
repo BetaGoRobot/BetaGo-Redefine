@@ -23,7 +23,7 @@ require (
 	github.com/jinzhu/copier v0.4.0
 	github.com/kevinmatthe/kinetic v0.0.0-20260508084110-85d655c5082e
 	github.com/kevinmatthe/zaplog v0.1.6
-	github.com/larksuite/oapi-sdk-go/v3 v3.7.2
+	github.com/larksuite/oapi-sdk-go/v3 v3.7.5
 	github.com/lib/pq v1.12.3
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/olivere/elastic/v7 v7.0.32
