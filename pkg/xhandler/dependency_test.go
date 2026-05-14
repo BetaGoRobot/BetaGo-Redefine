@@ -428,6 +428,36 @@ func TestBaseMetaDataAccessors(t *testing.T) {
 	}
 }
 
+func TestProcessorRunInjectsPipelineStartedAt(t *testing.T) {
+	seen := make(chan time.Time, 1)
+	stage := newChainedFetcher("timing-stage", nil)
+	stage.run = func(ctx context.Context, _ *testEvent, _ *BaseMetaData) error {
+		startedAt, ok := PipelineStartedAt(ctx)
+		if !ok {
+			t.Fatalf("expected pipeline start time in stage context")
+		}
+		seen <- startedAt
+		return nil
+	}
+	processor := (&Processor[testEvent, BaseMetaData]{}).
+		WithCtx(context.Background()).
+		WithData(&testEvent{}).
+		AddAsync(stage)
+
+	before := time.Now()
+	processor.Run()
+	after := time.Now()
+
+	select {
+	case startedAt := <-seen:
+		if startedAt.Before(before) || startedAt.After(after) {
+			t.Fatalf("pipeline start time = %v, want between %v and %v", startedAt, before, after)
+		}
+	default:
+		t.Fatalf("stage did not run")
+	}
+}
+
 func waitClosed(t *testing.T, ch <-chan struct{}, timeout time.Duration, what string) {
 	t.Helper()
 	select {

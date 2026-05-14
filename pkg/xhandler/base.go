@@ -365,6 +365,12 @@ func (p *Processor[T, K]) ListFeatures() []FeatureInfo {
 //	@param ctx
 //	@param event
 func (p *Processor[T, K]) Run() {
+	if p.Context == nil {
+		p.Context = context.Background()
+	}
+	if _, ok := PipelineStartedAt(p.Context); !ok {
+		p.Context = WithPipelineStartedAt(p.Context, time.Now())
+	}
 	if p.metaInitFn == nil {
 		p.metaInitFn = func(*T) *K { return new(K) }
 	}

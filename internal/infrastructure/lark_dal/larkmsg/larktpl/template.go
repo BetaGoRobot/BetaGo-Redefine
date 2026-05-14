@@ -14,6 +14,7 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
@@ -162,6 +163,9 @@ func defaultCardBaseVars(ctx context.Context, traceID string) CardBaseVars {
 		WithdrawConfirm: "你确定要撤回这条消息吗？",
 		WithdrawObject:  WithDrawObj{Action: cardaction.ActionCardWithdraw},
 		RefreshTime:     time.Now().In(utils.UTC8Loc()).Format(time.DateTime),
+	}
+	if cost := xhandler.PipelineElapsedString(ctx); cost != "" {
+		v.FirstReplyCost = cost
 	}
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil {
 		v.RawCmd = gptr.Of(srcCmd.(string))

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
@@ -15,6 +16,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -125,8 +127,9 @@ const (
 type musicItemTransFunc[T any] func(context.Context, *T) *SearchMusicItem
 
 type (
-	MusicListCardSender  func(context.Context, larkmsg.RawCard, int) (string, error)
-	MusicListCardPatcher func(context.Context, string, larkmsg.RawCard, int) error
+	MusicListSequence    func() int
+	MusicListCardSender  func(context.Context, larkmsg.RawCard, MusicListSequence) (string, error)
+	MusicListCardPatcher func(context.Context, string, larkmsg.RawCard, MusicListSequence) error
 )
 
 type MusicListRequest struct {
@@ -255,11 +258,11 @@ func newMusicListCardRenderer(data musicListCardData) *musicListCardRenderer {
 }
 
 func (r *musicListCardRenderer) Card(ctx context.Context) *larktpl.TemplateCardContent {
-	return larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, r.vars())
+	return larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, r.varsFor(ctx, true))
 }
 
 func (r *musicListCardRenderer) RawCard(ctx context.Context) larkmsg.RawCard {
-	return musicListRawCardBuilder(ctx, r.vars())
+	return musicListRawCardBuilder(ctx, r.varsFor(ctx, true))
 }
 
 func (r *musicListCardRenderer) vars() *larktpl.MusicListCardVars {
@@ -276,6 +279,17 @@ func (r *musicListCardRenderer) vars() *larktpl.MusicListCardVars {
 		PrevPageVal:  r.pagePayload(currentPage - 1),
 		NextPageVal:  r.pagePayload(currentPage + 1),
 	}
+}
+
+func (r *musicListCardRenderer) varsFor(ctx context.Context, finalPatch bool) *larktpl.MusicListCardVars {
+	vars := r.vars()
+	if cost := xhandler.PipelineElapsedString(ctx); cost != "" {
+		vars.FirstReplyCost = cost
+		if finalPatch {
+			vars.FinalPatchCost = cost
+		}
+	}
+	return vars
 }
 
 func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send MusicListCardSender, patch MusicListCardPatcher, cancel context.CancelFunc) error {
@@ -307,13 +321,13 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 		return asyncErr
 	}
 
-	err := r.streamCurrentPageVars(ctx, streamGuard, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
+	err := r.streamCurrentPageVars(ctx, streamGuard, func(vars *larktpl.MusicListCardVars, messageID string, nextSequence MusicListSequence) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return messageID, err
 		}
 		card := musicListRawCardBuilder(ctx, vars)
 		if messageID == "" {
-			nextMessageID, err := send(ctx, card, sequence)
+			nextMessageID, err := send(ctx, card, nextSequence)
 			if err != nil {
 				return "", err
 			}
@@ -326,7 +340,7 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			recordAsyncErr(patch(ctx, messageID, card, sequence))
+			recordAsyncErr(patch(ctx, messageID, card, nextSequence))
 		}()
 		return messageID, nil
 	})
@@ -336,10 +350,10 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 	return waitAsync()
 }
 
-func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string, int) (string, error)) error {
+func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string, MusicListSequence) (string, error)) error {
 	pageStates := r.currentPageStates()
 	nextSeq := newMusicListStreamSequence()
-	messageID, err := emit(r.vars(), "", nextSeq())
+	messageID, err := emit(r.varsFor(ctx, false), "", nextSeq)
 	if err != nil {
 		return err
 	}
@@ -380,12 +394,12 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 
 	pendingPatch := false
 	sentResolvedPatch := false
-	flushPatch := func() error {
+	flushPatch := func(finalPatch bool) error {
 		if !pendingPatch {
 			return nil
 		}
 		pendingPatch = false
-		_, err := emit(r.vars(), messageID, nextSeq())
+		_, err := emit(r.varsFor(ctx, finalPatch), messageID, nextSeq)
 		return err
 	}
 
@@ -398,29 +412,30 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 				if err := <-groupDone; err != nil {
 					return err
 				}
-				return flushPatch()
+				pendingPatch = true
+				return flushPatch(true)
 			}
 			pendingPatch = true
 			if !sentResolvedPatch {
-				if err := flushPatch(); err != nil {
+				if err := flushPatch(false); err != nil {
 					return err
 				}
 				sentResolvedPatch = true
 			}
 		case <-patchTicker.C:
-			if err := flushPatch(); err != nil {
+			if err := flushPatch(false); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func newMusicListStreamSequence() func() int {
+func newMusicListStreamSequence() MusicListSequence {
 	// Sequence 1 is reserved for enabling CardKit streaming before content updates.
-	seq := 1
+	var seq atomic.Int64
+	seq.Store(1)
 	return func() int {
-		seq++
-		return seq
+		return int(seq.Add(1))
 	}
 }
 

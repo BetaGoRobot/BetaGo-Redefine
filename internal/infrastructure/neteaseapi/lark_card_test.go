@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
@@ -77,6 +79,8 @@ func TestBuildMusicListRawCardRendersConcreteCardJSON(t *testing.T) {
 			WithdrawConfirm: "确认撤回？",
 			WithdrawObject:  larktpl.WithDrawObj{Action: cardactionproto.ActionCardWithdraw},
 			RefreshTime:     "2026-05-14 12:00:00",
+			FirstReplyCost:  "1.2s",
+			FinalPatchCost:  "3.4s",
 		},
 		ObjectList1: []*larktpl.MusicListCardItem{{
 			Field1:      "**稻香**\n**周杰伦**",
@@ -103,7 +107,7 @@ func TestBuildMusicListRawCardRendersConcreteCardJSON(t *testing.T) {
 			t.Fatalf("raw card should not contain template marker %q: %s", forbidden, jsonStr)
 		}
 	}
-	for _, want := range []string{`"schema":"2.0"`, `"img_key":"img_test"`, `"content":"[稻香]的检索结果"`, `"content":"ID:1859245776"`} {
+	for _, want := range []string{`"schema":"2.0"`, `"img_key":"img_test"`, `"content":"[稻香]的检索结果"`, `"content":"ID:1859245776"`, "首次回复耗时：1.2s", "最终Patch耗时：3.4s"} {
 		if !strings.Contains(jsonStr, want) {
 			t.Fatalf("raw card missing %q: %s", want, jsonStr)
 		}
@@ -134,7 +138,7 @@ func TestMusicListStreamRevealsMonotonicProgress(t *testing.T) {
 	})
 
 	var resolvedCounts []int
-	if err := renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
+	if err := renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, nextSequence MusicListSequence) (string, error) {
 		resolved := 0
 		for _, item := range vars.ObjectList1 {
 			if item != nil && item.Filled {
@@ -204,7 +208,7 @@ func TestMusicListStreamPatchesImageBeforeSlowComment(t *testing.T) {
 	var snapshots [][]*larktpl.MusicListCardItem
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
+		errCh <- renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, nextSequence MusicListSequence) (string, error) {
 			snapshots = append(snapshots, cloneMusicListItems(vars.ObjectList1))
 			if messageID == "" {
 				return "om_msg_1", nil
@@ -242,6 +246,51 @@ func TestMusicListStreamPatchesImageBeforeSlowComment(t *testing.T) {
 		return item.Field2.ImgKey == "img_uploaded_1" && item.Field3 == "hot comment"
 	}) {
 		t.Fatalf("expected final snapshot with image and comment, snapshots=%#v", snapshots)
+	}
+}
+
+func TestMusicListStreamVarsIncludePipelineElapsed(t *testing.T) {
+	previousProvider := NetEaseGCtx
+	NetEaseGCtx = fakeMusicListProvider{}
+	defer func() { NetEaseGCtx = previousProvider }()
+
+	renderer := newMusicListCardRenderer(musicListCardData{
+		request: MusicListRequest{
+			Scene:    MusicListSceneSongSearch,
+			Query:    "稻香",
+			Page:     1,
+			PageSize: 1,
+		},
+		resourceType: CommentTypeSong,
+		displayTitle: "稻香",
+		items: []*SearchMusicItem{
+			{ID: 1, Name: "s1", ArtistName: "a1", ImageKey: "img1"},
+		},
+	})
+
+	ctx := xhandler.WithPipelineStartedAt(context.Background(), time.Now().Add(-1500*time.Millisecond))
+	var emitted []larktpl.MusicListCardVars
+	err := renderer.streamCurrentPageVars(ctx, &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, nextSequence MusicListSequence) (string, error) {
+		emitted = append(emitted, *vars)
+		if messageID == "" {
+			return "om_msg_1", nil
+		}
+		return messageID, nil
+	})
+	if err != nil {
+		t.Fatalf("stream current page: %v", err)
+	}
+	if len(emitted) < 2 {
+		t.Fatalf("expected initial and final emissions, got %d", len(emitted))
+	}
+	if emitted[0].FirstReplyCost == "" {
+		t.Fatalf("expected first emission to include first reply cost")
+	}
+	if emitted[0].FinalPatchCost != "" {
+		t.Fatalf("did not expect first emission to include final patch cost, got %q", emitted[0].FinalPatchCost)
+	}
+	if emitted[len(emitted)-1].FinalPatchCost == "" {
+		t.Fatalf("expected final emission to include final patch cost")
 	}
 }
 
@@ -325,11 +374,11 @@ func TestMusicListStreamDispatchesPatchesWithoutWaitingForPreviousPatch(t *testi
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- renderer.streamCurrentPage(context.Background(),
-			func(context.Context, larkmsg.RawCard, int) (string, error) {
+			func(context.Context, larkmsg.RawCard, MusicListSequence) (string, error) {
 				return "om_msg_1", nil
 			},
-			func(ctx context.Context, msgID string, card larkmsg.RawCard, sequence int) error {
-				started <- sequence
+			func(ctx context.Context, msgID string, card larkmsg.RawCard, nextSequence MusicListSequence) error {
+				started <- nextSequence()
 				<-release
 				return nil
 			},
@@ -350,6 +399,81 @@ func TestMusicListStreamDispatchesPatchesWithoutWaitingForPreviousPatch(t *testi
 	}
 
 	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("stream current page: %v", err)
+	}
+}
+
+func TestMusicListStreamSequenceAllocatedWhenPatchRequests(t *testing.T) {
+	previousProvider := NetEaseGCtx
+	NetEaseGCtx = fakeMusicListProvider{}
+	defer func() { NetEaseGCtx = previousProvider }()
+	s, rdb := setupMusicListTestRedis(t)
+	defer s.Close()
+	previousRedisClient := redis_dal.RedisClient
+	redis_dal.RedisClient = rdb
+	defer func() { redis_dal.RedisClient = previousRedisClient }()
+	previousIdentity := currentMusicListStreamIdentity
+	currentMusicListStreamIdentity = func() botidentity.Identity {
+		return botidentity.Identity{AppID: "cli_test_app", BotOpenID: "ou_test_bot"}
+	}
+	defer func() { currentMusicListStreamIdentity = previousIdentity }()
+	previousCardBuilder := musicListRawCardBuilder
+	musicListRawCardBuilder = func(ctx context.Context, vars *larktpl.MusicListCardVars) larkmsg.RawCard {
+		return larkmsg.RawCard{"schema": "2.0"}
+	}
+	defer func() { musicListRawCardBuilder = previousCardBuilder }()
+
+	renderer := newMusicListCardRenderer(musicListCardData{
+		request: MusicListRequest{
+			Scene:    MusicListSceneSongSearch,
+			Query:    "稻香",
+			Page:     1,
+			PageSize: 5,
+		},
+		resourceType: CommentTypeSong,
+		displayTitle: "稻香",
+		items: []*SearchMusicItem{
+			{ID: 1, Name: "s1", ArtistName: "a1", ImageKey: "img1"},
+			{ID: 2, Name: "s2", ArtistName: "a2", ImageKey: "img2"},
+			{ID: 3, Name: "s3", ArtistName: "a3", ImageKey: "img3"},
+			{ID: 4, Name: "s4", ArtistName: "a4", ImageKey: "img4"},
+			{ID: 5, Name: "s5", ArtistName: "a5", ImageKey: "img5"},
+		},
+	})
+
+	var patchCalls atomic.Int32
+	firstMayRequest := make(chan struct{})
+	secondRequested := make(chan int, 1)
+	firstRequested := make(chan int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- renderer.streamCurrentPage(context.Background(),
+			func(context.Context, larkmsg.RawCard, MusicListSequence) (string, error) {
+				return "om_msg_1", nil
+			},
+			func(ctx context.Context, msgID string, card larkmsg.RawCard, nextSequence MusicListSequence) error {
+				switch patchCalls.Add(1) {
+				case 1:
+					<-firstMayRequest
+					firstRequested <- nextSequence()
+				case 2:
+					secondRequested <- nextSequence()
+					close(firstMayRequest)
+				default:
+					_ = nextSequence()
+				}
+				return nil
+			},
+			func() {},
+		)
+	}()
+
+	secondSeq := waitMusicListPatchSequence(t, secondRequested)
+	firstSeq := waitMusicListPatchSequence(t, firstRequested)
+	if secondSeq >= firstSeq {
+		t.Fatalf("expected sequence to follow request order, second=%d first=%d", secondSeq, firstSeq)
+	}
 	if err := <-errCh; err != nil {
 		t.Fatalf("stream current page: %v", err)
 	}

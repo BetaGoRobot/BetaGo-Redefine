@@ -15,6 +15,8 @@ type CardBaseVars struct {
 	WithdrawTitle   string      `json:"withdraw_title"`
 	WithdrawConfirm string      `json:"withdraw_confirm"`
 	WithdrawObject  WithDrawObj `json:"withdraw_object"`
+	FirstReplyCost  string      `json:"first_reply_cost,omitempty"`
+	FinalPatchCost  string      `json:"final_patch_cost,omitempty"`
 
 	RawCmd     *string     `json:"raw_cmd,omitempty"`
 	RefreshObj *RefreshObj `json:"refresh_obj,omitempty"`
@@ -62,12 +64,12 @@ type MusicListCardItem struct {
 	Field2       ImageKeyRef       `json:"field_2,omitempty"`
 	Field3       string            `json:"field_3,omitempty"`
 	CommentTime  string            `json:"comment_time,omitempty"`
-	ButtonInfo  string            `json:"button_info,omitempty"`
-	ElementID   string            `json:"element_id,omitempty"`
-	ButtonVal   map[string]string `json:"button_val,omitempty"`
-	Button2Info string            `json:"button2_info,omitempty"`
-	Button2Val  map[string]string `json:"button2_val,omitempty"`
-	AudioElement string           `json:"audio_element,omitempty"` // markdown with <audio> tag for inline audio
+	ButtonInfo   string            `json:"button_info,omitempty"`
+	ElementID    string            `json:"element_id,omitempty"`
+	ButtonVal    map[string]string `json:"button_val,omitempty"`
+	Button2Info  string            `json:"button2_info,omitempty"`
+	Button2Val   map[string]string `json:"button2_val,omitempty"`
+	AudioElement string            `json:"audio_element,omitempty"` // markdown with <audio> tag for inline audio
 
 	Filled bool `json:"-"`
 }

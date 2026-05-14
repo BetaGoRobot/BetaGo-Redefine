@@ -58,9 +58,9 @@ func (s *CardJSONEntityStream) Patch(ctx context.Context, msgID string, cardData
 	if err != nil {
 		return err
 	}
-	if err := s.ensureStreaming(ctx, cardID); err != nil {
-		return err
-	}
+	// if err := s.ensureStreaming(ctx, cardID); err != nil {
+	// 	return err
+	// }
 	if err := UpdateCardJSONEntity(ctx, cardID, cardData, sequence); err != nil {
 		return err
 	}
@@ -191,6 +191,9 @@ func UpdateCardJSONEntity(ctx context.Context, cardID string, cardData any, sequ
 		return err
 	}
 	if !resp.Success() {
+		if resp.CodeError.Code == 300317 {
+			return nil
+		}
 		return errors.New(resp.Error())
 	}
 	return nil

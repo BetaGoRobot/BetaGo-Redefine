@@ -101,8 +101,8 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
 	stream := larkmsg.NewCardJSONEntityStream()
-	send := func(sendCtx context.Context, cardContent larkmsg.RawCard, sequence int) (string, error) {
-		replyMsgID, err := stream.Reply(sendCtx, cardContent, *data.Event.Message.MessageId, "_musicSearch", replyInThread, sequence)
+	send := func(sendCtx context.Context, cardContent larkmsg.RawCard, nextSequence neteaseapi.MusicListSequence) (string, error) {
+		replyMsgID, err := stream.Reply(sendCtx, cardContent, *data.Event.Message.MessageId, "_musicSearch", replyInThread, nextSequence())
 		if err == nil {
 			return replyMsgID, nil
 		}
@@ -116,9 +116,9 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 		}
 		return *resp.Data.MessageId, nil
 	}
-	patch := func(patchCtx context.Context, msgID string, cardContent larkmsg.RawCard, sequence int) error {
+	patch := func(patchCtx context.Context, msgID string, cardContent larkmsg.RawCard, nextSequence neteaseapi.MusicListSequence) error {
 		if stream.Active() {
-			return stream.Patch(patchCtx, msgID, cardContent, sequence)
+			return stream.Patch(patchCtx, msgID, cardContent, nextSequence())
 		}
 		return larkmsg.PatchCardJSON(patchCtx, msgID, cardContent)
 	}

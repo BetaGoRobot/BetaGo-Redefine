@@ -3,6 +3,7 @@ package neteaseapi
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
@@ -10,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/gg/gptr"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
@@ -76,6 +78,9 @@ func withMusicListBaseVars(ctx context.Context, vars *larktpl.MusicListCardVars)
 	if next.RefreshTime == "" {
 		next.RefreshTime = timeNowString()
 	}
+	if next.FirstReplyCost == "" {
+		next.FirstReplyCost = xhandler.PipelineElapsedString(ctx)
+	}
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil && next.RawCmd == nil {
 		if raw, ok := srcCmd.(string); ok {
 			next.RawCmd = gptr.Of(raw)
@@ -99,7 +104,7 @@ func musicListRawCardElements(vars *larktpl.MusicListCardVars) []any {
 			"tag": "div",
 			"text": map[string]any{
 				"tag":        "plain_text",
-				"content":    "卡片更新时间：" + vars.RefreshTime,
+				"content":    musicListTimingText(vars),
 				"text_size":  "notation",
 				"text_align": "right",
 				"text_color": "default",
@@ -108,6 +113,23 @@ func musicListRawCardElements(vars *larktpl.MusicListCardVars) []any {
 		},
 	)
 	return elements
+}
+
+func musicListTimingText(vars *larktpl.MusicListCardVars) string {
+	if vars == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if strings.TrimSpace(vars.FirstReplyCost) != "" {
+		parts = append(parts, "首次回复耗时："+vars.FirstReplyCost)
+		finalCost := strings.TrimSpace(vars.FinalPatchCost)
+		if finalCost == "" {
+			finalCost = "计算中"
+		}
+		parts = append(parts, "最终Patch耗时："+finalCost)
+	}
+	parts = append(parts, "卡片更新时间："+vars.RefreshTime)
+	return strings.Join(parts, " · ")
 }
 
 func musicListRawCardItem(item *larktpl.MusicListCardItem) map[string]any {

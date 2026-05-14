@@ -179,8 +179,8 @@ func handleMusicListPage(ctx context.Context, actionCtx *Context) (AsyncTask, er
 			Query:    query,
 			Page:     page,
 			PageSize: pageSize,
-		}, func(sendCtx context.Context, cardContent larkmsg.RawCard, sequence int) (string, error) {
-			nextMsgID, updateErr := stream.UpdateMessage(sendCtx, msgID, cardContent, sequence)
+		}, func(sendCtx context.Context, cardContent larkmsg.RawCard, nextSequence neteaseapi.MusicListSequence) (string, error) {
+			nextMsgID, updateErr := stream.UpdateMessage(sendCtx, msgID, cardContent, nextSequence())
 			if updateErr == nil {
 				return nextMsgID, nil
 			}
@@ -189,11 +189,11 @@ func handleMusicListPage(ctx context.Context, actionCtx *Context) (AsyncTask, er
 				return "", err
 			}
 			return msgID, nil
-		}, func(patchCtx context.Context, patchMsgID string, cardContent larkmsg.RawCard, sequence int) error {
+		}, func(patchCtx context.Context, patchMsgID string, cardContent larkmsg.RawCard, nextSequence neteaseapi.MusicListSequence) error {
 			if legacyPatch {
 				return larkmsg.PatchCardJSON(patchCtx, patchMsgID, cardContent)
 			}
-			return stream.Patch(patchCtx, patchMsgID, cardContent, sequence)
+			return stream.Patch(patchCtx, patchMsgID, cardContent, nextSequence())
 		})
 		if !legacyPatch {
 			closeErr := stream.Close(runCtx)
