@@ -15,7 +15,7 @@ require (
 	github.com/eko/gocache/lib/v4 v4.2.3
 	github.com/eko/gocache/store/go_cache/v4 v4.2.4
 	github.com/enescakir/emoji v1.0.0
-	github.com/go-openapi/runtime v0.29.5
+	github.com/go-openapi/runtime v0.30.0
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gotify/go-api-client/v2 v2.0.4
 	github.com/h2non/bimg v1.1.9
@@ -61,6 +61,7 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/go-openapi/runtime/server-middleware v0.30.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
