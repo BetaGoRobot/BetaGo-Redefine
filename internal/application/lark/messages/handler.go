@@ -60,7 +60,7 @@ func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[
 		}).
 		WithMetaDataProcess(metaInit).
 		WithPreRun(func(p *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) {
-			utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId)
+			go utils.AddTrace2DB(p, *p.Data().Event.Message.MessageId)
 		}).
 		WithDefer(recording.CollectMessage).
 		WithDefer(func(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) {

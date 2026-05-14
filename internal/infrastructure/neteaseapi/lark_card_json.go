@@ -36,6 +36,7 @@ func BuildMusicListRawCard(ctx context.Context, vars *larktpl.MusicListCardVars)
 					},
 				},
 			},
+			"streaming_mode": true,
 		},
 		"body": map[string]any{
 			"direction":          "vertical",

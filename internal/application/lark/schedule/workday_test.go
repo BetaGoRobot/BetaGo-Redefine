@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -11,8 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func skipScheduleHolidayIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("BETAGO_RUN_HOLIDAY_INTEGRATION") != "1" {
+		t.Skip("set BETAGO_RUN_HOLIDAY_INTEGRATION=1 to run schedule workday integration test")
+	}
+}
+
 // TestScheduleWithWorkdayCheck 测试带工作日检查的调度
 func TestScheduleWithWorkdayCheck(t *testing.T) {
+	skipScheduleHolidayIntegration(t)
 	ctx := context.Background()
 
 	t.Run("测试跳过周末", func(t *testing.T) {
@@ -24,7 +33,7 @@ func TestScheduleWithWorkdayCheck(t *testing.T) {
 			CronExpr:  "0 9 * * 1-5", // 每周一到周五9点
 			Timezone:  "Asia/Shanghai",
 			Status:    model.ScheduleTaskStatusEnabled,
-			NextRunAt: time.Date(2026, 5, 8, 9, 0, 0, 0, time.UTC), // 周五
+			NextRunAt: time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC), // 周五
 			// SkipWeekends: true, // TODO: 添加此字段
 		}
 
@@ -60,8 +69,8 @@ func TestScheduleWithWorkdayCheck(t *testing.T) {
 	})
 
 	t.Run("测试周末和节假日组合", func(t *testing.T) {
-		// 测试周六（2026-05-09）
-		saturday := time.Date(2026, 5, 9, 9, 0, 0, 0, time.UTC)
+		// 2026-06-13 is a regular Saturday, not a make-up workday.
+		saturday := time.Date(2026, 6, 13, 9, 0, 0, 0, time.UTC)
 
 		// 检查周六是否为工作日
 		isWorkday, err := holiday.IsWorkdayCheck(ctx, saturday)
@@ -80,6 +89,7 @@ func TestScheduleWithWorkdayCheck(t *testing.T) {
 
 // TestComputeNextRunWithWorkday 测试带工作日判断的下次执行时间计算
 func TestComputeNextRunWithWorkday(t *testing.T) {
+	skipScheduleHolidayIntegration(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -91,14 +101,14 @@ func TestComputeNextRunWithWorkday(t *testing.T) {
 	}{
 		{
 			name:         "周五跳过周末，下一个应该是周一",
-			from:         time.Date(2026, 5, 8, 9, 0, 0, 0, time.UTC),  // 周五
+			from:         time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC), // 周五
 			skipWeekends: true,
 			skipHolidays: false,
-			expectedNext: time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC), // 周一
+			expectedNext: time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC), // 周一
 		},
 		{
 			name:         "劳动节跳过节假日，下一个应该是工作日",
-			from:         time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC),  // 劳动节
+			from:         time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC), // 劳动节
 			skipWeekends: false,
 			skipHolidays: true,
 			// 劳动节后应该是工作日（需要根据实际API返回确定）

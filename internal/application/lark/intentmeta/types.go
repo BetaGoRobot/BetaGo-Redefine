@@ -38,6 +38,12 @@ const (
 	ReplyModeIgnore          ReplyMode = "ignore"
 )
 
+type InteractionMode string
+
+const (
+	InteractionModeStandard InteractionMode = "standard"
+)
+
 // IntentAnalysis 意图分析结果
 type IntentAnalysis struct {
 	IntentType      IntentType                     `json:"intent_type"`
@@ -48,6 +54,7 @@ type IntentAnalysis struct {
 	ReplyMode       ReplyMode                      `json:"reply_mode"`
 	UserWillingness int                            `json:"user_willingness"`
 	InterruptRisk   int                            `json:"interrupt_risk"`
+	InteractionMode InteractionMode                `json:"interaction_mode"`
 	ReasoningEffort responses.ReasoningEffort_Enum `json:"reasoning_effort"`
 }
 
@@ -62,6 +69,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		ReplyMode       ReplyMode       `json:"reply_mode"`
 		UserWillingness int             `json:"user_willingness"`
 		InterruptRisk   int             `json:"interrupt_risk"`
+		InteractionMode InteractionMode `json:"interaction_mode"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
 	}
 	if err := sonic.Unmarshal(data, &raw); err != nil {
@@ -77,6 +85,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		ReplyMode:       raw.ReplyMode,
 		UserWillingness: raw.UserWillingness,
 		InterruptRisk:   raw.InterruptRisk,
+		InteractionMode: raw.InteractionMode,
 		ReasoningEffort: parseReasoningEffort(raw.ReasoningEffort),
 	}
 	return nil
@@ -116,7 +125,8 @@ func (a *IntentAnalysis) Sanitize() {
 		a.SuggestAction = SuggestActionIgnore
 	}
 
-	// Chat pipeline is standard-only.
+	// Chat pipeline is standard-only; keep the field for older prompt/test payloads.
+	a.InteractionMode = InteractionModeStandard
 	a.ReasoningEffort = NormalizeReasoningEffort(a.ReasoningEffort)
 
 	if a.ReplyConfidence < 0 {

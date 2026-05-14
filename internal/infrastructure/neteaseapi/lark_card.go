@@ -23,13 +23,95 @@ const (
 	musicListResolveConcurrency = 4
 	defaultMusicListPageSize    = 5
 	maxMusicListPageSize        = 100
-	musicListStreamPatchWindow  = 500 * time.Millisecond
+	musicListStreamPatchWindow  = 100 * time.Millisecond
+	musicListLoadingImageKey    = "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g"
 )
 
 var (
 	activeMusicListStreams  sync.Map
 	musicListRawCardBuilder = BuildMusicListRawCard
+	musicListImageUploader  = defaultMusicListImageUploader
+	musicListImageKeyCache  sync.Map
+	musicListCommentCache   sync.Map
 )
+
+type musicListComment struct {
+	Content string
+	Time    string
+}
+
+type musicListImageAsset struct {
+	ImageKey string
+	OSSURL   string
+}
+
+type musicListImageUploadFunc func(context.Context, string, int) (string, string, error)
+
+func defaultMusicListImageUploader(ctx context.Context, picURL string, musicID int) (string, string, error) {
+	return larkimg.UploadPicAllinOne(ctx, picURL, musicID, true)
+}
+
+func EnsureMusicImageKey(ctx context.Context, musicID int, picURL string) (string, error) {
+	asset, err := EnsureMusicImageAsset(ctx, musicID, picURL)
+	if err != nil {
+		return "", err
+	}
+	return asset.ImageKey, nil
+}
+
+func EnsureMusicImageAsset(ctx context.Context, musicID int, picURL string) (musicListImageAsset, error) {
+	picURL = strings.TrimSpace(picURL)
+	if picURL == "" {
+		return musicListImageAsset{}, nil
+	}
+	cacheKey := musicListImageCacheKey(musicID, picURL)
+	if cached, ok := musicListImageKeyCache.Load(cacheKey); ok {
+		return cached.(musicListImageAsset), nil
+	}
+	imageKey, ossURL, err := musicListImageUploader(ctx, picURL, musicID)
+	if err != nil {
+		return musicListImageAsset{}, err
+	}
+	asset := musicListImageAsset{
+		ImageKey: strings.TrimSpace(imageKey),
+		OSSURL:   strings.TrimSpace(ossURL),
+	}
+	if asset.ImageKey != "" {
+		musicListImageKeyCache.Store(cacheKey, asset)
+	}
+	return asset, nil
+}
+
+func EnsureMusicComment(ctx context.Context, commentType CommentType, id string) (musicListComment, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return musicListComment{}, nil
+	}
+	cacheKey := string(commentType) + ":" + id
+	if cached, ok := musicListCommentCache.Load(cacheKey); ok {
+		return cached.(musicListComment), nil
+	}
+	comment, err := NetEaseGCtx.GetComment(ctx, commentType, id)
+	if err != nil {
+		return musicListComment{}, err
+	}
+	resolved := musicListComment{}
+	if comment != nil && len(comment.Data.Comments) > 0 {
+		resolved.Content = trimMusicComment(comment.Data.Comments[0].Content)
+		resolved.Time = comment.Data.Comments[0].TimeStr
+	}
+	musicListCommentCache.Store(cacheKey, resolved)
+	return resolved, nil
+}
+
+func musicListImageCacheKey(musicID int, picURL string) string {
+	return strconv.Itoa(musicID) + ":" + strings.TrimSpace(picURL)
+}
+
+func clearMusicListResourceCache() {
+	musicListImageKeyCache = sync.Map{}
+	musicListCommentCache = sync.Map{}
+}
 
 type MusicListScene string
 
@@ -157,7 +239,7 @@ func newMusicListCardRenderer(data musicListCardData) *musicListCardRenderer {
 		}
 		lines = append(lines, &musicListLineState{
 			item: item,
-			line: newMusicListCardLoadingItem(item),
+			line: newMusicListCardLoadingItem(item, musicListButtonConfigFor(data.resourceType)),
 		})
 	}
 
@@ -197,6 +279,9 @@ func (r *musicListCardRenderer) vars() *larktpl.MusicListCardVars {
 }
 
 func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send MusicListCardSender, patch MusicListCardPatcher, cancel context.CancelFunc) error {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	streamGuard := &musicListStreamGuard{}
 	defer streamGuard.Release(context.Background())
 
@@ -265,24 +350,22 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 		return nil
 	}
 
-	resolvedCh := make(chan struct{}, len(pageStates))
+	resolvedCh := make(chan struct{}, len(pageStates)*3)
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
+		state := state
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
 				return err
 			}
-			r.resolveLine(groupCtx, state)
-			if err := groupCtx.Err(); err != nil {
-				return err
-			}
-			select {
-			case resolvedCh <- struct{}{}:
-				return nil
-			case <-groupCtx.Done():
-				return groupCtx.Err()
-			}
+			r.resolveLine(groupCtx, state, func() {
+				select {
+				case resolvedCh <- struct{}{}:
+				case <-groupCtx.Done():
+				}
+			})
+			return groupCtx.Err()
 		})
 	}
 
@@ -346,52 +429,85 @@ func (r *musicListCardRenderer) resolveCurrentPage(ctx context.Context) {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
+		state := state
 		group.Go(func() error {
-			r.resolveLine(groupCtx, state)
+			r.resolveLine(groupCtx, state, nil)
 			return nil
 		})
 	}
 	_ = group.Wait()
 }
 
-func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicListLineState) {
+func (r *musicListCardRenderer) resolveLine(ctx context.Context, state *musicListLineState, notify func()) {
 	if state == nil || state.item == nil {
 		return
 	}
 
 	item := state.item
-	imageKey := strings.TrimSpace(item.ImageKey)
-	if imageKey == "" && strings.TrimSpace(item.PicURL) != "" {
-		uploadedKey, _, err := larkimg.UploadPicAllinOne(ctx, item.PicURL, item.ID, true)
+	group, groupCtx := errgroup.WithContext(ctx)
+
+	group.Go(func() error {
+		imageKey, err := EnsureMusicImageKey(groupCtx, item.ID, item.PicURL)
 		if err != nil {
-			logs.L().Ctx(ctx).Warn("upload music list picture failed", zap.Int("music_id", item.ID), zap.Error(err))
-		} else {
-			imageKey = uploadedKey
+			logs.L().Ctx(groupCtx).Warn("resolve music list picture failed", zap.Int("music_id", item.ID), zap.Error(err))
+			return nil
 		}
-	}
+		if imageKey != "" {
+			r.updateLineImage(state, imageKey)
+			if notify != nil {
+				notify()
+			}
+		}
+		return nil
+	})
 
-	commentContent := ""
-	commentTime := ""
-	comment, err := NetEaseGCtx.GetComment(ctx, r.resourceType, strconv.Itoa(item.ID))
-	if err != nil {
-		logs.L().Ctx(ctx).Error("GetComment Error", zap.Int("music_id", item.ID), zap.Error(err))
-	} else if comment != nil && len(comment.Data.Comments) > 0 {
-		commentContent = trimMusicComment(comment.Data.Comments[0].Content)
-		commentTime = comment.Data.Comments[0].TimeStr
-	}
+	group.Go(func() error {
+		comment, err := EnsureMusicComment(groupCtx, r.resourceType, strconv.Itoa(item.ID))
+		if err != nil {
+			logs.L().Ctx(groupCtx).Error("resolve music list comment failed", zap.Int("music_id", item.ID), zap.Error(err))
+			return nil
+		}
+		r.updateLineComment(state, comment)
+		if notify != nil {
+			notify()
+		}
+		return nil
+	})
 
+	_ = group.Wait()
+	r.markLineFilled(state)
+	if notify != nil {
+		notify()
+	}
+}
+
+func (r *musicListCardRenderer) updateLineImage(state *musicListLineState, imageKey string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	line := newMusicListCardItem(item, musicListButtonConfigFor(r.resourceType))
-	if imageKey != "" {
-		state.item.ImageKey = imageKey
-		line.Field2 = larktpl.ImageKeyRef{ImgKey: imageKey}
+	if state == nil || state.item == nil {
+		return
 	}
-	line.Field3 = commentContent
-	line.CommentTime = commentTime
-	line.Filled = true
-	state.line = line
+	state.item.ImageKey = imageKey
+	state.line.Field2 = larktpl.ImageKeyRef{ImgKey: imageKey}
+}
+
+func (r *musicListCardRenderer) updateLineComment(state *musicListLineState, comment musicListComment) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if state == nil {
+		return
+	}
+	state.line.Field3 = comment.Content
+	state.line.CommentTime = comment.Time
+}
+
+func (r *musicListCardRenderer) markLineFilled(state *musicListLineState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if state == nil {
+		return
+	}
+	state.line.Filled = true
 }
 
 func (r *musicListCardRenderer) snapshotCurrentPageLines() []*larktpl.MusicListCardItem {
@@ -498,7 +614,7 @@ func loadMusicListCardData(ctx context.Context, req MusicListRequest) (musicList
 		if err != nil {
 			return musicListCardData{}, err
 		}
-		title, items, err := albumDetailToSearchMusicItems(ctx, albumDetail)
+		title, items, err := albumDetailToSearchMusicItems(albumDetail)
 		if err != nil {
 			return musicListCardData{}, err
 		}
@@ -513,27 +629,9 @@ func loadMusicListCardData(ctx context.Context, req MusicListRequest) (musicList
 	}
 }
 
-func albumDetailToSearchMusicItems(ctx context.Context, albumDetail *AlbumDetail) (string, []*SearchMusicItem, error) {
+func albumDetailToSearchMusicItems(albumDetail *AlbumDetail) (string, []*SearchMusicItem, error) {
 	if albumDetail == nil || len(albumDetail.Songs) == 0 {
 		return "", nil, nil
-	}
-
-	musicIDs := make([]int, 0, len(albumDetail.Songs))
-	for idx := range albumDetail.Songs {
-		if albumDetail.Songs[idx].ID == 0 {
-			continue
-		}
-		musicIDs = append(musicIDs, albumDetail.Songs[idx].ID)
-	}
-	urlFetcher, ok := NetEaseGCtx.(interface {
-		GetMusicURLs(context.Context, int, ...int) (map[int]string, error)
-	})
-	if !ok {
-		return "", nil, errors.New("netease provider does not support GetMusicURLs")
-	}
-	urlByID, err := urlFetcher.GetMusicURLs(ctx, defaultMusicURLBatchSize, musicIDs...)
-	if err != nil {
-		return "", nil, err
 	}
 
 	result := make([]*SearchMusicItem, 0, len(albumDetail.Songs))
@@ -555,7 +653,6 @@ func albumDetailToSearchMusicItems(ctx context.Context, albumDetail *AlbumDetail
 			Name:       song.Name,
 			ArtistName: strings.Join(artistNames, ", "),
 			PicURL:     song.Al.PicURL,
-			SongURL:    urlByID[song.ID],
 		})
 	}
 	return title, result, nil
@@ -609,15 +706,10 @@ func musicListButtonConfigFor(resourceType CommentType) musicListButtonConfig {
 }
 
 func newMusicListCardItem(item *SearchMusicItem, button musicListButtonConfig) larktpl.MusicListCardItem {
-	buttonInfo := button.ButtonName
-	if button.ActionName == cardaction.ActionMusicPlay && strings.TrimSpace(item.SongURL) == "" {
-		buttonInfo = "歌曲无效"
-	}
-
 	cardItem := larktpl.MusicListCardItem{
 		Field1:     genMusicTitle(item.Name, item.ArtistName),
 		Field2:     larktpl.ImageKeyRef{ImgKey: item.ImageKey},
-		ButtonInfo: buttonInfo,
+		ButtonInfo: button.ButtonName,
 		ElementID:  strconv.Itoa(item.ID),
 		ButtonVal:  cardaction.New(button.ActionName).WithID(strconv.Itoa(item.ID)).Payload(),
 	}
@@ -629,22 +721,14 @@ func newMusicListCardItem(item *SearchMusicItem, button musicListButtonConfig) l
 	return cardItem
 }
 
-func newMusicListCardLoadingItem(item *SearchMusicItem) larktpl.MusicListCardItem {
-	elementID := ""
-	if item != nil && item.ID != 0 {
-		elementID = strconv.Itoa(item.ID)
+func newMusicListCardLoadingItem(item *SearchMusicItem, button musicListButtonConfig) larktpl.MusicListCardItem {
+	cardItem := newMusicListCardItem(item, button)
+	if strings.TrimSpace(cardItem.Field2.ImgKey) == "" {
+		cardItem.Field2 = larktpl.ImageKeyRef{ImgKey: musicListLoadingImageKey}
 	}
-	return larktpl.MusicListCardItem{
-		Field1: "加载中",
-		Field2: larktpl.ImageKeyRef{
-			ImgKey: "img_v3_02vo_8fa12381-e31b-4241-ad11-7afc7d81650g",
-		},
-		Field3:      "加载中",
-		CommentTime: "加载中",
-		ButtonInfo:  "加载中",
-		Button2Info: "播放语音",
-		ElementID:   elementID,
-	}
+	cardItem.Field3 = "加载中"
+	cardItem.CommentTime = "加载中"
+	return cardItem
 }
 
 func normalizeMusicListRequest(req MusicListRequest) MusicListRequest {

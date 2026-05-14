@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -18,6 +20,14 @@ import (
 // 这里定义和注册一些functioncall的handler
 // 举例，我们先定义一个
 func TestLarkBotFunctionCallTools(t *testing.T) {
+	if os.Getenv("BETAGO_RUN_ARK_INTEGRATION") != "1" {
+		t.Skip("set BETAGO_RUN_ARK_INTEGRATION=1 to run live Ark function-call integration test")
+	}
+	configPath := "../../../.dev/config.toml"
+	if _, err := os.Stat(filepath.Clean(configPath)); err != nil {
+		t.Skipf("Ark integration config is unavailable: %v", err)
+	}
+
 	// 注册一个垃圾函数
 	config := config.LoadFile("../../../.dev/config.toml")
 	otel.Init(config.OtelConfig)

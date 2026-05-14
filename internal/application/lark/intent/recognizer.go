@@ -47,6 +47,12 @@ const (
 	ReplyModeIgnore          = intentmeta.ReplyModeIgnore
 )
 
+type InteractionMode = intentmeta.InteractionMode
+
+const (
+	InteractionModeStandard = intentmeta.InteractionModeStandard
+)
+
 type IntentAnalysis = intentmeta.IntentAnalysis
 
 // 系统提示词

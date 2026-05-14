@@ -311,10 +311,10 @@ func (queryYearHolidaysHandler) Handle(ctx context.Context, data *larkim.P2Messa
 
 	count := 0
 	holidaySorted := utils.SortMapToSlice(info.Holiday)
-	for date, holiday := range holidaySorted {
+	for _, holiday := range holidaySorted {
 		if holiday.Holiday {
 			count++
-			result += fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, date)
+			result += fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, holiday.Date)
 			if holiday.Wage > 1 {
 				result += fmt.Sprintf("   薪资倍数: %d倍\n", holiday.Wage)
 			}

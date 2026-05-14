@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestResolveStandardPromptMode(t *testing.T) {
 }
 
 func TestBuildStandardChatSystemPromptContainsV2CoreRules(t *testing.T) {
-	prompt := buildStandardChatSystemPrompt(standardPromptModeAmbient)
+	prompt := buildStandardChatSystemPrompt(context.Background(), standardPromptModeAmbient, "")
 	for _, want := range []string{
 		"# 任务",
 		"# 输入",
@@ -66,7 +67,7 @@ func TestBuildStandardChatSystemPromptContainsV2CoreRules(t *testing.T) {
 }
 
 func TestBuildStandardChatSystemPromptGuidesMentionsAndThreadContinuation(t *testing.T) {
-	prompt := buildStandardChatSystemPrompt(standardPromptModeDirect)
+	prompt := buildStandardChatSystemPrompt(context.Background(), standardPromptModeDirect, "")
 	for _, want := range []string{
 		"默认应回答，不要轻易 skip",
 		"优先直接延续当前子话题",
@@ -79,7 +80,7 @@ func TestBuildStandardChatSystemPromptGuidesMentionsAndThreadContinuation(t *tes
 }
 
 func TestBuildStandardChatSystemPromptGuidesFinanceToolDiscovery(t *testing.T) {
-	prompt := buildStandardChatSystemPrompt(standardPromptModeAmbient)
+	prompt := buildStandardChatSystemPrompt(context.Background(), standardPromptModeAmbient, "")
 	for _, want := range []string{
 		"优先使用金融工具而不是 web_search",
 		"先调用 finance_tool_discover",

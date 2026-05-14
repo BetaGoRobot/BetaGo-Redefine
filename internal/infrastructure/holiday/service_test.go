@@ -2,6 +2,7 @@ package holiday
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -9,8 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func skipHolidayIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("BETAGO_RUN_HOLIDAY_INTEGRATION") != "1" {
+		t.Skip("set BETAGO_RUN_HOLIDAY_INTEGRATION=1 to run live holiday API integration test")
+	}
+}
+
 // TestIsWorkday 测试工作日判断
 func TestIsWorkday(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -26,12 +35,12 @@ func TestIsWorkday(t *testing.T) {
 		},
 		{
 			name:     "周六不应该工作日",
-			date:     time.Date(2026, 5, 9, 0, 0, 0, 0, time.UTC), // 2026-05-09 周六
+			date:     time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC), // 2026-06-13 周六
 			expected: false,
 		},
 		{
 			name:     "周日不应该是工作日",
-			date:     time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), // 2026-05-10 周日
+			date:     time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC), // 2026-06-14 周日
 			expected: false,
 		},
 		{
@@ -57,6 +66,7 @@ func TestIsWorkday(t *testing.T) {
 
 // TestGetDateInfo 测试获取日期信息
 func TestGetDateInfo(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -80,7 +90,7 @@ func TestGetDateInfo(t *testing.T) {
 		},
 		{
 			name:          "查询周六",
-			date:          "2026-05-09",
+			date:          "2026-06-13",
 			expectType:    1, // 周末
 			expectHoliday: false,
 		},
@@ -101,6 +111,7 @@ func TestGetDateInfo(t *testing.T) {
 
 // TestGetNextHoliday 测试获取下一个节假日
 func TestGetNextHoliday(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -108,20 +119,21 @@ func TestGetNextHoliday(t *testing.T) {
 		info, err := svc.GetNextHoliday(ctx, "2026-01-01")
 		require.NoError(t, err)
 		require.NotNil(t, info)
-		assert.NotEmpty(t, info.Holiday.Holiday.Name)
-		assert.NotEmpty(t, info.Holiday.Holiday.Date)
+		assert.NotEmpty(t, info.Holiday.Name)
+		assert.NotEmpty(t, info.Holiday.Date)
 	})
 
 	t.Run("不指定日期查询下一个节假日", func(t *testing.T) {
 		info, err := svc.GetNextHoliday(ctx, "")
 		require.NoError(t, err)
 		require.NotNil(t, info)
-		assert.NotEmpty(t, info.Holiday.Holiday.Name)
+		assert.NotEmpty(t, info.Holiday.Name)
 	})
 }
 
 // TestGetNextWorkday 测试获取下一个工作日
 func TestGetNextWorkday(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -132,18 +144,18 @@ func TestGetNextWorkday(t *testing.T) {
 	}{
 		{
 			name:     "周五的下一个工作日应该是周一",
-			date:     "2026-05-08", // 周五
-			wantDate: "2026-05-11", // 周一
+			date:     "2026-06-12", // 周五
+			wantDate: "2026-06-15", // 周一
 		},
 		{
 			name:     "周六的下一个工作日应该是周一",
-			date:     "2026-05-09", // 周六
-			wantDate: "2026-05-11", // 周一
+			date:     "2026-06-13", // 周六
+			wantDate: "2026-06-15", // 周一
 		},
 		{
 			name:     "周日的下一个工作日应该是周一",
-			date:     "2026-05-10", // 周日
-			wantDate: "2026-05-11", // 周一
+			date:     "2026-06-14", // 周日
+			wantDate: "2026-06-15", // 周一
 		},
 	}
 
@@ -159,14 +171,15 @@ func TestGetNextWorkday(t *testing.T) {
 
 // TestGetYearHolidays 测试获取年度节假日
 func TestGetYearHolidays(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
 	tests := []struct {
-		year         string
+		year           string
 		expectMinCount int
 	}{
-		{"2026", 7},  // 至少有7个法定节假日
+		{"2026", 7}, // 至少有7个法定节假日
 		{"2025", 7},
 	}
 
@@ -191,6 +204,7 @@ func TestGetYearHolidays(t *testing.T) {
 
 // TestBatchGetDateInfo 测试批量查询
 func TestBatchGetDateInfo(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -235,6 +249,7 @@ func TestBatchGetDateInfo(t *testing.T) {
 
 // TestGetTTS 测试获取语音播报文本
 func TestGetTTS(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 	svc := GetService()
 
@@ -259,6 +274,7 @@ func TestGetTTS(t *testing.T) {
 
 // TestIsWorkdayCheck 测试检查工作日函数
 func TestIsWorkdayCheck(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -267,7 +283,7 @@ func TestIsWorkdayCheck(t *testing.T) {
 		expected bool
 	}{
 		{"工作日", time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC), true},
-		{"周末", time.Date(2026, 5, 9, 0, 0, 0, 0, time.UTC), false},
+		{"周末", time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC), false},
 		{"节假日", time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC), false},
 	}
 
@@ -282,6 +298,7 @@ func TestIsWorkdayCheck(t *testing.T) {
 
 // TestGetNextWorkdayForSchedule 测试schedule专用的获取下一个工作日
 func TestGetNextWorkdayForSchedule(t *testing.T) {
+	skipHolidayIntegration(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -291,13 +308,13 @@ func TestGetNextWorkdayForSchedule(t *testing.T) {
 	}{
 		{
 			name:     "周五的下一个工作日是周一",
-			from:     time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC),
-			expected: time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+			from:     time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC),
+			expected: time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			name:     "周六的下一个工作日是周一",
-			from:     time.Date(2026, 5, 9, 0, 0, 0, 0, time.UTC),
-			expected: time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC),
+			from:     time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC),
+			expected: time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 		},
 	}
 

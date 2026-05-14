@@ -141,15 +141,19 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	} else {
 		err = errors.New("unknown search type")
 	}
-	go func() {
-		// stream close可以异步，节省2s
-		closeErr := stream.Close(ctx)
-		if err != nil || closeErr != nil {
-			logs.L().Ctx(ctx).Error("stream music list card failed", zap.Error(err), zap.Error(closeErr))
-		}
-	}()
+	if err != nil {
+		return errors.Join(err, stream.Close(ctx))
+	}
+	// Closing the card stream is slow and does not affect the already-sent card.
+	go closeMusicCardStream(ctx, stream)
 	metaData.SetExtra(musicSearchToolResultKey, "音乐卡片已发送")
 	return nil
+}
+
+func closeMusicCardStream(ctx context.Context, stream *larkmsg.CardJSONEntityStream) {
+	if closeErr := stream.Close(ctx); closeErr != nil {
+		logs.L().Ctx(ctx).Error("close music list card stream failed", zap.Error(closeErr))
+	}
 }
 
 // sendMusicVoice 搜索单曲并直接发送语音消息

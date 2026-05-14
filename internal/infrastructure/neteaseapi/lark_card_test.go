@@ -41,8 +41,14 @@ func TestMusicListRendererIncludesPaginationPayload(t *testing.T) {
 	if got := len(vars.ObjectList1); got != 2 {
 		t.Fatalf("expected 2 visible items, got %d", got)
 	}
-	if vars.ObjectList1[0].Field1 != "加载中" || vars.ObjectList1[1].Field1 != "加载中" {
-		t.Fatalf("expected initial loading placeholders, got %#v", vars.ObjectList1)
+	if vars.ObjectList1[0].Field1 != "**s3**\n**a3**" || vars.ObjectList1[1].Field1 != "**s4**\n**a4**" {
+		t.Fatalf("expected initial rows to expose title and artist, got %#v", vars.ObjectList1)
+	}
+	if vars.ObjectList1[0].ButtonVal[cardactionproto.ActionField] != cardactionproto.ActionMusicPlay {
+		t.Fatalf("expected initial row to expose playable button payload, got %#v", vars.ObjectList1[0].ButtonVal)
+	}
+	if vars.ObjectList1[0].Field3 != "加载中" || vars.ObjectList1[0].CommentTime != "加载中" {
+		t.Fatalf("expected comment loading placeholders, got %#v", vars.ObjectList1[0])
 	}
 	if got := vars.PageInfoText; got != "第 2 / 3 页" {
 		t.Fatalf("expected page info text, got %#v", got)
@@ -131,7 +137,7 @@ func TestMusicListStreamRevealsMonotonicProgress(t *testing.T) {
 	if err := renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
 		resolved := 0
 		for _, item := range vars.ObjectList1 {
-			if item != nil && item.Field1 != "加载中" {
+			if item != nil && item.Filled {
 				resolved++
 			}
 		}
@@ -161,6 +167,118 @@ func TestMusicListStreamRevealsMonotonicProgress(t *testing.T) {
 			t.Fatalf("expected resolved count in [0,5], got %v", resolvedCounts)
 		}
 		last = got
+	}
+}
+
+func TestMusicListStreamPatchesImageBeforeSlowComment(t *testing.T) {
+	previousProvider := NetEaseGCtx
+	commentStarted := make(chan struct{})
+	releaseComment := make(chan struct{})
+	NetEaseGCtx = blockingCommentMusicListProvider{
+		started: commentStarted,
+		release: releaseComment,
+	}
+	defer func() { NetEaseGCtx = previousProvider }()
+
+	previousUpload := musicListImageUploader
+	musicListImageUploader = func(context.Context, string, int) (string, string, error) {
+		return "img_uploaded_1", "https://oss.example/1.jpg", nil
+	}
+	defer func() { musicListImageUploader = previousUpload }()
+	clearMusicListResourceCache()
+
+	renderer := newMusicListCardRenderer(musicListCardData{
+		request: MusicListRequest{
+			Scene:    MusicListSceneSongSearch,
+			Query:    "稻香",
+			Page:     1,
+			PageSize: 1,
+		},
+		resourceType: CommentTypeSong,
+		displayTitle: "稻香",
+		items: []*SearchMusicItem{
+			{ID: 1, Name: "s1", ArtistName: "a1", SongURL: "u1", PicURL: "https://pic.example/1.jpg"},
+		},
+	})
+
+	var snapshots [][]*larktpl.MusicListCardItem
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- renderer.streamCurrentPageVars(context.Background(), &musicListStreamGuard{}, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
+			snapshots = append(snapshots, cloneMusicListItems(vars.ObjectList1))
+			if messageID == "" {
+				return "om_msg_1", nil
+			}
+			return messageID, nil
+		})
+	}()
+
+	select {
+	case <-commentStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for comment fetch to start")
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		if hasSnapshot(snapshots, func(item *larktpl.MusicListCardItem) bool {
+			return item.Field2.ImgKey == "img_uploaded_1" && item.Field3 == "加载中"
+		}) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected image patch before comment finished, snapshots=%#v", snapshots)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	close(releaseComment)
+	if err := <-errCh; err != nil {
+		t.Fatalf("stream current page: %v", err)
+	}
+	if !hasSnapshot(snapshots, func(item *larktpl.MusicListCardItem) bool {
+		return item.Field2.ImgKey == "img_uploaded_1" && item.Field3 == "hot comment"
+	}) {
+		t.Fatalf("expected final snapshot with image and comment, snapshots=%#v", snapshots)
+	}
+}
+
+func TestAsyncGetSearchResDoesNotPreloadMusicURLOrImage(t *testing.T) {
+	searchRes := SearchMusic{}
+	searchRes.Result.Songs = append(searchRes.Result.Songs, struct {
+		Name string `json:"name"`
+		ID   int    `json:"id"`
+		Ar   []struct {
+			Name string `json:"name"`
+		} `json:"ar"`
+		Al struct {
+			PicURL string `json:"picUrl"`
+		} `json:"al"`
+	}{
+		Name: "s1",
+		ID:   1,
+		Ar: []struct {
+			Name string `json:"name"`
+		}{{Name: "a1"}},
+		Al: struct {
+			PicURL string `json:"picUrl"`
+		}{PicURL: "https://pic.example/1.jpg"},
+	})
+
+	items, err := (&NetEaseContext{}).AsyncGetSearchRes(context.Background(), searchRes)
+	if err != nil {
+		t.Fatalf("AsyncGetSearchRes() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if items[0].ID != 1 || items[0].Name != "s1" || items[0].ArtistName != "a1" || items[0].PicURL == "" {
+		t.Fatalf("unexpected item metadata: %#v", items[0])
+	}
+	if items[0].SongURL != "" || items[0].ImageKey != "" {
+		t.Fatalf("did not expect preloaded resources, got %#v", items[0])
 	}
 }
 
@@ -278,15 +396,18 @@ func waitMusicListPatchSequence(t *testing.T, ch <-chan int) int {
 	}
 }
 
-func TestNewMusicListCardItemMarksUnavailableSong(t *testing.T) {
+func TestNewMusicListCardItemKeepsPlayButtonWithoutPreloadedSongURL(t *testing.T) {
 	item := newMusicListCardItem(&SearchMusicItem{
 		ID:         7,
-		Name:       "无版权歌曲",
+		Name:       "待加载歌曲",
 		ArtistName: "测试歌手",
 	}, musicListButtonConfigFor(CommentTypeSong))
 
-	if item.ButtonInfo != "歌曲无效" {
-		t.Fatalf("expected unavailable song label, got %q", item.ButtonInfo)
+	if item.ButtonInfo != "点击播放" {
+		t.Fatalf("expected playable label before song URL is loaded, got %q", item.ButtonInfo)
+	}
+	if item.ButtonVal[cardactionproto.ActionField] != cardactionproto.ActionMusicPlay {
+		t.Fatalf("expected play action payload, got %#v", item.ButtonVal)
 	}
 }
 
@@ -296,6 +417,51 @@ type fakeMusicListProvider struct {
 
 func (fakeMusicListProvider) GetComment(context.Context, CommentType, string) (*CommentResult, error) {
 	return nil, nil
+}
+
+type blockingCommentMusicListProvider struct {
+	noopProvider
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p blockingCommentMusicListProvider) GetComment(context.Context, CommentType, string) (*CommentResult, error) {
+	close(p.started)
+	<-p.release
+	var result CommentResult
+	result.Data.Comments = append(result.Data.Comments, struct {
+		Content string `json:"content"`
+		TimeStr string `json:"timeStr"`
+	}{
+		Content: "hot comment",
+		TimeStr: "刚刚",
+	})
+	return &result, nil
+}
+
+func cloneMusicListItems(items []*larktpl.MusicListCardItem) []*larktpl.MusicListCardItem {
+	cloned := make([]*larktpl.MusicListCardItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		copyItem := *item
+		cloned = append(cloned, &copyItem)
+	}
+	return cloned
+}
+
+func hasSnapshot(snapshots [][]*larktpl.MusicListCardItem, match func(*larktpl.MusicListCardItem) bool) bool {
+	for _, snapshot := range snapshots {
+		if len(snapshot) == 0 || snapshot[0] == nil {
+			continue
+		}
+		if match(snapshot[0]) {
+			return true
+		}
+	}
+	return false
 }
 
 func setupMusicListTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {

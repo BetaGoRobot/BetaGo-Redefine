@@ -13,7 +13,7 @@ import (
 
 func TestMetaInitPrefersOpenID(t *testing.T) {
 	chatID := "oc_chat"
-	chatType := "group"
+	chatType := "p2p"
 	openID := "ou_open"
 	legacyUserID := "cli_user"
 
@@ -39,7 +39,7 @@ func TestMetaInitPrefersOpenID(t *testing.T) {
 
 func TestMetaInitReturnsEmptyWithoutOpenID(t *testing.T) {
 	chatID := "oc_chat"
-	chatType := "group"
+	chatType := "p2p"
 	legacyUserID := "cli_user"
 
 	meta := metaInit(&larkim.P2MessageReceiveV1{

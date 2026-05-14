@@ -105,7 +105,7 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		logs.L().Ctx(ctx).Error("Failed to get picture URL", zap.Error(err))
 		return nil
 	}
-	imageKey, ossURL, err := larkimg.UploadPicAllinOne(ctx, songDetail.Al.PicURL, musicID, true)
+	imageAsset, err := neteaseapi.EnsureMusicImageAsset(ctx, musicID, songDetail.Al.PicURL)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
 		return nil
@@ -144,7 +144,7 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		Title:      songDetail.Name,
 		LyricsURL:  lyricsURL,
 		MusicURL:   musicURL,
-		PictureURL: ossURL,
+		PictureURL: imageAsset.OSSURL,
 		Album:      songDetail.Al.Name,
 		Artist:     artistNameList,
 		Duration:   songDetail.Dt,
@@ -207,7 +207,7 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		Lyrics:       lyrics,
 		Title:        songDetail.Name,
 		Subtitle:     subtitle,
-		ImageKey:     imageKey,
+		ImageKey:     imageAsset.ImageKey,
 		PlayerURL:    playerURL,
 		AudioFileKey: audioFileKey,
 		AudioID:      "music_" + strconv.Itoa(musicID),
@@ -237,11 +237,8 @@ func PatchMusicCard(ctx context.Context, musicID int, msgID string, page int) {
 		return
 	}
 
-	// Async upload audio and patch card with audio (slow, non-blocking)
-	go func() {
-		bgCtx := context.Background()
-		AsyncUploadAudioAndPatch(bgCtx, musicID, msgID, page, view.PlayerURL, view.Title)
-	}()
+	// Audio upload is slow; keep it alive after the fast card update returns.
+	go AsyncUploadAudioAndPatch(context.WithoutCancel(ctx), musicID, msgID, page, view.PlayerURL, view.Title)
 }
 
 // AsyncUploadAudioAndPatch uploads audio and patches the card with audio element.
@@ -364,7 +361,7 @@ func HandleFullLyrics(ctx context.Context, metaData *xhandler.BaseMetaData, musi
 	}
 	songDetail := detail.Songs[0]
 
-	imgKey, _, err := larkimg.UploadPicAllinOne(ctx, songDetail.Al.PicURL, musicID, true)
+	imgKey, err := neteaseapi.EnsureMusicImageKey(ctx, musicID, songDetail.Al.PicURL)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Failed to upload picture", zap.Error(err))
 		return

@@ -1,6 +1,7 @@
 package larkmsg
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,11 +10,18 @@ import (
 
 func useLarkMsgConfigPath(t *testing.T) {
 	t.Helper()
-	configPath, err := filepath.Abs("../../../../.dev/config.toml")
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	data := []byte("[lark_config]\nbot_open_id = \"ou_configured_bot\"\n")
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("write test config: %v", err)
+	}
+	configPath, err := filepath.Abs(configPath)
 	if err != nil {
 		t.Fatalf("resolve config path: %v", err)
 	}
 	t.Setenv("BETAGO_CONFIG_PATH", configPath)
+	infraConfig.LoadFile(configPath)
 }
 
 func TestResolveRecordedBotIdentityPreservesSenderOpenID(t *testing.T) {

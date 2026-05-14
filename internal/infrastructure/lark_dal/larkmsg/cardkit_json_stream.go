@@ -136,9 +136,9 @@ func ReplyStreamingCardJSONEntityWithResp(ctx context.Context, cardData any, msg
 	if err != nil {
 		return nil, "", err
 	}
-	if err := SetCardEntityStreaming(ctx, cardID, true, 1); err != nil {
-		return nil, "", err
-	}
+	// if err := SetCardEntityStreaming(ctx, cardID, true, 1); err != nil {
+	// 	return nil, "", err
+	// }
 	resp, err := ReplyMsgRawContentType(ctx, msgID, larkim.MsgTypeInteractive, content, suffix, replyInThread)
 	if err != nil {
 		return nil, "", err

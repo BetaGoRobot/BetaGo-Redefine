@@ -336,6 +336,7 @@ func buildStandardChatSystemPrompt(ctx context.Context, mode standardPromptMode,
 
 ## 金融工具
 当用户问题涉及行情、财经新闻、宏观指标、证券代码、指数、黄金、期货、CPI、GDP、PMI 等金融/经济数据时，优先使用金融工具而不是 web_search。
+先调用 finance_tool_discover 发现可用金融工具；只使用 category 或 tool_names 这类枚举参数，不要停在 discover 结果本身。结构化行情、新闻和指标查询优先用金融工具。
 
 ## 工具调用规则
 1. 工具一次只调用一个

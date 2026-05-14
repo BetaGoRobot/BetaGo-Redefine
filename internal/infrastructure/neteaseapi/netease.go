@@ -550,41 +550,6 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 
-	songIDs := make([]int, 0, len(searchRes.Result.Songs))
-	for idx := range searchRes.Result.Songs {
-		if searchRes.Result.Songs[idx].ID == 0 {
-			continue
-		}
-		songIDs = append(songIDs, searchRes.Result.Songs[idx].ID)
-	}
-	urlByID := make(map[int]string, len(songIDs))
-
-	urlFuture := kinetic.Go(
-		func() (map[int]string, error) {
-			return neteaseCtx.GetMusicURLByIDs(ctx, songIDs...)
-		},
-		kinetic.WithContext(ctx),
-	)
-
-	imageFuture := kinetic.Go(
-		func() (map[int]string, error) {
-			return asyncUploadPics(ctx, searchRes), nil
-		},
-		kinetic.WithContext(ctx),
-	)
-	fetched, err := urlFuture.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	for k, v := range fetched {
-		urlByID[k] = v
-	}
-	imageKeyByID, err := imageFuture.Get()
-	if err != nil {
-		return nil, err
-	}
-
 	for idx := range searchRes.Result.Songs {
 		song := &searchRes.Result.Songs[idx]
 		if song.ID == 0 {
@@ -595,8 +560,6 @@ func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchR
 			Name:       song.Name,
 			ArtistName: genArtistName(song),
 			PicURL:     song.Al.PicURL,
-			ImageKey:   imageKeyByID[song.ID],
-			SongURL:    urlByID[song.ID],
 		})
 	}
 
@@ -690,11 +653,6 @@ func (neteaseCtx *NetEaseContext) SearchMusicByPlaylist(ctx context.Context, pla
 		}
 	}
 
-	urlByID, err := neteaseCtx.GetMusicURLs(ctx, defaultMusicURLBatchSize, trackIDs...)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	result = make([]*SearchMusicItem, 0, len(trackIDs))
 	for _, id := range trackIDs {
 		song, ok := songByID[id]
@@ -706,7 +664,6 @@ func (neteaseCtx *NetEaseContext) SearchMusicByPlaylist(ctx context.Context, pla
 			Name:       song.Name,
 			ArtistName: song.ArtistName,
 			PicURL:     song.PicURL,
-			SongURL:    urlByID[id],
 		})
 	}
 	return
@@ -916,21 +873,12 @@ func (neteaseCtx *NetEaseContext) GetNewRecommendMusic() (res []SearchMusicItem,
 		artistNameByID[result.Song.ID] = ArtistName
 		picURLByID[result.Song.ID] = result.PicURL
 	}
-	urlByID, err := neteaseCtx.GetMusicURLs(context.Background(), defaultMusicURLBatchSize, musicIDs...)
-	if err != nil {
-		return nil, err
-	}
 	for _, musicID := range musicIDs {
-		songURL := urlByID[musicID]
-		if songURL == "" {
-			continue
-		}
 		res = append(res, SearchMusicItem{
 			ID:         musicID,
 			Name:       nameByID[musicID],
 			ArtistName: artistNameByID[musicID],
 			PicURL:     picURLByID[musicID],
-			SongURL:    songURL,
 		})
 	}
 	return

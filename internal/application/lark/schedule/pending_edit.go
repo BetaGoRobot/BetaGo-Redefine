@@ -48,13 +48,12 @@ func storePendingEdit(token string, edit *PendingEdit) error {
 	defer pendingEditsMu.Unlock()
 	pendingEdits[token] = edit
 
-	// Start expiration goroutine
-	go func() {
-		time.Sleep(pendingEditTTL)
+	// Expire stale edit confirmations without blocking the card callback path.
+	time.AfterFunc(pendingEditTTL, func() {
 		pendingEditsMu.Lock()
 		delete(pendingEdits, token)
 		pendingEditsMu.Unlock()
-	}()
+	})
 	return nil
 }
 

@@ -32,6 +32,7 @@ func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 		"delete_schedule":   {},
 		"pause_schedule":    {},
 		"resume_schedule":   {},
+		"edit_schedule":     {},
 		"revert_message":    {},
 		"permission_manage": {},
 	}

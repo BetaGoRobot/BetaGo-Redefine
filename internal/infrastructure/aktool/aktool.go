@@ -211,8 +211,8 @@ func (p httpProvider) GetStockSymbolInfo(ctx context.Context, symbol string) (st
 	defer span.End()
 
 	var rows []akshareapi.StockIndividualInfoEmRow
-	err = p.callInto(ctx, akshareapi.EndpointStockIndividualSpotXq, akshareapi.StockIndividualInfoEmParams{
-		Symbol: "sh" + symbol,
+	err = p.callInto(ctx, akshareapi.EndpointStockIndividualInfoEm, akshareapi.StockIndividualInfoEmParams{
+		Symbol: symbol,
 	}, &rows)
 	if err != nil {
 		return "", err
