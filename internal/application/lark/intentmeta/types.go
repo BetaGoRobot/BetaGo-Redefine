@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
@@ -63,7 +64,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		InterruptRisk   int             `json:"interrupt_risk"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := sonic.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
@@ -176,17 +177,17 @@ func parseReasoningEffort(raw json.RawMessage) responses.ReasoningEffort_Enum {
 	}
 
 	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
+	if err := sonic.Unmarshal(raw, &text); err == nil {
 		return parseReasoningEffortText(text)
 	}
 
 	var effort responses.ReasoningEffort_Enum
-	if err := json.Unmarshal(raw, &effort); err == nil {
+	if err := sonic.Unmarshal(raw, &effort); err == nil {
 		return effort
 	}
 
 	var numeric int32
-	if err := json.Unmarshal(raw, &numeric); err == nil {
+	if err := sonic.Unmarshal(raw, &numeric); err == nil {
 		return responses.ReasoningEffort_Enum(numeric)
 	}
 	return responses.ReasoningEffort_unspecified

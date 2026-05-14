@@ -2,7 +2,6 @@ package larkmsg
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/bytedance/sonic"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -155,7 +155,7 @@ func BuildCardJSONEntityContent(ctx context.Context, cardData any) (string, stri
 }
 
 func CreateCardJSONEntity(ctx context.Context, cardData any) (string, error) {
-	raw, err := json.Marshal(cardData)
+	raw, err := sonic.Marshal(cardData)
 	if err != nil {
 		return "", err
 	}

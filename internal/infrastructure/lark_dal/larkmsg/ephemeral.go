@@ -2,13 +2,13 @@ package larkmsg
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/bytedance/sonic"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"go.uber.org/zap"
 )
@@ -75,7 +75,7 @@ func SendEphemeralCard(ctx context.Context, chatID, openID string, cardData any)
 	}
 
 	resp := &sendEphemeralMessageResp{}
-	if err := json.Unmarshal(apiResp.RawBody, resp); err != nil {
+	if err := sonic.Unmarshal(apiResp.RawBody, resp); err != nil {
 		logs.L().Ctx(ctx).Error("SendEphemeralCard decode failed", zap.String("chat_id", chatID), zap.String("open_id", openID), zap.Error(err))
 		return "", err
 	}
@@ -108,7 +108,7 @@ func DeleteEphemeralMessage(ctx context.Context, messageID string) error {
 	}
 
 	resp := &deleteEphemeralMessageResp{}
-	if err := json.Unmarshal(apiResp.RawBody, resp); err != nil {
+	if err := sonic.Unmarshal(apiResp.RawBody, resp); err != nil {
 		logs.L().Ctx(ctx).Error("DeleteEphemeralMessage decode failed", zap.String("message_id", messageID), zap.Error(err))
 		return err
 	}

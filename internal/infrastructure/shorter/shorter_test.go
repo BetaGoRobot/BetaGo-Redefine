@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -15,6 +16,13 @@ import (
 )
 
 func TestGenAKAKutt(t *testing.T) {
+	if os.Getenv("BETAGO_RUN_KUTT_INTEGRATION") != "1" {
+		t.Skip("set BETAGO_RUN_KUTT_INTEGRATION=1 to run Kutt integration test")
+	}
+	if _, err := os.Stat(".dev/config.toml"); err != nil {
+		t.Skipf("Kutt integration config is unavailable: %v", err)
+	}
+
 	otel.Init(config.Get().OtelConfig)
 	logs.Init()
 	u := &url.URL{
@@ -26,6 +34,8 @@ func TestGenAKAKutt(t *testing.T) {
 }
 
 func GenAKAKutt1(ctx context.Context, u *url.URL, expires ExpireTime) (newURL *url.URL) {
+	// Test-only variant keeps the external Kutt request path unchanged while
+	// allowing the integration test to use a short expiry.
 	oldURL := u.String()
 	req := &KuttRequest{
 		Target:   oldURL,

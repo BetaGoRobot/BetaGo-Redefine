@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/bytedance/sonic"
 	"github.com/opensearch-project/opensearch-go/v4"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
@@ -88,7 +88,7 @@ func ExtractText(raw string) string {
 
 	if looksLikeJSONObject(stripped) {
 		var obj any
-		if err := json.Unmarshal([]byte(stripped), &obj); err == nil {
+		if err := sonic.Unmarshal([]byte(stripped), &obj); err == nil {
 			return cleanAtMentions(extractFromJSON(obj))
 		}
 	}
@@ -130,13 +130,13 @@ func BuildScanQuery(days int) []byte {
 		},
 	}
 
-	data, _ := json.Marshal(query)
+	data, _ := sonic.Marshal(query)
 	return data
 }
 
 func BuildBulkUpdatePayload(updates []BulkUpdate) ([]byte, error) {
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
+	enc := sonic.ConfigFastest.NewEncoder(&buf)
 	for _, update := range updates {
 		meta := map[string]any{
 			"update": map[string]any{
@@ -276,7 +276,7 @@ func AnalyzeIndex(ctx context.Context, client *opensearchapi.Client, index strin
 	mappingInfo := make(map[string]any)
 	for _, item := range mappingResp.Indices {
 		var raw map[string]any
-		if err := json.Unmarshal(item.Mappings, &raw); err == nil {
+		if err := sonic.Unmarshal(item.Mappings, &raw); err == nil {
 			mappingInfo = raw
 		}
 		break
@@ -481,7 +481,7 @@ func hasOnlyKeys(m map[string]any, allowed ...string) bool {
 }
 
 func countByQuery(ctx context.Context, client *opensearchapi.Client, index string, query map[string]any) (int, error) {
-	body, err := json.Marshal(query)
+	body, err := sonic.Marshal(query)
 	if err != nil {
 		return 0, fmt.Errorf("marshal count query: %w", err)
 	}
@@ -497,12 +497,12 @@ func countByQuery(ctx context.Context, client *opensearchapi.Client, index strin
 
 func scanDocuments(ctx context.Context, client *opensearchapi.Client, opts RunOptions, yield func(ScanDocument) error) error {
 	body := map[string]any{}
-	if err := json.Unmarshal(BuildScanQuery(opts.Days), &body); err != nil {
+	if err := sonic.Unmarshal(BuildScanQuery(opts.Days), &body); err != nil {
 		return fmt.Errorf("build scan query: %w", err)
 	}
 	body["_source"] = []string{"raw_message", "message_v2"}
 
-	data, err := json.Marshal(body)
+	data, err := sonic.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal scan body: %w", err)
 	}
@@ -523,7 +523,7 @@ func scanDocuments(ctx context.Context, client *opensearchapi.Client, opts RunOp
 	for {
 		for _, hit := range resp.Hits.Hits {
 			var doc SourceDoc
-			if err := json.Unmarshal(hit.Source, &doc); err != nil {
+			if err := sonic.Unmarshal(hit.Source, &doc); err != nil {
 				return fmt.Errorf("unmarshal source %s: %w", hit.ID, err)
 			}
 			if err := yield(ScanDocument{

@@ -2,7 +2,6 @@ package intent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/bytedance/gg/gptr"
+	"github.com/bytedance/sonic"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -164,7 +164,7 @@ func analyzeMessage(ctx context.Context, message string, recentLines []string, m
 
 	// 解析 JSON
 	analysis = &IntentAnalysis{}
-	if err := json.Unmarshal([]byte(responseText), analysis); err != nil {
+	if err := sonic.Unmarshal([]byte(responseText), analysis); err != nil {
 		logs.L().Ctx(ctx).Error("failed to unmarshal intent analysis", zap.String("response", responseText), zap.Error(err))
 		return nil, err
 	}

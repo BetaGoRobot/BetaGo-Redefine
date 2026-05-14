@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 // HealthHTTPModule 承载轻量级管理面服务，用于暴露 liveness、readiness
@@ -173,7 +174,7 @@ func (m *HealthHTTPModule) snapshot() Snapshot {
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(payload)
+	_ = sonic.ConfigFastest.NewEncoder(w).Encode(payload)
 }
 
 func (m *HealthHTTPModule) metricsPayload(ctx context.Context) (string, error) {

@@ -106,16 +106,17 @@ func RecordErrorPtr(span trace.Span, err *error) {
 }
 
 func PreviewString(s string, maxLen int) string {
-	gr := uniseg.NewGraphemes(s)
-	var byteIdx int
-	for i := 0; i < maxLen && gr.Next(); i++ {
-		_, byteEnd := gr.Positions()
-		byteIdx = byteEnd
+	s = strings.TrimSpace(s)
+	if maxLen <= 0 || s == "" {
+		return ""
 	}
-	if byteIdx == 0 && maxLen > 0 {
+	if graphemeLen(s) <= maxLen {
 		return s
-	} // 处理未达到长度的情况
-	return s[:byteIdx] + "..."
+	}
+	if maxLen <= 3 {
+		return firstGraphemes(s, maxLen)
+	}
+	return firstGraphemes(s, maxLen-3) + "..."
 }
 
 func PreviewAttrs(key, value string, limit int) []attribute.KeyValue {
@@ -123,6 +124,30 @@ func PreviewAttrs(key, value string, limit int) []attribute.KeyValue {
 		attribute.Int(key+".len", len([]rune(strings.TrimSpace(value)))),
 		attribute.String(key+".preview", PreviewString(value, limit)),
 	}
+}
+
+func graphemeLen(s string) int {
+	gr := uniseg.NewGraphemes(s)
+	count := 0
+	for gr.Next() {
+		count++
+	}
+	return count
+}
+
+func firstGraphemes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	gr := uniseg.NewGraphemes(s)
+	var byteIdx int
+	for i := 0; i < n && gr.Next(); i++ {
+		_, byteIdx = gr.Positions()
+	}
+	if byteIdx == 0 {
+		return ""
+	}
+	return s[:byteIdx]
 }
 
 func Init(config *config.OtelConfig) {

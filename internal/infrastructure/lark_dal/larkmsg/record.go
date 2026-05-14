@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/bytedance/sonic"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -313,7 +313,7 @@ func cardActionDocID(cardAction *callback.CardActionTriggerEvent) string {
 			operatorOpenID = strings.TrimSpace(cardAction.Event.Operator.OpenID)
 		}
 		if cardAction.Event.Action != nil {
-			if data, err := json.Marshal(cardAction.Event.Action.Value); err == nil {
+			if data, err := sonic.Marshal(cardAction.Event.Action.Value); err == nil {
 				actionValueJSON = data
 			}
 		}

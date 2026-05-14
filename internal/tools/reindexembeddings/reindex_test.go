@@ -2,7 +2,6 @@ package reindexembeddings
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 )
 
@@ -190,16 +189,16 @@ func TestBuildEmbeddingRequests(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len(requests) = %d, want 2", len(got))
 	}
-	if !reflect.DeepEqual(got[0].Input, []string{"a"}) {
-		t.Fatalf("request[0].input = %#v, want %#v", got[0].Input, []string{"a"})
+	if len(got[0].Input) != 1 || got[0].Input[0].Text == nil || *got[0].Input[0].Text != "a" {
+		t.Fatalf("request[0].input = %#v, want text %q", got[0].Input, "a")
 	}
-	if !reflect.DeepEqual(got[1].Input, []string{"b"}) {
-		t.Fatalf("request[1].input = %#v, want %#v", got[1].Input, []string{"b"})
+	if len(got[1].Input) != 1 || got[1].Input[0].Text == nil || *got[1].Input[0].Text != "b" {
+		t.Fatalf("request[1].input = %#v, want text %q", got[1].Input, "b")
 	}
 	if got[0].Model != "ep-test" {
 		t.Fatalf("model = %q, want %q", got[0].Model, "ep-test")
 	}
-	if got[0].Dimensions != dims {
-		t.Fatalf("dimensions = %d, want %d", got[0].Dimensions, dims)
+	if got[0].Dimensions == nil || *got[0].Dimensions != dims {
+		t.Fatalf("dimensions = %v, want %d", got[0].Dimensions, dims)
 	}
 }

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -79,7 +78,7 @@ func buildCorrectionsContext(ctx context.Context, chatID string) string {
 		return ""
 	}
 	var corrections []ChatCorrection
-	if err := json.Unmarshal([]byte(correctionsJSON), &corrections); err != nil {
+	if err := sonic.Unmarshal([]byte(correctionsJSON), &corrections); err != nil {
 		return ""
 	}
 	if len(corrections) == 0 {

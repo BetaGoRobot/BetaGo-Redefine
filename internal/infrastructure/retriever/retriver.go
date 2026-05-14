@@ -15,8 +15,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	opensearchgo "github.com/opensearch-project/opensearch-go"
 	"github.com/bytedance/sonic"
+	opensearchgo "github.com/opensearch-project/opensearch-go"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/schema"
@@ -318,7 +318,7 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 		"_source": []string{"content", "metadata"},
 	}
 
-	queryBytes, _ := json.Marshal(searchQuery)
+	queryBytes, _ := sonic.Marshal(searchQuery)
 	resp, err := rs.osClient.Search(
 		rs.osClient.Search.WithContext(ctx),
 		rs.osClient.Search.WithIndex(indexName),

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -100,7 +100,7 @@ func (chatCorrectionHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	existingJSON := cfgManager.GetString(ctx, config.KeyChatCorrections, chatID, "")
 	var corrections []ChatCorrection
 	if existingJSON != "" {
-		if err := json.Unmarshal([]byte(existingJSON), &corrections); err != nil {
+		if err := sonic.Unmarshal([]byte(existingJSON), &corrections); err != nil {
 			corrections = []ChatCorrection{}
 		}
 	}
@@ -109,7 +109,7 @@ func (chatCorrectionHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 	corrections = append(corrections, correction)
 
 	// Save back
-	newJSON, err := json.Marshal(corrections)
+	newJSON, err := sonic.Marshal(corrections)
 	if err != nil {
 		return fmt.Errorf("failed to marshal corrections: %w", err)
 	}

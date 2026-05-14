@@ -3,7 +3,6 @@ package ratelimit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/bytedance/sonic"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -255,7 +255,7 @@ func (m *Metrics) getOrCreateChatMetrics(ctx context.Context, chatID string) (*C
 	}
 
 	var cm ChatMetrics
-	if err := json.Unmarshal(data, &cm); err != nil {
+	if err := sonic.Unmarshal(data, &cm); err != nil {
 		return nil, err
 	}
 	return &cm, nil
@@ -264,7 +264,7 @@ func (m *Metrics) getOrCreateChatMetrics(ctx context.Context, chatID string) (*C
 func (m *Metrics) saveChatMetrics(ctx context.Context, chatID string, cm *ChatMetrics) error {
 	key := metricsRedisKey(chatID)
 	cm.LastUpdated = time.Now()
-	data, err := json.Marshal(cm)
+	data, err := sonic.Marshal(cm)
 	if err != nil {
 		return err
 	}
@@ -282,7 +282,7 @@ func (m *Metrics) getChatStats(ctx context.Context, chatID string) *ChatMetrics 
 	}
 
 	var cm ChatMetrics
-	if err := json.Unmarshal(data, &cm); err != nil {
+	if err := sonic.Unmarshal(data, &cm); err != nil {
 		return nil
 	}
 	return &cm
@@ -466,7 +466,7 @@ func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID stri
 	}
 
 	var stats ChatStats
-	if err := json.Unmarshal(data, &stats); err != nil {
+	if err := sonic.Unmarshal(data, &stats); err != nil {
 		return nil, err
 	}
 
@@ -481,7 +481,7 @@ func (s *SmartRateLimiter) getOrCreateChatStats(ctx context.Context, chatID stri
 // saveChatStats 保存会话统计到 Redis
 func (s *SmartRateLimiter) saveChatStats(ctx context.Context, stats *ChatStats) error {
 	key := statsRedisKey(stats.ChatID)
-	data, err := json.Marshal(stats)
+	data, err := sonic.Marshal(stats)
 	if err != nil {
 		return err
 	}
@@ -506,7 +506,7 @@ func (s *SmartRateLimiter) getRecentSends(ctx context.Context, chatID string) ([
 	records := make([]SendRecord, 0, len(dataList))
 	for _, data := range dataList {
 		var r SendRecord
-		if err := json.Unmarshal([]byte(data), &r); err == nil {
+		if err := sonic.Unmarshal([]byte(data), &r); err == nil {
 			records = append(records, r)
 		}
 	}
@@ -516,7 +516,7 @@ func (s *SmartRateLimiter) getRecentSends(ctx context.Context, chatID string) ([
 // addRecentSend 添加发送记录到 Redis
 func (s *SmartRateLimiter) addRecentSend(ctx context.Context, chatID string, record SendRecord) error {
 	key := recentSendsRedisKey(chatID)
-	data, err := json.Marshal(record)
+	data, err := sonic.Marshal(record)
 	if err != nil {
 		return err
 	}

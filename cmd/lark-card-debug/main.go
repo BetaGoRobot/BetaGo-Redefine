@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -338,7 +337,7 @@ func printPayload(built *carddebug.BuiltCard) error {
 		if built.CardJSON == nil {
 			return fmt.Errorf("card json is nil")
 		}
-		data, err := json.MarshalIndent(built.CardJSON, "", "  ")
+		data, err := sonic.MarshalIndent(built.CardJSON, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -431,7 +430,7 @@ func runSuite(ctx context.Context, opts options, cfg *infraConfig.BaseConfig) er
 		return err
 	}
 	if path := strings.TrimSpace(opts.ReportJSON); path != "" {
-		data, err := json.MarshalIndent(results, "", "  ")
+		data, err := sonic.MarshalIndent(results, "", "  ")
 		if err != nil {
 			return err
 		}
