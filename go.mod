@@ -13,7 +13,7 @@ require (
 	github.com/defensestation/osquery v1.0.0
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/eko/gocache/lib/v4 v4.2.3
-	github.com/eko/gocache/store/go_cache/v4 v4.2.4
+	github.com/eko/gocache/store/go_cache/v4 v4.2.5
 	github.com/enescakir/emoji v1.0.0
 	github.com/go-openapi/runtime v0.30.0
 	github.com/go-resty/resty/v2 v2.17.2
