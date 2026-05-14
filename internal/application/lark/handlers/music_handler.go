@@ -8,7 +8,6 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -101,11 +100,27 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
-	send := func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
-		return sendCompatibleCardWithMessageID(sendCtx, data, metaData, cardContent, "_musicSearch", replyInThread)
+	stream := larkmsg.NewCardJSONEntityStream()
+	send := func(sendCtx context.Context, cardContent larkmsg.RawCard, sequence int) (string, error) {
+		replyMsgID, err := stream.Reply(sendCtx, cardContent, *data.Event.Message.MessageId, "_musicSearch", replyInThread, sequence)
+		if err == nil {
+			return replyMsgID, nil
+		}
+		content := utils.MustMarshalString(cardContent)
+		resp, respErr := larkmsg.ReplyMsgRawContentType(sendCtx, *data.Event.Message.MessageId, larkim.MsgTypeInteractive, content, "_musicSearch_fallback", replyInThread)
+		if respErr != nil {
+			return "", errors.Join(err, respErr)
+		}
+		if !resp.Success() {
+			return "", errors.Join(err, errors.New(resp.Error()))
+		}
+		return *resp.Data.MessageId, nil
 	}
-	patch := func(patchCtx context.Context, msgID string, cardContent *larktpl.TemplateCardContent) error {
-		return larkmsg.PatchCard(patchCtx, cardContent, msgID)
+	patch := func(patchCtx context.Context, msgID string, cardContent larkmsg.RawCard, sequence int) error {
+		if stream.Active() {
+			return stream.Patch(patchCtx, msgID, cardContent, sequence)
+		}
+		return larkmsg.PatchCardJSON(patchCtx, msgID, cardContent)
 	}
 
 	if arg.Type == "" || arg.Type == MusicSearchTypeSong {
@@ -126,8 +141,9 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	} else {
 		err = errors.New("unknown search type")
 	}
-	if err != nil {
-		return err
+	closeErr := stream.Close(ctx)
+	if err != nil || closeErr != nil {
+		return errors.Join(err, closeErr)
 	}
 	metaData.SetExtra(musicSearchToolResultKey, "音乐卡片已发送")
 	return nil

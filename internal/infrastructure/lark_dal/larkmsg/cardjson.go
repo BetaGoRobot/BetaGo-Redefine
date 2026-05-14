@@ -1,11 +1,11 @@
 package larkmsg
 
-import "encoding/json"
+import "github.com/bytedance/sonic"
 
 type RawCard map[string]any
 
 func (c RawCard) JSON() (string, error) {
-	data, err := json.Marshal(c)
+	data, err := sonic.Marshal(c)
 	if err != nil {
 		return "", err
 	}

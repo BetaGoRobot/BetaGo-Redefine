@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
@@ -58,6 +59,68 @@ func PatchCardJSON(ctx context.Context, msgID string, cardData any) error {
 
 func BuildCardEntityContent(ctx context.Context, cardData any) (string, error) {
 	return buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
+}
+
+func SetCardEntityStreaming(ctx context.Context, cardID string, enabled bool, sequence int) error {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" {
+		return errors.New("empty card id")
+	}
+	settings := larkcard.DisableCardStreaming().String()
+	if enabled {
+		settings = larkcard.EnableCardStreaming().String()
+	}
+	reqBodyBuilder := larkcardkit.NewSettingsCardReqBodyBuilder().
+		Settings(settings).
+		Uuid(streamingUUID("settings", cardID, sequence))
+	if sequence > 0 {
+		reqBodyBuilder.Sequence(sequence)
+	}
+	resp, err := lark_dal.Client().Cardkit.V1.Card.Settings(
+		ctx,
+		larkcardkit.NewSettingsCardReqBuilder().
+			CardId(cardID).
+			Body(reqBodyBuilder.Build()).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
+}
+
+func CardIDFromMessageID(ctx context.Context, msgID string) (string, error) {
+	msgID = strings.TrimSpace(msgID)
+	if msgID == "" {
+		return "", errors.New("empty message id")
+	}
+	resp, err := lark_dal.Client().Cardkit.V1.Card.IdConvert(
+		ctx,
+		larkcardkit.NewIdConvertCardReqBuilder().
+			Body(larkcardkit.NewIdConvertCardReqBodyBuilder().MessageId(msgID).Build()).
+			Build(),
+	)
+	if err != nil {
+		return "", err
+	}
+	if !resp.Success() {
+		return "", errors.New(resp.Error())
+	}
+	if resp.Data == nil || resp.Data.CardId == nil || strings.TrimSpace(*resp.Data.CardId) == "" {
+		return "", errors.New("empty card_id from cardkit id_convert")
+	}
+	return strings.TrimSpace(*resp.Data.CardId), nil
+}
+
+func createCardEntityFromData(ctx context.Context, cardData any) (string, error) {
+	raw, err := json.Marshal(cardData)
+	if err != nil {
+		return "", err
+	}
+	return createCardEntity(ctx, cardKitTypeCardJSON, string(raw))
 }
 
 func buildCardEntityContent(ctx context.Context, cardType string, cardData any) (string, error) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -25,7 +26,10 @@ const (
 	musicListStreamPatchWindow  = 500 * time.Millisecond
 )
 
-var activeMusicListStreams sync.Map
+var (
+	activeMusicListStreams  sync.Map
+	musicListRawCardBuilder = BuildMusicListRawCard
+)
 
 type MusicListScene string
 
@@ -39,8 +43,8 @@ const (
 type musicItemTransFunc[T any] func(context.Context, *T) *SearchMusicItem
 
 type (
-	MusicListCardSender  func(context.Context, *larktpl.TemplateCardContent) (string, error)
-	MusicListCardPatcher func(context.Context, string, *larktpl.TemplateCardContent) error
+	MusicListCardSender  func(context.Context, larkmsg.RawCard, int) (string, error)
+	MusicListCardPatcher func(context.Context, string, larkmsg.RawCard, int) error
 )
 
 type MusicListRequest struct {
@@ -172,6 +176,10 @@ func (r *musicListCardRenderer) Card(ctx context.Context) *larktpl.TemplateCardC
 	return larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, r.vars())
 }
 
+func (r *musicListCardRenderer) RawCard(ctx context.Context) larkmsg.RawCard {
+	return musicListRawCardBuilder(ctx, r.vars())
+}
+
 func (r *musicListCardRenderer) vars() *larktpl.MusicListCardVars {
 	currentPage := r.currentPage()
 	totalPages := r.totalPages()
@@ -192,13 +200,35 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 	streamGuard := &musicListStreamGuard{}
 	defer streamGuard.Release(context.Background())
 
-	return r.streamCurrentPageVars(ctx, streamGuard, func(vars *larktpl.MusicListCardVars, messageID string) (string, error) {
+	var (
+		wg       sync.WaitGroup
+		errMu    sync.Mutex
+		asyncErr error
+	)
+	recordAsyncErr := func(err error) {
+		if err == nil {
+			return
+		}
+		errMu.Lock()
+		defer errMu.Unlock()
+		if asyncErr == nil {
+			asyncErr = err
+		}
+	}
+	waitAsync := func() error {
+		wg.Wait()
+		errMu.Lock()
+		defer errMu.Unlock()
+		return asyncErr
+	}
+
+	err := r.streamCurrentPageVars(ctx, streamGuard, func(vars *larktpl.MusicListCardVars, messageID string, sequence int) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return messageID, err
 		}
-		card := larktpl.NewCardContentWithData(ctx, larktpl.AlbumListTemplate, vars)
+		card := musicListRawCardBuilder(ctx, vars)
 		if messageID == "" {
-			nextMessageID, err := send(ctx, card)
+			nextMessageID, err := send(ctx, card, sequence)
 			if err != nil {
 				return "", err
 			}
@@ -208,13 +238,23 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 		if err := streamGuard.EnsureActive(ctx); err != nil {
 			return messageID, err
 		}
-		return messageID, patch(ctx, messageID, card)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recordAsyncErr(patch(ctx, messageID, card, sequence))
+		}()
+		return messageID, nil
 	})
+	if err != nil {
+		return err
+	}
+	return waitAsync()
 }
 
-func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string) (string, error)) error {
+func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, streamGuard *musicListStreamGuard, emit func(*larktpl.MusicListCardVars, string, int) (string, error)) error {
 	pageStates := r.currentPageStates()
-	messageID, err := emit(r.vars(), "")
+	nextSeq := newMusicListStreamSequence()
+	messageID, err := emit(r.vars(), "", nextSeq())
 	if err != nil {
 		return err
 	}
@@ -261,8 +301,9 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 		if !pendingPatch {
 			return nil
 		}
-		emit(r.vars(), messageID)
-		return nil
+		pendingPatch = false
+		_, err := emit(r.vars(), messageID, nextSeq())
+		return err
 	}
 
 	for {
@@ -288,6 +329,15 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 				return err
 			}
 		}
+	}
+}
+
+func newMusicListStreamSequence() func() int {
+	// Sequence 1 is reserved for enabling CardKit streaming before content updates.
+	seq := 1
+	return func() int {
+		seq++
+		return seq
 	}
 }
 

@@ -7,18 +7,48 @@ import (
 	"iter"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+)
+
+const (
+	streamingReplyElementID = "streaming_reply_md"
+	streamingReplyTitle     = "正在回复"
+)
+
+type streamingContentUpdate struct {
+	CardID    string
+	ElementID string
+	Content   string
+	UUID      string
+	Sequence  int
+}
+
+type streamingSettingsUpdate struct {
+	CardID        string
+	UUID          string
+	Sequence      int
+	StreamingMode bool
+}
+
+var (
+	streamingCreateCardEntity  = createStreamingCardEntity
+	streamingReplyCardEntity   = replyStreamingCardEntity
+	streamingUpdateCardContent = updateStreamingCardContent
+	streamingSetCardStreaming  = setStreamingCardMode
 )
 
 // CreateMsgTextRaw 需要自行BuildText
@@ -89,16 +119,59 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 
 	var (
 		latestText string
-		replyMsgID string
+		cardID     string
+		wg         sync.WaitGroup
+		errMu      sync.Mutex
+		asyncErr   error
 	)
+	nextSeq := newStreamingSequence()
+	recordAsyncErr := func(updateErr error) {
+		if updateErr == nil {
+			return
+		}
+		errMu.Lock()
+		defer errMu.Unlock()
+		if asyncErr == nil {
+			asyncErr = updateErr
+		}
+	}
+	waitAsync := func() error {
+		wg.Wait()
+		errMu.Lock()
+		defer errMu.Unlock()
+		return asyncErr
+	}
+	dispatchContentUpdate := func(update streamingContentUpdate) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recordAsyncErr(streamingUpdateCardContent(ctx, update))
+		}()
+	}
+	dispatchSettingsUpdate := func(update streamingSettingsUpdate) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recordAsyncErr(streamingSetCardStreaming(ctx, update))
+		}()
+	}
+
 	for data := range msgSeq {
 		chunk := streamingChunkText(data)
 		if strings.TrimSpace(chunk) == "" {
 			continue
 		}
 		latestText = chunk
-		if replyMsgID == "" {
-			resp, replyErr := ReplyMsgText(ctx, latestText, *msg.MessageId, "_streaming_reply", inThread)
+		if cardID == "" {
+			card, cardErr := buildStreamingReplyCard(latestText)
+			if cardErr != nil {
+				return cardErr
+			}
+			cardID, cardErr = streamingCreateCardEntity(ctx, card)
+			if cardErr != nil {
+				return cardErr
+			}
+			resp, replyErr := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, "_streaming_reply", inThread)
 			if replyErr != nil {
 				return replyErr
 			}
@@ -108,24 +181,45 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 			if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
 				return errors.New("empty reply message id")
 			}
-			replyMsgID = strings.TrimSpace(*resp.Data.MessageId)
 			continue
 		}
-		if patchErr := PatchTextMessage(ctx, replyMsgID, latestText); patchErr != nil {
-			return patchErr
+		sequence := nextSeq()
+		dispatchContentUpdate(streamingContentUpdate{
+			CardID:    cardID,
+			ElementID: streamingReplyElementID,
+			Content:   latestText,
+			UUID:      streamingUUID("content", cardID, sequence),
+			Sequence:  sequence,
+		})
+	}
+	if cardID == "" {
+		if strings.TrimSpace(latestText) == "" {
+			return nil
+		}
+		card, cardErr := buildStreamingReplyCard(latestText)
+		if cardErr != nil {
+			return cardErr
+		}
+		cardID, cardErr = streamingCreateCardEntity(ctx, card)
+		if cardErr != nil {
+			return cardErr
+		}
+		resp, replyErr := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, "_streaming_reply_final", inThread)
+		if replyErr != nil {
+			return replyErr
+		}
+		if !resp.Success() {
+			return errors.New(resp.Error())
 		}
 	}
-	if replyMsgID != "" || strings.TrimSpace(latestText) == "" {
-		return nil
-	}
-	resp, replyErr := ReplyMsgText(ctx, latestText, *msg.MessageId, "_streaming_reply_final", inThread)
-	if replyErr != nil {
-		return replyErr
-	}
-	if !resp.Success() {
-		return errors.New(resp.Error())
-	}
-	return nil
+	sequence := nextSeq()
+	dispatchSettingsUpdate(streamingSettingsUpdate{
+		CardID:        cardID,
+		UUID:          streamingUUID("settings", cardID, sequence),
+		Sequence:      sequence,
+		StreamingMode: false,
+	})
+	return waitAsync()
 }
 
 func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
@@ -140,6 +234,103 @@ func streamingChunkText(data *ark_dal.ModelStreamRespReasoning) string {
 		return text
 	}
 	return strings.TrimSpace(data.Content)
+}
+
+func buildStreamingReplyCard(content string) (RawCard, error) {
+	card := NewCardV2(streamingReplyTitle, []any{map[string]any{
+		"tag":        "markdown",
+		"element_id": streamingReplyElementID,
+		"content":    content,
+	}}, CardV2Options{
+		HeaderTemplate:  "wathet",
+		VerticalSpacing: "8px",
+		Padding:         "12px",
+	})
+	config, ok := card["config"].(map[string]any)
+	if !ok {
+		return nil, errors.New("invalid card config")
+	}
+	config["streaming_mode"] = true
+	return card, nil
+}
+
+func newStreamingSequence() func() int {
+	seq := int(time.Now().Unix() % 2000000000)
+	if seq < 1 {
+		seq = 1
+	}
+	return func() int {
+		seq++
+		return seq
+	}
+}
+
+func streamingUUID(prefix, cardID string, sequence int) string {
+	raw := fmt.Sprintf("%s-%s-%d", prefix, cardID, sequence)
+	if len(raw) <= 64 {
+		return raw
+	}
+	return utils.GenUUIDStr(raw, 64)
+}
+
+func createStreamingCardEntity(ctx context.Context, cardData any) (string, error) {
+	return createCardEntityFromData(ctx, cardData)
+}
+
+func replyStreamingCardEntity(ctx context.Context, msgID, cardID, suffix string, replyInThread bool) (*larkim.ReplyMessageResp, error) {
+	return ReplyMsgRawContentType(ctx, msgID, larkim.MsgTypeInteractive, larkcard.NewCardEntityContent(cardID).String(), suffix, replyInThread)
+}
+
+func updateStreamingCardContent(ctx context.Context, update streamingContentUpdate) error {
+	content := utils.MustMarshalString(map[string]string{"content": update.Content})
+	resp, err := lark_dal.Client().Cardkit.V1.CardElement.Content(
+		ctx,
+		larkcardkit.NewContentCardElementReqBuilder().
+			CardId(update.CardID).
+			ElementId(update.ElementID).
+			Body(
+				larkcardkit.NewContentCardElementReqBodyBuilder().
+					Uuid(update.UUID).
+					Content(content).
+					Sequence(update.Sequence).
+					Build(),
+			).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
+}
+
+func setStreamingCardMode(ctx context.Context, update streamingSettingsUpdate) error {
+	settings := larkcard.DisableCardStreaming().String()
+	if update.StreamingMode {
+		settings = larkcard.EnableCardStreaming().String()
+	}
+	resp, err := lark_dal.Client().Cardkit.V1.Card.Settings(
+		ctx,
+		larkcardkit.NewSettingsCardReqBuilder().
+			CardId(update.CardID).
+			Body(
+				larkcardkit.NewSettingsCardReqBodyBuilder().
+					Settings(settings).
+					Uuid(update.UUID).
+					Sequence(update.Sequence).
+					Build(),
+			).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
 }
 
 // SendRecoveredMsg  SendRecoveredMsg

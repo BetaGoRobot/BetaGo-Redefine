@@ -16,7 +16,6 @@ import (
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	apppermission "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/permission"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -173,19 +172,37 @@ func handleMusicListPage(ctx context.Context, actionCtx *Context) (AsyncTask, er
 	}
 	return func(runCtx context.Context) {
 		neteaseapi.CancelMusicListStream(runCtx, msgID)
+		stream := larkmsg.NewCardJSONEntityStream()
+		legacyPatch := false
 		err := neteaseapi.StreamMusicListCardForRequest(runCtx, neteaseapi.MusicListRequest{
 			Scene:    neteaseapi.MusicListScene(scene),
 			Query:    query,
 			Page:     page,
 			PageSize: pageSize,
-		}, func(sendCtx context.Context, cardContent *larktpl.TemplateCardContent) (string, error) {
-			if err := larkmsg.PatchCard(sendCtx, cardContent, msgID); err != nil {
+		}, func(sendCtx context.Context, cardContent larkmsg.RawCard, sequence int) (string, error) {
+			nextMsgID, updateErr := stream.UpdateMessage(sendCtx, msgID, cardContent, sequence)
+			if updateErr == nil {
+				return nextMsgID, nil
+			}
+			legacyPatch = true
+			if err := larkmsg.PatchCardJSON(sendCtx, msgID, cardContent); err != nil {
 				return "", err
 			}
 			return msgID, nil
-		}, func(patchCtx context.Context, patchMsgID string, cardContent *larktpl.TemplateCardContent) error {
-			return larkmsg.PatchCard(patchCtx, cardContent, patchMsgID)
+		}, func(patchCtx context.Context, patchMsgID string, cardContent larkmsg.RawCard, sequence int) error {
+			if legacyPatch {
+				return larkmsg.PatchCardJSON(patchCtx, patchMsgID, cardContent)
+			}
+			return stream.Patch(patchCtx, patchMsgID, cardContent, sequence)
 		})
+		if !legacyPatch {
+			closeErr := stream.Close(runCtx)
+			if err == nil {
+				err = closeErr
+			} else if closeErr != nil {
+				logs.L().Ctx(runCtx).Warn("close music list card stream failed", zap.String("message_id", msgID), zap.Error(closeErr))
+			}
+		}
 		if err != nil {
 			logs.L().Ctx(runCtx).Warn("stream music list page card failed", zap.String("message_id", msgID), zap.Error(err))
 		}
