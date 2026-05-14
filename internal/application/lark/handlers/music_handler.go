@@ -141,10 +141,13 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	} else {
 		err = errors.New("unknown search type")
 	}
-	closeErr := stream.Close(ctx)
-	if err != nil || closeErr != nil {
-		return errors.Join(err, closeErr)
-	}
+	go func() {
+		// stream close可以异步，节省2s
+		closeErr := stream.Close(ctx)
+		if err != nil || closeErr != nil {
+			logs.L().Ctx(ctx).Error("stream music list card failed", zap.Error(err), zap.Error(closeErr))
+		}
+	}()
 	metaData.SetExtra(musicSearchToolResultKey, "音乐卡片已发送")
 	return nil
 }

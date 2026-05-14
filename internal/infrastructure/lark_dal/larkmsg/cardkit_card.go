@@ -8,6 +8,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -62,6 +63,9 @@ func BuildCardEntityContent(ctx context.Context, cardData any) (string, error) {
 }
 
 func SetCardEntityStreaming(ctx context.Context, cardID string, enabled bool, sequence int) error {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	cardID = strings.TrimSpace(cardID)
 	if cardID == "" {
 		return errors.New("empty card id")
@@ -93,6 +97,9 @@ func SetCardEntityStreaming(ctx context.Context, cardID string, enabled bool, se
 }
 
 func CardIDFromMessageID(ctx context.Context, msgID string) (string, error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	msgID = strings.TrimSpace(msgID)
 	if msgID == "" {
 		return "", errors.New("empty message id")
@@ -137,6 +144,9 @@ func buildCardEntityContent(ctx context.Context, cardType string, cardData any) 
 }
 
 func createCardEntity(ctx context.Context, cardType, data string) (string, error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	req := larkcardkit.NewCreateCardReqBuilder().
 		Body(
 			larkcardkit.NewCreateCardReqBodyBuilder().

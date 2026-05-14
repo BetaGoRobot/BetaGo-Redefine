@@ -8,6 +8,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -162,6 +163,9 @@ func CreateCardJSONEntity(ctx context.Context, cardData any) (string, error) {
 }
 
 func UpdateCardJSONEntity(ctx context.Context, cardID string, cardData any, sequence int) error {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+
 	if cardID == "" {
 		return errors.New("empty card id")
 	}
