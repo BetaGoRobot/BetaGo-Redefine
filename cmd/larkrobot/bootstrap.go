@@ -298,7 +298,11 @@ func newEventDispatcher(handlerSet *larkiface.HandlerSet) *dispatcher.EventDispa
 		OnP2MessageReactionCreatedV1(handlerSet.MessageReactionHandler).
 		OnP2MessageReceiveV1(handlerSet.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(handlerSet.AuditV6Handler).
-		OnP2CardActionTrigger(handlerSet.CardActionHandler)
+		OnP2CardActionTrigger(handlerSet.CardActionHandler).
+		OnP2MessageRecalledV1(emptyHandler).
+		OnP2ChatMemberUserAddedV1(emptyHandler).
+		OnP2ChatMemberBotDeletedV1(emptyHandler).
+		OnP2ChatMemberUserDeletedV1(emptyHandler)
 }
 
 func initVMMetrics(cfg *infraConfig.VMConfig) {
@@ -307,4 +311,8 @@ func initVMMetrics(cfg *infraConfig.VMConfig) {
 	}
 	pushInterval := time.Duration(cfg.PushInterval) * time.Second
 	xhandler.InitMetrics(cfg.PushURL, pushInterval, cfg.Instance)
+}
+
+func emptyHandler[T any](context.Context, T) error {
+	return nil
 }
