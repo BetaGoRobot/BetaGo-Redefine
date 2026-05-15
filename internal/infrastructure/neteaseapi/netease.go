@@ -107,6 +107,7 @@ func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []
 			"id":        joinSongIDs(musicIDs),
 			"level":     "standard",
 			"timestamp": fmt.Sprint(time.Now().UnixNano()),
+			"unblock":   "true",
 		},
 	).SetCookies(cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
 	if err != nil {
