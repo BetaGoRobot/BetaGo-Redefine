@@ -17,6 +17,7 @@ import (
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
@@ -294,7 +295,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 // Lark 事件类型上。
 func newEventDispatcher(handlerSet *larkiface.HandlerSet) *dispatcher.EventDispatcher {
 	return dispatcher.
-		NewEventDispatcher("", "").
+		NewEventDispatcher(config.Get().LarkConfig.VerificationToken, config.Get().LarkConfig.EncryptionKey).
 		OnP2MessageReactionCreatedV1(handlerSet.MessageReactionHandler).
 		OnP2MessageReceiveV1(handlerSet.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(handlerSet.AuditV6Handler).

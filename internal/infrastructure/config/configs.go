@@ -172,8 +172,8 @@ type ArkConfig struct {
 type LarkConfig struct {
 	AppID                string `json:"app_id" yaml:"app_id" toml:"app_id"`
 	AppSecret            string `json:"app_secret" yaml:"app_secret" toml:"app_secret"`
-	Encryption           string `json:"encryption" yaml:"encryption" toml:"encryption"`
-	Verification         string `json:"verification" yaml:"verification" toml:"verification"`
+	EncryptionKey        string `json:"encryption_key" yaml:"encryption_key" toml:"encryption_key"`
+	VerificationToken    string `json:"verification_token" yaml:"verification_token" toml:"verification_token"`
 	BotOpenID            string `json:"bot_open_id" yaml:"bot_open_id" toml:"bot_open_id"`
 	BootstrapAdminOpenID string `json:"bootstrap_admin_open_id" yaml:"bootstrap_admin_open_id" toml:"bootstrap_admin_open_id"`
 	WithDrawReplace      bool   `json:"with_draw_replace" yaml:"with_draw_replace" toml:"with_draw_replace"`
