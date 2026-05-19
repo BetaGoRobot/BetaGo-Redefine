@@ -705,19 +705,31 @@ func GetAudioFromURL(ctx context.Context, audioURL string) (audioData []byte, er
 	return audioData, nil
 }
 
-// ConvertMp3ToOpus 将 mp3 音频转换为 opus 格式（使用 ffmpeg）
+// ConvertMp3ToOpus 将音频转换为 opus 格式（使用 ffmpeg）。
 //
-//	@param ctx context.Context
-//	@param mp3Data mp3 音频数据
-//	@return opusData opus 音频数据
-//	@return durationMs 源 MP3 音频时长，单位毫秒
-//	@return err error
+// Deprecated: use ConvertAudioToOpus. The input is not limited to MP3.
 func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, durationMs int, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
+	return ConvertAudioToOpus(ctx, mp3Data)
+}
 
-	durationCh := probeMp3DurationAsync(ctx, mp3Data)
+// ConvertAudioToOpus 将音频转换为 opus 格式（使用 ffmpeg），并返回源音频时长，单位毫秒。
+func ConvertAudioToOpus(ctx context.Context, audioData []byte) (opusData []byte, durationMs int, err error) {
+	ctx, span := otel.StartNamed(ctx, "lark.audio.convert_to_opus")
+	span.SetAttributes(
+		attribute.Int("audio.input_bytes", len(audioData)),
+		attribute.String("audio.output_format", "opus"),
+		attribute.String("audio.encoder", "ffmpeg"),
+	)
+	defer span.End()
+	defer func() {
+		span.SetAttributes(
+			attribute.Int("audio.output_bytes", len(opusData)),
+			attribute.Int("audio.duration_ms", durationMs),
+		)
+		otel.RecordError(span, err)
+	}()
+
+	durationCh := probeAudioDurationAsync(ctx, audioData)
 
 	cmd := exec.CommandContext(ctx,
 		ffmpegBin(),
@@ -729,29 +741,57 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, dur
 		"-f", "opus",
 		"pipe:1",
 	)
-	cmd.Stdin = bytes.NewReader(mp3Data)
+	cmd.Stdin = bytes.NewReader(audioData)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	_, ffmpegSpan := otel.StartNamed(ctx, "lark.audio.ffmpeg.convert_output")
+	ffmpegSpan.SetAttributes(
+		attribute.String("audio.ffmpeg.input", "pipe"),
+		attribute.String("audio.ffmpeg.output", "pipe"),
+		attribute.String("audio.output_format", "opus"),
+	)
 	opusData, err = cmd.Output()
+	ffmpegSpan.SetAttributes(attribute.Int("audio.output_bytes", len(opusData)))
+	otel.RecordError(ffmpegSpan, err)
+	ffmpegSpan.End()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("ffmpeg convert failed", zap.Error(err), zap.String("stderr", stderr.String()))
 		return nil, 0, errors.New("ffmpeg 转换失败")
 	}
 
-	durationMs = waitMp3Duration(ctx, durationCh)
+	durationMs = waitAudioDuration(ctx, durationCh)
 	return opusData, durationMs, nil
 }
 
-// ConvertMp3ToOpusAndUpload 将 mp3 直接流式转换为 Ogg Opus 并上传到 Lark
+// ConvertMp3ToOpusAndUpload 将音频直接流式转换为 Ogg Opus 并上传到 Lark。
 //
-// 注意：duration 以实际下载到的 MP3 数据为准，不信任平台元数据 Dt。
+// Deprecated: use ConvertAudioToOpusAndUpload. The input is not limited to MP3.
 func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName string) (fileKey string, durationMs int, err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
+	return ConvertAudioToOpusAndUpload(ctx, mp3Data, fileName)
+}
 
-	durationCh := probeMp3DurationAsync(ctx, mp3Data)
+// ConvertAudioToOpusAndUpload 将音频直接流式转换为 Ogg Opus 并上传到 Lark。
+//
+// 注意：duration 以实际下载到的音频数据为准，不信任平台元数据 Dt。
+func ConvertAudioToOpusAndUpload(ctx context.Context, audioData []byte, fileName string) (fileKey string, durationMs int, err error) {
+	ctx, span := otel.StartNamed(ctx, "lark.audio.convert_to_opus_and_upload")
+	span.SetAttributes(
+		attribute.Int("audio.input_bytes", len(audioData)),
+		attribute.String("audio.output_format", "opus"),
+		attribute.String("audio.encoder", "ffmpeg"),
+	)
+	span.SetAttributes(otel.PreviewAttrs("audio.file_name", fileName, 128)...)
+	defer span.End()
+	defer func() {
+		span.SetAttributes(
+			attribute.Int("audio.duration_ms", durationMs),
+			attribute.Bool("audio.uploaded", fileKey != ""),
+		)
+		otel.RecordError(span, err)
+	}()
+
+	durationCh := probeAudioDurationAsync(ctx, audioData)
 
 	cmdCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -765,7 +805,7 @@ func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName str
 		"-f", "opus",
 		"pipe:1",
 	)
-	cmd.Stdin = bytes.NewReader(mp3Data)
+	cmd.Stdin = bytes.NewReader(audioData)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		logs.L().Ctx(ctx).Error("create ffmpeg stdout pipe failed", zap.Error(err))
@@ -775,38 +815,56 @@ func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName str
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	durationMs = waitMp3Duration(ctx, durationCh)
+	waitCtx, waitSpan := otel.StartNamed(ctx, "lark.audio.duration.wait")
+	durationMs = waitAudioDuration(waitCtx, durationCh)
+	waitSpan.SetAttributes(attribute.Int("audio.duration_ms", durationMs))
+	waitSpan.End()
 
+	ffmpegCtx, ffmpegSpan := otel.StartNamed(ctx, "lark.audio.ffmpeg.convert_stream")
+	ffmpegSpan.SetAttributes(
+		attribute.String("audio.ffmpeg.input", "pipe"),
+		attribute.String("audio.ffmpeg.output", "stdout_pipe"),
+		attribute.String("audio.output_format", "opus"),
+		attribute.Bool("audio.ffmpeg.output_consumed_by_upload", true),
+	)
 	if err := cmd.Start(); err != nil {
+		otel.RecordError(ffmpegSpan, err)
+		ffmpegSpan.End()
 		logs.L().Ctx(ctx).Error("start ffmpeg failed", zap.Error(err), zap.String("stderr", stderr.String()))
 		return "", 0, errors.New("启动 ffmpeg 失败")
 	}
 
-	fileKey, err = UploadAudio(ctx, stdout, fileName, durationMs)
+	fileKey, err = UploadAudio(ffmpegCtx, stdout, fileName, durationMs)
 	if err != nil {
 		// 上传失败时主动取消 ffmpeg，避免 stdout 无人消费导致 ffmpeg 阻塞
 		cancel()
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
+		otel.RecordError(ffmpegSpan, err)
+		otel.RecordError(ffmpegSpan, waitErr)
+		ffmpegSpan.End()
 		return "", durationMs, err
 	}
 
 	if err := cmd.Wait(); err != nil {
+		otel.RecordError(ffmpegSpan, err)
+		ffmpegSpan.End()
 		logs.L().Ctx(ctx).Error("ffmpeg exited with error", zap.Error(err), zap.String("stderr", stderr.String()))
 		return "", durationMs, errors.New("ffmpeg 转换失败")
 	}
+	ffmpegSpan.End()
 	return fileKey, durationMs, nil
 }
 
-type mp3DurationResult struct {
+type audioDurationResult struct {
 	durationMs int
 	err        error
 }
 
-func probeMp3DurationAsync(ctx context.Context, mp3Data []byte) <-chan mp3DurationResult {
-	ch := make(chan mp3DurationResult, 1)
+func probeAudioDurationAsync(ctx context.Context, audioData []byte) <-chan audioDurationResult {
+	ch := make(chan audioDurationResult, 1)
 	go func() {
-		durationMs, err := probeMp3DurationMs(mp3Data)
-		result := mp3DurationResult{durationMs: durationMs, err: err}
+		durationMs, err := probeAudioDurationMs(ctx, audioData)
+		result := audioDurationResult{durationMs: durationMs, err: err}
 		select {
 		case ch <- result:
 		case <-ctx.Done():
@@ -815,11 +873,11 @@ func probeMp3DurationAsync(ctx context.Context, mp3Data []byte) <-chan mp3Durati
 	return ch
 }
 
-func waitMp3Duration(ctx context.Context, durationCh <-chan mp3DurationResult) int {
+func waitAudioDuration(ctx context.Context, durationCh <-chan audioDurationResult) int {
 	select {
 	case result := <-durationCh:
 		if result.err != nil {
-			logs.L().Ctx(ctx).Warn("probe mp3 duration failed, will upload without duration", zap.Error(result.err))
+			logs.L().Ctx(ctx).Warn("probe audio duration failed, will upload without duration", zap.Error(result.err))
 			return 0
 		}
 		return result.durationMs
@@ -828,10 +886,135 @@ func waitMp3Duration(ctx context.Context, durationCh <-chan mp3DurationResult) i
 	}
 }
 
-// probeMp3DurationMs 解析 mp3 帧头统计时长（毫秒）。
-//
-// 说明：ffprobe 对非 seekable 输入（pipe）常返回 N/A；这里用纯内存解析规避该限制。
-func probeMp3DurationMs(mp3Data []byte) (int, error) {
+func probeAudioDurationMs(ctx context.Context, audioData []byte) (durationMs int, err error) {
+	ctx, span := otel.StartNamed(ctx, "lark.audio.duration.probe")
+	span.SetAttributes(attribute.Int("audio.input_bytes", len(audioData)))
+	defer span.End()
+	defer func() {
+		span.SetAttributes(attribute.Int("audio.duration_ms", durationMs))
+		otel.RecordError(span, err)
+	}()
+
+	if len(audioData) == 0 {
+		return 0, errors.New("empty audio data")
+	}
+
+	durationMs, err = probeAudioDurationPipe(ctx, audioData)
+	if err == nil && durationMs > 0 {
+		span.SetAttributes(attribute.String("audio.duration_probe.method", "ffprobe_pipe"))
+		return durationMs, nil
+	}
+	span.AddEvent("ffprobe_pipe_failed")
+	probeErr := err
+
+	durationMs, err = probeAudioDurationTempFile(ctx, audioData)
+	if err == nil && durationMs > 0 {
+		span.SetAttributes(attribute.String("audio.duration_probe.method", "ffprobe_file"))
+		return durationMs, nil
+	}
+	span.AddEvent("ffprobe_file_failed")
+	if probeErr == nil {
+		probeErr = err
+	}
+
+	durationMs, err = probeMp3FrameDurationMs(ctx, audioData)
+	if err == nil && durationMs > 0 {
+		span.SetAttributes(attribute.String("audio.duration_probe.method", "mp3_frame_fallback"))
+		return durationMs, nil
+	}
+	span.AddEvent("mp3_frame_fallback_failed")
+	if probeErr != nil {
+		return 0, probeErr
+	}
+	return 0, err
+}
+
+func probeAudioDurationPipe(ctx context.Context, audioData []byte) (durationMs int, err error) {
+	_, span := otel.StartNamed(ctx, "lark.audio.duration.ffprobe_pipe")
+	span.SetAttributes(attribute.Int("audio.input_bytes", len(audioData)))
+	defer span.End()
+	defer func() {
+		span.SetAttributes(attribute.Int("audio.duration_ms", durationMs))
+		otel.RecordError(span, err)
+	}()
+
+	cmd := exec.CommandContext(ctx,
+		ffprobeBin(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		"-i", "pipe:0",
+	)
+	cmd.Stdin = bytes.NewReader(audioData)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, errors.New("ffprobe pipe failed: " + string(output))
+	}
+	return parseFFProbeDurationMs(output)
+}
+
+func probeAudioDurationTempFile(ctx context.Context, audioData []byte) (durationMs int, err error) {
+	_, span := otel.StartNamed(ctx, "lark.audio.duration.ffprobe_file")
+	span.SetAttributes(attribute.Int("audio.input_bytes", len(audioData)))
+	defer span.End()
+	defer func() {
+		span.SetAttributes(attribute.Int("audio.duration_ms", durationMs))
+		otel.RecordError(span, err)
+	}()
+
+	audioFile, err := os.CreateTemp("", "betago_audio_probe_*")
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(audioFile.Name())
+	defer audioFile.Close()
+
+	if _, err := audioFile.Write(audioData); err != nil {
+		return 0, err
+	}
+	if err := audioFile.Close(); err != nil {
+		return 0, err
+	}
+
+	cmd := exec.CommandContext(ctx,
+		ffprobeBin(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		audioFile.Name(),
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, errors.New("ffprobe file failed: " + string(output))
+	}
+	return parseFFProbeDurationMs(output)
+}
+
+func parseFFProbeDurationMs(output []byte) (int, error) {
+	text := string(bytes.TrimSpace(output))
+	if text == "" || text == "N/A" {
+		return 0, errors.New("audio duration is unavailable")
+	}
+	durationSec, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return 0, err
+	}
+	if durationSec <= 0 {
+		return 0, errors.New("audio duration is not positive")
+	}
+	return int(durationSec * 1000), nil
+}
+
+// probeMp3FrameDurationMs 解析 mp3 帧头统计时长（毫秒），仅作为 ffprobe 不可用时的 MP3 兜底。
+func probeMp3FrameDurationMs(ctx context.Context, mp3Data []byte) (durationMs int, err error) {
+	_, span := otel.StartNamed(ctx, "lark.audio.duration.mp3_frame")
+	span.SetAttributes(attribute.Int("audio.input_bytes", len(mp3Data)))
+	defer span.End()
+	defer func() {
+		span.SetAttributes(attribute.Int("audio.duration_ms", durationMs))
+		otel.RecordError(span, err)
+	}()
+
 	off := 0
 	if len(mp3Data) >= 10 && string(mp3Data[:3]) == "ID3" {
 		sz := syncsafeInt(mp3Data[6:10])
@@ -989,6 +1172,10 @@ func syncsafeInt(b []byte) int {
 
 func ffmpegBin() string {
 	return resolveBin("/usr/bin/ffmpeg", "ffmpeg")
+}
+
+func ffprobeBin() string {
+	return resolveBin("/usr/bin/ffprobe", "ffprobe")
 }
 
 func resolveBin(preferredPath, name string) string {

@@ -39,6 +39,28 @@ func TestConvertMp3ToOpus(t *testing.T) {
 	}
 }
 
+func TestProbeAudioDurationSupportsWav(t *testing.T) {
+	ffmpeg := ffmpegBin()
+	if err := exec.Command(ffmpeg, "-version").Run(); err != nil {
+		t.Skipf("ffmpeg 不可用，跳过: %v", err)
+	}
+
+	wavData, err := genTestWav(t, ffmpeg, 350*time.Millisecond)
+	if err != nil {
+		t.Skipf("无法生成测试 wav：%v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	durationMs, err := probeAudioDurationMs(ctx, wavData)
+	if err != nil {
+		t.Fatalf("probeAudioDurationMs 返回错误: %v", err)
+	}
+	if durationMs < 250 || durationMs > 600 {
+		t.Fatalf("durationMs 超出预期范围: %d", durationMs)
+	}
+}
+
 func BenchmarkConvertMp3ToOpus_Stream(b *testing.B) {
 	mp3Data := loadBenchMp3(b)
 	ctx := context.Background()
@@ -146,6 +168,23 @@ func genTestMp3(t *testing.T, ffmpeg string, dur time.Duration) ([]byte, error) 
 	return exec.Command(ffmpeg, args2...).Output()
 }
 
+func genTestWav(t *testing.T, ffmpeg string, dur time.Duration) ([]byte, error) {
+	t.Helper()
+
+	seconds := float64(dur) / float64(time.Second)
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-f", "lavfi",
+		"-i", "sine=frequency=1000:sample_rate=44100",
+		"-t", formatFloatSeconds(seconds),
+		"-ac", "1",
+		"-f", "wav",
+		"pipe:1",
+	}
+	return exec.Command(ffmpeg, args...).Output()
+}
+
 func loadBenchMp3(b *testing.B) []byte {
 	b.Helper()
 
@@ -208,8 +247,8 @@ func convertMp3ToOpusTempfile(ctx context.Context, mp3Data []byte) (opusData []b
 }
 
 func convertMp3ToOggOpusStreamToWriter(ctx context.Context, mp3Data []byte, dst io.Writer) (durationMs int, err error) {
-	// 用生产逻辑同样的时长探测（mp3 帧头解析）
-	durationMs, err = probeMp3DurationMs(mp3Data)
+	// 用生产逻辑同样的时长探测
+	durationMs, err = probeAudioDurationMs(ctx, mp3Data)
 	if err != nil {
 		return 0, err
 	}

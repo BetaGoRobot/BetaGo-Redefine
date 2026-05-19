@@ -251,8 +251,12 @@ func patchMusicCard(ctx context.Context, musicID int, msgID string, page int, fo
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
+	var skipAudioUpload bool = true
+	if forceRefresh {
+		skipAudioUpload = false
+	}
 	view := buildMusicDetailCardViewWithOptions(ctx, musicID, page, musicDetailCardBuildOptions{
-		skipAudioUpload: true,
+		skipAudioUpload: skipAudioUpload,
 		forceRefresh:    forceRefresh,
 	})
 	if view == nil {
