@@ -28,7 +28,7 @@ func ReplyCardJSON(ctx context.Context, msgID string, cardData any, suffix strin
 }
 
 func CreateCardJSON(ctx context.Context, chatID string, cardData any, msgID, suffix string) error {
-	return CreateCardJSONByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, cardData, msgID, suffix)
+	return CreateCardJSONByReceiveID(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, cardData, msgID, suffix)
 }
 
 func CreateCardJSONByReceiveID(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {

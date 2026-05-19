@@ -14,7 +14,7 @@ func ReplyRawCard(ctx context.Context, msgID, content, suffix string, replyInThr
 }
 
 func CreateRawCard(ctx context.Context, chatID, content, msgID, suffix string) error {
-	return CreateRawCardByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, content, msgID, suffix)
+	return CreateRawCardByReceiveID(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, content, msgID, suffix)
 }
 
 func CreateRawCardByReceiveID(ctx context.Context, receiveIDType, receiveID, content, msgID, suffix string) error {

@@ -54,7 +54,7 @@ func CreateMsgCard(ctx context.Context, cardContent *larktpl.TemplateCardContent
 }
 
 func CreateMsgCardWithResp(ctx context.Context, cardContent *larktpl.TemplateCardContent, chatID string) (resp *larkim.CreateMessageResp, err error) {
-	return CreateMsgCardByReceiveIDWithResp(ctx, cardContent, larkim.ReceiveIdTypeChatId, chatID)
+	return CreateMsgCardByReceiveIDWithResp(ctx, cardContent, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID)
 }
 
 func CreateMsgCardByReceiveID(ctx context.Context, cardContent *larktpl.TemplateCardContent, receiveIDType, receiveID string) (err error) {

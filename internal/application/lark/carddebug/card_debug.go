@@ -94,19 +94,19 @@ var legacySceneAliases = map[string]sceneAlias{
 func ResolveReceiveTarget(toChatID, toOpenID, fallbackChatID string) (ReceiveTarget, error) {
 	if openID := strings.TrimSpace(toOpenID); openID != "" {
 		return ReceiveTarget{
-			ReceiveIDType: larkim.ReceiveIdTypeOpenId,
+			ReceiveIDType: larkim.CreateMessageV1ReceiveIDTypeOpenId,
 			ReceiveID:     openID,
 		}, nil
 	}
 	if chatID := strings.TrimSpace(toChatID); chatID != "" {
 		return ReceiveTarget{
-			ReceiveIDType: larkim.ReceiveIdTypeChatId,
+			ReceiveIDType: larkim.CreateMessageV1ReceiveIDTypeChatId,
 			ReceiveID:     chatID,
 		}, nil
 	}
 	if chatID := strings.TrimSpace(fallbackChatID); chatID != "" {
 		return ReceiveTarget{
-			ReceiveIDType: larkim.ReceiveIdTypeChatId,
+			ReceiveIDType: larkim.CreateMessageV1ReceiveIDTypeChatId,
 			ReceiveID:     chatID,
 		}, nil
 	}

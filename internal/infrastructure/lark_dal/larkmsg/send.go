@@ -73,7 +73,7 @@ func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err e
 }
 
 func CreateMsgRawContentType(ctx context.Context, chatID, msgType, content, msgID, suffix string) (resp *larkim.CreateMessageResp, err error) {
-	return CreateMsgRawContentTypeByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, msgType, content, msgID, suffix)
+	return CreateMsgRawContentTypeByReceiveID(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, msgType, content, msgID, suffix)
 }
 
 func CreateMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, receiveID, msgType, content, msgID, suffix string) (resp *larkim.CreateMessageResp, err error) {
@@ -90,7 +90,7 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 	}
 	receiveIDType = strings.TrimSpace(receiveIDType)
 	if receiveIDType == "" {
-		receiveIDType = larkim.ReceiveIdTypeChatId
+		receiveIDType = larkim.CreateMessageV1ReceiveIDTypeChatId
 	}
 
 	req := larkim.NewCreateMessageReqBuilder().
@@ -383,7 +383,7 @@ func CreateMsgAudioRaw(ctx context.Context, fileKey, chatID, suffix string) erro
 	defer func() { otel.RecordError(span, nil) }()
 
 	content := fmt.Sprintf(`{"file_key":"%s"}`, fileKey)
-	_, err := createMsgRawContentTypeByReceiveID(ctx, larkim.ReceiveIdTypeChatId, chatID, larkim.MsgTypeAudio, content, "", suffix)
+	_, err := createMsgRawContentTypeByReceiveID(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, larkim.MsgTypeAudio, content, "", suffix)
 	return err
 }
 

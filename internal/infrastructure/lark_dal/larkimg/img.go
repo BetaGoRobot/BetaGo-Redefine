@@ -522,7 +522,7 @@ func Upload2Lark(ctx context.Context, musicID string, bodyReader io.ReadCloser) 
 	req := larkim.NewCreateImageReqBuilder().
 		Body(
 			larkim.NewCreateImageReqBodyBuilder().
-				ImageType(larkim.ImageTypeMessage).
+				ImageType(larkim.CreateImageImageTypeMessage).
 				Image(bodyReader).
 				Build(),
 		).
@@ -555,7 +555,7 @@ func UploadPicture2LarkReader(ctx context.Context, picture io.Reader) (imgKey st
 	req := larkim.NewCreateImageReqBuilder().
 		Body(
 			larkim.NewCreateImageReqBodyBuilder().
-				ImageType(larkim.ImageTypeMessage).
+				ImageType(larkim.CreateImageImageTypeMessage).
 				Image(picture).
 				Build(),
 		).
@@ -587,7 +587,7 @@ func UploadPicture2Lark(ctx context.Context, URL string) (imgKey string) {
 	req := larkim.NewCreateImageReqBuilder().
 		Body(
 			larkim.NewCreateImageReqBodyBuilder().
-				ImageType(larkim.ImageTypeMessage).
+				ImageType(larkim.CreateImageImageTypeMessage).
 				Image(bytes.NewReader(picData)).
 				Build(),
 		).
