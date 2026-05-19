@@ -586,7 +586,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	topicLines := make([]string, 0)
 	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
 	if err != nil {
-		logs.L().Ctx(ctx).Error("RecallDocs err", zap.Error(err))
+		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
 	}
 	for _, doc := range docs {
 		msgID, ok := doc.Metadata["msg_id"]

@@ -135,7 +135,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		PreviousResponseId: gptr.Of(respID),
 		Text:               req.Text,
 		// Reasoning:          req.Reasoning,
-		Thinking: req.Thinking,
+		// Thinking: req.Thinking,
 	}
 
 	resp, err := createResponsesFn(ctx, secondReq)
