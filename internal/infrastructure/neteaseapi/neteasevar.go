@@ -25,6 +25,7 @@ type Provider interface {
 	SearchMusicByKeyWord(ctx context.Context, keywords ...string) ([]*SearchMusicItem, error)
 	SearchMusicByPlaylist(ctx context.Context, playlistID string) (*PlaylistDetail, []*SearchMusicItem, error)
 	GetMusicURL(ctx context.Context, id int) (string, error)
+	RefreshMusicURL(ctx context.Context, id int) (string, error)
 	GetDetail(ctx context.Context, musicID int) *MusicDetail
 	GetLyrics(ctx context.Context, songID int) (string, string)
 	GetAlbumDetail(ctx context.Context, albumID string) (*AlbumDetail, error)
@@ -73,6 +74,10 @@ func (n noopProvider) SearchMusicByPlaylist(context.Context, string) (*PlaylistD
 }
 
 func (n noopProvider) GetMusicURL(context.Context, int) (string, error) {
+	return "", n.unavailableErr()
+}
+
+func (n noopProvider) RefreshMusicURL(context.Context, int) (string, error) {
 	return "", n.unavailableErr()
 }
 

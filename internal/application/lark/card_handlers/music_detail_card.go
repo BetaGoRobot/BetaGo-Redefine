@@ -17,6 +17,7 @@ type MusicDetailCardView struct {
 	Subtitle         string
 	ImageKey         string
 	PlayerURL        string
+	SourceMusicURL   string
 	AudioFileKey     string
 	AudioID          string
 	RefreshTime      string

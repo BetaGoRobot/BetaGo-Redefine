@@ -123,7 +123,7 @@ func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []
 	return music.Data, nil
 }
 
-var commonMusicExtensions = []string{".mp3", ".flac"}
+var commonMusicExtensions = []string{".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".audio", ""}
 
 func musicObjectKey(musicID int, rawURL string) string {
 	ext := filepath.Ext(rawURL)
@@ -131,6 +131,9 @@ func musicObjectKey(musicID int, rawURL string) string {
 		if parsedExt := path.Ext(path.Base(parsedURL.Path)); parsedExt != "" {
 			ext = parsedExt
 		}
+	}
+	if ext == "" {
+		ext = ".audio"
 	}
 	return "music/" + songIDString(musicID) + ext
 }
@@ -163,6 +166,39 @@ func ensureMusicPresignedURL(ctx context.Context, item *musicData) (string, erro
 		WithURL(item.URL).
 		Do(cacheBucket, objKey, minio.PutObjectOptions{}).
 		PreSignURL(ctx)
+}
+
+func refreshMusicPresignedURL(ctx context.Context, item *musicData) (string, error) {
+	if item == nil || item.ID == 0 || item.URL == "" {
+		return "", nil
+	}
+	objKey := musicObjectKey(item.ID, item.URL)
+	signedURL, err := miniodal.New(miniodal.Internal).Upload(ctx).
+		WithContentType(xmodel.ContentTypeAudio.String()).
+		WithURL(item.URL).
+		Do(cacheBucket, objKey, minio.PutObjectOptions{}).
+		PreSignURL(ctx)
+	if err != nil {
+		return "", err
+	}
+	deleteStaleMusicObjects(ctx, item.ID, objKey)
+	return signedURL, nil
+}
+
+func deleteStaleMusicObjects(ctx context.Context, musicID int, keepKey string) {
+	client := miniodal.GetInternalClient()
+	if client == nil {
+		return
+	}
+	for _, ext := range commonMusicExtensions {
+		objKey := "music/" + songIDString(musicID) + ext
+		if objKey == keepKey {
+			continue
+		}
+		if err := client.RemoveObject(ctx, cacheBucket, objKey, minio.RemoveObjectOptions{}); err != nil {
+			logs.L().Ctx(ctx).Warn("delete stale music cache failed", zap.String("object_key", objKey), zap.Error(err))
+		}
+	}
 }
 
 func Init() {
@@ -335,6 +371,30 @@ func (neteaseCtx *NetEaseContext) GetMusicURL(ctx context.Context, ID int) (url 
 	}
 	if url, ok := urlByID[ID]; ok {
 		return url, nil
+	}
+	return "", fmt.Errorf("song %d url not found", ID)
+}
+
+func (neteaseCtx *NetEaseContext) RefreshMusicURL(ctx context.Context, ID int) (string, error) {
+	ctx, span := otel.Start(ctx)
+	span.SetAttributes(attribute.Int("songID", ID))
+	defer span.End()
+
+	items, err := fetchMusicURLBatch(ctx, neteaseCtx.cookies, []int{ID})
+	if err != nil {
+		return "", err
+	}
+	for _, item := range items {
+		if item == nil || item.ID != ID {
+			continue
+		}
+		signedURL, err := refreshMusicPresignedURL(ctx, item)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(signedURL) != "" {
+			return signedURL, nil
+		}
 	}
 	return "", fmt.Errorf("song %d url not found", ID)
 }

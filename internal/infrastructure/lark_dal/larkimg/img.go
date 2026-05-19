@@ -710,21 +710,15 @@ func GetAudioFromURL(ctx context.Context, audioURL string) (audioData []byte, er
 //	@param ctx context.Context
 //	@param mp3Data mp3 音频数据
 //	@return opusData opus 音频数据
-//	@return durationMs 音频时长，单位毫秒
+//	@return durationMs 源 MP3 音频时长，单位毫秒
 //	@return err error
 func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, durationMs int, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	// 先获取 mp3 时长（不落盘、不依赖 ffprobe；直接解析帧头）
-	durationMs, err = probeMp3DurationMs(mp3Data)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("probe mp3 duration failed", zap.Error(err))
-		durationMs = 0
-	}
+	durationCh := probeMp3DurationAsync(ctx, mp3Data)
 
-	// 执行 ffmpeg 转换：stdin 读 mp3，stdout 输出 Ogg Opus
 	cmd := exec.CommandContext(ctx,
 		ffmpegBin(),
 		"-hide_banner",
@@ -745,23 +739,19 @@ func ConvertMp3ToOpus(ctx context.Context, mp3Data []byte) (opusData []byte, dur
 		return nil, 0, errors.New("ffmpeg 转换失败")
 	}
 
+	durationMs = waitMp3Duration(ctx, durationCh)
 	return opusData, durationMs, nil
 }
 
 // ConvertMp3ToOpusAndUpload 将 mp3 直接流式转换为 Ogg Opus 并上传到 Lark
 //
-// 注意：该实现不落盘；ffmpeg 通过 stdout 直接产生 Ogg Opus 数据，UploadAudio 直接消费 reader。
+// 注意：duration 以实际下载到的 MP3 数据为准，不信任平台元数据 Dt。
 func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName string) (fileKey string, durationMs int, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	// 先 probe 出时长，供 UploadAudio 填充 duration（不填则无法展示具体时长）
-	durationMs, err = probeMp3DurationMs(mp3Data)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("probe mp3 duration failed, will upload without duration", zap.Error(err))
-		durationMs = 0
-	}
+	durationCh := probeMp3DurationAsync(ctx, mp3Data)
 
 	cmdCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -785,6 +775,8 @@ func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName str
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	durationMs = waitMp3Duration(ctx, durationCh)
+
 	if err := cmd.Start(); err != nil {
 		logs.L().Ctx(ctx).Error("start ffmpeg failed", zap.Error(err), zap.String("stderr", stderr.String()))
 		return "", 0, errors.New("启动 ffmpeg 失败")
@@ -803,6 +795,37 @@ func ConvertMp3ToOpusAndUpload(ctx context.Context, mp3Data []byte, fileName str
 		return "", durationMs, errors.New("ffmpeg 转换失败")
 	}
 	return fileKey, durationMs, nil
+}
+
+type mp3DurationResult struct {
+	durationMs int
+	err        error
+}
+
+func probeMp3DurationAsync(ctx context.Context, mp3Data []byte) <-chan mp3DurationResult {
+	ch := make(chan mp3DurationResult, 1)
+	go func() {
+		durationMs, err := probeMp3DurationMs(mp3Data)
+		result := mp3DurationResult{durationMs: durationMs, err: err}
+		select {
+		case ch <- result:
+		case <-ctx.Done():
+		}
+	}()
+	return ch
+}
+
+func waitMp3Duration(ctx context.Context, durationCh <-chan mp3DurationResult) int {
+	select {
+	case result := <-durationCh:
+		if result.err != nil {
+			logs.L().Ctx(ctx).Warn("probe mp3 duration failed, will upload without duration", zap.Error(result.err))
+			return 0
+		}
+		return result.durationMs
+	case <-ctx.Done():
+		return 0
+	}
 }
 
 // probeMp3DurationMs 解析 mp3 帧头统计时长（毫秒）。

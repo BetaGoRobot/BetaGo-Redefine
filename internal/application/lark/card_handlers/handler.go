@@ -65,9 +65,19 @@ func buildMusicDetailCardView(ctx context.Context, musicID, page int) *MusicDeta
 	return buildMusicDetailCardViewWithAudio(ctx, musicID, page, true)
 }
 
+type musicDetailCardBuildOptions struct {
+	skipAudioUpload bool
+	forceRefresh    bool
+	audioDurationMs int
+}
+
 // buildMusicDetailCardViewWithAudio builds the view and optionally uploads audio synchronously.
 // skipAudioUpload: true = skip audio upload (for fast initial display), false = upload audio inline (blocking).
 func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, skipAudioUpload bool) *MusicDetailCardView {
+	return buildMusicDetailCardViewWithOptions(ctx, musicID, page, musicDetailCardBuildOptions{skipAudioUpload: skipAudioUpload})
+}
+
+func buildMusicDetailCardViewWithOptions(ctx context.Context, musicID, page int, opts musicDetailCardBuildOptions) *MusicDetailCardView {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("musicID").Int(musicID))
 	defer span.End()
@@ -77,6 +87,14 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		maxPageSize      = 18
 	)
 	musicURLFuture := xfuture.New(ctx, func(ctx context.Context) (string, error) {
+		if opts.forceRefresh {
+			musicURL, err := neteaseapi.NetEaseGCtx.RefreshMusicURL(ctx, musicID)
+			if err != nil {
+				logs.L().Ctx(ctx).Error("Failed to refresh music URL", zap.Error(err))
+				return "", err
+			}
+			return musicURL, nil
+		}
 		musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("Failed to get music URL", zap.Error(err))
@@ -140,6 +158,24 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		return nil
 	}
 
+	audioFileKey := ""
+	audioDurationMs := opts.audioDurationMs
+	if !opts.skipAudioUpload {
+		// Synchronous audio upload - blocking, only used when explicitly requested.
+		audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
+		if err == nil {
+			fileKey, durationMs, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songDetail.Name+".opus")
+			if err == nil {
+				audioFileKey = fileKey
+				audioDurationMs = durationMs
+			} else {
+				logs.L().Ctx(ctx).Warn("convert+upload to opus failed", zap.Error(err))
+			}
+		} else {
+			logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))
+		}
+	}
+
 	targetURL := &resultURL{
 		Title:      songDetail.Name,
 		LyricsURL:  lyricsURL,
@@ -147,7 +183,7 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 		PictureURL: imageAsset.OSSURL,
 		Album:      songDetail.Al.Name,
 		Artist:     artistNameList,
-		Duration:   songDetail.Dt,
+		Duration:   audioDurationMs,
 	}
 	dal := miniodal.New(miniodal.Internal)
 	res, err := dal.Upload(ctx).
@@ -183,34 +219,19 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 	}
 	lyrics = strings.Join(newList, "\n")
 
-	audioFileKey := ""
-	if !skipAudioUpload {
-		// Synchronous audio upload - blocking, only used when explicitly requested
-		audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
-		if err == nil {
-			fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songDetail.Name+".opus")
-			if err == nil {
-				audioFileKey = fileKey
-			} else {
-				logs.L().Ctx(ctx).Warn("convert+upload to opus failed", zap.Error(err))
-			}
-		} else {
-			logs.L().Ctx(ctx).Warn("get audio from url failed", zap.Error(err))
-		}
-	}
-
 	subtitle := ""
 	if len(songDetail.Ar) > 0 {
 		subtitle = songDetail.Ar[0].Name
 	}
 	view := &MusicDetailCardView{
-		Lyrics:       lyrics,
-		Title:        songDetail.Name,
-		Subtitle:     subtitle,
-		ImageKey:     imageAsset.ImageKey,
-		PlayerURL:    playerURL,
-		AudioFileKey: audioFileKey,
-		AudioID:      "music_" + strconv.Itoa(musicID),
+		Lyrics:         lyrics,
+		Title:          songDetail.Name,
+		Subtitle:       subtitle,
+		ImageKey:       imageAsset.ImageKey,
+		PlayerURL:      playerURL,
+		SourceMusicURL: musicURL,
+		AudioFileKey:   audioFileKey,
+		AudioID:        "music_" + strconv.Itoa(musicID),
 		FullLyricsButton: cardaction.New(cardaction.ActionMusicLyrics).
 			WithID(strconv.Itoa(musicID)).
 			Payload(),
@@ -222,11 +243,18 @@ func buildMusicDetailCardViewWithAudio(ctx context.Context, musicID, page int, s
 }
 
 func PatchMusicCard(ctx context.Context, musicID int, msgID string, page int) {
+	patchMusicCard(ctx, musicID, msgID, page, false)
+}
+
+func patchMusicCard(ctx context.Context, musicID int, msgID string, page int, forceRefresh bool) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(attribute.Key("msgID").String(msgID), attribute.Key("musicID").Int(musicID))
 	defer span.End()
 
-	view := buildMusicDetailCardView(ctx, musicID, page)
+	view := buildMusicDetailCardViewWithOptions(ctx, musicID, page, musicDetailCardBuildOptions{
+		skipAudioUpload: true,
+		forceRefresh:    forceRefresh,
+	})
 	if view == nil {
 		return
 	}
@@ -238,12 +266,12 @@ func PatchMusicCard(ctx context.Context, musicID int, msgID string, page int) {
 	}
 
 	// Audio upload is slow; keep it alive after the fast card update returns.
-	go AsyncUploadAudioAndPatch(context.WithoutCancel(ctx), musicID, msgID, page, view.PlayerURL, view.Title)
+	go AsyncUploadAudioAndPatch(context.WithoutCancel(ctx), musicID, msgID, page, view.SourceMusicURL, view.Title, forceRefresh)
 }
 
 // AsyncUploadAudioAndPatch uploads audio and patches the card with audio element.
 // Call this in a goroutine after sending a card built with skipAudioUpload=true.
-func AsyncUploadAudioAndPatch(ctx context.Context, musicID int, msgID string, page int, playerURL string, songName string) {
+func AsyncUploadAudioAndPatch(ctx context.Context, musicID int, msgID string, page int, sourceMusicURL string, songName string, forceRefresh bool) {
 	ctx, span := otel.Start(ctx)
 	span.SetAttributes(
 		attribute.Key("msgID").String(msgID),
@@ -251,11 +279,18 @@ func AsyncUploadAudioAndPatch(ctx context.Context, musicID int, msgID string, pa
 	)
 	defer span.End()
 
-	// Get fresh music URL (not the presigned JSON URL)
-	musicURL, err := neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: get music URL failed", zap.Error(err))
-		return
+	musicURL := strings.TrimSpace(sourceMusicURL)
+	if musicURL == "" {
+		var err error
+		if forceRefresh {
+			musicURL, err = neteaseapi.NetEaseGCtx.RefreshMusicURL(ctx, musicID)
+		} else {
+			musicURL, err = neteaseapi.NetEaseGCtx.GetMusicURL(ctx, musicID)
+		}
+		if err != nil {
+			logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: get music URL failed", zap.Error(err))
+			return
+		}
 	}
 
 	if strings.TrimSpace(musicURL) == "" {
@@ -274,14 +309,17 @@ func AsyncUploadAudioAndPatch(ctx context.Context, musicID int, msgID string, pa
 		return
 	}
 
-	fileKey, _, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songName+".opus")
+	fileKey, durationMs, err := larkimg.ConvertMp3ToOpusAndUpload(ctx, audioData, songName+".opus")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("AsyncUploadAudioAndPatch: convert+upload to opus failed", zap.Error(err))
 		return
 	}
 
 	// Rebuild view with audio and patch
-	view := buildMusicDetailCardViewWithAudio(ctx, musicID, page, true)
+	view := buildMusicDetailCardViewWithOptions(ctx, musicID, page, musicDetailCardBuildOptions{
+		skipAudioUpload: true,
+		audioDurationMs: durationMs,
+	})
 	view.AudioFileKey = fileKey
 
 	if err := patchMusicDetailCardContent(ctx, msgID, *view); err != nil {
@@ -412,7 +450,7 @@ func HandleWithDraw(ctx context.Context, cardAction *callback.CardActionTriggerE
 }
 
 func HandleRefreshMusic(ctx context.Context, musicID int, msgID string) {
-	PatchMusicCard(ctx, musicID, msgID, 1)
+	patchMusicCard(ctx, musicID, msgID, 1, true)
 }
 
 func HandleRefreshObj(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
