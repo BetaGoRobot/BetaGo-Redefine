@@ -105,8 +105,11 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if second.GetText() == nil || second.GetText().GetFormat() == nil || second.GetText().GetFormat().GetType() != responses.TextType_json_object {
 		t.Fatalf("response request Text = %+v, want json_object", second.GetText())
 	}
-	if second.GetReasoning() == nil || second.GetReasoning().GetEffort() != responses.ReasoningEffort_low {
-		t.Fatalf("response request Reasoning = %+v, want low", second.GetReasoning())
+	if second.GetReasoning() != nil {
+		t.Fatalf("response request Reasoning = %+v, want nil in cache mode", second.GetReasoning())
+	}
+	if second.GetThinking() != nil {
+		t.Fatalf("response request Thinking = %+v, want nil in cache mode", second.GetThinking())
 	}
 	assertSingleInputMessage(t, second, responses.MessageRole_user, "user prompt")
 
