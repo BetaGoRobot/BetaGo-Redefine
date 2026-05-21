@@ -26,12 +26,12 @@ type StoreCorrectionArgs struct {
 }
 
 type ChatCorrection struct {
-	Timestamp        string `json:"timestamp"`
-	UserID           string `json:"user_id"`
-	UserName         string `json:"user_name"`
-	OriginalContext  string `json:"original_context"`
-	Correction       string `json:"correction"`
-	Reason           string `json:"reason,omitempty"`
+	Timestamp       string `json:"timestamp"`
+	UserID          string `json:"user_id"`
+	UserName        string `json:"user_name"`
+	OriginalContext string `json:"original_context"`
+	Correction      string `json:"correction"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 type chatCorrectionHandler struct{}
@@ -123,10 +123,10 @@ func (chatCorrectionHandler) Handle(ctx context.Context, data *larkim.P2MessageR
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if len([]rune(s)) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string([]rune(s)[:maxLen]) + "..."
 }
 
 // ==========================================
@@ -135,7 +135,7 @@ func truncate(s string, maxLen int) string {
 
 type SetChatContextArgs struct {
 	ContextType string `json:"context_type"` // "extra_context" or "persona"
-	Content     string `json:"content"`       // 上下文内容
+	Content     string `json:"content"`      // 上下文内容
 }
 
 type chatContextHandler struct{}

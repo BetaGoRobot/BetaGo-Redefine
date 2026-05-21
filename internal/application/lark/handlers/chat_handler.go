@@ -25,6 +25,7 @@ import (
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/osqueryutil"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
@@ -176,12 +177,12 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 		var parentQuery *osquery.BoolQuery
 		if cutoffTime != "" {
 			parentQuery = osquery.Bool().Must(
-				osquery.Terms("message_id", uniqueIDs),
+				osqueryutil.TermsFromStrings("message_id", uniqueIDs),
 				osquery.Range("create_time_v2").Gte(cutoffTime),
 			)
 		} else {
 			parentQuery = osquery.Bool().Must(
-				osquery.Terms("message_id", uniqueIDs),
+				osqueryutil.TermsFromStrings("message_id", uniqueIDs),
 			)
 		}
 		parentMsgs, _ = history.New(ctx).
