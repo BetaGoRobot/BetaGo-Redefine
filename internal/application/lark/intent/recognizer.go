@@ -152,9 +152,9 @@ func analyzeMessage(ctx context.Context, message string, recentLines []string, m
 				Type: responses.TextType_json_object,
 			},
 		},
-		Reasoning: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_minimal,
-		},
+		// Reasoning: &responses.ResponsesReasoning{
+		// 	Effort: responses.ReasoningEffort_minimal,
+		// },
 		Thinking: &responses.ResponsesThinking{
 			Type: gptr.Of(responses.ThinkingType_disabled),
 		},

@@ -62,7 +62,9 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		"cache",
 		cacheScene(req.CacheScene),
 		req.ModelID,
-		hashResponseCacheInput(req.Thinking.String()+req.Reasoning.String()+req.SystemPrompt),
+		"thinking_"+req.Thinking.String(),
+		"reasoning_"+req.Reasoning.String(),
+		hashResponseCacheInput(req.SystemPrompt),
 	)
 	span.SetAttributes(
 		attribute.String("cache.key.preview", otel.PreviewString(key, 128)),
@@ -94,7 +96,9 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 				Type:   responses.CacheType_enabled.Enum(),
 				Prefix: gptr.Of(true),
 			},
-			ExpireAt: gptr.Of(exp),
+			ExpireAt:  gptr.Of(exp),
+			Thinking:  req.Thinking,
+			Reasoning: req.Reasoning,
 		}
 		resp, err := createResponsesFn(ctx, cacheReq)
 		if err != nil {
@@ -133,6 +137,8 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		Input:              singleTextInput(responses.MessageRole_user, req.UserPrompt),
 		PreviousResponseId: gptr.Of(respID),
 		Text:               req.Text,
+		Thinking:           req.Thinking,
+		Reasoning:          req.Reasoning,
 	}
 
 	resp, err := createResponsesFn(ctx, secondReq)
