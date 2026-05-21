@@ -41,6 +41,9 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 		SystemPrompt: sysPrompt,
 		UserPrompt:   userPrompt,
 		ModelID:      modelID,
+		Thinking: &responses.ResponsesThinking{
+			Type: responses.ThinkingType_enabled.Enum(),
+		},
 	})
 }
 
