@@ -417,11 +417,12 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 		return
 	}
 	sysPrompt := &strings.Builder{}
-	err = tp.Execute(sysPrompt, map[string]string{"CurrentTimeStamp": time.Now().In(utils.UTC8Loc()).Format(time.DateTime)})
+	err = tp.Execute(sysPrompt, map[string]string{})
 	if err != nil {
 		return
 	}
 	chunkStr := strings.Join(chunkLines, "\n")
+	chunkStr = "**当前时间戳**: `" + time.Now().In(utils.UTC8Loc()).Format(time.DateTime) + "`\n" + chunkStr
 	span.SetAttributes(
 		attribute.Int("chunk.lines.count", len(chunkLines)),
 		attribute.Int("chunk.text.len", len(chunkStr)),
