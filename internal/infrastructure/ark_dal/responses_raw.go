@@ -143,6 +143,8 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		Input:              singleTextInput(responses.MessageRole_user, req.UserPrompt),
 		PreviousResponseId: gptr.Of(respID),
 		Text:               req.Text,
+		Thinking:           req.Thinking,
+		Reasoning:          req.Reasoning,
 	}
 
 	resp, err := createResponsesFn(ctx, secondReq)

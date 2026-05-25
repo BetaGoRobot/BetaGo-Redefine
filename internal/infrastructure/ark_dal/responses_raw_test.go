@@ -70,6 +70,9 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: responses.ReasoningEffort_low,
 		},
+		Thinking: &responses.ResponsesThinking{
+			Type: responses.ThinkingType_disabled.Enum(),
+		},
 	}
 
 	if _, err := ResponseTextWithCache(context.Background(), req); err != nil {
@@ -105,11 +108,11 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if second.GetText() == nil || second.GetText().GetFormat() == nil || second.GetText().GetFormat().GetType() != responses.TextType_json_object {
 		t.Fatalf("response request Text = %+v, want json_object", second.GetText())
 	}
-	if second.GetReasoning() != nil {
-		t.Fatalf("response request Reasoning = %+v, want nil in cache mode", second.GetReasoning())
+	if second.GetReasoning() == nil || second.GetReasoning().GetEffort() != responses.ReasoningEffort_low {
+		t.Fatalf("response request Reasoning = %+v, want low to match seed", second.GetReasoning())
 	}
-	if second.GetThinking() != nil {
-		t.Fatalf("response request Thinking = %+v, want nil in cache mode", second.GetThinking())
+	if second.GetThinking() == nil || second.GetThinking().GetType() != responses.ThinkingType_disabled {
+		t.Fatalf("response request Thinking = %+v, want disabled to match seed", second.GetThinking())
 	}
 	assertSingleInputMessage(t, second, responses.MessageRole_user, "user prompt")
 

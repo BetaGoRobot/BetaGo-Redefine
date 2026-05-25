@@ -263,4 +263,7 @@ func assertIntentRequest(t *testing.T, req ark_dal.CachedResponseRequest, userPr
 	if req.Reasoning == nil || req.Reasoning.GetEffort() != effort {
 		t.Fatalf("reasoning = %+v, want %v", req.Reasoning, effort)
 	}
+	if req.Thinking == nil || req.Thinking.GetType() != responses.ThinkingType_disabled {
+		t.Fatalf("thinking = %+v, want disabled", req.Thinking)
+	}
 }
