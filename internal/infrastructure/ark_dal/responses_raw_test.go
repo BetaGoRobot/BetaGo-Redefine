@@ -108,6 +108,9 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if second.GetText() == nil || second.GetText().GetFormat() == nil || second.GetText().GetFormat().GetType() != responses.TextType_json_object {
 		t.Fatalf("response request Text = %+v, want json_object", second.GetText())
 	}
+	if second.GetCaching() == nil || second.GetCaching().GetType() != responses.CacheType_enabled {
+		t.Fatalf("response request Caching = %+v, want enabled to continue cached head", second.GetCaching())
+	}
 	if second.GetReasoning() == nil || second.GetReasoning().GetEffort() != responses.ReasoningEffort_low {
 		t.Fatalf("response request Reasoning = %+v, want low to match seed", second.GetReasoning())
 	}

@@ -108,7 +108,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		}
 		resp, err := createResponsesFn(ctx, cacheReq)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
+			logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_head", cacheReq, err)...)
 			return "", err
 		}
 		redisSetCtx, redisSetSpan := otel.StartNamed(ctx, "ark.responses.cache_set")
@@ -143,13 +143,16 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		Input:              singleTextInput(responses.MessageRole_user, req.UserPrompt),
 		PreviousResponseId: gptr.Of(respID),
 		Text:               req.Text,
+		Caching: &responses.ResponsesCaching{
+			Type: responses.CacheType_enabled.Enum(),
+		},
 		Thinking:           req.Thinking,
 		Reasoning:          req.Reasoning,
 	}
 
 	resp, err := createResponsesFn(ctx, secondReq)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("responses error", zap.Error(err))
+		logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_continuation", secondReq, err)...)
 		return "", err
 	}
 
@@ -202,4 +205,25 @@ func cacheScene(scene string) string {
 func hashResponseCacheInput(sysPrompt string) string {
 	sum := sha256.Sum256([]byte(sysPrompt))
 	return hex.EncodeToString(sum[:])
+}
+
+func responseRequestLogFields(stage string, req *responses.ResponsesRequest, err error) []zap.Field {
+	fields := []zap.Field{
+		zap.Error(err),
+		zap.String("ark_request_stage", stage),
+	}
+	if req == nil {
+		return fields
+	}
+	fields = append(fields,
+		zap.String("model", req.Model),
+		zap.Bool("previous_response_id_set", req.PreviousResponseId != nil),
+		zap.String("previous_response_id_preview", otel.PreviewString(req.GetPreviousResponseId(), 128)),
+		zap.String("thinking_type", responseThinkingType(req.Thinking)),
+		zap.String("reasoning_effort", responseReasoningEffort(req.Reasoning)),
+		zap.String("caching_type", responseCachingType(req.Caching)),
+		zap.Bool("caching_prefix", req.GetCaching().GetPrefix()),
+		zap.Bool("text_format_set", req.GetText().GetFormat() != nil),
+	)
+	return fields
 }

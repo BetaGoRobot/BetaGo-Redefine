@@ -77,6 +77,11 @@ func CreateResponses(ctx context.Context, body *responses.ResponsesRequest) (*re
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
 			attribute.Int("tools.count", len(body.Tools)),
+			attribute.String("thinking.type", responseThinkingType(body.Thinking)),
+			attribute.String("reasoning.effort", responseReasoningEffort(body.Reasoning)),
+			attribute.String("caching.type", responseCachingType(body.Caching)),
+			attribute.Bool("caching.prefix", body.GetCaching().GetPrefix()),
+			attribute.Bool("previous_response_id.set", body.PreviousResponseId != nil),
 		)
 		if body.PreviousResponseId != nil {
 			span.SetAttributes(attribute.String("previous_response_id.preview", otel.PreviewString(*body.PreviousResponseId, 128)))
@@ -103,6 +108,11 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
 			attribute.Int("tools.count", len(body.Tools)),
+			attribute.String("thinking.type", responseThinkingType(body.Thinking)),
+			attribute.String("reasoning.effort", responseReasoningEffort(body.Reasoning)),
+			attribute.String("caching.type", responseCachingType(body.Caching)),
+			attribute.Bool("caching.prefix", body.GetCaching().GetPrefix()),
+			attribute.Bool("previous_response_id.set", body.PreviousResponseId != nil),
 		)
 		if body.PreviousResponseId != nil {
 			span.SetAttributes(attribute.String("previous_response_id.preview", otel.PreviewString(*body.PreviousResponseId, 128)))
@@ -118,4 +128,25 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 	resp, err := runtime.CreateResponsesStream(ctx, body)
 	otel.RecordError(span, err)
 	return resp, err
+}
+
+func responseThinkingType(thinking *responses.ResponsesThinking) string {
+	if thinking == nil {
+		return "unset"
+	}
+	return thinking.GetType().String()
+}
+
+func responseReasoningEffort(reasoning *responses.ResponsesReasoning) string {
+	if reasoning == nil {
+		return "unset"
+	}
+	return reasoning.GetEffort().String()
+}
+
+func responseCachingType(caching *responses.ResponsesCaching) string {
+	if caching == nil {
+		return "unset"
+	}
+	return caching.GetType().String()
 }
