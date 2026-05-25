@@ -3,24 +3,29 @@ package tools
 import "github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 
 type Prop struct {
-	Type    string  `json:"type"`
-	Desc    string  `json:"description"`
-	Items   []*Prop `json:"items"`
-	Enum    []any   `json:"enum,omitempty"`
-	Default any     `json:"default,omitempty"`
+	Type                 string           `json:"type"`
+	Desc                 string           `json:"description"`
+	Props                map[string]*Prop `json:"properties,omitempty"`
+	Required             []string         `json:"required,omitempty"`
+	Items                *Prop            `json:"items,omitempty"`
+	Enum                 []any            `json:"enum,omitempty"`
+	Default              any              `json:"default,omitempty"`
+	AdditionalProperties *bool            `json:"additionalProperties,omitempty"`
 }
 
 type Param struct {
-	Type     string           `json:"type"`
-	Props    map[string]*Prop `json:"properties"`
-	Required []string         `json:"required"`
+	Type                 string           `json:"type"`
+	Props                map[string]*Prop `json:"properties"`
+	Required             []string         `json:"required"`
+	AdditionalProperties bool             `json:"additionalProperties"`
 }
 
 func NewParams(typ string) *Param {
 	return &Param{
-		Type:     typ,
-		Props:    make(map[string]*Prop),
-		Required: make([]string, 0),
+		Type:                 typ,
+		Props:                make(map[string]*Prop),
+		Required:             make([]string, 0),
+		AdditionalProperties: false,
 	}
 }
 
@@ -35,20 +40,39 @@ func (p *Param) AddRequired(name string) *Param {
 }
 
 func (p *Param) JSON() []byte {
+	p.closeObjectProps()
 	return utils.MustMarshal(p)
+}
+
+func (p *Param) closeObjectProps() {
+	if p == nil {
+		return
+	}
+	for _, prop := range p.Props {
+		closeObjectProp(prop)
+	}
+}
+
+func closeObjectProp(prop *Prop) {
+	if prop == nil {
+		return
+	}
+	if prop.Type == "object" && prop.AdditionalProperties == nil {
+		allowAdditional := false
+		prop.AdditionalProperties = &allowAdditional
+	}
+	for _, nested := range prop.Props {
+		closeObjectProp(nested)
+	}
+	closeObjectProp(prop.Items)
 }
 
 // func registerHistorySearch() {
 // 	params := NewParams("object").
 // 		AddProp("keywords", &Prop{
-// 			Type: "array",
-// 			Desc: "需要检索的关键词列表",
-// 			Items: []*Prop{
-// 				{
-// 					Type: "string",
-// 					Desc: "关键词",
-// 				},
-// 			},
+// 			Type:  "array",
+// 			Desc:  "需要检索的关键词列表",
+// 			Items: &Prop{Type: "string", Desc: "关键词"},
 // 		}).
 // 		AddProp("user_id", &Prop{
 // 			Type: "string",

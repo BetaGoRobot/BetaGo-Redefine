@@ -59,6 +59,7 @@ func (h *Impl[T]) Tools() []*responses.ResponsesTool {
 			Union: &responses.ResponsesTool_ToolFunction{
 				ToolFunction: &responses.ToolFunction{
 					Name:        unit.FunctionName,
+					Strict:      gptr.Of(true),
 					Type:        responses.ToolType_function,
 					Description: gptr.Of(unit.Description),
 					Parameters:  &responses.Bytes{Value: unit.Parameters.JSON()},

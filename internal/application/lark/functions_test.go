@@ -40,11 +40,9 @@ func TestLarkBotFunctionCallTools(t *testing.T) {
 		AddProp("city", &tools.Prop{
 			Type: "string",
 			Desc: "城市",
-			Items: []*tools.Prop{
-				{
-					Type: "string",
-					Desc: "城市名称",
-				},
+			Items: &tools.Prop{
+				Type: "string",
+				Desc: "城市名称",
 			},
 		}).AddRequired("city")
 	ins.Add(unit.Name("get_weather").Desc("根据城市获取天气").Params(params).Func(handleGetWeather))

@@ -55,9 +55,9 @@ type (
 		Notes       string `json:"notes,omitempty"`
 	}
 
-	researchReadURLHandler struct{}
+	researchReadURLHandler         struct{}
 	researchExtractEvidenceHandler struct{}
-	researchSourceLedgerHandler struct{}
+	researchSourceLedgerHandler    struct{}
 
 	researchFetchedDocument struct {
 		FinalURL    string
@@ -205,6 +205,10 @@ func (researchExtractEvidenceHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("questions", &arktools.Prop{
 				Type: "array",
 				Desc: "多个待回答问题",
+				Items: &arktools.Prop{
+					Type: "string",
+					Desc: "待回答问题",
+				},
 			}).
 			AddProp("max_quotes", &arktools.Prop{
 				Type: "number",
@@ -281,10 +285,26 @@ func (researchSourceLedgerHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("existing_sources", &arktools.Prop{
 				Type: "array",
 				Desc: "已有来源列表",
+				Items: &arktools.Prop{
+					Type: "object",
+					Desc: "已有来源",
+					Props: map[string]*arktools.Prop{
+						"url":   {Type: "string", Desc: "来源 URL"},
+						"title": {Type: "string", Desc: "来源标题"},
+					},
+				},
 			}).
 			AddProp("new_sources", &arktools.Prop{
 				Type: "array",
 				Desc: "新补充的来源列表",
+				Items: &arktools.Prop{
+					Type: "object",
+					Desc: "新来源",
+					Props: map[string]*arktools.Prop{
+						"url":   {Type: "string", Desc: "来源 URL"},
+						"title": {Type: "string", Desc: "来源标题"},
+					},
+				},
 			}).
 			AddProp("max_sources", &arktools.Prop{
 				Type: "number",

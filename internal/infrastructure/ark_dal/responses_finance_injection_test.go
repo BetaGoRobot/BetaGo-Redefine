@@ -18,6 +18,9 @@ func TestAdditionalToolsFromToolResultBuildsFinanceToolsFromDiscoverOutput(t *te
 	if got := tools[0].GetToolFunction().GetName(); got != "finance_market_data_get" {
 		t.Fatalf("first tool name = %q, want %q", got, "finance_market_data_get")
 	}
+	if !tools[0].GetToolFunction().GetStrict() {
+		t.Fatal("first tool strict = false, want true")
+	}
 	if got := string(tools[0].GetToolFunction().GetParameters().GetValue()); !strings.Contains(got, `"asset_type"`) || !strings.Contains(got, `"required":["asset_type"]`) {
 		t.Fatalf("first tool parameters = %s, want asset_type schema", got)
 	}

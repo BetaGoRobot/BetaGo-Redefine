@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,5 +173,36 @@ func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 	}
 	if featureProp.Enum[0] != "chat" || featureProp.Enum[1] != "music" {
 		t.Fatalf("unexpected feature enum values: %+v", featureProp.Enum)
+	}
+}
+
+func TestLarkToolsEmitStrictCompatibleSchemas(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	allTools := larktools()
+
+	for _, tool := range allTools.Tools() {
+		fn := tool.GetToolFunction()
+		if fn == nil {
+			continue
+		}
+		if !fn.GetStrict() {
+			t.Fatalf("%s strict = false, want true", fn.GetName())
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(fn.GetParameters().GetValue(), &schema); err != nil {
+			t.Fatalf("%s parameters should be json: %v", fn.GetName(), err)
+		}
+		if schema["additionalProperties"] != false {
+			t.Fatalf("%s root additionalProperties = %#v, want false", fn.GetName(), schema["additionalProperties"])
+		}
+		props, _ := schema["properties"].(map[string]any)
+		for propName, raw := range props {
+			prop, _ := raw.(map[string]any)
+			if prop["type"] == "array" {
+				if _, ok := prop["items"].(map[string]any); !ok {
+					t.Fatalf("%s.%s array items = %#v, want schema object", fn.GetName(), propName, prop["items"])
+				}
+			}
+		}
 	}
 }

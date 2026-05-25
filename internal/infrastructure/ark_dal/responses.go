@@ -274,6 +274,7 @@ func responseFunctionTool(name, description string, schema *tools.Param) *respon
 		Union: &responses.ResponsesTool_ToolFunction{
 			ToolFunction: &responses.ToolFunction{
 				Name:        strings.TrimSpace(name),
+				Strict:      gptr.Of(true),
 				Type:        responses.ToolType_function,
 				Description: gptr.Of(strings.TrimSpace(description)),
 				Parameters:  &responses.Bytes{Value: schema.JSON()},

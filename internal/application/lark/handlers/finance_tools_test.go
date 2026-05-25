@@ -64,10 +64,10 @@ func TestFinanceToolDiscoverToolSpecUsesEnumsOnly(t *testing.T) {
 	if toolNames == nil {
 		t.Fatal("expected tool_names prop")
 	}
-	if len(toolNames.Items) != 1 {
-		t.Fatalf("tool_names items len = %d, want 1", len(toolNames.Items))
+	if toolNames.Items == nil {
+		t.Fatal("expected tool_names items schema")
 	}
-	if got := len(toolNames.Items[0].Enum); got != 3 {
+	if got := len(toolNames.Items.Enum); got != 3 {
 		t.Fatalf("tool_names enum count = %d, want 3", got)
 	}
 }

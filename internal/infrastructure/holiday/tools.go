@@ -392,6 +392,10 @@ func (batchQueryHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("dates", &tools.Prop{
 				Type: "array",
 				Desc: "日期数组，格式 YYYY-MM-DD，最多50个。例如: [\"2026-01-01\", \"2026-02-10\"]",
+				Items: &tools.Prop{
+					Type: "string",
+					Desc: "日期，格式 YYYY-MM-DD",
+				},
 			}).
 			AddRequired("dates"),
 		Result: func(metaData *xhandler.BaseMetaData) string {

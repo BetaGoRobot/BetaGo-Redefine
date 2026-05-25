@@ -39,12 +39,10 @@ func (financeToolDiscoverHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("tool_names", &arktools.Prop{
 				Type: "array",
 				Desc: "按显式 tool_name 白名单过滤，优先直接从枚举中选择",
-				Items: []*arktools.Prop{
-					{
-						Type: "string",
-						Desc: "tool_name",
-						Enum: financeToolDiscoverToolNameEnum(),
-					},
+				Items: &arktools.Prop{
+					Type: "string",
+					Desc: "tool_name",
+					Enum: financeToolDiscoverToolNameEnum(),
 				},
 			}).
 			AddProp("limit", &arktools.Prop{
