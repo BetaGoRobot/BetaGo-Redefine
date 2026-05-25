@@ -123,8 +123,8 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if len(keys) != 1 {
 		t.Fatalf("cache key count = %d, want 1", len(keys))
 	}
-	if !strings.Contains(keys[0], ":ark:response:cache:intent:") {
-		t.Fatalf("cache key = %q, want intent cache namespace", keys[0])
+	if !strings.Contains(keys[0], ":ark:response:cache:v2:intent:") {
+		t.Fatalf("cache key = %q, want versioned intent cache namespace", keys[0])
 	}
 }
 

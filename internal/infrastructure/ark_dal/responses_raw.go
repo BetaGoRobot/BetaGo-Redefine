@@ -25,6 +25,8 @@ var (
 	createResponsesFn = CreateResponses
 )
 
+const responseCacheVersion = "v2"
+
 type CachedResponseRequest struct {
 	CacheScene   string
 	SystemPrompt string
@@ -63,6 +65,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		"ark",
 		"response",
 		"cache",
+		responseCacheVersion,
 		cacheScene(req.CacheScene),
 		req.ModelID,
 		"thinking_"+req.Thinking.String(),
