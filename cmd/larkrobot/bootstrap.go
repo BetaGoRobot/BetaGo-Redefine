@@ -22,6 +22,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/miniodal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
@@ -120,6 +121,7 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 		Init: func(context.Context) error {
 			return appruntime.RecoverError("db.Init", func() {
 				db.Init(cfg.DBConfig)
+				llmusage.SetDefaultRecorder(llmusage.NewRecorder(db.DB()))
 			})
 		},
 		Ready: func(ctx context.Context) error {

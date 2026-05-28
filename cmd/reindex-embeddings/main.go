@@ -8,6 +8,8 @@ import (
 	"time"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/tools/reindexembeddings"
 )
 
@@ -34,6 +36,10 @@ func main() {
 	if cfg.OpensearchConfig == nil || cfg.ArkConfig == nil {
 		fmt.Fprintln(os.Stderr, "config missing opensearch_config or ark_config")
 		os.Exit(1)
+	}
+	if cfg.DBConfig != nil {
+		db.Init(cfg.DBConfig)
+		llmusage.SetDefaultRecorder(llmusage.NewRecorder(db.DB()))
 	}
 
 	targetIndex := *index

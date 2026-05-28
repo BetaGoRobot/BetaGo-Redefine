@@ -7,6 +7,7 @@ import (
 	"iter"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -18,6 +19,7 @@ import (
 
 func (r *ResponsesImpl[T]) StreamTurn(
 	ctx context.Context,
+	scope llmusage.Scope,
 	req ResponseTurnRequest,
 ) (iter.Seq[*ModelStreamRespReasoning], func() ResponseTurnSnapshot, error) {
 	if names := responseToolNames(req.AdditionalTools); len(names) > 0 {
@@ -30,7 +32,7 @@ func (r *ResponsesImpl[T]) StreamTurn(
 	if err != nil {
 		return nil, nil, err
 	}
-	resp, err := CreateResponsesStream(ctx, body)
+	resp, err := CreateResponsesStream(ctx, body, scope)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -40,6 +42,7 @@ func (r *ResponsesImpl[T]) StreamTurn(
 			ctx, span := otel.StartNamed(ctx, "ark.responses.turn_stream")
 			defer span.End()
 			defer r.SyncResult(ctx)
+			defer r.recordStreamUsage(ctx, scope, req.ModelID)
 
 			for {
 				event, recvErr := resp.Recv()
@@ -52,7 +55,7 @@ func (r *ResponsesImpl[T]) StreamTurn(
 					return
 				}
 
-				toolCall, handleErr := r.handleManualTurnEvent(ctx, event)
+				toolCall, handleErr := r.handleManualTurnEvent(ctx, event, scope, req.ModelID)
 				if handleErr != nil {
 					logs.L().Ctx(ctx).Error("manual response turn handle event error", zap.Error(handleErr))
 					return
@@ -185,12 +188,15 @@ func normalizeResponseTurnReasoningEffort(effort responses.ReasoningEffort_Enum)
 	}
 }
 
-func (r *ResponsesImpl[T]) handleManualTurnEvent(ctx context.Context, event *responses.Event) (*ToolCallIntent, error) {
+func (r *ResponsesImpl[T]) handleManualTurnEvent(ctx context.Context, event *responses.Event, scope llmusage.Scope, modelID string) (*ToolCallIntent, error) {
 	if id := event.GetResponse().GetResponse().GetId(); id != "" {
 		r.lastRespID = id
 	}
 
 	switch eventType := event.GetEventType(); eventType {
+	case responses.EventType_response_completed.String():
+		r.OnCompleted(ctx, event, scope, modelID)
+		return nil, nil
 	case responses.EventType_response_output_item_added.String():
 		r.OnCallStart(ctx, event)
 		return nil, nil

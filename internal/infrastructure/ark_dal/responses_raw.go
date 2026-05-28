@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -37,7 +38,7 @@ type CachedResponseRequest struct {
 	Thinking     *responses.ResponsesThinking
 }
 
-func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string) (res string, err error) {
+func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string, scope llmusage.Scope) (res string, err error) {
 	return ResponseTextWithCache(ctx, CachedResponseRequest{
 		CacheScene:   "chunking",
 		SystemPrompt: sysPrompt,
@@ -46,10 +47,10 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 		Thinking: &responses.ResponsesThinking{
 			Type: responses.ThinkingType_enabled.Enum(),
 		},
-	})
+	}, scope)
 }
 
-func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res string, err error) {
+func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope llmusage.Scope) (res string, err error) {
 	if _, _, err := runtimeClientFn(); err != nil {
 		return "", err
 	}
@@ -106,7 +107,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 			Thinking:  req.Thinking,
 			Reasoning: req.Reasoning,
 		}
-		resp, err := createResponsesFn(ctx, cacheReq)
+		resp, err := createResponsesFn(ctx, cacheReq, scope)
 		if err != nil {
 			logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_head", cacheReq, err)...)
 			return "", err
@@ -146,11 +147,11 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest) (res 
 		Caching: &responses.ResponsesCaching{
 			Type: responses.CacheType_enabled.Enum(),
 		},
-		Thinking:           req.Thinking,
-		Reasoning:          req.Reasoning,
+		Thinking:  req.Thinking,
+		Reasoning: req.Reasoning,
 	}
 
-	resp, err := createResponsesFn(ctx, secondReq)
+	resp, err := createResponsesFn(ctx, secondReq, scope)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_continuation", secondReq, err)...)
 		return "", err

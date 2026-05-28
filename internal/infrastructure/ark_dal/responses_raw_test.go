@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -40,12 +41,21 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	})
 
 	var captured []*responses.ResponsesRequest
+	var capturedScopes []llmusage.Scope
 	oldCreateResponsesFn := createResponsesFn
-	createResponsesFn = func(ctx context.Context, req *responses.ResponsesRequest) (*responses.ResponseObject, error) {
+	createResponsesFn = func(ctx context.Context, req *responses.ResponsesRequest, scope llmusage.Scope) (*responses.ResponseObject, error) {
 		captured = append(captured, req)
+		capturedScopes = append(capturedScopes, scope)
 		switch len(captured) {
 		case 1:
-			return &responses.ResponseObject{Id: "resp_seed"}, nil
+			return &responses.ResponseObject{
+				Id: "resp_seed",
+				Usage: &responses.Usage{
+					InputTokens:  10,
+					OutputTokens: 0,
+					TotalTokens:  10,
+				},
+			}, nil
 		case 2, 3:
 			return responseTextFixture(`{"intent_type":"question","need_reply":true,"reply_confidence":88,"reason":"ask","suggest_action":"chat","interaction_mode":"standard"}`), nil
 		default:
@@ -74,16 +84,46 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 			Type: responses.ThinkingType_disabled.Enum(),
 		},
 	}
+	scope := llmusage.Scope{
+		ChatID:     "oc_chat",
+		ChatName:   "Test Chat",
+		OpenID:     "ou_user",
+		UserName:   "Alice",
+		SourceType: llmusage.SourceTypeUser,
+		Source:     "intent",
+	}
+	store := &arkUsageStore{}
+	llmusage.SetDefaultRecorder(llmusage.NewRecorderWithStore(store))
+	t.Cleanup(func() {
+		llmusage.SetDefaultRecorder(nil)
+	})
 
-	if _, err := ResponseTextWithCache(context.Background(), req); err != nil {
+	if _, err := ResponseTextWithCache(context.Background(), req, scope); err != nil {
 		t.Fatalf("first ResponseTextWithCache() error = %v", err)
 	}
-	if _, err := ResponseTextWithCache(context.Background(), req); err != nil {
+	if _, err := ResponseTextWithCache(context.Background(), req, scope); err != nil {
 		t.Fatalf("second ResponseTextWithCache() error = %v", err)
 	}
 
 	if len(captured) != 3 {
 		t.Fatalf("CreateResponses call count = %d, want 3", len(captured))
+	}
+	if len(capturedScopes) != 3 {
+		t.Fatalf("captured scope count = %d, want 3", len(capturedScopes))
+	}
+	for i, got := range capturedScopes {
+		if got != scope {
+			t.Fatalf("scope[%d] = %+v, want %+v", i, got, scope)
+		}
+	}
+	if len(store.rows) != 3 {
+		t.Fatalf("usage record count = %d, want 3", len(store.rows))
+	}
+	if store.rows[0].ChatID != "oc_chat" || store.rows[0].OpenID != "ou_user" || store.rows[0].Source != "intent" {
+		t.Fatalf("usage row scope = %+v", store.rows[0])
+	}
+	if store.rows[0].PromptTokens != 10 || store.rows[0].TotalTokens != 10 {
+		t.Fatalf("usage row tokens = %d/%d", store.rows[0].PromptTokens, store.rows[0].TotalTokens)
 	}
 
 	first := captured[0]
@@ -159,6 +199,11 @@ func assertSingleInputMessage(t *testing.T, req *responses.ResponsesRequest, rol
 func responseTextFixture(text string) *responses.ResponseObject {
 	return &responses.ResponseObject{
 		Id: "resp_output",
+		Usage: &responses.Usage{
+			InputTokens:  12,
+			OutputTokens: 5,
+			TotalTokens:  17,
+		},
 		Output: []*responses.OutputItem{
 			{
 				Union: &responses.OutputItem_OutputMessage{
@@ -179,6 +224,15 @@ func responseTextFixture(text string) *responses.ResponseObject {
 			},
 		},
 	}
+}
+
+type arkUsageStore struct {
+	rows []llmusage.UsageRecordRow
+}
+
+func (s *arkUsageStore) CreateUsageRecord(_ context.Context, row *llmusage.UsageRecordRow) error {
+	s.rows = append(s.rows, *row)
+	return nil
 }
 
 func loadResponseCacheTestConfig(t *testing.T) {

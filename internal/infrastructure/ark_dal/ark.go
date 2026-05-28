@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
@@ -71,7 +73,7 @@ func runtimeClient() (*arkruntime.Client, *config.ArkConfig, error) {
 	return client, arkConfig, nil
 }
 
-func CreateResponses(ctx context.Context, body *responses.ResponsesRequest) (*responses.ResponseObject, error) {
+func CreateResponses(ctx context.Context, body *responses.ResponsesRequest, scope llmusage.Scope) (*responses.ResponseObject, error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.create")
 	if body != nil {
 		span.SetAttributes(
@@ -99,10 +101,11 @@ func CreateResponses(ctx context.Context, body *responses.ResponsesRequest) (*re
 	if resp != nil {
 		span.SetAttributes(attribute.String("response.id.preview", otel.PreviewString(resp.Id, 128)))
 	}
+	recordResponseUsage(ctx, scope, bodyModel(body), llmusage.KindResponses, resp, err)
 	return resp, err
 }
 
-func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest) (*arkutils.ResponsesStreamReader, error) {
+func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest, scope llmusage.Scope) (*arkutils.ResponsesStreamReader, error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.stream_create")
 	if body != nil {
 		span.SetAttributes(
@@ -123,11 +126,52 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 	runtime, _, err := runtimeClient()
 	if err != nil {
 		otel.RecordError(span, err)
+		recordResponseUsage(ctx, scope, bodyModel(body), llmusage.KindResponsesStream, nil, err)
 		return nil, err
 	}
 	resp, err := runtime.CreateResponsesStream(ctx, body)
 	otel.RecordError(span, err)
+	if err != nil {
+		recordResponseUsage(ctx, scope, bodyModel(body), llmusage.KindResponsesStream, nil, err)
+	}
 	return resp, err
+}
+
+func bodyModel(body *responses.ResponsesRequest) string {
+	if body == nil {
+		return ""
+	}
+	return body.Model
+}
+
+func recordResponseUsage(ctx context.Context, scope llmusage.Scope, model string, kind llmusage.Kind, resp *responses.ResponseObject, callErr error) {
+	record := llmusage.Record{
+		Scope:     scope,
+		Provider:  "ark",
+		Model:     model,
+		Kind:      kind,
+		Status:    llmusage.StatusSuccess,
+		CreatedAt: utilsNow(),
+	}
+	if resp != nil {
+		record.ResponseID = resp.Id
+		if usage := resp.GetUsage(); usage != nil {
+			record.PromptTokens = usage.GetInputTokens()
+			record.CompletionTokens = usage.GetOutputTokens()
+			record.TotalTokens = usage.GetTotalTokens()
+		} else if callErr == nil {
+			record.Status = llmusage.StatusUsageMissing
+		}
+	}
+	if callErr != nil {
+		record.Status = llmusage.StatusError
+		record.Error = callErr.Error()
+	}
+	_ = llmusage.RecordUsage(ctx, record)
+}
+
+var utilsNow = func() time.Time {
+	return time.Now()
 }
 
 func responseThinkingType(thinking *responses.ResponsesThinking) string {

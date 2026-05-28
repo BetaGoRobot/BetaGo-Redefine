@@ -17,6 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
@@ -652,7 +653,8 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
 	logs.L().Ctx(ctx).Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
-	iterSeq, err := dal.Do(ctx, systemPrompt, userPrompt, files...)
+	scope := buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(event, metaData), userName, "chat", llmusage.SourceTypeUser)
+	iterSeq, err := dal.Do(ctx, scope, systemPrompt, userPrompt, files...)
 	if err != nil {
 		return nil, err
 	}
@@ -689,4 +691,27 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		lastData.ReasoningContent = reasonBuilder.String()
 		yield(lastData)
 	}, nil
+}
+
+func buildUserLLMUsageScope(ctx context.Context, chatID, chatName, openID, userName, source string, sourceType llmusage.SourceType) llmusage.Scope {
+	if strings.TrimSpace(userName) == "" && strings.TrimSpace(chatID) != "" && strings.TrimSpace(openID) != "" {
+		if resolved, err := larkuser.GetUserNameCache(ctx, chatID, openID); err == nil {
+			userName = resolved
+		}
+	}
+	return llmusage.Scope{
+		ChatID:     chatID,
+		ChatName:   chatName,
+		OpenID:     openID,
+		UserName:   userName,
+		SourceType: sourceType,
+		Source:     source,
+	}
+}
+
+func metaChatName(metaData *xhandler.BaseMetaData) string {
+	if metaData == nil {
+		return ""
+	}
+	return metaData.ChatName
 }

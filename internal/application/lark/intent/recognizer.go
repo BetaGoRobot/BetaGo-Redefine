@@ -8,6 +8,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/bytedance/gg/gptr"
@@ -122,11 +123,11 @@ const intentSystemPrompt = `你是一个群聊消息意图分析助手。你的�
 }`
 
 // AnalyzeMessage 分析消息意图
-func AnalyzeMessage(ctx context.Context, message string, recentLines []string) (analysis *IntentAnalysis, err error) {
-	return analyzeMessage(ctx, message, recentLines, appconfig.NewAccessor(ctx, "", "").IntentLiteModel())
+func AnalyzeMessage(ctx context.Context, message string, recentLines []string, scope llmusage.Scope) (analysis *IntentAnalysis, err error) {
+	return analyzeMessage(ctx, message, recentLines, appconfig.NewAccessor(ctx, scope.ChatID, scope.OpenID).IntentLiteModel(), scope)
 }
 
-func analyzeMessage(ctx context.Context, message string, recentLines []string, modelID string) (analysis *IntentAnalysis, err error) {
+func analyzeMessage(ctx context.Context, message string, recentLines []string, modelID string, scope llmusage.Scope) (analysis *IntentAnalysis, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -158,7 +159,7 @@ func analyzeMessage(ctx context.Context, message string, recentLines []string, m
 		Thinking: &responses.ResponsesThinking{
 			Type: gptr.Of(responses.ThinkingType_disabled),
 		},
-	})
+	}, scope)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses for intent analysis", zap.Error(err))
 		return nil, err

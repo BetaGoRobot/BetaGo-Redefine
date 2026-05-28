@@ -21,6 +21,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcontent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larktpl"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
@@ -589,7 +590,12 @@ func handleDebugImage(ctx context.Context, data *larkim.P2MessageReceiveV1, meta
 
 	dataSeq, err := ark_dal.
 		New(*data.Event.Message.ChatId, currentOpenID(data, metaData), &data).
-		Do(ctx, "", inputPrompt, urls...)
+		Do(ctx,
+			buildUserLLMUsageScope(ctx, currentChatID(data, metaData), metaChatName(metaData), currentOpenID(data, metaData), "", "debug_image", llmusage.SourceTypeDebug),
+			"",
+			inputPrompt,
+			urls...,
+		)
 	if err != nil {
 		return err
 	}

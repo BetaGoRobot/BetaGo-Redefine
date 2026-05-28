@@ -14,6 +14,7 @@ import (
 	"time"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/bytedance/sonic"
 	"github.com/opensearch-project/opensearch-go/v4"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
@@ -657,10 +658,19 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 				mu.Lock()
 				if err != nil || len(resp.Data.Embedding) == 0 {
 					errors++
+					recordErr := err
+					if recordErr == nil {
+						recordErr = fmt.Errorf("empty embedding response")
+					}
+					recordReindexUsage(ctx, opts.Model, model.Usage{}, recordErr)
 				} else {
 					results[item.index] = resp.Data.Embedding
 					promptTokens += resp.Usage.PromptTokens
 					totalTokens += resp.Usage.TotalTokens
+					recordReindexUsage(ctx, opts.Model, model.Usage{
+						PromptTokens: resp.Usage.PromptTokens,
+						TotalTokens:  resp.Usage.TotalTokens,
+					}, nil)
 				}
 				mu.Unlock()
 			}
@@ -674,6 +684,28 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 	wg.Wait()
 
 	return results, errors, promptTokens, totalTokens
+}
+
+func recordReindexUsage(ctx context.Context, modelID string, usage model.Usage, err error) {
+	record := llmusage.Record{
+		Scope: llmusage.Scope{
+			SourceType: llmusage.SourceTypeBackground,
+			Source:     "reindex_embeddings",
+		},
+		Provider:         "ark",
+		Model:            modelID,
+		Kind:             llmusage.KindEmbedding,
+		Status:           llmusage.StatusSuccess,
+		PromptTokens:     int64(usage.PromptTokens),
+		CompletionTokens: int64(usage.CompletionTokens),
+		TotalTokens:      int64(usage.TotalTokens),
+		CreatedAt:        time.Now(),
+	}
+	if err != nil {
+		record.Status = llmusage.StatusError
+		record.Error = err.Error()
+	}
+	_ = llmusage.RecordUsage(ctx, record)
 }
 
 func intPtr(v int) *int {

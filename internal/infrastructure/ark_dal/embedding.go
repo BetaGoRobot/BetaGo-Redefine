@@ -3,6 +3,7 @@ package ark_dal
 import (
 	"context"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
@@ -17,9 +18,10 @@ import (
 //	@param input
 //	@return embedded
 //	@return err
-func EmbeddingText(ctx context.Context, input string) (embedded []float32, tokenUsage model.Usage, err error) {
+func EmbeddingText(ctx context.Context, input string, scope llmusage.Scope) (embedded []float32, tokenUsage model.Usage, err error) {
 	runtime, cfg, err := runtimeClient()
 	if err != nil {
+		recordEmbeddingUsage(ctx, scope, "", model.Usage{}, err)
 		return nil, model.Usage{}, err
 	}
 	ctx, span := otel.StartNamed(ctx, "ark.embedding.create")
@@ -46,11 +48,32 @@ func EmbeddingText(ctx context.Context, input string) (embedded []float32, token
 	)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("embeddings error", zap.Error(err), zap.String("input", input))
+		recordEmbeddingUsage(ctx, scope, cfg.EmbeddingModel, model.Usage{}, err)
 		return
 	}
 	embedded = resp.Data.Embedding
 	tokenUsage = Muda2Usage(resp.Usage)
+	recordEmbeddingUsage(ctx, scope, cfg.EmbeddingModel, tokenUsage, nil)
 	return
+}
+
+func recordEmbeddingUsage(ctx context.Context, scope llmusage.Scope, modelID string, usage model.Usage, callErr error) {
+	record := llmusage.Record{
+		Scope:            scope,
+		Provider:         "ark",
+		Model:            modelID,
+		Kind:             llmusage.KindEmbedding,
+		Status:           llmusage.StatusSuccess,
+		PromptTokens:     int64(usage.PromptTokens),
+		CompletionTokens: int64(usage.CompletionTokens),
+		TotalTokens:      int64(usage.TotalTokens),
+		CreatedAt:        utilsNow(),
+	}
+	if callErr != nil {
+		record.Status = llmusage.StatusError
+		record.Error = callErr.Error()
+	}
+	_ = llmusage.RecordUsage(ctx, record)
 }
 
 func Muda2Usage(u model.MultimodalEmbeddingUsage) model.Usage {

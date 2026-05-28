@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -42,6 +43,9 @@ type (
 		pendingCapabilityCalls []CapabilityCallTrace
 		ignoredEventCounts     map[string]int
 		reasoningEffort        *responses.ResponsesReasoning
+		streamUsage            *responses.Usage
+		streamResponseID       string
+		streamUsageRecorded    bool
 
 		lastRespID string
 		textOutput textOutput
@@ -292,7 +296,7 @@ func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Eve
 	}
 }
 
-func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Event) (resp *arkutils.ResponsesStreamReader, err error) {
+func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Event, scope llmusage.Scope) (resp *arkutils.ResponsesStreamReader, err error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.tool_args")
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -362,10 +366,13 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			// 		Type: responses.TextType_json_object,
 			// 	},
 			// },
-		})
+		}, scope)
 		if err != nil {
 			return
 		}
+		r.streamUsage = nil
+		r.streamResponseID = ""
+		r.streamUsageRecorded = false
 	} else {
 		logs.L().Ctx(ctx).Warn("no handler found for function call",
 			zap.String("function_name", handlerName),
@@ -405,16 +412,35 @@ func (r *ResponsesImpl[T]) OnOthers(ctx context.Context, event *responses.Event)
 	r.ignoredEventCounts[eventType]++
 }
 
-func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event) (newRes *arkutils.ResponsesStreamReader, err error) {
+func (r *ResponsesImpl[T]) OnCompleted(ctx context.Context, event *responses.Event, scope llmusage.Scope, modelID string) {
+	completed := event.GetResponseCompleted()
+	if completed == nil {
+		return
+	}
+	resp := completed.GetResponse()
+	if resp == nil {
+		return
+	}
+	r.streamResponseID = strings.TrimSpace(resp.GetId())
+	r.streamUsage = resp.GetUsage()
+	if r.streamResponseID != "" {
+		r.lastRespID = r.streamResponseID
+	}
+	r.recordStreamUsage(ctx, scope, modelID)
+}
+
+func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event, scope llmusage.Scope, modelID string) (newRes *arkutils.ResponsesStreamReader, err error) {
 	if id := event.GetResponse().GetResponse().GetId(); id != "" {
 		r.lastRespID = id
 	}
 
 	switch eventType := event.GetEventType(); eventType {
+	case responses.EventType_response_completed.String():
+		r.OnCompleted(ctx, event, scope, modelID)
 	case responses.EventType_response_output_item_added.String():
 		r.OnCallStart(ctx, event)
 	case responses.EventType_response_function_call_arguments_done.String():
-		return r.OnCallArgs(ctx, event)
+		return r.OnCallArgs(ctx, event, scope)
 	case responses.EventType_response_reasoning_summary_text_delta.String():
 		r.OnReasoningDelta(ctx, event)
 	case responses.EventType_response_output_text_delta.String():
@@ -521,7 +547,7 @@ func (r *ResponsesImpl[T]) flushPendingStreamItems(ctx context.Context, yield fu
 	return true
 }
 
-func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
+func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
 	_, cfg, err := runtimeClient()
 	if err != nil {
 		return nil, err
@@ -570,7 +596,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		MaxToolCalls:      gptr.Of(int64(10)),
 	}
 
-	resp, err := CreateResponsesStream(ctx, req)
+	resp, err := CreateResponsesStream(ctx, req, scope)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses stream", zap.Error(err))
 		return nil, err
@@ -581,6 +607,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 		defer subSpan.End()
 		defer func() { otel.RecordError(subSpan, err) }()
 		defer r.SyncResult(subCtx)
+		defer r.recordStreamUsage(subCtx, scope, modelID)
 
 		for {
 			event, err := resp.Recv()
@@ -594,7 +621,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 				return
 			}
 
-			resp, err = r.Handle(subCtx, resp, event)
+			resp, err = r.Handle(subCtx, resp, event, scope, modelID)
 			if err != nil {
 				logs.L().Ctx(subCtx).Error("handle event error", zap.String("last_resp_id", r.lastRespID), zap.Error(err))
 				return
@@ -610,4 +637,40 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, sysPrompt, userPrompt string,
 			}
 		}
 	}, nil
+}
+
+func (r *ResponsesImpl[T]) recordStreamUsage(ctx context.Context, scope llmusage.Scope, modelID string) {
+	if r == nil {
+		return
+	}
+	if r.streamUsageRecorded {
+		return
+	}
+	r.streamUsageRecorded = true
+	status := llmusage.StatusUsageMissing
+	record := llmusage.Record{
+		Scope:      scope,
+		Provider:   "ark",
+		Model:      modelID,
+		Kind:       llmusage.KindResponsesStream,
+		Status:     status,
+		ResponseID: strings.TrimSpace(firstNonEmptyString(r.streamResponseID, r.lastRespID)),
+		CreatedAt:  utilsNow(),
+	}
+	if r.streamUsage != nil {
+		record.Status = llmusage.StatusSuccess
+		record.PromptTokens = r.streamUsage.GetInputTokens()
+		record.CompletionTokens = r.streamUsage.GetOutputTokens()
+		record.TotalTokens = r.streamUsage.GetTotalTokens()
+	}
+	_ = llmusage.RecordUsage(ctx, record)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

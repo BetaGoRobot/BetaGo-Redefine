@@ -8,6 +8,8 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
@@ -30,7 +32,7 @@ var _ Op = &IntentRecognizeOperator{}
 type IntentRecognizeOperator struct {
 	OpBase
 	configAccessor      func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig
-	analyzer            func(context.Context, string, []string) (*intent.IntentAnalysis, error)
+	analyzer            func(context.Context, string, []string, llmusage.Scope) (*intent.IntentAnalysis, error)
 	recentContextLoader func(context.Context, *larkim.P2MessageReceiveV1, int) ([]string, error)
 }
 
@@ -107,7 +109,7 @@ func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2Messa
 	}
 
 	// 调用意图识别
-	analysis, err := r.analyzeIntent(ctx, text, recentLines)
+	analysis, err := r.analyzeIntent(ctx, text, recentLines, buildIntentLLMUsageScope(ctx, event, meta))
 	if err != nil {
 		logs.L().Ctx(ctx).Error("intent analysis failed", zap.Error(err))
 		return nil
@@ -133,11 +135,32 @@ func (r *IntentRecognizeOperator) intentConfigAccessor(ctx context.Context, even
 	return messageConfigAccessor(ctx, event, meta)
 }
 
-func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, text string, recentLines []string) (*intent.IntentAnalysis, error) {
+func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, text string, recentLines []string, scope llmusage.Scope) (*intent.IntentAnalysis, error) {
 	if r != nil && r.analyzer != nil {
-		return r.analyzer(ctx, text, recentLines)
+		return r.analyzer(ctx, text, recentLines, scope)
 	}
-	return intent.AnalyzeMessage(ctx, text, recentLines)
+	return intent.AnalyzeMessage(ctx, text, recentLines, scope)
+}
+
+func buildIntentLLMUsageScope(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) llmusage.Scope {
+	chatID := messageChatID(event, meta)
+	openID := messageOpenID(event, meta)
+	userName := ""
+	if chatID != "" && openID != "" {
+		userName, _ = larkuser.GetUserNameCache(ctx, chatID, openID)
+	}
+	chatName := ""
+	if meta != nil {
+		chatName = meta.ChatName
+	}
+	return llmusage.Scope{
+		ChatID:     chatID,
+		ChatName:   chatName,
+		OpenID:     openID,
+		UserName:   userName,
+		SourceType: llmusage.SourceTypeUser,
+		Source:     "intent",
+	}
 }
 
 func (r *IntentRecognizeOperator) loadRecentContext(

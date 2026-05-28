@@ -12,6 +12,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
@@ -97,7 +98,21 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			TraceID:     span.SpanContext().TraceID().String(),
 		}
 		content := larkmsg.PreGetTextMsg(ctx, event).GetText()
-		embedded, usage, err := ark_dal.EmbeddingText(ctx, content)
+		chatName := ""
+		if metaData != nil {
+			chatName = metaData.ChatName
+		}
+		if chatName == "" {
+			chatName = larkchat.GetChatName(ctx, chatID)
+		}
+		embedded, usage, err := ark_dal.EmbeddingText(ctx, content, llmusage.Scope{
+			ChatID:     chatID,
+			ChatName:   chatName,
+			OpenID:     openID,
+			UserName:   userName,
+			SourceType: llmusage.SourceTypeUser,
+			Source:     "message_recording",
+		})
 		if err != nil {
 			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err), zap.String("content", content))
 			return err

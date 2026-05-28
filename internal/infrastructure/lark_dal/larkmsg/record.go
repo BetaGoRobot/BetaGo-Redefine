@@ -14,6 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
@@ -80,19 +81,28 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 		TraceID:     span.SpanContext().TraceID().String(),
 	}
 
-	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content))
+	chatID := utils.AddrOrNil(resp.Data.ChatId)
+	chatName := larkchat.GetChatName(ctx, chatID)
+	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
+	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content), llmusage.Scope{
+		ChatID:     chatID,
+		ChatName:   chatName,
+		OpenID:     recordedOpenID,
+		UserName:   recordedUserName,
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "outbound_message_recording",
+	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))
 	}
 	jieba := gojieba.NewJieba()
 	defer jieba.Free()
 	ws := jieba.Cut(content, true)
-	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, utils.AddrOrNil(resp.Data.MessageId),
 		&xmodel.MessageIndex{
 			MessageLog:      msgLog,
-			ChatName:        larkchat.GetChatName(ctx, utils.AddrOrNil(resp.Data.ChatId)),
+			ChatName:        chatName,
 			RawMessage:      content,
 			RawMessageJieba: strings.Join(ws, " "),
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),
@@ -168,20 +178,29 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 		Content:     content,
 		TraceID:     span.SpanContext().TraceID().String(),
 	}
-	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content))
+	chatID := utils.AddrOrNil(resp.Data.ChatId)
+	chatName := larkchat.GetChatName(ctx, chatID)
+	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
+	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content), llmusage.Scope{
+		ChatID:     chatID,
+		ChatName:   chatName,
+		OpenID:     recordedOpenID,
+		UserName:   recordedUserName,
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "outbound_message_recording",
+	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))
 	}
 	jieba := gojieba.NewJieba()
 	defer jieba.Free()
 	ws := jieba.Cut(content, true)
-	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex,
 		utils.AddrOrNil(resp.Data.MessageId),
 		&xmodel.MessageIndex{
 			MessageLog:      msgLog,
-			ChatName:        larkchat.GetChatName(ctx, utils.AddrOrNil(resp.Data.ChatId)),
+			ChatName:        chatName,
 			RawMessage:      content,
 			RawMessageJieba: strings.Join(ws, " "),
 			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), time.UTC, time.DateTime),

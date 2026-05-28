@@ -6,6 +6,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -30,7 +31,7 @@ func TestIntentRecognizeOperatorRunStoresAnalysis(t *testing.T) {
 				"[2026-04-02 10:00:09](ou_c) <丙>: 指标要单独看",
 			}, nil
 		},
-		analyzer: func(_ context.Context, text string, recent []string) (*intent.IntentAnalysis, error) {
+		analyzer: func(_ context.Context, text string, recent []string, scope llmusage.Scope) (*intent.IntentAnalysis, error) {
 			if text != "hello" {
 				t.Fatalf("text = %q, want %q", text, "hello")
 			}

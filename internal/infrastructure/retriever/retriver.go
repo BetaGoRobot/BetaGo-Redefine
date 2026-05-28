@@ -12,6 +12,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -143,7 +144,10 @@ func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts 
 	for idx, text := range texts {
 		eg.Go(
 			func() error {
-				embedding, _, err := ark_dal.EmbeddingText(ctx, text)
+				embedding, _, err := ark_dal.EmbeddingText(ctx, text, llmusage.Scope{
+					SourceType: llmusage.SourceTypeSystem,
+					Source:     "retriever_embedding",
+				})
 				if err != nil {
 					return err
 				}
@@ -261,7 +265,11 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query), zap.String("startTime", startTime), zap.String("endTime", endTime))
 
 	// 1. 生成查询向量
-	vec, _, err := ark_dal.EmbeddingText(ctx, query)
+	vec, _, err := ark_dal.EmbeddingText(ctx, query, llmusage.Scope{
+		ChatID:     suffix,
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "retriever_recall",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("生成查询向量失败: %w", err)
 	}
@@ -347,15 +355,15 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 	docs := make([]schema.Document, 0, len(searchResp.Hits.Hits))
 	for _, hit := range searchResp.Hits.Hits {
 		var doc struct {
-			Content string                 `json:"content"`
-			Meta    map[string]any        `json:"metadata"`
+			Content string         `json:"content"`
+			Meta    map[string]any `json:"metadata"`
 		}
 		if err := sonic.Unmarshal(hit.Source, &doc); err != nil {
 			continue
 		}
 		docs = append(docs, schema.Document{
 			PageContent: doc.Content,
-			Metadata:     doc.Meta,
+			Metadata:    doc.Meta,
 		})
 	}
 

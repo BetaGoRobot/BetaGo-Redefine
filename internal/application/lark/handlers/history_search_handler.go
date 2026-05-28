@@ -8,10 +8,12 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
 
 type HistorySearchArgs struct {
@@ -96,7 +98,9 @@ func (historySearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 			StartTime:   arg.StartTime,
 			EndTime:     arg.EndTime,
 			CutoffTime:  cutoffTime,
-		}, ark_dal.EmbeddingText)
+		}, func(ctx context.Context, text string) ([]float32, model.Usage, error) {
+			return ark_dal.EmbeddingText(ctx, text, buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(data, metaData), "", "history_search", llmusage.SourceTypeUser))
+		})
 	if err != nil {
 		return err
 	}
