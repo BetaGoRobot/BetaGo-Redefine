@@ -127,8 +127,8 @@ github.com/go-openapi/loads v0.23.3 h1:g5Xap1JfwKkUnZdn+S0L3SzBDpcTIYzZ5Qaag0YDk
 github.com/go-openapi/loads v0.23.3/go.mod h1:NOH07zLajXo8y55hom0omlHWDVVvCwBM/S+csCK8LqA=
 github.com/go-openapi/runtime v0.0.0-20180920151709-4f900dc2ade9/go.mod h1:6v9a6LTXWQCdL8k1AO3cvqx5OtZY/Y9wKTgaoP6YRfA=
 github.com/go-openapi/runtime v0.17.2/go.mod h1:QO936ZXeisByFmZEO1IS1Dqhtf4QV1sYYFtIq6Ld86Q=
-github.com/go-openapi/runtime v0.32.1 h1:seZ/Mae6GIonXYo+Y7JrQlFDCtKdGwXFx4Q49iVg698=
-github.com/go-openapi/runtime v0.32.1/go.mod h1:IfM3cpgencPuwBp5Uo16i2IQaE74odL7Q4DCGovIQac=
+github.com/go-openapi/runtime v0.32.2 h1:X9mZz716lFwYZ6bFV1BBnthNdHTy46zKM5Em4D1UISI=
+github.com/go-openapi/runtime v0.32.2/go.mod h1:IfM3cpgencPuwBp5Uo16i2IQaE74odL7Q4DCGovIQac=
 github.com/go-openapi/runtime/server-middleware v0.30.0 h1:8rPoJ/xv7JL8BsovaqboKETlpWBArVh8n+0L/GyePog=
 github.com/go-openapi/runtime/server-middleware v0.30.0/go.mod h1:OYNT/TxNvB/VK5oe4htM2jDTwlEXuejVJmu0DVZfAMs=
 github.com/go-openapi/spec v0.17.0/go.mod h1:XkF/MOi14NmjsfZ8VtAKf8pIlbZzyoTvZsdfssdxcBI=
