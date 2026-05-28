@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"testing"
@@ -10,6 +11,23 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+func TestResolveChatNameUsesUserNameForP2P(t *testing.T) {
+	oldGetUserNameByID := getUserNameByID
+	t.Cleanup(func() {
+		getUserNameByID = oldGetUserNameByID
+	})
+	getUserNameByID = func(ctx context.Context, chatID, openID string) (string, error) {
+		if chatID != "oc_chat" || openID != "ou_open" {
+			t.Fatalf("getUserNameByID(%q, %q), want oc_chat/ou_open", chatID, openID)
+		}
+		return "Alice", nil
+	}
+
+	if got := resolveChatName(context.Background(), "oc_chat", true, "ou_open"); got != "[单聊]Alice" {
+		t.Fatalf("resolveChatName() = %q, want %q", got, "[单聊]Alice")
+	}
+}
 
 func TestMetaInitPrefersOpenID(t *testing.T) {
 	chatID := "oc_chat"

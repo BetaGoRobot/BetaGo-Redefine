@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
@@ -25,6 +26,11 @@ var Handler *MessageHandler
 
 // ConfigManager 全局配置管理器（新代码应该使用依赖注入）
 var ConfigManager *appconfig.Manager
+
+var (
+	getChatName     = larkchat.GetChatName
+	getUserNameByID = larkuser.GetUserNameCache
+)
 
 func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
 	if cfgManager == nil {
@@ -111,20 +117,26 @@ func init() {
 func metaInit(event *larkim.P2MessageReceiveV1) *xhandler.BaseMetaData {
 	chatID := *event.Event.Message.ChatId
 	isP2P := *event.Event.Message.ChatType == "p2p"
-	chatName := resolveChatName(chatID, isP2P)
+	openID := botidentity.MessageSenderOpenID(event)
+	chatName := resolveChatName(context.Background(), chatID, isP2P, openID)
 	return &xhandler.BaseMetaData{
 		ChatID:   chatID,
 		IsP2P:    isP2P,
 		ChatName: chatName,
-		OpenID:   botidentity.MessageSenderOpenID(event),
+		OpenID:   openID,
 	}
 }
 
-func resolveChatName(chatID string, isP2P bool) string {
+func resolveChatName(ctx context.Context, chatID string, isP2P bool, openID string) string {
 	if isP2P {
+		if openID != "" {
+			if name, err := getUserNameByID(ctx, chatID, openID); err == nil && name != "" {
+				return "[单聊]" + name
+			}
+		}
 		return "p2p"
 	}
-	if name := larkchat.GetChatName(context.Background(), chatID); name != "" {
+	if name := getChatName(ctx, chatID); name != "" {
 		return name
 	}
 	return "unknown"
