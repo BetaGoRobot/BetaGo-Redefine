@@ -147,7 +147,7 @@ func TestBuildConfigCardContainsPickerForm(t *testing.T) {
 	if !strings.Contains(jsonStr, `配置筛选`) || !strings.Contains(jsonStr, `"name":"config_selected_key"`) {
 		t.Fatalf("expected config picker form in config card: %s", jsonStr)
 	}
-	if !strings.Contains(jsonStr, string(KeyMusicCardInThread)) || !strings.Contains(jsonStr, string(KeyChatReasoningModel)) {
+	if !strings.Contains(jsonStr, string(KeyChunkEnabled)) || !strings.Contains(jsonStr, string(KeyMusicCardInThread)) || !strings.Contains(jsonStr, string(KeyChatReasoningModel)) {
 		t.Fatalf("expected accessor-backed config keys in picker: %s", jsonStr)
 	}
 }

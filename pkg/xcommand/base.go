@@ -4,6 +4,7 @@ package xcommand
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -542,10 +543,5 @@ func (c *Command[T]) matchesName(name string) bool {
 	if strings.TrimSpace(c.Name) == name {
 		return true
 	}
-	for _, alias := range c.GetAliases() {
-		if alias == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.GetAliases(), name)
 }

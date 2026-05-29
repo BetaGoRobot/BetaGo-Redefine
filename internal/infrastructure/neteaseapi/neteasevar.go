@@ -13,9 +13,9 @@ var IsTest = os.Getenv("IS_TEST")
 // LoginStatusStruct  登录状态
 type LoginStatusStruct struct {
 	Data struct {
-		Code    int                    `json:"code"`
-		Account map[string]interface{} `json:"account"`
-		Profile map[string]interface{} `json:"profile"`
+		Code    int            `json:"code"`
+		Account map[string]any `json:"account"`
+		Profile map[string]any `json:"profile"`
 	} `json:"data"`
 }
 
@@ -157,33 +157,33 @@ type Album struct {
 }
 type Playlist struct {
 	Result struct {
-		SearchQcReminder interface{} `json:"searchQcReminder"`
+		SearchQcReminder any `json:"searchQcReminder"`
 		Playlists        []struct {
 			ID          int64  `json:"id"`
 			Name        string `json:"name"`
 			CoverImgURL string `json:"coverImgUrl"`
 			Creator     struct {
-				Nickname   string      `json:"nickname"`
-				UserID     int         `json:"userId"`
-				UserType   int         `json:"userType"`
-				AvatarURL  interface{} `json:"avatarUrl"`
-				AuthStatus int         `json:"authStatus"`
-				ExpertTags interface{} `json:"expertTags"`
-				Experts    interface{} `json:"experts"`
+				Nickname   string `json:"nickname"`
+				UserID     int    `json:"userId"`
+				UserType   int    `json:"userType"`
+				AvatarURL  any    `json:"avatarUrl"`
+				AuthStatus int    `json:"authStatus"`
+				ExpertTags any    `json:"expertTags"`
+				Experts    any    `json:"experts"`
 			} `json:"creator"`
-			Subscribed    bool        `json:"subscribed"`
-			TrackCount    int         `json:"trackCount"`
-			UserID        int         `json:"userId"`
-			PlayCount     int         `json:"playCount"`
-			BookCount     int         `json:"bookCount"`
-			SpecialType   int         `json:"specialType"`
-			OfficialTags  interface{} `json:"officialTags"`
-			Action        interface{} `json:"action"`
-			ActionType    interface{} `json:"actionType"`
-			RecommendText interface{} `json:"recommendText"`
-			Score         interface{} `json:"score"`
-			Description   string      `json:"description"`
-			HighQuality   bool        `json:"highQuality"`
+			Subscribed    bool   `json:"subscribed"`
+			TrackCount    int    `json:"trackCount"`
+			UserID        int    `json:"userId"`
+			PlayCount     int    `json:"playCount"`
+			BookCount     int    `json:"bookCount"`
+			SpecialType   int    `json:"specialType"`
+			OfficialTags  any    `json:"officialTags"`
+			Action        any    `json:"action"`
+			ActionType    any    `json:"actionType"`
+			RecommendText any    `json:"recommendText"`
+			Score         any    `json:"score"`
+			Description   string `json:"description"`
+			HighQuality   bool   `json:"highQuality"`
 		} `json:"playlists"`
 		PlaylistCount int `json:"playlistCount"`
 	} `json:"result"`
@@ -303,43 +303,43 @@ type SearchLyrics struct {
 type MusicDetail struct {
 	Songs      []MusicDetailSong `json:"songs"`
 	Privileges []struct {
-		ID                 int         `json:"id"`
-		Fee                int         `json:"fee"`
-		Payed              int         `json:"payed"`
-		St                 int         `json:"st"`
-		Pl                 int         `json:"pl"`
-		Dl                 int         `json:"dl"`
-		Sp                 int         `json:"sp"`
-		Cp                 int         `json:"cp"`
-		Subp               int         `json:"subp"`
-		Cs                 bool        `json:"cs"`
-		Maxbr              int         `json:"maxbr"`
-		Fl                 int         `json:"fl"`
-		Toast              bool        `json:"toast"`
-		Flag               int         `json:"flag"`
-		PreSell            bool        `json:"preSell"`
-		PlayMaxbr          int         `json:"playMaxbr"`
-		DownloadMaxbr      int         `json:"downloadMaxbr"`
-		MaxBrLevel         string      `json:"maxBrLevel"`
-		PlayMaxBrLevel     string      `json:"playMaxBrLevel"`
-		DownloadMaxBrLevel string      `json:"downloadMaxBrLevel"`
-		PlLevel            string      `json:"plLevel"`
-		DlLevel            string      `json:"dlLevel"`
-		FlLevel            string      `json:"flLevel"`
-		Rscl               interface{} `json:"rscl"`
+		ID                 int    `json:"id"`
+		Fee                int    `json:"fee"`
+		Payed              int    `json:"payed"`
+		St                 int    `json:"st"`
+		Pl                 int    `json:"pl"`
+		Dl                 int    `json:"dl"`
+		Sp                 int    `json:"sp"`
+		Cp                 int    `json:"cp"`
+		Subp               int    `json:"subp"`
+		Cs                 bool   `json:"cs"`
+		Maxbr              int    `json:"maxbr"`
+		Fl                 int    `json:"fl"`
+		Toast              bool   `json:"toast"`
+		Flag               int    `json:"flag"`
+		PreSell            bool   `json:"preSell"`
+		PlayMaxbr          int    `json:"playMaxbr"`
+		DownloadMaxbr      int    `json:"downloadMaxbr"`
+		MaxBrLevel         string `json:"maxBrLevel"`
+		PlayMaxBrLevel     string `json:"playMaxBrLevel"`
+		DownloadMaxBrLevel string `json:"downloadMaxBrLevel"`
+		PlLevel            string `json:"plLevel"`
+		DlLevel            string `json:"dlLevel"`
+		FlLevel            string `json:"flLevel"`
+		Rscl               any    `json:"rscl"`
 		FreeTrialPrivilege struct {
-			ResConsumable      bool        `json:"resConsumable"`
-			UserConsumable     bool        `json:"userConsumable"`
-			ListenType         interface{} `json:"listenType"`
-			CannotListenReason interface{} `json:"cannotListenReason"`
-			PlayReason         interface{} `json:"playReason"`
+			ResConsumable      bool `json:"resConsumable"`
+			UserConsumable     bool `json:"userConsumable"`
+			ListenType         any  `json:"listenType"`
+			CannotListenReason any  `json:"cannotListenReason"`
+			PlayReason         any  `json:"playReason"`
 		} `json:"freeTrialPrivilege"`
 		RightSource    int `json:"rightSource"`
 		ChargeInfoList []struct {
-			Rate          int         `json:"rate"`
-			ChargeURL     interface{} `json:"chargeUrl"`
-			ChargeMessage interface{} `json:"chargeMessage"`
-			ChargeType    int         `json:"chargeType"`
+			Rate          int `json:"rate"`
+			ChargeURL     any `json:"chargeUrl"`
+			ChargeMessage any `json:"chargeMessage"`
+			ChargeType    int `json:"chargeType"`
 		} `json:"chargeInfoList"`
 	} `json:"privileges"`
 	Code int `json:"code"`
@@ -351,26 +351,26 @@ type MusicDetailSong struct {
 	Pst  int    `json:"pst"`
 	T    int    `json:"t"`
 	Ar   []struct {
-		ID    int           `json:"id"`
-		Name  string        `json:"name"`
-		Tns   []interface{} `json:"tns"`
-		Alias []interface{} `json:"alias"`
+		ID    int    `json:"id"`
+		Name  string `json:"name"`
+		Tns   []any  `json:"tns"`
+		Alias []any  `json:"alias"`
 	} `json:"ar"`
-	Alia []interface{} `json:"alia"`
-	Pop  int           `json:"pop"`
-	St   int           `json:"st"`
-	Rt   string        `json:"rt"`
-	Fee  int           `json:"fee"`
-	V    int           `json:"v"`
-	Crbt interface{}   `json:"crbt"`
-	Cf   string        `json:"cf"`
+	Alia []any  `json:"alia"`
+	Pop  int    `json:"pop"`
+	St   int    `json:"st"`
+	Rt   string `json:"rt"`
+	Fee  int    `json:"fee"`
+	V    int    `json:"v"`
+	Crbt any    `json:"crbt"`
+	Cf   string `json:"cf"`
 	Al   struct {
-		ID     int           `json:"id"`
-		Name   string        `json:"name"`
-		PicURL string        `json:"picUrl"`
-		Tns    []interface{} `json:"tns"`
-		PicStr string        `json:"pic_str"`
-		Pic    int64         `json:"pic"`
+		ID     int    `json:"id"`
+		Name   string `json:"name"`
+		PicURL string `json:"picUrl"`
+		Tns    []any  `json:"tns"`
+		PicStr string `json:"pic_str"`
+		Pic    int64  `json:"pic"`
 	} `json:"al"`
 	Dt int `json:"dt"`
 	H  struct {
@@ -394,34 +394,34 @@ type MusicDetailSong struct {
 		Vd   int `json:"vd"`
 		Sr   int `json:"sr"`
 	} `json:"l"`
-	Sq                   interface{}   `json:"sq"`
-	Hr                   interface{}   `json:"hr"`
-	A                    interface{}   `json:"a"`
-	Cd                   string        `json:"cd"`
-	No                   int           `json:"no"`
-	RtURL                interface{}   `json:"rtUrl"`
-	Ftype                int           `json:"ftype"`
-	RtUrls               []interface{} `json:"rtUrls"`
-	DjID                 int           `json:"djId"`
-	Copyright            int           `json:"copyright"`
-	SID                  int           `json:"s_id"`
-	Mark                 int           `json:"mark"`
-	OriginCoverType      int           `json:"originCoverType"`
-	OriginSongSimpleData interface{}   `json:"originSongSimpleData"`
-	TagPicList           interface{}   `json:"tagPicList"`
-	ResourceState        bool          `json:"resourceState"`
-	Version              int           `json:"version"`
-	SongJumpInfo         interface{}   `json:"songJumpInfo"`
-	EntertainmentTags    interface{}   `json:"entertainmentTags"`
-	AwardTags            interface{}   `json:"awardTags"`
-	Single               int           `json:"single"`
-	NoCopyrightRcmd      interface{}   `json:"noCopyrightRcmd"`
-	Mv                   int           `json:"mv"`
-	Rtype                int           `json:"rtype"`
-	Rurl                 interface{}   `json:"rurl"`
-	Mst                  int           `json:"mst"`
-	Cp                   int           `json:"cp"`
-	PublishTime          int           `json:"publishTime"`
+	Sq                   any    `json:"sq"`
+	Hr                   any    `json:"hr"`
+	A                    any    `json:"a"`
+	Cd                   string `json:"cd"`
+	No                   int    `json:"no"`
+	RtURL                any    `json:"rtUrl"`
+	Ftype                int    `json:"ftype"`
+	RtUrls               []any  `json:"rtUrls"`
+	DjID                 int    `json:"djId"`
+	Copyright            int    `json:"copyright"`
+	SID                  int    `json:"s_id"`
+	Mark                 int    `json:"mark"`
+	OriginCoverType      int    `json:"originCoverType"`
+	OriginSongSimpleData any    `json:"originSongSimpleData"`
+	TagPicList           any    `json:"tagPicList"`
+	ResourceState        bool   `json:"resourceState"`
+	Version              int    `json:"version"`
+	SongJumpInfo         any    `json:"songJumpInfo"`
+	EntertainmentTags    any    `json:"entertainmentTags"`
+	AwardTags            any    `json:"awardTags"`
+	Single               int    `json:"single"`
+	NoCopyrightRcmd      any    `json:"noCopyrightRcmd"`
+	Mv                   int    `json:"mv"`
+	Rtype                int    `json:"rtype"`
+	Rurl                 any    `json:"rurl"`
+	Mst                  int    `json:"mst"`
+	Cp                   int    `json:"cp"`
+	PublishTime          int    `json:"publishTime"`
 }
 
 // NetEaseAPIBaseURL 网易云API基础URL

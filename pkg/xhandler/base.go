@@ -3,6 +3,7 @@ package xhandler
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"sync"
 	"time"
@@ -259,9 +260,7 @@ func (p *Processor[T, K]) Clone() *Processor[T, K] {
 	}
 	if p.features != nil {
 		cloned.features = make(map[string]FeatureInfo, len(p.features))
-		for key, value := range p.features {
-			cloned.features[key] = value
-		}
+		maps.Copy(cloned.features, p.features)
 	}
 
 	return &cloned

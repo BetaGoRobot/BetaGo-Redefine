@@ -68,7 +68,7 @@ func PreGetTextMsg(ctx context.Context, event *larkim.P2MessageReceiveV1) (res *
 }
 
 func GetContentFromTextMsg(s string) string {
-	msgMap := make(map[string]interface{})
+	msgMap := make(map[string]any)
 	err := sonic.UnmarshalString(s, &msgMap)
 	if err != nil {
 		logs.L().Error("repeatMessage", zaplog.Error(err))

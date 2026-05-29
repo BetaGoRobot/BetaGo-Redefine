@@ -34,6 +34,7 @@ const (
 
 	// 开关配置
 	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
+	KeyChunkEnabled             ConfigKey = "chunk_enabled"
 
 	// 字符串配置
 	KeyChatMode            ConfigKey = "chat_mode"
@@ -50,9 +51,9 @@ const (
 
 	// 历史挡板与纠错配置
 	KeyHistoryCutoffTime ConfigKey = "history_cutoff_time"
-	KeyChatCorrections  ConfigKey = "chat_corrections"
-	KeyChatExtraContext ConfigKey = "chat_extra_context"
-	KeyChatPersona      ConfigKey = "chat_persona"
+	KeyChatCorrections   ConfigKey = "chat_corrections"
+	KeyChatExtraContext  ConfigKey = "chat_extra_context"
+	KeyChatPersona       ConfigKey = "chat_persona"
 )
 
 // ConfigScope 配置作用域
@@ -558,6 +559,8 @@ func (m *Manager) getDefaultInt(key ConfigKey) int {
 func (m *Manager) getDefaultBool(key ConfigKey) bool {
 	switch key {
 	case KeyIntentRecognitionEnabled:
+		return true
+	case KeyChunkEnabled:
 		return true
 	default:
 		return false

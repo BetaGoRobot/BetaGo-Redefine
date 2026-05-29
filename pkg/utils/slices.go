@@ -12,10 +12,7 @@ func Chunk[T any](slices []T, size int) [][]T {
 	}
 	var chunks [][]T
 	for i := 0; i < len(slices); i += size {
-		end := i + size
-		if end > len(slices) {
-			end = len(slices)
-		}
+		end := min(i+size, len(slices))
 		chunks = append(chunks, slices[i:end])
 	}
 	return chunks

@@ -30,7 +30,7 @@ type basicUserInfoResp struct {
 	larkcore.CodeError
 	Data struct {
 		Users []*basicUserInfo `json:"users,omitempty"`
-	} `json:"data,omitempty"`
+	} `json:"data"`
 }
 
 type basicUserInfo struct {

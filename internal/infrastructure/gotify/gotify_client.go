@@ -90,7 +90,7 @@ func (s clientSender) SendMessage(ctx context.Context, title, msg string, priori
 		Title:    title,
 		Message:  msg,
 		Priority: priority,
-		Extras: map[string]interface{}{
+		Extras: map[string]any{
 			"client::display": map[string]string{"contentType": "text/markdown"},
 		},
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"unsafe"
 
@@ -107,13 +108,7 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 		t.Fatalf("unified pipeline stage count = %d, want %d; stages=%+v", len(stageTypes), len(expected), stageTypes)
 	}
 	for _, want := range expected {
-		found := false
-		for _, got := range stageTypes {
-			if got == want {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(stageTypes, want)
 		if !found {
 			t.Fatalf("expected stage %q in unified pipeline, got %+v", want, stageTypes)
 		}

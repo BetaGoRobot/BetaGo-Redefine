@@ -5,6 +5,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type fakeStore struct {
@@ -90,6 +93,43 @@ func TestRecorderAllowsNilStore(t *testing.T) {
 		CreatedAt: time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatalf("Record() with nil store error = %v", err)
+	}
+}
+
+func TestRecorderFillsTraceIDFromContextWhenRecordTraceIDEmpty(t *testing.T) {
+	store := &fakeStore{}
+	recorder := NewRecorderWithStore(store)
+	tp := sdktrace.NewTracerProvider()
+	defer func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+	}()
+	tracer := tp.Tracer("llmusage-test")
+	ctx, span := tracer.Start(context.Background(), "record-usage")
+	defer span.End()
+
+	err := recorder.Record(ctx, Record{
+		Scope:     Scope{SourceType: SourceTypeUser, Source: "chat"},
+		Provider:  "ark",
+		Model:     "ep-test",
+		Kind:      KindResponses,
+		Status:    StatusError,
+		Error:     "call failed",
+		CreatedAt: time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if len(store.rows) != 1 {
+		t.Fatalf("row count = %d, want 1", len(store.rows))
+	}
+	wantTraceID := trace.SpanContextFromContext(ctx).TraceID().String()
+	if wantTraceID == "" || wantTraceID == "00000000000000000000000000000000" {
+		t.Fatalf("test generated invalid trace id %q", wantTraceID)
+	}
+	if store.rows[0].TraceID != wantTraceID {
+		t.Fatalf("TraceID = %q, want context trace %q", store.rows[0].TraceID, wantTraceID)
 	}
 }
 

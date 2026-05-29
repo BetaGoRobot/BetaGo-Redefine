@@ -378,7 +378,7 @@ func genHotRate(ctx context.Context, helper *trendInternalHelper, top int) (user
 
 func genWordCount(ctx context.Context, chatID string, st, et time.Time) (wc WordCountType, err error) {
 	// 统计用户发送的
-	tagsToInclude := []interface{}{
+	tagsToInclude := []any{
 		"n", "nr", "ns", "nt", "nz",
 		"v", "vd", "vn",
 		"a", "ad", "an",

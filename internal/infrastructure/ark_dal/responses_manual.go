@@ -11,7 +11,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 	"go.uber.org/zap"
@@ -118,9 +117,9 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		}
 		return &responses.ResponsesRequest{
 			Model:              modelID,
-			PreviousResponseId: gptr.Of(previousResponseID),
+			PreviousResponseId: new(previousResponseID),
 			Input:              input,
-			Store:              gptr.Of(true),
+			Store:              new(true),
 			Tools:              mergedTools,
 			// Text: &responses.ResponsesText{
 			// 	Format: &responses.TextFormat{
@@ -130,9 +129,9 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 			Reasoning: &responses.ResponsesReasoning{
 				Effort: reasoningEffort,
 			},
-			Stream:            gptr.Of(true),
-			ParallelToolCalls: gptr.Of(true),
-			MaxToolCalls:      gptr.Of(int64(10)),
+			Stream:            new(true),
+			ParallelToolCalls: new(true),
+			MaxToolCalls:      new(int64(10)),
 		}, nil
 	}
 
@@ -150,7 +149,7 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 	return &responses.ResponsesRequest{
 		Model: modelID,
 		Input: input,
-		Store: gptr.Of(true),
+		Store: new(true),
 		Tools: mergedTools,
 		// Text: &responses.ResponsesText{
 		// 	Format: &responses.TextFormat{
@@ -160,9 +159,9 @@ func (r *ResponsesImpl[T]) buildTurnRequest(req ResponseTurnRequest) (*responses
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: reasoningEffort,
 		},
-		Stream:            gptr.Of(true),
-		ParallelToolCalls: gptr.Of(true),
-		MaxToolCalls:      gptr.Of(int64(10)),
+		Stream:            new(true),
+		ParallelToolCalls: new(true),
+		MaxToolCalls:      new(int64(10)),
 	}, nil
 }
 

@@ -42,7 +42,7 @@ func (neteaseCtx *NetEaseContext) RefreshLogin(ctx context.Context) error {
 		logs.L().Ctx(ctx).Error("error in request refresh login", zap.Error(err))
 		return err
 	}
-	respMap := make(map[string]interface{})
+	respMap := make(map[string]any)
 	err = sonic.Unmarshal(resp.Body(), &respMap)
 	if err != nil {
 		return err
@@ -79,11 +79,11 @@ func (neteaseCtx *NetEaseContext) GetUniKey(ctx context.Context) (err error) {
 		return
 	}
 	data := resp.Body()
-	respMap := make(map[string]interface{})
+	respMap := make(map[string]any)
 	if err = sonic.Unmarshal(data, &respMap); err != nil {
 		return
 	}
-	neteaseCtx.qrStruct.uniKey = respMap["data"].(map[string]interface{})["unikey"].(string)
+	neteaseCtx.qrStruct.uniKey = respMap["data"].(map[string]any)["unikey"].(string)
 	return
 }
 
@@ -107,11 +107,11 @@ func (neteaseCtx *NetEaseContext) GetQRBase64(ctx context.Context) (err error) {
 		return
 	}
 	data := (resp.Body())
-	respMap := make(map[string]interface{})
+	respMap := make(map[string]any)
 	if err = sonic.Unmarshal(data, &respMap); err != nil {
 		return
 	}
-	neteaseCtx.qrStruct.qrBase64 = respMap["data"].(map[string]interface{})["qrimg"].(string)
+	neteaseCtx.qrStruct.qrBase64 = respMap["data"].(map[string]any)["qrimg"].(string)
 	return
 }
 
@@ -130,7 +130,7 @@ func (neteaseCtx *NetEaseContext) checkQRStatus(ctx context.Context) (err error)
 				return err
 			}
 			data := resp.Body()
-			respMap := make(map[string]interface{})
+			respMap := make(map[string]any)
 			if err = sonic.Unmarshal(data, &respMap); err != nil {
 				return err
 			}

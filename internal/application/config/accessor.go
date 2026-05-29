@@ -98,6 +98,11 @@ func (a *Accessor) IntentRecognitionEnabled() bool {
 	return a.manager.GetBool(a.ctx, KeyIntentRecognitionEnabled, a.chatID, a.openID)
 }
 
+// ChunkEnabled 检查是否启用 chunk。
+func (a *Accessor) ChunkEnabled() bool {
+	return a.manager.GetBool(a.ctx, KeyChunkEnabled, a.chatID, a.openID)
+}
+
 // MusicCardInThread 检查音乐卡片是否默认回帖中发送
 func (a *Accessor) MusicCardInThread() bool {
 	return a.manager.GetBool(a.ctx, KeyMusicCardInThread, a.chatID, a.openID)
@@ -189,6 +194,10 @@ func GetIntentReplyThreshold(ctx context.Context, chatID, openID string) int {
 // IsIntentRecognitionEnabled 检查是否启用意图识别
 func IsIntentRecognitionEnabled(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyIntentRecognitionEnabled, chatID, openID)
+}
+
+func IsChunkEnabled(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyChunkEnabled, chatID, openID)
 }
 
 func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {

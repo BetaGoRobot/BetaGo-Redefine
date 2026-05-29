@@ -59,7 +59,9 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 	}
 
 	go utils.AddTrace2DB(ctx, *resp.Data.MessageId)
-	defer larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageRespReply{resp})
+	defer func() {
+		_ = larkchunking.SubmitMessage(ctx, &larkchunking.LarkMessageRespReply{resp})
+	}()
 	var content string
 	if len(contents) > 0 {
 		content = strings.Join(contents, "\n")
@@ -156,7 +158,9 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 		return
 	}
 	go utils.AddTrace2DB(ctx, *resp.Data.MessageId)
-	defer larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageRespCreate{resp})
+	defer func() {
+		_ = larkchunking.SubmitMessage(ctx, &larkchunking.LarkMessageRespCreate{resp})
+	}()
 
 	var content string
 	if len(contents) > 0 {

@@ -307,27 +307,28 @@ func (queryYearHolidaysHandler) Handle(ctx context.Context, data *larkim.P2Messa
 	}
 
 	// 构建结果
-	result := fmt.Sprintf("📅 %s年节假日安排\n\n", year)
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("📅 %s年节假日安排\n\n", year))
 
 	count := 0
 	holidaySorted := utils.SortMapToSlice(info.Holiday)
 	for _, holiday := range holidaySorted {
 		if holiday.Holiday {
 			count++
-			result += fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, holiday.Date)
+			result.WriteString(fmt.Sprintf("%d. **%s** - %s\n", count, holiday.Name, holiday.Date))
 			if holiday.Wage > 1 {
-				result += fmt.Sprintf("   薪资倍数: %d倍\n", holiday.Wage)
+				result.WriteString(fmt.Sprintf("   薪资倍数: %d倍\n", holiday.Wage))
 			}
 		}
 	}
 
 	if count == 0 {
-		result += "暂无节假日数据\n"
+		result.WriteString("暂无节假日数据\n")
 	} else {
-		result += fmt.Sprintf("\n共 %d 个节假日\n", count)
+		result.WriteString(fmt.Sprintf("\n共 %d 个节假日\n", count))
 	}
 
-	metaData.SetExtra(holidayToolResultKey, result)
+	metaData.SetExtra(holidayToolResultKey, result.String())
 	return nil
 }
 
@@ -420,7 +421,8 @@ func (batchQueryHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 	}
 
 	// 构建结果
-	result := fmt.Sprintf("📅 批量查询结果（共 %d 个日期）\n\n", len(results))
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("📅 批量查询结果（共 %d 个日期）\n\n", len(results)))
 
 	count := 0
 	for date, info := range results {
@@ -432,14 +434,14 @@ func (batchQueryHandler) Handle(ctx context.Context, data *larkim.P2MessageRecei
 			dateType = "节假日"
 		}
 
-		result += fmt.Sprintf("%d. %s - %s", count, date, dateType)
+		result.WriteString(fmt.Sprintf("%d. %s - %s", count, date, dateType))
 		if info.Holiday != nil && info.Holiday.Holiday {
-			result += fmt.Sprintf(" (%s)", info.Holiday.Name)
+			result.WriteString(fmt.Sprintf(" (%s)", info.Holiday.Name))
 		}
-		result += "\n"
+		result.WriteString("\n")
 	}
 
-	metaData.SetExtra(holidayToolResultKey, result)
+	metaData.SetExtra(holidayToolResultKey, result.String())
 	return nil
 }
 

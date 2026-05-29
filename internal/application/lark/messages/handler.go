@@ -76,7 +76,7 @@ func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[
 				} else if privateModeEnabled {
 					return
 				}
-				larkchunking.M.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
+				_ = larkchunking.SubmitMessage(ctx, &larkchunking.LarkMessageEvent{P2MessageReceiveV1: event})
 			}
 		}).
 		WithFeatureChecker(cfgManager.FeatureCheckFunc()).

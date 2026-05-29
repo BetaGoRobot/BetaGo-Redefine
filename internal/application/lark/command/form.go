@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,13 +123,9 @@ func BuildCommandFormRawCommand(root *xcommand.Command[*larkim.P2MessageReceiveV
 	}
 
 	argValues := make(map[string]string, len(state.ArgValues))
-	for key, value := range state.ArgValues {
-		argValues[key] = value
-	}
+	maps.Copy(argValues, state.ArgValues)
 	argPresent := make(map[string]bool, len(state.ArgPresent))
-	for key, value := range state.ArgPresent {
-		argPresent[key] = value
-	}
+	maps.Copy(argPresent, state.ArgPresent)
 	inputValue := state.InputValue
 
 	for _, spec := range state.ArgSpecs {
@@ -544,12 +542,7 @@ func markdownInlineCode(value string) string {
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func parseBoolSelection(value string) bool {

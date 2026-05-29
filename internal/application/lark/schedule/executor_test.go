@@ -40,6 +40,14 @@ func TestToolExecutorRejectsTaskFromAnotherBot(t *testing.T) {
 }
 
 func TestToolExecutorExecutesOwnedTask(t *testing.T) {
+	originalChatMode := scheduledTaskChatMode
+	t.Cleanup(func() {
+		scheduledTaskChatMode = originalChatMode
+	})
+	scheduledTaskChatMode = func(context.Context, string) string {
+		return "group"
+	}
+
 	tools := toolkit.New[larkim.P2MessageReceiveV1]()
 	called := false
 	tools.Add(
@@ -88,7 +96,31 @@ func TestToolExecutorExecutesOwnedTask(t *testing.T) {
 }
 
 func TestBuildScheduledTaskEventReturnsNilWithoutMessageAndChat(t *testing.T) {
-	if got := buildScheduledTaskEvent(&model.ScheduledTask{}); got != nil {
+	if got := buildScheduledTaskEvent(context.Background(), &model.ScheduledTask{}); got != nil {
 		t.Fatalf("expected nil event, got %+v", got)
+	}
+}
+
+func TestBuildScheduledTaskEventOmitsSourceMessageForTopicChat(t *testing.T) {
+	originalChatMode := scheduledTaskChatMode
+	t.Cleanup(func() {
+		scheduledTaskChatMode = originalChatMode
+	})
+	scheduledTaskChatMode = func(context.Context, string) string {
+		return "topic"
+	}
+
+	task := model.NewScheduledTask("test", model.ScheduleTaskTypeOnce, "oc_topic", "user-1", "mock", `{}`, model.ScheduleTaskDefaultTimezone, "app-self", "bot-self")
+	task.SourceMessageID = "om_source"
+
+	event := buildScheduledTaskEvent(context.Background(), task)
+	if event == nil || event.Event == nil || event.Event.Message == nil {
+		t.Fatalf("expected event with message shell, got %+v", event)
+	}
+	if event.Event.Message.ChatId == nil || *event.Event.Message.ChatId != "oc_topic" {
+		t.Fatalf("chat id = %+v, want oc_topic", event.Event.Message.ChatId)
+	}
+	if event.Event.Message.MessageId != nil {
+		t.Fatalf("topic chat scheduled event should not carry source message id, got %q", *event.Event.Message.MessageId)
 	}
 }

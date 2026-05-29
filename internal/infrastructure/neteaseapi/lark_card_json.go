@@ -12,7 +12,6 @@ import (
 	cardaction "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/bytedance/gg/gptr"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -83,7 +82,7 @@ func withMusicListBaseVars(ctx context.Context, vars *larktpl.MusicListCardVars)
 	}
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil && next.RawCmd == nil {
 		if raw, ok := srcCmd.(string); ok {
-			next.RawCmd = gptr.Of(raw)
+			next.RawCmd = new(raw)
 			next.RefreshObj = &larktpl.RefreshObj{Action: cardaction.ActionCommandRefresh, Command: raw}
 		}
 	}

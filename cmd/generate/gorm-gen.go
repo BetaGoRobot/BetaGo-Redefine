@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	tables := make([]interface{}, 0, len(tableNames))
+	tables := make([]any, 0, len(tableNames))
 	for _, tableName := range tableNames {
 		switch tableName {
 		case "permission_grants":

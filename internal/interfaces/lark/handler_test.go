@@ -412,7 +412,7 @@ func newMessageEvent(messageID string) *larkim.P2MessageReceiveV1 {
 			},
 			Message: &larkim.EventMessage{
 				MessageId:  &messageID,
-				ChatId:     strPtr("oc_test_chat"),
+				ChatId:     new("oc_test_chat"),
 				ChatType:   &chatType,
 				CreateTime: &createTime,
 			},
@@ -458,6 +458,7 @@ func assertValidTraceID(t *testing.T, traceID oteltrace.TraceID, label string) {
 	}
 }
 
+//go:fix inline
 func strPtr(value string) *string {
-	return &value
+	return new(value)
 }

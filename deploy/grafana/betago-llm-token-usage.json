@@ -44,7 +44,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sum(increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))",
+                      "expr": "sum(increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__range]))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "total tokens",
@@ -136,7 +136,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sum(increase(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))",
+                      "expr": "sum(increase(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__range]))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "requests",
@@ -220,7 +220,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sum(increase(betago_llm_requests_total{status=\"error\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))",
+                      "expr": "sum(increase(betago_llm_requests_total{status=\"error\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__range]))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "errors",
@@ -308,7 +308,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sum(increase(betago_llm_requests_total{status=\"usage_missing\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))",
+                      "expr": "sum(increase(betago_llm_requests_total{status=\"usage_missing\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__range]))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "usage missing",
@@ -395,7 +395,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "sum by(token_type) (rate(betago_llm_token_usage_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__rate_interval]))",
+                      "expr": "sum by(token_type) (rate(betago_llm_token_usage_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__rate_interval]))",
                       "format": "time_series",
                       "legendFormat": "{{token_type}}",
                       "range": true
@@ -517,7 +517,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "sum by(status) (rate(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__rate_interval]))",
+                      "expr": "sum by(status) (rate(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__rate_interval]))",
                       "format": "time_series",
                       "legendFormat": "{{status}}",
                       "range": true
@@ -640,7 +640,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sort_desc(sum by(model) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range])))",
+                      "expr": "sort_desc(sum by(model) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__range])))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "{{model}}",
@@ -678,7 +678,14 @@
                     }
                   ]
                 },
-                "unit": "short"
+                "unit": "short",
+                "links": [
+                  {
+                    "title": "下钻到该 Model",
+                    "url": "?${__url.params}&var-model=${__field.labels.model}",
+                    "targetBlank": false
+                  }
+                ]
               },
               "overrides": []
             },
@@ -731,7 +738,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "sort_desc(sum by(source_type, source) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range])))",
+                      "expr": "sort_desc(sum by(source_type, source) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__range])))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "{{source_type}} / {{source}}",
@@ -769,7 +776,14 @@
                     }
                   ]
                 },
-                "unit": "short"
+                "unit": "short",
+                "links": [
+                  {
+                    "title": "下钻到该 Source",
+                    "url": "?${__url.params}&var-source_type=${__field.labels.source_type}&var-source=${__field.labels.source}",
+                    "targetBlank": false
+                  }
+                ]
               },
               "overrides": []
             },
@@ -822,7 +836,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "topk(20, sort_desc(sum by(chat_name, chat_id) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))))",
+                      "expr": "topk(20, sort_desc(sum by(chat_name, chat_id) (increase(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__range]))))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "{{chat_name}} / {{chat_id}}",
@@ -860,7 +874,14 @@
                     }
                   ]
                 },
-                "unit": "short"
+                "unit": "short",
+                "links": [
+                  {
+                    "title": "下钻到该 Chat",
+                    "url": "?${__url.params}&var-chat_name=${__field.labels.chat_name}&var-chat_id=${__field.labels.chat_id}",
+                    "targetBlank": false
+                  }
+                ]
               },
               "overrides": []
             },
@@ -913,7 +934,7 @@
                     "spec": {
                       "editorMode": "code",
                       "exemplar": false,
-                      "expr": "topk(20, sort_desc(sum by(user_name, open_id) (increase(betago_llm_token_usage_total{token_type=\"total\",source_type=\"user\",model=~\"$model\",kind=~\"$kind\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__range]))))",
+                      "expr": "topk(20, sort_desc(sum by(user_name, open_id) (increase(betago_llm_token_usage_total{token_type=\"total\",source_type=\"user\",model=~\"$model\",kind=~\"$kind\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__range]))))",
                       "format": "time_series",
                       "instant": true,
                       "legendFormat": "{{user_name}} / {{open_id}}",
@@ -951,7 +972,14 @@
                     }
                   ]
                 },
-                "unit": "short"
+                "unit": "short",
+                "links": [
+                  {
+                    "title": "下钻到该 User",
+                    "url": "?${__url.params}&var-user_name=${__field.labels.user_name}&var-open_id=${__field.labels.open_id}",
+                    "targetBlank": false
+                  }
+                ]
               },
               "overrides": []
             },
@@ -1003,7 +1031,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "sum by(model, kind) (rate(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__rate_interval]))",
+                      "expr": "sum by(model, kind) (rate(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__rate_interval]))",
                       "format": "time_series",
                       "legendFormat": "{{model}} / {{kind}}",
                       "range": true
@@ -1125,7 +1153,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "sum by(status, model, source) (rate(betago_llm_requests_total{status!=\"success\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}[$__rate_interval]))",
+                      "expr": "sum by(status, model, source) (rate(betago_llm_requests_total{status!=\"success\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__rate_interval]))",
                       "format": "time_series",
                       "legendFormat": "{{status}} / {{model}} / {{source}}",
                       "range": true
@@ -1196,7 +1224,258 @@
                     }
                   ]
                 },
+                "unit": "reqps",
+                "links": [
+                  {
+                    "title": "下钻到该异常来源",
+                    "url": "?${__url.params}&var-status=${__field.labels.status}&var-model=${__field.labels.model}&var-source=${__field.labels.source}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              "overrides": []
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.1"
+        }
+      }
+    },
+    "panel-13": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum by(model, source, status) (rate(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__rate_interval]))",
+                      "format": "time_series",
+                      "legendFormat": "{{model}} / {{source}} / {{status}}",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "按 model/source/status 拆分的 LLM 请求速率，用于和 Token 速率同时间轴对齐",
+        "id": 13,
+        "links": [],
+        "title": "模型/来源 QPS",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "req/s",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "showValues": false,
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
                 "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.1"
+        }
+      }
+    },
+    "panel-14": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum by(model, source) (rate(betago_llm_token_usage_total{token_type=\"total\",model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}[$__rate_interval])) / clamp_min(sum by(model, source) (rate(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\",status=~\"$status\"}[$__rate_interval])), 0.001)",
+                      "format": "time_series",
+                      "legendFormat": "{{model}} / {{source}}",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "total token/s 除以 request/s，按 model/source 拆分；用于判断是 QPS 高还是单次请求变重",
+        "id": 14,
+        "links": [],
+        "title": "每请求 Token",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "tokens/request",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "showValues": false,
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "short"
               },
               "overrides": []
             },
@@ -1458,6 +1737,46 @@
             },
             "title": "细分趋势"
           }
+        },
+        {
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-13"
+                      },
+                      "height": 9,
+                      "width": 12,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-14"
+                      },
+                      "height": 9,
+                      "width": 12,
+                      "x": 12,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "QPS 关联"
+          }
         }
       ]
     }
@@ -1639,6 +1958,130 @@
           "kind": "DataQuery",
           "spec": {
             "__legacyStringValue": "label_values(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\"}, chat_name)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        },
+        "description": "Chat ID for drilldown",
+        "hide": "dontHide",
+        "includeAll": true,
+        "label": "Chat ID",
+        "multi": true,
+        "name": "chat_id",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\"}, chat_id)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        },
+        "description": "User name for drilldown",
+        "hide": "dontHide",
+        "includeAll": true,
+        "label": "User",
+        "multi": true,
+        "name": "user_name",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\"}, user_name)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        },
+        "description": "Open ID for drilldown",
+        "hide": "dontHide",
+        "includeAll": true,
+        "label": "Open ID",
+        "multi": true,
+        "name": "open_id",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\"}, open_id)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        },
+        "description": "LLM request status",
+        "hide": "dontHide",
+        "includeAll": true,
+        "label": "Status",
+        "multi": true,
+        "name": "status",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(betago_llm_requests_total{model=~\"$model\",kind=~\"$kind\",source_type=~\"$source_type\",source=~\"$source\",chat_name=~\"$chat_name\",chat_id=~\"$chat_id\",user_name=~\"$user_name\",open_id=~\"$open_id\"}, status)"
           },
           "version": "v0"
         },

@@ -13,18 +13,18 @@ const (
 
 // RespBody  一言返回体
 type RespBody struct {
-	ID         int         `json:"id"`
-	UUID       string      `json:"uuid"`
-	Hitokoto   string      `json:"hitokoto"`
-	Type       string      `json:"type"`
-	From       string      `json:"from"`
-	FromWho    interface{} `json:"from_who"`
-	Creator    string      `json:"creator"`
-	CreatorUID int         `json:"creator_uid"`
-	Reviewer   int         `json:"reviewer"`
-	CommitFrom string      `json:"commit_from"`
-	CreatedAt  string      `json:"created_at"`
-	Length     int         `json:"length"`
+	ID         int    `json:"id"`
+	UUID       string `json:"uuid"`
+	Hitokoto   string `json:"hitokoto"`
+	Type       string `json:"type"`
+	From       string `json:"from"`
+	FromWho    any    `json:"from_who"`
+	Creator    string `json:"creator"`
+	CreatorUID int    `json:"creator_uid"`
+	Reviewer   int    `json:"reviewer"`
+	CommitFrom string `json:"commit_from"`
+	CreatedAt  string `json:"created_at"`
+	Length     int    `json:"length"`
 }
 
 // GetHitokoto 获取一言

@@ -66,10 +66,5 @@ func LookupPointDefinition(point string) (PointDefinition, bool) {
 }
 
 func SupportsScope(def PointDefinition, scope string) bool {
-	for _, item := range def.SupportedScopes {
-		if item == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(def.SupportedScopes, scope)
 }

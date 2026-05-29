@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
-	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
@@ -142,7 +141,7 @@ func testResponseFunctionTool(name string) *responses.ResponsesTool {
 			ToolFunction: &responses.ToolFunction{
 				Name:        name,
 				Type:        responses.ToolType_function,
-				Description: gptr.Of("dynamic tool"),
+				Description: new("dynamic tool"),
 				Parameters:  &responses.Bytes{Value: []byte(`{"type":"object","properties":{}}`)},
 			},
 		},

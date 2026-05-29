@@ -360,7 +360,7 @@ func splitTags(input string) []string {
 		return nil
 	}
 	tags := make([]string, 0)
-	for _, tag := range strings.Split(input, ",") {
+	for tag := range strings.SplitSeq(input, ",") {
 		if t := strings.TrimSpace(tag); t != "" {
 			tags = append(tags, t)
 		}

@@ -142,18 +142,14 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 		return asyncErr
 	}
 	dispatchContentUpdate := func(update streamingContentUpdate) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			recordAsyncErr(streamingUpdateCardContent(ctx, update))
-		}()
+		})
 	}
 	dispatchSettingsUpdate := func(update streamingSettingsUpdate) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			recordAsyncErr(streamingSetCardStreaming(ctx, update))
-		}()
+		})
 	}
 
 	for data := range msgSeq {
@@ -255,10 +251,7 @@ func buildStreamingReplyCard(content string) (RawCard, error) {
 }
 
 func newStreamingSequence() func() int {
-	seq := int(time.Now().Unix() % 2000000000)
-	if seq < 1 {
-		seq = 1
-	}
+	seq := max(int(time.Now().Unix()%2000000000), 1)
 	return func() int {
 		seq++
 		return seq

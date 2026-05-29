@@ -54,7 +54,10 @@ func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 		return err
 	}
 
-	return skipIfCommand(ctx, r.Name(), event)
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
+	}
+	return skipIfChatModerated(ctx, r.Name(), event, meta)
 }
 
 // Run  Repeat

@@ -21,8 +21,8 @@ func TestChatMembersHandlerUsesCurrentChatScope(t *testing.T) {
 	chatMembersLoader = func(ctx context.Context, chatID string) (map[string]*larkim.ListMember, error) {
 		capturedChatID = chatID
 		return map[string]*larkim.ListMember{
-			"ou_a": {MemberId: memberToolsStrPtr("ou_a"), Name: memberToolsStrPtr("Alice")},
-			"ou_b": {MemberId: memberToolsStrPtr("ou_b"), Name: memberToolsStrPtr("Bob")},
+			"ou_a": {MemberId: new("ou_a"), Name: new("Alice")},
+			"ou_b": {MemberId: new("ou_b"), Name: new("Bob")},
 		}, nil
 	}
 
@@ -129,4 +129,5 @@ func TestRecentActiveMembersHandlerRejectsEmptyChatID(t *testing.T) {
 
 var _ = larkuser.GetUserMapFromChatIDCache
 
-func memberToolsStrPtr(v string) *string { return &v }
+//go:fix inline
+func memberToolsStrPtr(v string) *string { return new(v) }

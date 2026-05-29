@@ -1,7 +1,6 @@
 package ark_dal
 
 import (
-	"github.com/bytedance/gg/gptr"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
@@ -60,7 +59,7 @@ func buildImageInputMessages(files ...string) []*responses.InputItem {
 							Union: &responses.ContentItem_Image{
 								Image: &responses.ContentItemImage{
 									Type:     responses.ContentItemType_input_image,
-									ImageUrl: gptr.Of(file),
+									ImageUrl: new(file),
 								},
 							},
 						},

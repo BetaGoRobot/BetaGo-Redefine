@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/runtimecontext"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -24,8 +26,19 @@ type sendMessageHandler struct {
 }
 
 var (
-	SendMessage          = sendMessageHandler{allowTargetChatOverride: true}
-	ScheduledSendMessage = sendMessageHandler{allowTargetChatOverride: false}
+	SendMessage           = sendMessageHandler{allowTargetChatOverride: true}
+	ScheduledSendMessage  = sendMessageHandler{allowTargetChatOverride: false}
+	sendMessageReplyText  = larkmsg.ReplyMsgText
+	sendMessageCreateText = func(ctx context.Context, content, msgID, chatID string) error {
+		return larkmsg.CreateMsgTextRaw(ctx, content, msgID, chatID)
+	}
+	sendMessageChatMode = func(ctx context.Context, chatID string) string {
+		chat, err := larkchat.GetChatInfoCache(ctx, chatID)
+		if err != nil || chat == nil || chat.ChatMode == nil {
+			return ""
+		}
+		return *chat.ChatMode
+	}
 )
 
 func (sendMessageHandler) ParseTool(raw string) (SendMessageArgs, error) {
@@ -79,9 +92,9 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		content = normalized
 	}
 
-	if !h.allowTargetChatOverride {
+	if !h.allowTargetChatOverride && shouldScheduledSendMessageReply(ctx, data, targetChatID) {
 		if msgID := currentMessageID(data); msgID != "" {
-			if resp, err := larkmsg.ReplyMsgText(ctx, content, msgID, "_sendMessage", false); err == nil && resp.Success() {
+			if resp, err := sendMessageReplyText(ctx, content, msgID, "_sendMessage", false); err == nil && resp.Success() {
 				if metaData != nil {
 					metaData.SetLastReplyRef(msgID, "text")
 				}
@@ -92,11 +105,26 @@ func (h sendMessageHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 		}
 	}
 
-	if err := larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), "", targetChatID); err != nil {
+	if err := sendMessageCreateText(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), "", targetChatID); err != nil {
 		return err
 	}
 	metaData.SetExtra("send_message_result", "消息发送成功")
 	return nil
+}
+
+func shouldScheduledSendMessageReply(ctx context.Context, data *larkim.P2MessageReceiveV1, chatID string) bool {
+	if data != nil && data.Event != nil && data.Event.Message != nil && data.Event.Message.ChatType != nil {
+		if strings.EqualFold(strings.TrimSpace(*data.Event.Message.ChatType), "topic_group") {
+			return false
+		}
+	}
+	if strings.TrimSpace(chatID) != "" {
+		mode := strings.TrimSpace(sendMessageChatMode(ctx, chatID))
+		if mode == "" || strings.EqualFold(mode, "topic") {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveSendMessageApprovalSummary(arg SendMessageArgs) string {

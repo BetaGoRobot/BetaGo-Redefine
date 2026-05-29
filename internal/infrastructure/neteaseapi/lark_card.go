@@ -337,11 +337,9 @@ func (r *musicListCardRenderer) streamCurrentPage(ctx context.Context, send Musi
 		if err := streamGuard.EnsureActive(ctx); err != nil {
 			return messageID, err
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			recordAsyncErr(patch(ctx, messageID, card, nextSequence))
-		}()
+		})
 		return messageID, nil
 	})
 	if err != nil {
@@ -368,7 +366,6 @@ func (r *musicListCardRenderer) streamCurrentPageVars(ctx context.Context, strea
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
-		state := state
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
 				return err
@@ -444,7 +441,6 @@ func (r *musicListCardRenderer) resolveCurrentPage(ctx context.Context) {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for _, state := range pageStates {
-		state := state
 		group.Go(func() error {
 			r.resolveLine(groupCtx, state, nil)
 			return nil
@@ -682,7 +678,6 @@ func collectMusicItems[T any](ctx context.Context, resList []*T, transFunc music
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(musicListResolveConcurrency)
 	for idx, item := range resList {
-		idx, item := idx, item
 		group.Go(func() error {
 			items[idx] = transFunc(groupCtx, item)
 			return nil

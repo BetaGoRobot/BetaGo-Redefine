@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -169,13 +170,7 @@ func (s *Service) UpdateTodo(ctx context.Context, req *UpdateTodoRequest) (*todo
 	if len(req.RemoveTags) > 0 {
 		newTags := make([]string, 0)
 		for _, tag := range t.Tags {
-			keep := true
-			for _, rt := range req.RemoveTags {
-				if tag == rt {
-					keep = false
-					break
-				}
-			}
+			keep := !slices.Contains(req.RemoveTags, tag)
 			if keep {
 				newTags = append(newTags, tag)
 			}

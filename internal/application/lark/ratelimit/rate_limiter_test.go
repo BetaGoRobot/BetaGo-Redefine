@@ -98,7 +98,7 @@ func TestSmartRateLimiter_HourlyLimit(t *testing.T) {
 	chatID := "test_chat_hourly"
 
 	// 发送 2 条消息（达到小时限制）
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		time.Sleep(150 * time.Millisecond)
 		allowed, reason := limiter.Allow(ctx, chatID, TriggerTypeIntent)
 		if !allowed {
@@ -286,7 +286,7 @@ func TestMentionContributesSoftLoadButNotHardBudget(t *testing.T) {
 		t.Fatalf("single mention should not consume hard passive budget: %s", reason)
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		limiter.Record(ctx, chatID, TriggerTypeMention)
 	}
 	allowed, reason = limiter.Allow(ctx, chatID, TriggerTypeIntent)

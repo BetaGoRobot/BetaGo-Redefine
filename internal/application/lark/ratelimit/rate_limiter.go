@@ -130,7 +130,7 @@ type Config struct {
 // DefaultConfig 默认配置
 func DefaultConfig() *Config {
 	hourlyWeights := [24]float64{}
-	for h := 0; h < 24; h++ {
+	for h := range 24 {
 		switch {
 		case h >= 9 && h <= 18:
 			hourlyWeights[h] = 0.8
@@ -165,7 +165,7 @@ func ConfigFromRateLimitConfig(cfg *infraConfig.RateLimitConfig) *Config {
 	}
 
 	hourlyWeights := [24]float64{}
-	for h := 0; h < 24; h++ {
+	for h := range 24 {
 		switch {
 		case h >= 9 && h <= 18:
 			hourlyWeights[h] = 0.8
@@ -540,7 +540,7 @@ func (s *SmartRateLimiter) getHourlyActivity(ctx context.Context, chatID string)
 	key := hourlyActivityRedisKey(chatID)
 	var hourly [24]HourlyStats
 
-	for h := 0; h < 24; h++ {
+	for h := range 24 {
 		hourly[h] = HourlyStats{Hour: h}
 	}
 
@@ -697,20 +697,6 @@ func (s *SmartRateLimiter) Allow(ctx context.Context, chatID string, triggerType
 	return true, "允许发送"
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func minDuration(a, b time.Duration) time.Duration {
 	if a < b {
 		return a
@@ -771,7 +757,7 @@ func (s *SmartRateLimiter) calculateActivityScore(hourly [24]HourlyStats, now ti
 	}
 
 	total := int64(0)
-	for h := 0; h < 24; h++ {
+	for h := range 24 {
 		total += hourly[h].MessageCount
 	}
 	if total == 0 {

@@ -141,27 +141,27 @@ func ErrorToast(message string) *callback.CardActionTriggerResponse {
 	return toast("error", message)
 }
 
-func InfoToastWithCard(message string, cardData interface{}) *callback.CardActionTriggerResponse {
+func InfoToastWithCard(message string, cardData any) *callback.CardActionTriggerResponse {
 	return toastWithCard("info", message, cardData)
 }
 
-func ErrorToastWithCard(message string, cardData interface{}) *callback.CardActionTriggerResponse {
+func ErrorToastWithCard(message string, cardData any) *callback.CardActionTriggerResponse {
 	return toastWithCard("error", message, cardData)
 }
 
-func InfoToastWithRawCardPayload(message string, cardData interface{}) *callback.CardActionTriggerResponse {
+func InfoToastWithRawCardPayload(message string, cardData any) *callback.CardActionTriggerResponse {
 	// Callback responses only support raw/template card types. The payload itself
 	// can still be Card JSON v2 content, so we return it as a raw card body.
 	return toastWithCardType("info", message, "raw", cardData)
 }
 
-func ErrorToastWithRawCardPayload(message string, cardData interface{}) *callback.CardActionTriggerResponse {
+func ErrorToastWithRawCardPayload(message string, cardData any) *callback.CardActionTriggerResponse {
 	// Callback responses only support raw/template card types. The payload itself
 	// can still be Card JSON v2 content, so we return it as a raw card body.
 	return toastWithCardType("error", message, "raw", cardData)
 }
 
-func CardOnly(cardData interface{}) *callback.CardActionTriggerResponse {
+func CardOnly(cardData any) *callback.CardActionTriggerResponse {
 	return &callback.CardActionTriggerResponse{
 		Card: &callback.Card{
 			Type: "raw",
@@ -170,7 +170,7 @@ func CardOnly(cardData interface{}) *callback.CardActionTriggerResponse {
 	}
 }
 
-func RawCardPayloadOnly(cardData interface{}) *callback.CardActionTriggerResponse {
+func RawCardPayloadOnly(cardData any) *callback.CardActionTriggerResponse {
 	return &callback.CardActionTriggerResponse{
 		Card: &callback.Card{
 			// Callback responses only support raw/template card types.
@@ -189,11 +189,11 @@ func toast(kind, message string) *callback.CardActionTriggerResponse {
 	}
 }
 
-func toastWithCard(kind, message string, cardData interface{}) *callback.CardActionTriggerResponse {
+func toastWithCard(kind, message string, cardData any) *callback.CardActionTriggerResponse {
 	return toastWithCardType(kind, message, "raw", cardData)
 }
 
-func toastWithCardType(kind, message, cardType string, cardData interface{}) *callback.CardActionTriggerResponse {
+func toastWithCardType(kind, message, cardType string, cardData any) *callback.CardActionTriggerResponse {
 	resp := toast(kind, message)
 	resp.Card = &callback.Card{
 		Type: cardType,

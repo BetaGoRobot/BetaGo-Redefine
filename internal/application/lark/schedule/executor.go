@@ -8,13 +8,21 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
-	"github.com/bytedance/gg/gptr"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 type ToolExecutor struct {
 	tools    *toolkit.Impl[larkim.P2MessageReceiveV1]
 	identity botidentity.Identity
+}
+
+var scheduledTaskChatMode = func(ctx context.Context, chatID string) string {
+	chat, err := larkchat.GetChatInfoCache(ctx, chatID)
+	if err != nil || chat == nil || chat.ChatMode == nil {
+		return ""
+	}
+	return *chat.ChatMode
 }
 
 func NewToolExecutor(tools *toolkit.Impl[larkim.P2MessageReceiveV1], identity botidentity.Identity) *ToolExecutor {
@@ -58,7 +66,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, task *model.ScheduledTask) (
 	result := unit.Function(ctx, task.ToolArgs, toolkit.FCMeta[larkim.P2MessageReceiveV1]{
 		ChatID: task.ChatID,
 		OpenID: task.CreatorID,
-		Data:   buildScheduledTaskEvent(task),
+		Data:   buildScheduledTaskEvent(ctx, task),
 	})
 	if result.IsErr() {
 		return "", result.Err()
@@ -66,7 +74,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, task *model.ScheduledTask) (
 	return result.Value(), nil
 }
 
-func buildScheduledTaskEvent(task *model.ScheduledTask) *larkim.P2MessageReceiveV1 {
+func buildScheduledTaskEvent(ctx context.Context, task *model.ScheduledTask) *larkim.P2MessageReceiveV1 {
 	if task == nil {
 		return nil
 	}
@@ -82,11 +90,22 @@ func buildScheduledTaskEvent(task *model.ScheduledTask) *larkim.P2MessageReceive
 			Message: &larkim.EventMessage{},
 		},
 	}
-	if sourceMessageID != "" {
-		event.Event.Message.MessageId = gptr.Of(sourceMessageID)
+	if sourceMessageID != "" && shouldAttachSourceMessage(ctx, chatID) {
+		event.Event.Message.MessageId = new(sourceMessageID)
 	}
 	if chatID != "" {
-		event.Event.Message.ChatId = gptr.Of(chatID)
+		event.Event.Message.ChatId = new(chatID)
 	}
 	return event
+}
+
+func shouldAttachSourceMessage(ctx context.Context, chatID string) bool {
+	if strings.TrimSpace(chatID) == "" {
+		return true
+	}
+	mode := strings.TrimSpace(scheduledTaskChatMode(ctx, chatID))
+	if mode == "" {
+		return false
+	}
+	return !strings.EqualFold(mode, "topic")
 }

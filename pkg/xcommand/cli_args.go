@@ -63,8 +63,7 @@ func describeCLIArgs[TArgs any](handler any) []CommandArg {
 	}
 
 	args := make([]CommandArg, 0, argType.NumField())
-	for i := range argType.NumField() {
-		field := argType.Field(i)
+	for field := range argType.Fields() {
 		if !field.IsExported() {
 			continue
 		}
@@ -159,8 +158,8 @@ func tagName(tag string) string {
 	if tag == "" || tag == "-" {
 		return ""
 	}
-	if idx := strings.IndexByte(tag, ','); idx >= 0 {
-		return tag[:idx]
+	if before, _, ok := strings.Cut(tag, ","); ok {
+		return before
 	}
 	return tag
 }

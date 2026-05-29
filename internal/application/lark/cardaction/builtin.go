@@ -3,6 +3,7 @@ package cardaction
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -249,9 +250,7 @@ func handleCommandSubmitForm(ctx context.Context, actionCtx *Context) (AsyncTask
 		return nil, err
 	}
 	formValues := make(map[string]any, len(actionCtx.Action.FormValue))
-	for key, value := range actionCtx.Action.FormValue {
-		formValues[key] = value
-	}
+	maps.Copy(formValues, actionCtx.Action.FormValue)
 	nextCommand, err := commandapp.BuildCommandFormRawCommand(commandapp.LarkRootCommand, rawCommand, formValues)
 	if err != nil {
 		return nil, err

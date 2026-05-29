@@ -261,10 +261,11 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\".*Operator\"}[$__rate_interval])))",
+                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"ops.*Operator.Run\"}[$__rate_interval])))",
                       "legendFormat": "{{span_name}}",
                       "format": "time_series",
-                      "range": true
+                      "range": true,
+                      "instant": false
                     },
                     "version": "v0"
                   },
@@ -383,10 +384,11 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\".*Operator\"}[$__rate_interval])))",
+                      "expr": "sort_desc(histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"ops.*Operator.Run\"}[$__rate_interval]))))",
                       "legendFormat": "{{span_name}}",
                       "format": "time_series",
-                      "range": true
+                      "range": true,
+                      "instant": true
                     },
                     "version": "v0"
                   },
@@ -444,7 +446,7 @@
                 "fields": "",
                 "values": false
               },
-              "showPercentChange": false,
+              "showPercentChange": true,
               "textMode": "auto",
               "wideLayout": true
             },
@@ -453,7 +455,7 @@
         }
       }
     },
-    "panel-7": {
+    "panel-8": {
       "kind": "Panel",
       "spec": {
         "data": {
@@ -472,10 +474,11 @@
                     "kind": "DataQuery",
                     "spec": {
                       "editorMode": "code",
-                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\".*Reaction\"}[$__rate_interval])))",
+                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"reaction.*Operator.*\"}[$__rate_interval])))",
                       "legendFormat": "{{span_name}}",
                       "format": "time_series",
-                      "range": true
+                      "range": true,
+                      "instant": false
                     },
                     "version": "v0"
                   },
@@ -488,7 +491,7 @@
           }
         },
         "description": "",
-        "id": 7,
+        "id": 8,
         "links": [],
         "title": "Reaction Pipeline P95 耗时",
         "vizConfig": {
@@ -569,95 +572,6 @@
                 "mode": "multi",
                 "sort": "desc"
               }
-            },
-            "version": ""
-          }
-        }
-      }
-    },
-    "panel-8": {
-      "kind": "Panel",
-      "spec": {
-        "data": {
-          "kind": "QueryGroup",
-          "spec": {
-            "queries": [
-              {
-                "kind": "PanelQuery",
-                "spec": {
-                  "hidden": false,
-                  "query": {
-                    "datasource": {
-                      "name": "beqjkynutojy8a"
-                    },
-                    "group": "victoriametrics-metrics-datasource",
-                    "kind": "DataQuery",
-                    "spec": {
-                      "editorMode": "code",
-                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\".*Reaction\"}[$__rate_interval])))",
-                      "legendFormat": "{{span_name}}",
-                      "format": "time_series",
-                      "range": true
-                    },
-                    "version": "v0"
-                  },
-                  "refId": "A"
-                }
-              }
-            ],
-            "queryOptions": {},
-            "transformations": []
-          }
-        },
-        "description": "",
-        "id": 8,
-        "links": [],
-        "title": "Reaction Pipeline 当前 P95",
-        "vizConfig": {
-          "group": "stat",
-          "kind": "VizConfig",
-          "spec": {
-            "fieldConfig": {
-              "defaults": {
-                "color": {
-                  "mode": "thresholds"
-                },
-                "thresholds": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": 0
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 1000
-                    },
-                    {
-                      "color": "red",
-                      "value": 5000
-                    }
-                  ]
-                },
-                "unit": "ms"
-              },
-              "overrides": []
-            },
-            "options": {
-              "colorMode": "value",
-              "graphMode": "area",
-              "justifyMode": "auto",
-              "orientation": "auto",
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
-              },
-              "showPercentChange": false,
-              "textMode": "auto",
-              "wideLayout": true
             },
             "version": ""
           }
@@ -973,102 +887,1002 @@
           }
         }
       }
+    },
+    "panel-14": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"handlers.*.Handle\"}[$__rate_interval])))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true,
+                      "instant": false
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 14,
+        "links": [],
+        "title": "Handlers P95 耗时",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "ms",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 5000
+                    }
+                  ]
+                },
+                "unit": "ms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "version": ""
+          }
+        }
+      }
+    },
+    "panel-15": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sort_desc(histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"handlers.*.Handle\"}[$__rate_interval]))))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true,
+                      "instant": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 15,
+        "links": [],
+        "title": "Handlers 当前 P95",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 5000
+                    }
+                  ]
+                },
+                "unit": "ms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": true,
+              "textMode": "auto",
+              "wideLayout": true
+            },
+            "version": ""
+          }
+        }
+      }
+    },
+    "panel-9": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sort_desc(histogram_quantile(0.95, sum by(le, span_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\",span_name=~\"reaction.*Operator.*\"}[$__rate_interval]))))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true,
+                      "instant": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 9,
+        "links": [],
+        "title": "Reaction Pipeline 当前 P95",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 5000
+                    }
+                  ]
+                },
+                "unit": "ms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            },
+            "version": ""
+          }
+        }
+      }
+    },
+    "panel-16": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum by(span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"$service_name\",span_name=~\"ops.*Operator.Run\"}[$__rate_interval]))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Message Pipeline 各 Stage 每秒请求量",
+        "id": 16,
+        "links": [],
+        "title": "Message Pipeline 吞吐量 (req/s)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "req/s",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "version": ""
+          }
+        }
+      }
+    },
+    "panel-17": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum by(span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"$service_name\",span_name=~\"reaction.*Operator.*\"}[$__rate_interval]))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Reaction Pipeline 各 Stage 每秒请求量",
+        "id": 17,
+        "links": [],
+        "title": "Reaction Pipeline 吞吐量 (req/s)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "req/s",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "version": ""
+          }
+        }
+      }
+    },
+    "panel-18": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "beqjkynutojy8a"
+                    },
+                    "group": "victoriametrics-metrics-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum by(span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"$service_name\",span_name=~\"handlers.*.Handle\"}[$__rate_interval]))",
+                      "legendFormat": "{{span_name}}",
+                      "format": "time_series",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Handlers 各 Stage 每秒请求量",
+        "id": 18,
+        "links": [],
+        "title": "Handlers 吞吐量 (req/s)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "req/s",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [
+                  "mean",
+                  "max",
+                  "lastNotNull"
+                ],
+                "displayMode": "table",
+                "placement": "bottom",
+                "showLegend": true,
+                "sort": "desc",
+                "sortBy": "Last *"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "version": ""
+          }
+        }
+      }
     }
   },
   "layout": {
-    "kind": "GridLayout",
+    "kind": "RowsLayout",
     "spec": {
-      "items": [
+      "rows": [
         {
-          "x": 0,
-          "y": 0,
-          "width": 12,
-          "height": 8,
-          "element": "panel-2"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-2"
+                      },
+                      "height": 10,
+                      "width": 16,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-3"
+                      },
+                      "height": 10,
+                      "width": 8,
+                      "x": 16,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "总览"
+          }
         },
         {
-          "x": 12,
-          "y": 0,
-          "width": 12,
-          "height": 8,
-          "element": "panel-3"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-5"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-6"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 8,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-16"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 16,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "Message Pipeline"
+          }
         },
         {
-          "x": 0,
-          "y": 8,
-          "width": 12,
-          "height": 8,
-          "element": "panel-5"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-8"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-9"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 8,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-17"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 16,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "Reaction Pipeline"
+          }
         },
         {
-          "x": 12,
-          "y": 8,
-          "width": 12,
-          "height": 8,
-          "element": "panel-6"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-14"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-15"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 8,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-18"
+                      },
+                      "height": 9,
+                      "width": 8,
+                      "x": 16,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "Handlers"
+          }
         },
         {
-          "x": 0,
-          "y": 16,
-          "width": 12,
-          "height": 8,
-          "element": "panel-7"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-11"
+                      },
+                      "height": 9,
+                      "width": 24,
+                      "x": 0,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "分位线对比"
+          }
         },
         {
-          "x": 12,
-          "y": 16,
-          "width": 12,
-          "height": 8,
-          "element": "panel-8"
-        },
-        {
-          "x": 0,
-          "y": 24,
-          "width": 24,
-          "height": 8,
-          "element": "panel-11"
-        },
-        {
-          "x": 0,
-          "y": 32,
-          "width": 24,
-          "height": 8,
-          "element": "panel-13"
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-13"
+                      },
+                      "height": 9,
+                      "width": 24,
+                      "x": 0,
+                      "y": 0
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "吞吐量"
+          }
         }
       ]
     }
   },
-  "spec": {
-    "variables": [
-      {
-        "kind": "Variable",
-        "spec": {
-          "current": {
-            "text": "BetaGoV2",
-            "value": "BetaGoV2"
-          },
-          "definition": "",
-          "label": "Service Name",
-          "name": "service_name",
-          "query": {
-            "group": "victoriametrics-metrics-datasource",
-            "kind": "DataQuery",
-            "spec": {
-              "__legacyStringValue": "label_values(traces_span_metrics_duration_milliseconds_bucket, service_name)"
-            },
-            "version": "v0"
-          },
-          "type": "query"
-        }
-      }
-    ]
-  },
-  "time": {
-    "from": "now-1h",
+  "title": "BetaGoV2 - ByStage 耗时看板",
+  "links": [],
+  "liveNow": false,
+  "preload": false,
+  "tags": [
+    "betago",
+    "spanmetrics",
+    "by-stage"
+  ],
+  "timeSettings": {
+    "autoRefresh": "30s",
+    "autoRefreshIntervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-3h",
+    "hideTimepicker": false,
+    "timezone": "browser",
     "to": "now"
   },
-  "timezone": "",
-  "title": "BetaGo ByStage Duration",
-  "uid": "betago-bystage-duration",
-  "version": 0
+  "variables": [
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "current": {
+          "text": "LarkBotV2",
+          "value": "LarkBotV2"
+        },
+        "description": "Service Name",
+        "hide": "dontHide",
+        "includeAll": false,
+        "label": "Service",
+        "multi": false,
+        "name": "service_name",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(traces_span_metrics_duration_milliseconds_bucket, service_name)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    },
+    {
+      "kind": "QueryVariable",
+      "spec": {
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "Stage / Span Name",
+        "hide": "dontHide",
+        "includeAll": true,
+        "label": "Stage",
+        "multi": true,
+        "name": "span_name",
+        "options": [],
+        "query": {
+          "group": "victoriametrics-metrics-datasource",
+          "kind": "DataQuery",
+          "spec": {
+            "__legacyStringValue": "label_values(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service_name\"}, span_name)"
+          },
+          "version": "v0"
+        },
+        "refresh": "onTimeRangeChanged",
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": "alphabeticalAsc"
+      }
+    }
+  ]
 }

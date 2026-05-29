@@ -113,7 +113,7 @@ func splitByComma(input string) []string {
 		return nil
 	}
 	parts := make([]string, 0)
-	for _, part := range strings.Split(input, ",") {
+	for part := range strings.SplitSeq(input, ",") {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			parts = append(parts, trimmed)
 		}

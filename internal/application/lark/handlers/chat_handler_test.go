@@ -28,7 +28,7 @@ func TestResolveStandardPromptMode(t *testing.T) {
 			Message: &larkim.EventMessage{
 				ChatType: &group,
 				Mentions: []*larkim.MentionEvent{{
-					Id: &larkim.UserId{OpenId: chatHandlerStrPtr(infraConfig.Get().LarkConfig.BotOpenID)},
+					Id: &larkim.UserId{OpenId: new(infraConfig.Get().LarkConfig.BotOpenID)},
 				}},
 			},
 		},
@@ -121,4 +121,5 @@ func TestBuildStandardChatUserPromptIncludesSelfIdentity(t *testing.T) {
 	}
 }
 
-func chatHandlerStrPtr(v string) *string { return &v }
+//go:fix inline
+func chatHandlerStrPtr(v string) *string { return new(v) }

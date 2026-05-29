@@ -413,6 +413,6 @@ func indexNameForSuffix(suffix string) string {
 	return IndexNamePrefix + "_" + suffix
 }
 
-func mutateIndexMap(indexMap *map[string]interface{}) {
-	(*indexMap)["mappings"].(map[string]interface{})["properties"].(map[string]interface{})["contentVector"].(map[string]interface{})["dimension"] = vectorDimension
+func mutateIndexMap(indexMap *map[string]any) {
+	(*indexMap)["mappings"].(map[string]any)["properties"].(map[string]any)["contentVector"].(map[string]any)["dimension"] = vectorDimension
 }

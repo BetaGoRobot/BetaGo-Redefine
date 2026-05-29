@@ -222,10 +222,7 @@ func buildRootHelpCardElements(view helpView, root *xcommand.Command[*larkim.P2M
 	}
 	panelElements := make([]any, 0, (len(commandButtons)+rootHelpButtonsPerRow-1)/rootHelpButtonsPerRow)
 	for start := 0; start < len(commandButtons); start += rootHelpButtonsPerRow {
-		end := start + rootHelpButtonsPerRow
-		if end > len(commandButtons) {
-			end = len(commandButtons)
-		}
+		end := min(start+rootHelpButtonsPerRow, len(commandButtons))
 		panelElements = append(panelElements, larkmsg.ButtonRow("none", commandButtons[start:end]...))
 	}
 	elements = append(elements, larkmsg.Divider(), larkmsg.CollapsiblePanel(
@@ -433,10 +430,7 @@ func buildHelpSubCommandButtons(state *helpCardState) []any {
 	}
 	rows := make([]any, 0, (len(buttons)+helpCardSubCommandButtonsPerRow-1)/helpCardSubCommandButtonsPerRow)
 	for start := 0; start < len(buttons); start += helpCardSubCommandButtonsPerRow {
-		end := start + helpCardSubCommandButtonsPerRow
-		if end > len(buttons) {
-			end = len(buttons)
-		}
+		end := min(start+helpCardSubCommandButtonsPerRow, len(buttons))
 		rows = append(rows, larkmsg.ButtonRow("flow", buttons[start:end]...))
 	}
 	return rows

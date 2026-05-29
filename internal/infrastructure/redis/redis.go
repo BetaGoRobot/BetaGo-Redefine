@@ -102,7 +102,7 @@ var setOrGetExpireAtScriptV2 = redis.NewScript(`
 // - wasSet (bool): true 表示 key 是新创建的; false 表示 key 已存在。
 // - timestamp (int64): 相关的时间戳 (新设置的或已存在的)。
 // - error: 如果执行出错。
-func SetOrGetExpireAt(ctx context.Context, rdb *redis.Client, key string, value interface{}, expireAt time.Time) (set bool, t time.Time, err error) {
+func SetOrGetExpireAt(ctx context.Context, rdb *redis.Client, key string, value any, expireAt time.Time) (set bool, t time.Time, err error) {
 	timestamp := expireAt.Unix()
 
 	result, err := setOrGetExpireAtScriptV2.Run(ctx, rdb, []string{key}, value, timestamp).Result()
@@ -114,7 +114,7 @@ func SetOrGetExpireAt(ctx context.Context, rdb *redis.Client, key string, value 
 	}
 
 	// Lua 脚本返回一个 table, go-redis 将其映射为 []interface{}
-	resultSlice, ok := result.([]interface{})
+	resultSlice, ok := result.([]any)
 	if !ok {
 		return set, t, fmt.Errorf("unexpected script result type: %T (value: %v)", result, result)
 	}

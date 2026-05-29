@@ -33,7 +33,10 @@ func (r *CommandOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
-	return requireCommand(ctx, r.Name(), event)
+	if err := requireCommand(ctx, r.Name(), event); err != nil {
+		return err
+	}
+	return skipIfChatModerated(ctx, r.Name(), event, meta)
 }
 
 func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {

@@ -54,7 +54,10 @@ func (r *WordReplyMsgOperator) PreRun(ctx context.Context, event *larkim.P2Messa
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 
-	return skipIfCommand(ctx, r.Name(), event)
+	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
+	}
+	return skipIfChatModerated(ctx, r.Name(), event, meta)
 }
 
 // Run  Repeat

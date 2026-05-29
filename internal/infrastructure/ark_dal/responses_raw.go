@@ -13,7 +13,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/bytedance/gg/gptr"
 	"github.com/redis/go-redis/v9"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
@@ -98,12 +97,12 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		cacheReq := &responses.ResponsesRequest{
 			Model: req.ModelID,
 			Input: singleTextInput(responses.MessageRole_system, req.SystemPrompt),
-			Store: gptr.Of(true),
+			Store: new(true),
 			Caching: &responses.ResponsesCaching{
 				Type:   responses.CacheType_enabled.Enum(),
-				Prefix: gptr.Of(true),
+				Prefix: new(true),
 			},
-			ExpireAt:  gptr.Of(exp),
+			ExpireAt:  new(exp),
 			Thinking:  req.Thinking,
 			Reasoning: req.Reasoning,
 		}
@@ -142,7 +141,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	secondReq := &responses.ResponsesRequest{
 		Model:              req.ModelID,
 		Input:              singleTextInput(responses.MessageRole_user, req.UserPrompt),
-		PreviousResponseId: gptr.Of(respID),
+		PreviousResponseId: new(respID),
 		Text:               req.Text,
 		Caching: &responses.ResponsesCaching{
 			Type: responses.CacheType_enabled.Enum(),

@@ -225,7 +225,7 @@ func TestTextInputBuildsNamedField(t *testing.T) {
 	element := TextInput("config_key", TextInputOptions{
 		Placeholder:  "输入配置键",
 		DefaultValue: "intent_recognition_enabled",
-		Required:     boolPtr(true),
+		Required:     new(true),
 		ElementID:    "config_key_input",
 	})
 	raw, err := json.Marshal(element)
@@ -319,8 +319,9 @@ func TestButtonRowsWithLimitWrapsButtonsIntoMultipleRows(t *testing.T) {
 	}
 }
 
+//go:fix inline
 func boolPtr(v bool) *bool {
-	return &v
+	return new(v)
 }
 
 func TestCollapsiblePanelBuildsSchemaV2Container(t *testing.T) {

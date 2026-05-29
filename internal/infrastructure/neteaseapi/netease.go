@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
@@ -345,9 +346,7 @@ func (neteaseCtx *NetEaseContext) GetMusicURLs(ctx context.Context, batchSize in
 				}
 
 				mu.Lock()
-				for musicID, signedURL := range localResults {
-					musicIDURL[musicID] = signedURL
-				}
+				maps.Copy(musicIDURL, localResults)
 				mu.Unlock()
 				return nil
 			},
@@ -561,8 +560,8 @@ var lyricsRepattern = regexp2.MustCompile(`\[(?P<time>.*)\](?P<line>.*)`, regexp
 
 func mergeLyrics(lyrics, translatedLyrics string) string {
 	lyricsMap := map[string]string{}
-	lines := strings.Split(lyrics, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(lyrics, "\n")
+	for line := range lines {
 		match, err := lyricsRepattern.FindStringMatch(line)
 		if err != nil {
 			continue
@@ -573,7 +572,7 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 			}
 		}
 	}
-	for _, translatedLine := range strings.Split(translatedLyrics, "\n") {
+	for translatedLine := range strings.SplitSeq(translatedLyrics, "\n") {
 		match, err := lyricsRepattern.FindStringMatch(translatedLine)
 		if err != nil {
 			continue
@@ -584,7 +583,7 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 			}
 		}
 	}
-	resStr := ""
+	var resStr strings.Builder
 	type lineStruct struct {
 		time string
 		line string
@@ -602,9 +601,9 @@ func mergeLyrics(lyrics, translatedLyrics string) string {
 		return cmp.Compare(i.time, j.time)
 	})
 	for _, line := range lyricsLines {
-		resStr += line.line + "\n"
+		resStr.WriteString(line.line + "\n")
 	}
-	return resStr
+	return resStr.String()
 }
 
 func (neteaseCtx *NetEaseContext) AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) (result []*SearchMusicItem, err error) {

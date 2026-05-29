@@ -20,7 +20,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
-	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -461,7 +460,7 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	chunkLog := &xmodel.MessageChunkLogV3{
 		ID:          uuid.NewV1().String(),
 		Timestamp:   utils.UTC8Time().Format(time.RFC3339),
-		TimestampV2: gptr.Of(utils.UTC8Time().Format(time.RFC3339)),
+		TimestampV2: new(utils.UTC8Time().Format(time.RFC3339)),
 		GroupID:     chunk.GroupID,
 		MsgIDs:      msgIDs,
 		MsgList:     chunkLines,

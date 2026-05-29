@@ -1,6 +1,6 @@
 module github.com/BetaGoRobot/BetaGo-Redefine
 
-go 1.25.1
+go 1.26
 
 require (
 	github.com/BetaGoRobot/go_utils v0.0.4

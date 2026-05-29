@@ -152,6 +152,7 @@ func TestGetAllConfigKeysIncludesAccessorBackedKeys(t *testing.T) {
 	}
 
 	expected := []ConfigKey{
+		KeyChunkEnabled,
 		KeyMusicCardInThread,
 		KeyWithDrawReplace,
 		KeyChatMode,
@@ -182,6 +183,13 @@ func TestGetAllConfigKeysIncludesStartupOnlyKeys(t *testing.T) {
 		if _, ok := set[key]; !ok {
 			t.Fatalf("expected startup-only config key %q in GetAllConfigKeys()", key)
 		}
+	}
+}
+
+func TestChunkEnabledDefaultsToTrue(t *testing.T) {
+	manager := NewManager()
+	if !manager.GetBool(context.Background(), KeyChunkEnabled, "", "") {
+		t.Fatal("expected chunk_enabled default to be true")
 	}
 }
 

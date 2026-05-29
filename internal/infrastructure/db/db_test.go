@@ -49,7 +49,7 @@ func TestCacheDBRead(t *testing.T) {
 		"Test CacheDB Read", t, func() {
 			Init(config.DBConfig)
 			ctx := context.Background()
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				result, err := query.Q.Administrator.WithContext(ctx).Order(query.Administrator.ID.Desc()).Limit(10).Find()
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)

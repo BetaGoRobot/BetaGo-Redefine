@@ -503,10 +503,7 @@ func ButtonRowsWithLimit(opts ButtonRowsOptions, buttons ...map[string]any) []an
 	}
 	rows := make([]any, 0, (len(filtered)+maxColumns-1)/maxColumns)
 	for start := 0; start < len(filtered); start += maxColumns {
-		end := start + maxColumns
-		if end > len(filtered) {
-			end = len(filtered)
-		}
+		end := min(start+maxColumns, len(filtered))
 		rows = append(rows, buildButtonRow(filtered[start:end], opts))
 	}
 	return rows

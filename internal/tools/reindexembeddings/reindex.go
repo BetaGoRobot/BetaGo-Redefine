@@ -323,10 +323,7 @@ func Run(ctx context.Context, osClient *opensearchapi.Client, arkClient *arkrunt
 			return
 		}
 		const width = 30
-		done := visitedTargets
-		if done > opts.ExpectedTotal {
-			done = opts.ExpectedTotal
-		}
+		done := min(visitedTargets, opts.ExpectedTotal)
 		filled := 0
 		if opts.ExpectedTotal > 0 {
 			filled = done * width / opts.ExpectedTotal
@@ -513,7 +510,7 @@ func scanDocuments(ctx context.Context, client *opensearchapi.Client, opts RunOp
 		Body:    bytes.NewReader(data),
 		Params: opensearchapi.SearchParams{
 			Scroll: opts.ScrollTimeout,
-			Size:   intPtr(opts.ScrollSize),
+			Size:   new(opts.ScrollSize),
 		},
 	})
 	if err != nil {
@@ -647,9 +644,7 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 	}
 
 	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for item := range jobs {
 				reqCtx, cancel := context.WithTimeout(ctx, opts.RequestTimeout)
 				resp, err := client.CreateMultiModalEmbeddings(reqCtx, item.req)
@@ -674,7 +669,7 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 				}
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 
 	for i, req := range requests {
@@ -708,8 +703,9 @@ func recordReindexUsage(ctx context.Context, modelID string, usage model.Usage, 
 	_ = llmusage.RecordUsage(ctx, record)
 }
 
+//go:fix inline
 func intPtr(v int) *int {
-	return &v
+	return new(v)
 }
 
 func preview(s string, max int) string {

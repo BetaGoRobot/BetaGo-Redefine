@@ -12,7 +12,7 @@ func enrichToolParamsFromArgs[TArgs any](params *arktools.Param) *arktools.Param
 		return params
 	}
 
-	argType := reflect.TypeOf((*TArgs)(nil)).Elem()
+	argType := reflect.TypeFor[TArgs]()
 	for argType != nil && argType.Kind() == reflect.Pointer {
 		argType = argType.Elem()
 	}
@@ -20,8 +20,8 @@ func enrichToolParamsFromArgs[TArgs any](params *arktools.Param) *arktools.Param
 		return params
 	}
 
-	for i := range argType.NumField() {
-		field := argType.Field(i)
+	for field := range argType.Fields() {
+		field := field
 		if !field.IsExported() {
 			continue
 		}

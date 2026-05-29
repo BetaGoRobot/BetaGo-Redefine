@@ -80,6 +80,9 @@ func (r *IntentRecognizeOperator) PreRun(ctx context.Context, event *larkim.P2Me
 	if err := skipIfMentioned(r.Name(), event); err != nil { // mentioned直接不过意图识别了就。
 		return err
 	}
+	if err := skipIfChatModerated(ctx, r.Name(), event, meta); err != nil {
+		return err
+	}
 	return
 }
 

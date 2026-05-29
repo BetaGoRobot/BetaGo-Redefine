@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -164,8 +165,6 @@ func cloneStats(stats map[string]any) map[string]any {
 		return nil
 	}
 	cloned := make(map[string]any, len(stats))
-	for key, value := range stats {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, stats)
 	return cloned
 }

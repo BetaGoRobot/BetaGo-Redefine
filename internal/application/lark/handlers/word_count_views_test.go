@@ -51,7 +51,7 @@ func TestBuildWordChunkListCardIncludesInteractiveControls(t *testing.T) {
 			},
 			MsgIDs:      []string{"om_1", "om_2"},
 			Timestamp:   "2026-03-06 20:30:00",
-			TimestampV2: strPtr("2026-03-06T20:30:00+08:00"),
+			TimestampV2: new("2026-03-06T20:30:00+08:00"),
 		},
 	})
 
@@ -90,7 +90,7 @@ func TestBuildWordChunkListCardIncludesPaginationActions(t *testing.T) {
 	})
 	card := buildWordChunkListCardWithState(context.Background(), view, wordChunkSearchResult{
 		Items: []*xmodel.MessageChunkLogV3{
-			{ID: "chunk-1", Summary: "分页测试", TimestampV2: strPtr("2026-03-06T20:30:00+08:00")},
+			{ID: "chunk-1", Summary: "分页测试", TimestampV2: new("2026-03-06T20:30:00+08:00")},
 		},
 		Total: 12,
 	})
@@ -186,6 +186,7 @@ func TestBuildChunkTemplateDataSummarizesUnresolvedQuestions(t *testing.T) {
 	}
 }
 
+//go:fix inline
 func strPtr(value string) *string {
-	return &value
+	return new(value)
 }

@@ -2,16 +2,20 @@ package larkchunking
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xchunk"
+	"go.uber.org/zap"
 )
 
 var M *xchunk.Management
 var (
 	backgroundCancel context.CancelFunc
 	backgroundMu     sync.Mutex
+	enabledForChat   = func(context.Context, string) bool { return true }
 )
 
 func Init() {
@@ -50,6 +54,29 @@ func SetExecutor(executor interface {
 		M = xchunk.NewManagement()
 	}
 	M.SetExecutor(executor)
+}
+
+func SetEnabledForChat(fn func(context.Context, string) bool) {
+	if fn == nil {
+		enabledForChat = func(context.Context, string) bool { return true }
+		return
+	}
+	enabledForChat = fn
+}
+
+func SubmitMessage(ctx context.Context, msg xchunk.GenericMsg) error {
+	if msg == nil {
+		return nil
+	}
+	chatID := strings.TrimSpace(msg.GroupID())
+	if chatID != "" && !enabledForChat(ctx, chatID) {
+		logs.L().Ctx(ctx).Debug("Chunk submission skipped by config", zap.String("chat_id", chatID))
+		return nil
+	}
+	if M == nil {
+		M = xchunk.NewManagement()
+	}
+	return M.SubmitMessage(ctx, msg)
 }
 
 func Enabled() bool {

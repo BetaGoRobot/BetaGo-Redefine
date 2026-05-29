@@ -33,10 +33,7 @@ func PipelineElapsed(ctx context.Context) (time.Duration, bool) {
 	if !ok {
 		return 0, false
 	}
-	elapsed := time.Since(startedAt)
-	if elapsed < 0 {
-		elapsed = 0
-	}
+	elapsed := max(time.Since(startedAt), 0)
 	return elapsed, true
 }
 

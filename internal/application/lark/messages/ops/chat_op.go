@@ -66,6 +66,9 @@ func (r *ChatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageRec
 	if err := skipIfMentioned(r.Name(), event); err != nil {
 		return err
 	}
+	if err := skipIfChatModerated(ctx, r.Name(), event, meta); err != nil {
+		return err
+	}
 	return
 }
 

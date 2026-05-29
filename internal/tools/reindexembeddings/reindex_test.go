@@ -61,7 +61,6 @@ func TestExtractText(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := ExtractText(tt.raw); got != tt.want {
@@ -112,7 +111,6 @@ func TestShouldProcessDocument(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := ShouldProcessDocument(tt.doc); got != tt.want {

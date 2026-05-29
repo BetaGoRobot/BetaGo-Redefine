@@ -2,7 +2,7 @@ package ops
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"go.uber.org/zap"
@@ -59,6 +59,9 @@ func (r *RepeatMsgOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 	defer otel.RecordErrorPtr(span, &err)
 
 	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
+		return err
+	}
+	if err := skipIfChatModerated(ctx, r.Name(), event, meta); err != nil {
 		return err
 	}
 	if ext, err := redis_dal.GetRedisClient().
@@ -175,7 +178,7 @@ func RebuildAtMsg(input string, substrings []string) []string {
 	}
 
 	// Sort the positions to split
-	sort.Slice(splitPositions, func(i, j int) bool { return splitPositions[i] < splitPositions[j] })
+	slices.Sort(splitPositions)
 
 	if len(splitPositions) > 0 {
 		// Remove duplicate positions

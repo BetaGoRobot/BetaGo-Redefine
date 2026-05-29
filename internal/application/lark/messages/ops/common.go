@@ -8,13 +8,16 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/command"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/sonic"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	pkgerrors "github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type (
@@ -77,6 +80,35 @@ func skipIfMentioned(opName string, event *larkim.P2MessageReceiveV1) error {
 		return skipStage(opName, "is mentioned")
 	}
 	return nil
+}
+
+var getChatModerationPermission = func(ctx context.Context, chatID string) (string, error) {
+	chat, err := larkchat.GetChatInfoCache(ctx, chatID)
+	if err != nil || chat == nil || chat.ModerationPermission == nil {
+		return "", err
+	}
+	return strings.TrimSpace(*chat.ModerationPermission), nil
+}
+
+func skipIfChatModerated(ctx context.Context, opName string, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) error {
+	if currentChatType(event) == "p2p" {
+		return nil
+	}
+	chatID := messageChatID(event, meta)
+	if chatID == "" {
+		return nil
+	}
+	permission, err := getChatModerationPermission(ctx, chatID)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("get chat moderation permission failed", zap.String("chat_id", chatID), zap.Error(err))
+		return nil
+	}
+	switch permission {
+	case "", "all_members":
+		return nil
+	default:
+		return skipStage(opName, "chat moderation restricts replies")
+	}
 }
 
 func requireMentionOrP2P(opName string, event *larkim.P2MessageReceiveV1) error {

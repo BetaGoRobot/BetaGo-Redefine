@@ -2,6 +2,7 @@ package history
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -182,12 +183,7 @@ func useHistorySearchConfigPath(t *testing.T) {
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func containsTermFilter(filters []map[string]any, field, value string) bool {

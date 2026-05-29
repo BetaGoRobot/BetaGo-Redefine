@@ -17,7 +17,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/gg/gresult"
 	"github.com/bytedance/sonic"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
@@ -278,9 +277,9 @@ func responseFunctionTool(name, description string, schema *tools.Param) *respon
 		Union: &responses.ResponsesTool_ToolFunction{
 			ToolFunction: &responses.ToolFunction{
 				Name:        strings.TrimSpace(name),
-				Strict:      gptr.Of(true),
+				Strict:      new(true),
 				Type:        responses.ToolType_function,
-				Description: gptr.Of(strings.TrimSpace(description)),
+				Description: new(strings.TrimSpace(description)),
 				Parameters:  &responses.Bytes{Value: schema.JSON()},
 			},
 		},
@@ -355,12 +354,12 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		}
 		resp, err = CreateResponsesStream(ctx, &responses.ResponsesRequest{
 			Model:              cfg.NormalModel,
-			PreviousResponseId: gptr.Of(r.lastRespID),
+			PreviousResponseId: new(r.lastRespID),
 			Input:              message,
-			Store:              gptr.Of(true),
+			Store:              new(true),
 			Tools:              mergeResponseTools(r.tools, r.dynamicTools),
 			Reasoning:          r.reasoningEffort,
-			Stream:             gptr.Of(true),
+			Stream:             new(true),
 			// Text: &responses.ResponsesText{
 			// 	Format: &responses.TextFormat{
 			// 		Type: responses.TextType_json_object,
@@ -461,10 +460,7 @@ func (r *ResponsesImpl[T]) SyncResult(ctx context.Context) {
 		fcSlice = make([]string, 0)
 	)
 
-	previewCap := len(r.functionResult)
-	if previewCap > 10 {
-		previewCap = 10
-	}
+	previewCap := min(len(r.functionResult), 10)
 	resultPreview := make([]string, 0, previewCap)
 	for callID, res := range r.functionResult {
 		funcName := r.functionCallMap[callID]
@@ -588,12 +584,12 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysProm
 	req = &responses.ResponsesRequest{
 		Model:             modelID,
 		Input:             input,
-		Store:             gptr.Of(true),
+		Store:             new(true),
 		Tools:             r.tools,
 		Reasoning:         r.reasoningEffort,
-		Stream:            gptr.Of(true),
-		ParallelToolCalls: gptr.Of(true),
-		MaxToolCalls:      gptr.Of(int64(10)),
+		Stream:            new(true),
+		ParallelToolCalls: new(true),
+		MaxToolCalls:      new(int64(10)),
 	}
 
 	resp, err := CreateResponsesStream(ctx, req, scope)

@@ -1,5 +1,7 @@
 package config
 
+import "slices"
+
 import "strings"
 
 const (
@@ -70,6 +72,11 @@ var configDefinitions = []ConfigDefinition{
 	{
 		Key:         KeyIntentRecognitionEnabled,
 		Description: "是否启用意图识别",
+		ValueType:   "bool",
+	},
+	{
+		Key:         KeyChunkEnabled,
+		Description: "是否启用 chunk",
 		ValueType:   "bool",
 	},
 	{
@@ -258,10 +265,5 @@ func buildConfigEnumOptions(candidates []configEnumCandidate) []ConfigEnumOption
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }

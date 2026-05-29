@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS prebuild
+FROM golang:alpine AS prebuild
 
 ENV GO111MODULE="auto"
 

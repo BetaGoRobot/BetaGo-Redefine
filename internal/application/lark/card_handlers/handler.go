@@ -27,7 +27,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/minio/minio-go/v7"
 
-	"github.com/bytedance/gg/gptr"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
@@ -467,7 +466,7 @@ func ExecuteRawCommandFromCard(ctx context.Context, cardAction *callback.CardAct
 	data := new(larkim.P2MessageReceiveV1)
 	data.Event = new(larkim.P2MessageReceiveV1Data)
 	data.Event.Message = new(larkim.EventMessage)
-	data.Event.Message.MessageId = gptr.Of(msgID)
+	data.Event.Message.MessageId = new(msgID)
 	data.Event.Message.ChatId = new(string)
 	*data.Event.Message.ChatId = cardAction.Event.Context.OpenChatID
 

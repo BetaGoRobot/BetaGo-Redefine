@@ -15,7 +15,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
 )
@@ -84,10 +83,10 @@ type (
 		Data CardData `json:"data"`
 	}
 	CardData struct {
-		TemplateID          string                 `json:"template_id"`
-		TemplateVersionName string                 `json:"template_version_name"`
-		TemplateVariable    map[string]interface{} `json:"template_variable"`
-		TemplateSrc         string                 `json:"template_src"`
+		TemplateID          string         `json:"template_id"`
+		TemplateVersionName string         `json:"template_version_name"`
+		TemplateVariable    map[string]any `json:"template_variable"`
+		TemplateSrc         string         `json:"template_src"`
 	}
 )
 
@@ -102,7 +101,7 @@ func NewCardContent(ctx context.Context, templateID string) *TemplateCardContent
 		Data: CardData{
 			TemplateID:          templateVersion.TemplateID,
 			TemplateVersionName: templateVersion.TemplateVersion,
-			TemplateVariable:    make(map[string]interface{}),
+			TemplateVariable:    make(map[string]any),
 		},
 	}
 	if templateVersion.TemplateSrc != "" {
@@ -123,7 +122,7 @@ func NewCardContentV2[T any](ctx context.Context, templateVersion TemplateVersio
 		Data: CardData{
 			TemplateID:          templateVersion.TemplateID,
 			TemplateVersionName: templateVersion.TemplateVersion.TemplateVersion,
-			TemplateVariable:    make(map[string]interface{}),
+			TemplateVariable:    make(map[string]any),
 		},
 	}
 	if templateVersion.TemplateSrc != "" {
@@ -168,7 +167,7 @@ func defaultCardBaseVars(ctx context.Context, traceID string) CardBaseVars {
 		v.FirstReplyCost = cost
 	}
 	if srcCmd := ctx.Value(consts.ContextVarSrcCmd); srcCmd != nil {
-		v.RawCmd = gptr.Of(srcCmd.(string))
+		v.RawCmd = new(srcCmd.(string))
 		v.RefreshObj = &RefreshObj{Action: cardaction.ActionCommandRefresh, Command: srcCmd.(string)}
 	}
 	return v
@@ -179,7 +178,7 @@ func (c *TemplateCardContent) AddJaegerTraceInfo(traceID string) *TemplateCardCo
 		AddVariable("jaeger_trace_url", utils.GenTraceURL(traceID))
 }
 
-func (c *TemplateCardContent) AddVariable(key string, value interface{}) *TemplateCardContent {
+func (c *TemplateCardContent) AddVariable(key string, value any) *TemplateCardContent {
 	c.Data.TemplateVariable[key] = value
 	return c
 }
@@ -193,10 +192,8 @@ func (c *TemplateCardContent) AddVariableStruct(value any) *TemplateCardContent 
 	return c
 }
 
-func (c *TemplateCardContent) UpdateVariables(m map[string]interface{}) *TemplateCardContent {
-	for k, v := range m {
-		c.Data.TemplateVariable[k] = v
-	}
+func (c *TemplateCardContent) UpdateVariables(m map[string]any) *TemplateCardContent {
+	maps.Copy(c.Data.TemplateVariable, m)
 	return c
 }
 

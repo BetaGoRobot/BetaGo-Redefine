@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/VictoriaMetrics/metrics"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 )
 
@@ -77,6 +78,12 @@ func RecordUsage(ctx context.Context, record Record) error {
 func (r *Recorder) Record(ctx context.Context, record Record) error {
 	if r == nil {
 		return nil
+	}
+	if strings.TrimSpace(record.TraceID) == "" {
+		spanCtx := trace.SpanContextFromContext(ctx)
+		if spanCtx.HasTraceID() {
+			record.TraceID = spanCtx.TraceID().String()
+		}
 	}
 	row := record.toRow()
 	recordMetrics(row)

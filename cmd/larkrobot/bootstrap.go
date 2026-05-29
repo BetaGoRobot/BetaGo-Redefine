@@ -8,6 +8,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
+	chatmetrics "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chatmetrics"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
@@ -218,11 +219,22 @@ func addExecutorModules(app *appruntime.App, components *appComponents) {
 // addApplicationModules 注册依赖基础设施和执行器的上层模块。这里把遗留
 // 包级初始化收敛成有序的运行时阶段。
 func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, components *appComponents) {
+	app.AddModule(chatmetrics.NewModule(chatmetrics.ModuleOptions{
+		Interval:     5 * time.Minute,
+		Timeout:      2 * time.Minute,
+		RecentWindow: 24 * time.Hour,
+		Collector: chatmetrics.Collector{
+			CountRecentMessages: countRecentChatMessages,
+		},
+	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "application_services",
 		Critical: true,
 		Start: func(context.Context) error {
 			recording.SetBackgroundSubmitter(components.recordingExecutor)
+			larkchunking.SetEnabledForChat(func(ctx context.Context, chatID string) bool {
+				return appconfig.IsChunkEnabled(ctx, chatID, "")
+			})
 			larkchunking.SetExecutor(components.chunkExecutor)
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
