@@ -9,7 +9,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.6
-	github.com/bytedance/sonic v1.15.1
+	github.com/bytedance/sonic v1.15.2
 	github.com/defensestation/osquery v1.0.0
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/eko/gocache/lib/v4 v4.2.3
