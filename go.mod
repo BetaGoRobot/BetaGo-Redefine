@@ -6,7 +6,7 @@ require (
 	github.com/BetaGoRobot/go_utils v0.0.4
 	github.com/RealAlexandreAI/json-repair v0.0.15
 	github.com/VictoriaMetrics/metrics v1.43.2
-	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/bytedance/gg v1.1.0
 	github.com/bytedance/mockey v1.4.6
 	github.com/bytedance/sonic v1.15.2
