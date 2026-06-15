@@ -9,7 +9,6 @@ import (
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
-	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -25,18 +24,21 @@ func NewCredentialRepository(db *gorm.DB, codec TokenCodec) *CredentialRepositor
 
 func (r *CredentialRepository) FindToken(ctx context.Context, lookup luckin.CredentialLookup) (luckin.Credential, error) {
 	ins := r.q.McpCredential
-	row, err := ins.WithContext(ctx).
+	rows, err := ins.WithContext(ctx).
 		Where(ins.Provider.Eq(lookup.Provider)).
 		Where(ins.AppID.Eq(lookup.AppID)).
 		Where(ins.BotOpenID.Eq(lookup.BotOpenID)).
 		Where(ins.ScopeType.Eq(string(lookup.Scope.Type))).
 		Where(ins.ScopeID.Eq(lookup.Scope.ID)).
-		Where(field.NewField(ins.TableName(), "deleted_at").IsNull()).
-		First()
+		Limit(1).
+		Find()
 	if err := normalizeCredentialFindError(err); err != nil {
 		return luckin.Credential{}, err
 	}
-	return credentialFromRow(r.codec, lookup, row)
+	if len(rows) == 0 {
+		return luckin.Credential{}, luckin.ErrCredentialNotFound
+	}
+	return credentialFromRow(r.codec, lookup, rows[0])
 }
 
 func (r *CredentialRepository) UpsertToken(ctx context.Context, lookup luckin.CredentialLookup, token, actorOpenID string) error {

@@ -36,7 +36,7 @@ func TestResolverPrefersChatThenPersonalThenSystemForGroup(t *testing.T) {
 		t.Fatalf("Resolve error = %v", err)
 	}
 	if cred.Token != "chat-token" || cred.Scope.Type != ScopeChat {
-		t.Fatalf("credential = %+v", cred)
+		t.Fatalf("credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestResolverGroupFallsBackToPersonalThenSystem(t *testing.T) {
 		t.Fatalf("Resolve error = %v", err)
 	}
 	if cred.Token != "user-token" || cred.Scope.Type != ScopePersonal {
-		t.Fatalf("credential = %+v", cred)
+		t.Fatalf("credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
 	}
 
 	resolver = NewCredentialResolver(fakeCredentialStore{values: map[CredentialLookup]string{}}, "system-token")
@@ -64,7 +64,7 @@ func TestResolverGroupFallsBackToPersonalThenSystem(t *testing.T) {
 		t.Fatalf("Resolve system fallback error = %v", err)
 	}
 	if cred.Token != "system-token" || cred.Scope.Type != ScopeSystem {
-		t.Fatalf("system credential = %+v", cred)
+		t.Fatalf("system credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestResolverPrivateUsesPersonalFirst(t *testing.T) {
 		t.Fatalf("Resolve error = %v", err)
 	}
 	if cred.Token != "user-token" || cred.Scope.Type != ScopePersonal {
-		t.Fatalf("credential = %+v", cred)
+		t.Fatalf("credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
 	}
 }
 
