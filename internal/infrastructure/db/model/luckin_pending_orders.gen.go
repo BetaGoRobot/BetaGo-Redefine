@@ -6,31 +6,33 @@ package model
 
 import (
 	"time"
+
+	"gorm.io/datatypes"
 )
 
 const TableNameLuckinPendingOrder = "luckin_pending_orders"
 
 // LuckinPendingOrder mapped from table <luckin_pending_orders>
 type LuckinPendingOrder struct {
-	ID                  string    `gorm:"column:id;primaryKey" json:"id"`
-	AppID               string    `gorm:"column:app_id;not null" json:"app_id"`
-	BotOpenID           string    `gorm:"column:bot_open_id;not null" json:"bot_open_id"`
-	ChatID              string    `gorm:"column:chat_id;not null" json:"chat_id"`
-	RequesterOpenID     string    `gorm:"column:requester_open_id;not null" json:"requester_open_id"`
-	CredentialScopeType string    `gorm:"column:credential_scope_type;not null" json:"credential_scope_type"`
-	CredentialScopeID   string    `gorm:"column:credential_scope_id;not null" json:"credential_scope_id"`
-	McpServerName       string    `gorm:"column:mcp_server_name;not null;default:my-coffee" json:"mcp_server_name"`
-	CreateOrderPayload  string    `gorm:"column:create_order_payload;not null" json:"create_order_payload"`
-	PayloadHash         string    `gorm:"column:payload_hash;not null" json:"payload_hash"`
-	PreviewResult       string    `gorm:"column:preview_result;not null;default:{}" json:"preview_result"`
-	Status              string    `gorm:"column:status;not null;default:pending" json:"status"`
-	ResultJSON          string    `gorm:"column:result_json;not null;default:{}" json:"result_json"`
-	ErrorText           string    `gorm:"column:error_text;not null" json:"error_text"`
-	ExpiresAt           time.Time `gorm:"column:expires_at;not null" json:"expires_at"`
-	ConfirmedByOpenID   string    `gorm:"column:confirmed_by_open_id;not null" json:"confirmed_by_open_id"`
-	ConfirmedAt         time.Time `gorm:"column:confirmed_at" json:"confirmed_at"`
-	CreatedAt           time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
-	UpdatedAt           time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	ID                  string         `gorm:"column:id;primaryKey" json:"id"`
+	AppID               string         `gorm:"column:app_id;not null" json:"app_id"`
+	BotOpenID           string         `gorm:"column:bot_open_id;not null" json:"bot_open_id"`
+	ChatID              string         `gorm:"column:chat_id;not null" json:"chat_id"`
+	RequesterOpenID     string         `gorm:"column:requester_open_id;not null" json:"requester_open_id"`
+	CredentialScopeType string         `gorm:"column:credential_scope_type;not null" json:"credential_scope_type"`
+	CredentialScopeID   string         `gorm:"column:credential_scope_id;not null" json:"credential_scope_id"`
+	McpServerName       string         `gorm:"column:mcp_server_name;not null;default:my-coffee" json:"mcp_server_name"`
+	CreateOrderPayload  datatypes.JSON `gorm:"column:create_order_payload;type:jsonb;not null" json:"create_order_payload"`
+	PayloadHash         string         `gorm:"column:payload_hash;not null" json:"payload_hash"`
+	PreviewResult       datatypes.JSON `gorm:"column:preview_result;type:jsonb;not null;default:{}" json:"preview_result"`
+	Status              string         `gorm:"column:status;not null;default:pending" json:"status"`
+	ResultJSON          datatypes.JSON `gorm:"column:result_json;type:jsonb;not null;default:{}" json:"result_json"`
+	ErrorText           string         `gorm:"column:error_text;not null" json:"error_text"`
+	ExpiresAt           time.Time      `gorm:"column:expires_at;not null" json:"expires_at"`
+	ConfirmedByOpenID   string         `gorm:"column:confirmed_by_open_id;not null" json:"confirmed_by_open_id"`
+	ConfirmedAt         time.Time      `gorm:"column:confirmed_at" json:"confirmed_at"`
+	CreatedAt           time.Time      `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	UpdatedAt           time.Time      `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
 }
 
 // TableName LuckinPendingOrder's table name

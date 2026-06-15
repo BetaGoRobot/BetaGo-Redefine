@@ -33,11 +33,11 @@ func newLuckinPendingOrder(db *gorm.DB, opts ...gen.DOOption) luckinPendingOrder
 	_luckinPendingOrder.CredentialScopeType = field.NewString(tableName, "credential_scope_type")
 	_luckinPendingOrder.CredentialScopeID = field.NewString(tableName, "credential_scope_id")
 	_luckinPendingOrder.McpServerName = field.NewString(tableName, "mcp_server_name")
-	_luckinPendingOrder.CreateOrderPayload = field.NewString(tableName, "create_order_payload")
+	_luckinPendingOrder.CreateOrderPayload = field.NewField(tableName, "create_order_payload")
 	_luckinPendingOrder.PayloadHash = field.NewString(tableName, "payload_hash")
-	_luckinPendingOrder.PreviewResult = field.NewString(tableName, "preview_result")
+	_luckinPendingOrder.PreviewResult = field.NewField(tableName, "preview_result")
 	_luckinPendingOrder.Status = field.NewString(tableName, "status")
-	_luckinPendingOrder.ResultJSON = field.NewString(tableName, "result_json")
+	_luckinPendingOrder.ResultJSON = field.NewField(tableName, "result_json")
 	_luckinPendingOrder.ErrorText = field.NewString(tableName, "error_text")
 	_luckinPendingOrder.ExpiresAt = field.NewTime(tableName, "expires_at")
 	_luckinPendingOrder.ConfirmedByOpenID = field.NewString(tableName, "confirmed_by_open_id")
@@ -62,11 +62,11 @@ type luckinPendingOrder struct {
 	CredentialScopeType field.String
 	CredentialScopeID   field.String
 	McpServerName       field.String
-	CreateOrderPayload  field.String
+	CreateOrderPayload  field.Field
 	PayloadHash         field.String
-	PreviewResult       field.String
+	PreviewResult       field.Field
 	Status              field.String
-	ResultJSON          field.String
+	ResultJSON          field.Field
 	ErrorText           field.String
 	ExpiresAt           field.Time
 	ConfirmedByOpenID   field.String
@@ -97,11 +97,11 @@ func (l *luckinPendingOrder) updateTableName(table string) *luckinPendingOrder {
 	l.CredentialScopeType = field.NewString(table, "credential_scope_type")
 	l.CredentialScopeID = field.NewString(table, "credential_scope_id")
 	l.McpServerName = field.NewString(table, "mcp_server_name")
-	l.CreateOrderPayload = field.NewString(table, "create_order_payload")
+	l.CreateOrderPayload = field.NewField(table, "create_order_payload")
 	l.PayloadHash = field.NewString(table, "payload_hash")
-	l.PreviewResult = field.NewString(table, "preview_result")
+	l.PreviewResult = field.NewField(table, "preview_result")
 	l.Status = field.NewString(table, "status")
-	l.ResultJSON = field.NewString(table, "result_json")
+	l.ResultJSON = field.NewField(table, "result_json")
 	l.ErrorText = field.NewString(table, "error_text")
 	l.ExpiresAt = field.NewTime(table, "expires_at")
 	l.ConfirmedByOpenID = field.NewString(table, "confirmed_by_open_id")
