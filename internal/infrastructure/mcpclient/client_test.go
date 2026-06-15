@@ -15,6 +15,9 @@ func TestClientListToolsAndCallTool(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer token-1" {
 			t.Fatalf("Authorization = %q", got)
 		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept = %q", got)
+		}
 		var req jsonRPCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -96,9 +99,13 @@ func TestClientNormalizesJSONRPCErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req jsonRPCRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
 				_ = json.NewEncoder(w).Encode(jsonRPCResponse{
 					JSONRPC: "2.0",
-					ID:      1,
+					ID:      req.ID,
 					Error:   &jsonRPCError{Code: -32000, Message: tt.message},
 				})
 			}))
@@ -146,4 +153,74 @@ func TestClientNormalizesTimeoutAndProtocolErrors(t *testing.T) {
 			t.Fatalf("err = %v, want ErrProtocol", err)
 		}
 	})
+}
+
+func TestClientRejectsMismatchedResponseID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jsonRPCRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID + 100,
+			Result:  json.RawMessage(`{"tools":[]}`),
+		})
+	}))
+	defer server.Close()
+
+	client := New(ClientOptions{HTTPClient: server.Client()})
+	_, err := client.ListTools(context.Background(), ServerConfig{Name: "my-coffee", URL: server.URL})
+	if !errors.Is(err, ErrProtocol) {
+		t.Fatalf("err = %v, want ErrProtocol", err)
+	}
+}
+
+func TestClientPreservesContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	client := New(ClientOptions{HTTPClient: http.DefaultClient})
+	_, err := client.ListTools(ctx, ServerConfig{Name: "my-coffee", URL: "http://127.0.0.1:1"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, did not want ErrTimeout", err)
+	}
+}
+
+func TestClientRejectsMalformedCallToolResult(t *testing.T) {
+	tests := []struct {
+		name   string
+		result string
+	}{
+		{name: "invalid shape", result: `[]`},
+		{name: "empty content", result: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req jsonRPCRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Result:  json.RawMessage(tt.result),
+				})
+			}))
+			defer server.Close()
+
+			client := New(ClientOptions{HTTPClient: server.Client()})
+			_, err := client.CallTool(context.Background(), CallRequest{
+				Server:   ServerConfig{Name: "my-coffee", URL: server.URL},
+				ToolName: "queryShopList",
+			})
+			if !errors.Is(err, ErrProtocol) {
+				t.Fatalf("err = %v, want ErrProtocol", err)
+			}
+		})
+	}
 }

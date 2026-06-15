@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,9 +68,11 @@ func (c *Client) CallTool(ctx context.Context, req CallRequest) (CallResult, err
 		return CallResult{}, err
 	}
 	var out callToolResult
-	_ = json.Unmarshal(raw, &out)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return CallResult{}, fmt.Errorf("%w: decode tools/call: %v", ErrProtocol, err)
+	}
 	if len(out.Content) == 0 {
-		out.Content = raw
+		return CallResult{}, fmt.Errorf("%w: empty tools/call content", ErrProtocol)
 	}
 	return CallResult{Content: out.Content, Raw: raw}, nil
 }
@@ -83,9 +86,10 @@ func (c *Client) do(ctx context.Context, server ServerConfig, method string, par
 		ctx, cancel = context.WithTimeout(ctx, server.Timeout)
 		defer cancel()
 	}
+	id := nextID.Add(1)
 	body, err := json.Marshal(jsonRPCRequest{
 		JSONRPC: "2.0",
-		ID:      nextID.Add(1),
+		ID:      id,
 		Method:  method,
 		Params:  params,
 	})
@@ -97,14 +101,17 @@ func (c *Client) do(ctx context.Context, server ServerConfig, method string, par
 		return nil, fmt.Errorf("%w: build request: %v", ErrProtocol, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+	httpReq.Header.Set("Accept", "application/json")
 	for k, v := range server.Headers {
 		httpReq.Header.Set(k, v)
 	}
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTimeout, ctx.Err())
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("%w: %w", ErrTimeout, ctxErr)
+			}
+			return nil, ctxErr
 		}
 		return nil, fmt.Errorf("%w: %v", ErrRemote, err)
 	}
@@ -125,6 +132,9 @@ func (c *Client) do(ctx context.Context, server ServerConfig, method string, par
 	}
 	if rpc.JSONRPC != "2.0" {
 		return nil, fmt.Errorf("%w: unexpected jsonrpc version %q", ErrProtocol, rpc.JSONRPC)
+	}
+	if rpc.ID != id {
+		return nil, fmt.Errorf("%w: response id %d does not match request id %d", ErrProtocol, rpc.ID, id)
 	}
 	if rpc.Error != nil {
 		return nil, classifyRPCError(rpc.Error)
