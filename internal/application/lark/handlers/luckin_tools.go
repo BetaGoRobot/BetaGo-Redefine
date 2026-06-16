@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mcpbridge"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
@@ -22,11 +22,12 @@ import (
 
 func registerLuckinTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 	mcpbridge.Register(ins, mcpbridge.RegisterOptions{
-		Policies: luckin.ToolPolicies(),
-		Client:   mcpclient.New(mcpclient.ClientOptions{}),
-		Resolver: luckinRuntimeResolver{},
-		Pending:  luckinPendingOrderStore{},
-		Sender:   luckinPendingOrderCardSender{},
+		Policies:  luckin.ToolPolicies(),
+		Client:    mcpclient.New(mcpclient.ClientOptions{}),
+		Resolver:  luckinRuntimeResolver{},
+		Pending:   luckinPendingOrderStore{},
+		Sender:    luckinPendingOrderCardSender{},
+		SystemURL: luckinServerURL(),
 	})
 }
 
@@ -37,7 +38,7 @@ func (luckinRuntimeResolver) Resolve(ctx context.Context, req luckin.CredentialR
 	if err != nil {
 		return luckin.Credential{}, err
 	}
-	resolver := luckin.NewCredentialResolver(store, os.Getenv("LUCKIN_MCP_TOKEN"))
+	resolver := luckin.NewCredentialResolver(store, luckinSystemToken())
 	return resolver.Resolve(ctx, req)
 }
 
@@ -46,7 +47,7 @@ func newLuckinCredentialStore() (*mcpstore.CredentialRepository, error) {
 	if db == nil {
 		return nil, nil
 	}
-	key := strings.TrimSpace(os.Getenv("MCP_CREDENTIALS_KEY"))
+	key := luckinCredentialsKey()
 	if key == "" {
 		return nil, nil
 	}
@@ -55,6 +56,38 @@ func newLuckinCredentialStore() (*mcpstore.CredentialRepository, error) {
 		return nil, err
 	}
 	return mcpstore.NewCredentialRepository(db, codec), nil
+}
+
+func luckinSystemToken() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.SystemToken)
+}
+
+func luckinCredentialsKey() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.CredentialsKey)
+}
+
+func luckinServerURL() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil || strings.TrimSpace(cfg.ServerURL) == "" {
+		return luckin.ServerURL
+	}
+	return strings.TrimSpace(cfg.ServerURL)
+}
+
+func luckinRuntimeConfig() *infraConfig.LuckinMCPConfig {
+	cfg := infraConfig.Get()
+	if cfg == nil {
+		return nil
+	}
+	return cfg.LuckinMCPConfig
 }
 
 type luckinPendingOrderStore struct{}

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
@@ -22,7 +22,7 @@ func Register() {
 		pendingStore{},
 		credentialStore{},
 		mcpclient.New(mcpclient.ClientOptions{}),
-		luckin.ServerURL,
+		luckinServerURL(),
 	)
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
@@ -79,7 +79,7 @@ type credentialStore struct{}
 
 func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLookup) (luckin.Credential, error) {
 	if lookup.Scope.Type == luckin.ScopeSystem {
-		token := strings.TrimSpace(os.Getenv("LUCKIN_MCP_TOKEN"))
+		token := luckinSystemToken()
 		if token == "" {
 			return luckin.Credential{}, luckin.ErrCredentialNotFound
 		}
@@ -94,7 +94,7 @@ func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLo
 	if db == nil {
 		return luckin.Credential{}, luckin.ErrCredentialNotFound
 	}
-	key := strings.TrimSpace(os.Getenv("MCP_CREDENTIALS_KEY"))
+	key := luckinCredentialsKey()
 	if key == "" {
 		return luckin.Credential{}, luckin.ErrCredentialNotFound
 	}
@@ -103,6 +103,38 @@ func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLo
 		return luckin.Credential{}, err
 	}
 	return mcpstore.NewCredentialRepository(db, codec).FindToken(ctx, lookup)
+}
+
+func luckinSystemToken() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.SystemToken)
+}
+
+func luckinCredentialsKey() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.CredentialsKey)
+}
+
+func luckinServerURL() string {
+	cfg := luckinRuntimeConfig()
+	if cfg == nil || strings.TrimSpace(cfg.ServerURL) == "" {
+		return luckin.ServerURL
+	}
+	return strings.TrimSpace(cfg.ServerURL)
+}
+
+func luckinRuntimeConfig() *infraConfig.LuckinMCPConfig {
+	cfg := infraConfig.Get()
+	if cfg == nil {
+		return nil
+	}
+	return cfg.LuckinMCPConfig
 }
 
 type pendingStore struct{}

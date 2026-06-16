@@ -2,10 +2,13 @@ package luckinaction
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
@@ -69,7 +72,7 @@ func TestHandleConfirmRequiresPayloadHash(t *testing.T) {
 }
 
 func TestCredentialStoreReturnsSystemToken(t *testing.T) {
-	t.Setenv("LUCKIN_MCP_TOKEN", "system-token")
+	writeLuckinConfigForTest(t, "system-token", "", "")
 	cred, err := credentialStore{}.FindToken(context.Background(), luckin.CredentialLookup{
 		Provider: luckin.ProviderLuckin,
 		Scope:    luckin.CredentialScope{Type: luckin.ScopeSystem},
@@ -79,6 +82,13 @@ func TestCredentialStoreReturnsSystemToken(t *testing.T) {
 	}
 	if cred.Token != "system-token" || cred.TokenHint != "****oken" {
 		t.Fatalf("system credential mismatch: hint=%q len=%d", cred.TokenHint, len(cred.Token))
+	}
+}
+
+func TestRegisterUsesConfiguredServerURL(t *testing.T) {
+	writeLuckinConfigForTest(t, "", "", "https://luckin.example/mcp")
+	if got := luckinServerURL(); got != "https://luckin.example/mcp" {
+		t.Fatalf("luckinServerURL() = %q", got)
 	}
 }
 
@@ -112,4 +122,34 @@ func (s *fakeConfirmationService) Cancel(ctx context.Context, req luckin.CancelR
 	s.cancelCalled = true
 	s.cancelReq = req
 	return nil
+}
+
+func writeLuckinConfigForTest(t *testing.T, systemToken, credentialsKey, serverURL string) {
+	t.Helper()
+	restoreWorkspaceConfigAfterTest(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := "[luckin_mcp]\n" +
+		"system_token = \"" + systemToken + "\"\n" +
+		"credentials_key = \"" + credentialsKey + "\"\n" +
+		"server_url = \"" + serverURL + "\"\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := infraConfig.LoadFileE(path); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+}
+
+func restoreWorkspaceConfigAfterTest(t *testing.T) {
+	t.Helper()
+	workspaceConfig, err := filepath.Abs("../../../../.dev/config.toml")
+	if err != nil {
+		t.Fatalf("resolve workspace config: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := infraConfig.LoadFileE(workspaceConfig); err != nil {
+			t.Errorf("restore workspace config: %v", err)
+		}
+	})
 }

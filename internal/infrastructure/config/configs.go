@@ -31,6 +31,13 @@ type BaseConfig struct {
 	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
 	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
 	VMConfig             *VMConfig             `json:"vm_config" yaml:"vm_config" toml:"vm_config"`
+	LuckinMCPConfig      *LuckinMCPConfig      `json:"luckin_mcp" yaml:"luckin_mcp" toml:"luckin_mcp"`
+}
+
+type LuckinMCPConfig struct {
+	SystemToken    string `json:"system_token" yaml:"system_token" toml:"system_token"`
+	CredentialsKey string `json:"credentials_key" yaml:"credentials_key" toml:"credentials_key"`
+	ServerURL      string `json:"server_url" yaml:"server_url" toml:"server_url"`
 }
 
 type RuntimeConfig struct {

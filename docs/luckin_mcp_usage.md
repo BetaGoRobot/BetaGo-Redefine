@@ -14,7 +14,13 @@
 
 模型只能调用 `luckin_order_prepare_create` 创建待确认订单草稿。机器人会保存待确认 payload，并发送飞书确认卡片。只有发起人在原会话点击确认卡片后，系统才会用保存的 payload 调用瑞幸 `createOrder`。确认后只创建订单，不会自动支付。
 
-## 环境变量
+## 配置
 
-- `LUCKIN_MCP_TOKEN`：可选系统默认瑞幸 Token。
-- `MCP_CREDENTIALS_KEY`：32 字节 token 加密 key，用于保存个人或群聊默认 Token。
+在 `config.toml` 中配置：
+
+```toml
+[luckin_mcp]
+system_token = ""      # 可选系统默认瑞幸 Token
+credentials_key = ""   # 32 字节 token 加密 key，用于保存个人或群聊默认 Token
+server_url = ""        # 可选，默认 https://gwmcp.lkcoffee.com/order/user/mcp
+```
