@@ -39,13 +39,13 @@ func TestBuildPendingOrderRowMapsJSONFields(t *testing.T) {
 
 	row := buildPendingOrderRow(order)
 	if row.CreateOrderPayload.String() != datatypes.JSON(order.CreateOrderPayload).String() {
-		t.Fatalf("CreateOrderPayload = %s", row.CreateOrderPayload)
+		t.Fatalf("CreateOrderPayload mismatch")
 	}
 	if row.PreviewResult.String() != datatypes.JSON(order.PreviewResult).String() {
-		t.Fatalf("PreviewResult = %s", row.PreviewResult)
+		t.Fatalf("PreviewResult mismatch")
 	}
 	if row.ResultJSON.String() != datatypes.JSON(order.ResultJSON).String() {
-		t.Fatalf("ResultJSON = %s", row.ResultJSON)
+		t.Fatalf("ResultJSON mismatch")
 	}
 	if row.CredentialScopeType != string(luckin.ScopeChat) || row.CredentialScopeID != "chat" {
 		t.Fatalf("scope mismatch: type=%q id=%q", row.CredentialScopeType, row.CredentialScopeID)
@@ -76,10 +76,10 @@ func TestPendingOrderFromRowMapsDomainFields(t *testing.T) {
 		t.Fatalf("identity mismatch: id=%q app=%q bot=%q", got.ID, got.AppID, got.BotOpenID)
 	}
 	if string(got.CreateOrderPayload) != string(order.CreateOrderPayload) {
-		t.Fatalf("CreateOrderPayload = %s", got.CreateOrderPayload)
+		t.Fatalf("CreateOrderPayload mismatch")
 	}
 	if string(got.PreviewResult) != string(order.PreviewResult) {
-		t.Fatalf("PreviewResult = %s", got.PreviewResult)
+		t.Fatalf("PreviewResult mismatch")
 	}
 	if got.CredentialScope != order.CredentialScope {
 		t.Fatalf("CredentialScope = %+v", got.CredentialScope)
@@ -135,7 +135,7 @@ func TestPendingOrderRepositoryIntegrationCreateFindAndMarkConfirmed(t *testing.
 		t.Fatalf("confirmed fields mismatch: status=%q actor=%q", row.Status, row.ConfirmedByOpenID)
 	}
 	if !jsonEqual(row.ResultJSON, datatypes.JSON(resultJSON)) {
-		t.Fatalf("ResultJSON = %s", row.ResultJSON)
+		t.Fatalf("ResultJSON mismatch")
 	}
 	if row.ConfirmedAt.IsZero() {
 		t.Fatalf("ConfirmedAt is zero")

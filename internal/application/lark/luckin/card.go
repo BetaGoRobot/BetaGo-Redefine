@@ -58,6 +58,7 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 						"value": map[string]any{
 							cardactionproto.ActionField:         cardactionproto.ActionLuckinOrderCancel,
 							cardactionproto.PendingOrderIDField: order.ID,
+							cardactionproto.PayloadHashField:    order.PayloadHash,
 						},
 					}},
 				},
