@@ -13,6 +13,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/geocode"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
@@ -29,8 +30,20 @@ func registerLuckinTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 		Sender:    luckinPendingOrderCardSender{},
 		Cards:     luckinCardSender{},
 		Session:   mcpstore.DefaultSessionStore(),
+		Geocoder:  luckinGeocoder(),
 		SystemURL: luckinServerURL(),
 	})
+}
+
+func luckinGeocoder() luckin.Geocoder {
+	amapKey := ""
+	if cfg := luckinRuntimeConfig(); cfg != nil {
+		amapKey = strings.TrimSpace(cfg.AmapKey)
+	}
+	return geocode.NewCached(
+		geocode.NewAmapProvider(amapKey),
+		geocode.NewNominatimProvider(),
+	)
 }
 
 type luckinRuntimeResolver struct{}

@@ -35,8 +35,9 @@ func ToolPolicies() []ToolPolicy {
 
 func shopSearchParams() *arktools.Param {
 	return arktools.NewParams("object").
-		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称关键词，例如“人民广场”“环宇荟”"}).
-		AddRequired("deptName")
+		AddProp("locationText", &arktools.Prop{Type: "string", Desc: "用户描述的位置，用于定位附近门店，例如“上海人民广场”“北京安贞环宇荟”"}).
+		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称关键词，可选，用于在附近门店中进一步过滤"}).
+		AddRequired("locationText")
 }
 
 func productSearchParams() *arktools.Param {

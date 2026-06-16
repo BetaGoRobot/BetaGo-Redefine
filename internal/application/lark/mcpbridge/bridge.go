@@ -40,6 +40,7 @@ type RegisterOptions struct {
 	Sender    PendingOrderCardSender
 	Cards     CardSender
 	Session   luckin.SessionStore
+	Geocoder  luckin.Geocoder
 	SystemURL string
 }
 
@@ -55,6 +56,7 @@ type handler struct {
 	sender    PendingOrderCardSender
 	cards     CardSender
 	session   luckin.SessionStore
+	geocoder  luckin.Geocoder
 	serverURL string
 }
 
@@ -74,6 +76,7 @@ func Register(ins *arktools.Impl[larkim.P2MessageReceiveV1], opts RegisterOption
 			sender:    opts.Sender,
 			cards:     opts.Cards,
 			session:   opts.Session,
+			geocoder:  opts.Geocoder,
 			serverURL: opts.SystemURL,
 		})
 	}
@@ -139,19 +142,37 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 }
 
 func (h handler) handleShopSearch(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cred luckin.Credential, arg rawArgs) error {
-	res, err := h.callRemote(ctx, cred, arg.JSON)
+	locationText := stringArg(arg.JSON, "locationText")
+	if locationText == "" {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "请提供一个用于定位的地点描述，例如“上海人民广场”")
+		return nil
+	}
+	if h.geocoder == nil {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "门店定位服务未配置，无法按地点查询门店")
+		return nil
+	}
+	point, err := h.geocoder.Geocode(ctx, locationText)
+	if err != nil {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "无法定位“"+locationText+"”，请换个更具体的地点描述")
+		return nil
+	}
+
+	payload := injectField(arg.JSON, "longitude", point.Longitude)
+	payload = injectField(payload, "latitude", point.Latitude)
+	payload = removeField(payload, "locationText")
+
+	res, err := h.callRemote(ctx, cred, payload)
 	if err != nil {
 		return err
 	}
 	shops := luckin.ShopOptionsFromResult(res.Content, 5)
-	keyword := stringArg(arg.JSON, "deptName")
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopSelectCard(keyword, shops)); err != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopSelectCard(locationText, shops)); err != nil {
 			return err
 		}
 	}
 	if len(shops) == 0 {
-		metaData.SetExtra(h.policy.RobotToolName+"_result", "未找到匹配门店，已提示用户更换关键词")
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "附近未找到门店，已提示用户更换地点")
 	} else {
 		metaData.SetExtra(h.policy.RobotToolName+"_result", "已发送门店选择卡片，等待用户点选门店")
 	}
@@ -323,6 +344,22 @@ func injectField(raw json.RawMessage, key string, value any) json.RawMessage {
 		}
 	}
 	m[key] = value
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func removeField(raw json.RawMessage, key string) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	m := map[string]any{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	delete(m, key)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return raw

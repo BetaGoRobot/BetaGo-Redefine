@@ -85,10 +85,11 @@ func TestHandleShopSearchSendsShopCard(t *testing.T) {
 		client:    mcpclient.New(mcpclient.ClientOptions{HTTPClient: server.Client()}),
 		resolver:  resolver,
 		cards:     cards,
+		geocoder:  &fakeGeocoder{point: luckin.GeoPoint{Longitude: 116.39, Latitude: 39.98}},
 		serverURL: server.URL,
 	}
 	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user", IsP2P: true}
-	args, err := h.ParseTool(`{"deptName":"人民广场"}`)
+	args, err := h.ParseTool(`{"locationText":"北京安贞环宇荟"}`)
 	if err != nil {
 		t.Fatalf("ParseTool error = %v", err)
 	}
@@ -313,6 +314,18 @@ func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, s
 
 func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.ok = false
+}
+
+type fakeGeocoder struct {
+	point luckin.GeoPoint
+	err   error
+}
+
+func (g *fakeGeocoder) Geocode(ctx context.Context, address string) (luckin.GeoPoint, error) {
+	if g.err != nil {
+		return luckin.GeoPoint{}, g.err
+	}
+	return g.point, nil
 }
 
 type fakePendingOrderService struct {

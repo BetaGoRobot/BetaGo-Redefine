@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+type GeoPoint struct {
+	Longitude float64
+	Latitude  float64
+}
+
+// Geocoder 把用户描述的地点文本转为经纬度（GCJ-02，与瑞幸坐标系一致）。
+type Geocoder interface {
+	Geocode(context.Context, string) (GeoPoint, error)
+}
+
 type ShopSelection struct {
 	DeptID   int64
 	DeptName string
