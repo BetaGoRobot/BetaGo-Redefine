@@ -35,17 +35,14 @@ func ToolPolicies() []ToolPolicy {
 
 func shopSearchParams() *arktools.Param {
 	return arktools.NewParams("object").
-		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称，可选"}).
-		AddProp("longitude", &arktools.Prop{Type: "number", Desc: "经度"}).
-		AddProp("latitude", &arktools.Prop{Type: "number", Desc: "纬度"}).
-		AddRequired("longitude").
-		AddRequired("latitude")
+		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称关键词，例如“人民广场”“环宇荟”"}).
+		AddRequired("deptName")
 }
 
 func productSearchParams() *arktools.Param {
 	return arktools.NewParams("object").
 		AddProp("deptId", &arktools.Prop{Type: "integer", Desc: "门店ID"}).
-		AddProp("query", &arktools.Prop{Type: "string", Desc: "用户原始查询文本"}).
+		AddProp("query", &arktools.Prop{Type: "string", Desc: "用户原始查询文本，例如“生椰拿铁”"}).
 		AddRequired("deptId").
 		AddRequired("query")
 }
@@ -123,17 +120,13 @@ func orderCreateParams() *arktools.Param {
 	return arktools.NewParams("object").
 		AddProp("deptId", &arktools.Prop{Type: "integer", Desc: "门店ID"}).
 		AddProp("productList", orderProductListProp()).
-		AddProp("longitude", &arktools.Prop{Type: "number", Desc: "经度"}).
-		AddProp("latitude", &arktools.Prop{Type: "number", Desc: "纬度"}).
 		AddProp("couponCodeList", &arktools.Prop{
 			Type:  "array",
 			Desc:  "优惠券编码列表，可选",
 			Items: &arktools.Prop{Type: "string", Desc: "优惠券编码"},
 		}).
 		AddRequired("deptId").
-		AddRequired("productList").
-		AddRequired("longitude").
-		AddRequired("latitude")
+		AddRequired("productList")
 }
 
 func PolicyByRobotTool(name string) (ToolPolicy, bool) {

@@ -50,6 +50,27 @@ func (r *CredentialRepository) UpsertToken(ctx context.Context, lookup luckin.Cr
 	return ins.WithContext(ctx).Clauses(credentialUpsertConflict(row)).Create(row)
 }
 
+func (r *CredentialRepository) DeleteToken(ctx context.Context, lookup luckin.CredentialLookup, actorOpenID string) (bool, error) {
+	now := time.Now()
+	ins := r.q.McpCredential
+	result, err := ins.WithContext(ctx).
+		Where(ins.Provider.Eq(lookup.Provider)).
+		Where(ins.AppID.Eq(lookup.AppID)).
+		Where(ins.BotOpenID.Eq(lookup.BotOpenID)).
+		Where(ins.ScopeType.Eq(string(lookup.Scope.Type))).
+		Where(ins.ScopeID.Eq(lookup.Scope.ID)).
+		Where(ins.DeletedAt.IsNull()).
+		Updates(map[string]any{
+			"deleted_at":         now,
+			"updated_at":         now,
+			"updated_by_open_id": actorOpenID,
+		})
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func buildCredentialRow(codec TokenCodec, lookup luckin.CredentialLookup, token, actorOpenID string, now time.Time) (*model.McpCredential, error) {
 	encrypted, err := codec.Encrypt(token)
 	if err != nil {

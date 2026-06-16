@@ -26,6 +26,18 @@ func Register() {
 	)
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
+
+	session := newSessionStore()
+	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, pendingStore{}, credentialStore{}))
+
+	writer := newCredentialWriter()
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinBindToken, handleBindToken(writer))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinUnbindToken, handleUnbindToken(writer))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinViewScope, handleViewScope(func(ctx context.Context, req luckin.CredentialRequest) (luckin.Credential, error) {
+		return resolveCredential(ctx, credentialStore{}, req)
+	}))
 }
 
 func handleConfirm(service luckin.ConfirmationService) appcardaction.SyncHandler {
@@ -138,6 +150,14 @@ func luckinRuntimeConfig() *infraConfig.LuckinMCPConfig {
 }
 
 type pendingStore struct{}
+
+func (pendingStore) CreatePendingOrder(ctx context.Context, order luckin.PendingOrder) error {
+	repo, err := newPendingRepo()
+	if err != nil {
+		return err
+	}
+	return repo.CreatePendingOrder(ctx, order)
+}
 
 func (pendingStore) FindPendingOrder(ctx context.Context, id string) (luckin.PendingOrder, error) {
 	repo, err := newPendingRepo()

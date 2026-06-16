@@ -27,6 +27,8 @@ func registerLuckinTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 		Resolver:  luckinRuntimeResolver{},
 		Pending:   luckinPendingOrderStore{},
 		Sender:    luckinPendingOrderCardSender{},
+		Cards:     luckinCardSender{},
+		Session:   mcpstore.DefaultSessionStore(),
 		SystemURL: luckinServerURL(),
 	})
 }
@@ -135,13 +137,22 @@ func newLuckinPendingOrderRepository() (*mcpstore.PendingOrderRepository, error)
 type luckinPendingOrderCardSender struct{}
 
 func (luckinPendingOrderCardSender) SendPendingOrderCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, order luckin.PendingOrder) error {
-	card := luckin.BuildPendingOrderCard(order)
+	return sendLuckinCard(ctx, data, meta, luckin.BuildPendingOrderCard(order))
+}
+
+type luckinCardSender struct{}
+
+func (luckinCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
+	return sendLuckinCard(ctx, data, meta, card)
+}
+
+func sendLuckinCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
 	msgID := ""
 	if data != nil && data.Event != nil && data.Event.Message != nil && data.Event.Message.MessageId != nil {
 		msgID = strings.TrimSpace(*data.Event.Message.MessageId)
 	}
 	if msgID != "" {
-		return larkmsg.ReplyCardJSON(ctx, msgID, card, "_luckinOrderConfirm", false)
+		return larkmsg.ReplyCardJSON(ctx, msgID, card, "_luckinCard", false)
 	}
 	chatID := ""
 	if meta != nil {
@@ -153,5 +164,5 @@ func (luckinPendingOrderCardSender) SendPendingOrderCard(ctx context.Context, da
 	if chatID == "" {
 		return errors.New("chat_id is required")
 	}
-	return larkmsg.CreateCardJSON(ctx, chatID, card, fmt.Sprintf("luckin-order-confirm-%d", time.Now().UnixNano()), "_luckinOrderConfirm")
+	return larkmsg.CreateCardJSON(ctx, chatID, card, fmt.Sprintf("luckin-card-%d", time.Now().UnixNano()), "_luckinCard")
 }

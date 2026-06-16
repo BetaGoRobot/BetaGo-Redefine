@@ -56,6 +56,13 @@ type CredentialStore interface {
 	FindToken(context.Context, CredentialLookup) (Credential, error)
 }
 
+type CredentialWriter interface {
+	UpsertToken(context.Context, CredentialLookup, string, string) error
+	DeleteToken(context.Context, CredentialLookup, string) (bool, error)
+}
+
+type CredentialResolverFunc func(context.Context, CredentialRequest) (Credential, error)
+
 type CredentialResolver struct {
 	store       CredentialStore
 	systemToken string

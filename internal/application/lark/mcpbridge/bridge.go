@@ -3,6 +3,7 @@ package mcpbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
@@ -26,12 +27,19 @@ type PendingOrderCardSender interface {
 	SendPendingOrderCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, luckin.PendingOrder) error
 }
 
+// CardSender 发送任意瑞幸交互卡片（门店选择、商品选择、绑定引导）。
+type CardSender interface {
+	SendCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, map[string]any) error
+}
+
 type RegisterOptions struct {
 	Policies  []luckin.ToolPolicy
 	Client    *mcpclient.Client
 	Resolver  CredentialResolver
 	Pending   PendingOrderService
 	Sender    PendingOrderCardSender
+	Cards     CardSender
+	Session   luckin.SessionStore
 	SystemURL string
 }
 
@@ -45,6 +53,8 @@ type handler struct {
 	resolver  CredentialResolver
 	pending   PendingOrderService
 	sender    PendingOrderCardSender
+	cards     CardSender
+	session   luckin.SessionStore
 	serverURL string
 }
 
@@ -62,6 +72,8 @@ func Register(ins *arktools.Impl[larkim.P2MessageReceiveV1], opts RegisterOption
 			resolver:  opts.Resolver,
 			pending:   opts.Pending,
 			sender:    opts.Sender,
+			cards:     opts.Cards,
+			session:   opts.Session,
 			serverURL: opts.SystemURL,
 		})
 	}
@@ -104,39 +116,119 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	if h.resolver == nil {
 		return fmt.Errorf("luckin credential resolver is not configured")
 	}
-	cred, err := h.resolver.Resolve(ctx, credentialRequestFromMessage(data, metaData))
+	req := credentialRequestFromMessage(data, metaData)
+	cred, err := h.resolver.Resolve(ctx, req)
+	if err != nil {
+		if errors.Is(err, luckin.ErrCredentialNotFound) {
+			return h.guideBindToken(ctx, data, metaData, req)
+		}
+		return err
+	}
+
+	switch h.policy.RobotToolName {
+	case "luckin_shop_search":
+		return h.handleShopSearch(ctx, data, metaData, cred, arg)
+	case "luckin_product_search":
+		return h.handleProductSearch(ctx, data, metaData, req, cred, arg)
+	}
+
+	if h.policy.HighRisk {
+		return h.handlePrepareCreate(ctx, data, metaData, req, cred, arg)
+	}
+	return h.callRemoteAndStore(ctx, metaData, cred, arg.JSON)
+}
+
+func (h handler) handleShopSearch(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cred luckin.Credential, arg rawArgs) error {
+	res, err := h.callRemote(ctx, cred, arg.JSON)
 	if err != nil {
 		return err
 	}
-	if h.policy.HighRisk {
-		if h.pending == nil {
-			return fmt.Errorf("luckin pending order service is not configured")
-		}
-		identity := botidentity.Current()
-		order := luckin.NewPendingOrder(luckin.NewPendingOrderRequest{
-			AppID:              identity.AppID,
-			BotOpenID:          identity.BotOpenID,
-			ChatID:             metaData.ChatID,
-			RequesterOpenID:    metaData.OpenID,
-			Credential:         cred,
-			CreateOrderPayload: arg.JSON,
-			PreviewResult:      json.RawMessage(`{}`),
-		})
-		if err := h.pending.CreatePendingOrder(ctx, order); err != nil {
+	shops := luckin.ShopOptionsFromResult(res.Content, 5)
+	keyword := stringArg(arg.JSON, "deptName")
+	if h.cards != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopSelectCard(keyword, shops)); err != nil {
 			return err
 		}
-		if h.sender != nil {
-			if err := h.sender.SendPendingOrderCard(ctx, data, metaData, order); err != nil {
-				return err
-			}
-		}
-		metaData.SetExtra(h.policy.RobotToolName+"_result", "瑞幸订单确认卡片已发送，请由发起人确认后再创建订单")
+	}
+	if len(shops) == 0 {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "未找到匹配门店，已提示用户更换关键词")
+	} else {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "已发送门店选择卡片，等待用户点选门店")
+	}
+	return nil
+}
+
+func (h handler) handleProductSearch(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, req luckin.CredentialRequest, cred luckin.Credential, arg rawArgs) error {
+	shop, ok := h.lookupShop(ctx, req)
+	if !ok {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "用户还没有选择门店，请先调用 luckin_shop_search 让用户选店")
 		return nil
 	}
-	if h.client == nil {
-		return fmt.Errorf("luckin mcp client is not configured")
+	payload := injectField(arg.JSON, "deptId", shop.DeptID)
+	res, err := h.callRemote(ctx, cred, payload)
+	if err != nil {
+		return err
 	}
-	res, err := h.client.CallTool(ctx, mcpclient.CallRequest{
+	products := luckin.ProductOptionsFromResult(res.Content, 5)
+	if h.cards != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, products)); err != nil {
+			return err
+		}
+	}
+	if len(products) == 0 {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "未找到匹配商品，已提示用户更换关键词")
+	} else {
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "已发送商品选择卡片，等待用户点选商品")
+	}
+	return nil
+}
+
+func (h handler) handlePrepareCreate(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, req luckin.CredentialRequest, cred luckin.Credential, arg rawArgs) error {
+	if h.pending == nil {
+		return fmt.Errorf("luckin pending order service is not configured")
+	}
+	payload := arg.JSON
+	if shop, ok := h.lookupShop(ctx, req); ok {
+		payload = injectField(payload, "deptId", shop.DeptID)
+		payload = injectField(payload, "longitude", shop.Longitude)
+		payload = injectField(payload, "latitude", shop.Latitude)
+	}
+	identity := botidentity.Current()
+	order := luckin.NewPendingOrder(luckin.NewPendingOrderRequest{
+		AppID:              identity.AppID,
+		BotOpenID:          identity.BotOpenID,
+		ChatID:             metaData.ChatID,
+		RequesterOpenID:    metaData.OpenID,
+		Credential:         cred,
+		CreateOrderPayload: payload,
+		PreviewResult:      json.RawMessage(`{}`),
+	})
+	if err := h.pending.CreatePendingOrder(ctx, order); err != nil {
+		return err
+	}
+	if h.sender != nil {
+		if err := h.sender.SendPendingOrderCard(ctx, data, metaData, order); err != nil {
+			return err
+		}
+	}
+	metaData.SetExtra(h.policy.RobotToolName+"_result", "瑞幸订单确认卡片已发送，请由发起人确认后再创建订单")
+	return nil
+}
+
+func (h handler) callRemoteAndStore(ctx context.Context, metaData *xhandler.BaseMetaData, cred luckin.Credential, payload json.RawMessage) error {
+	res, err := h.callRemote(ctx, cred, payload)
+	if err != nil {
+		return err
+	}
+	metaData.SetExtra(h.policy.RobotToolName+"_result", string(res.Content))
+	return nil
+}
+
+func (h handler) callRemote(ctx context.Context, cred luckin.Credential, payload json.RawMessage) (mcpclient.CallResult, error) {
+	if h.client == nil {
+		return mcpclient.CallResult{}, fmt.Errorf("luckin mcp client is not configured")
+	}
+	return h.client.CallTool(ctx, mcpclient.CallRequest{
 		Server: mcpclient.ServerConfig{
 			Name:    luckin.ServerName,
 			URL:     h.remoteURL(),
@@ -144,13 +236,25 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 			Timeout: luckin.DefaultTimeout(),
 		},
 		ToolName:  h.policy.MCPToolName,
-		Arguments: arg.JSON,
+		Arguments: payload,
 	})
-	if err != nil {
-		return err
+}
+
+func (h handler) guideBindToken(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, req luckin.CredentialRequest) error {
+	if h.cards != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildBindTokenCard(req.ChatType)); err != nil {
+			return err
+		}
 	}
-	metaData.SetExtra(h.policy.RobotToolName+"_result", string(res.Content))
+	metaData.SetExtra(h.policy.RobotToolName+"_result", "用户尚未绑定瑞幸账号，已发送绑定引导卡片，绑定后请重试")
 	return nil
+}
+
+func (h handler) lookupShop(ctx context.Context, req luckin.CredentialRequest) (luckin.ShopSelection, bool) {
+	if h.session == nil {
+		return luckin.ShopSelection{}, false
+	}
+	return h.session.GetShop(ctx, luckin.NewSessionKey(req))
 }
 
 func (h handler) remoteURL() string {
@@ -195,4 +299,33 @@ func credentialRequestFromMessage(data *larkim.P2MessageReceiveV1, metaData *xha
 		req.ChatType = luckin.ChatTypeGroup
 	}
 	return req
+}
+
+func stringArg(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func injectField(raw json.RawMessage, key string, value any) json.RawMessage {
+	m := map[string]any{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &m); err != nil {
+			m = map[string]any{}
+		}
+	}
+	m[key] = value
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }

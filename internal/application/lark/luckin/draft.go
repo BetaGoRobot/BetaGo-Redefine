@@ -1,0 +1,99 @@
+package luckin
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
+)
+
+type DraftRequest struct {
+	AppID           string
+	BotOpenID       string
+	ChatID          string
+	RequesterOpenID string
+	Credential      Credential
+	Shop            ShopSelection
+	Product         ProductOption
+	Amount          int
+	Now             time.Time
+}
+
+type DraftService struct {
+	caller    ToolCaller
+	serverURL string
+}
+
+func NewDraftService(caller ToolCaller, serverURL string) DraftService {
+	return DraftService{caller: caller, serverURL: serverURL}
+}
+
+func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder, map[string]any, error) {
+	amount := req.Amount
+	if amount <= 0 {
+		amount = 1
+	}
+	payload := createOrderPayload(req.Shop, req.Product, amount)
+
+	preview := json.RawMessage(`{}`)
+	if s.caller != nil {
+		previewPayload, _ := json.Marshal(map[string]any{
+			"deptId":      req.Shop.DeptID,
+			"productList": []map[string]any{productItem(req.Product, amount)},
+		})
+		res, err := s.caller.CallTool(ctx, mcpclient.CallRequest{
+			Server: mcpclient.ServerConfig{
+				Name:    ServerName,
+				URL:     s.remoteURL(),
+				Headers: map[string]string{"Authorization": "Bearer " + req.Credential.Token},
+				Timeout: DefaultTimeout(),
+			},
+			ToolName:  "previewOrder",
+			Arguments: previewPayload,
+		})
+		if err != nil {
+			return PendingOrder{}, nil, err
+		}
+		if data := ExtractData(res.Content); len(data) > 0 {
+			preview = data
+		}
+	}
+
+	order := NewPendingOrder(NewPendingOrderRequest{
+		AppID:              req.AppID,
+		BotOpenID:          req.BotOpenID,
+		ChatID:             req.ChatID,
+		RequesterOpenID:    req.RequesterOpenID,
+		Credential:         req.Credential,
+		CreateOrderPayload: payload,
+		PreviewResult:      preview,
+		Now:                req.Now,
+	})
+	return order, BuildPendingOrderCard(order), nil
+}
+
+func (s DraftService) remoteURL() string {
+	if s.serverURL != "" {
+		return s.serverURL
+	}
+	return ServerURL
+}
+
+func createOrderPayload(shop ShopSelection, product ProductOption, amount int) json.RawMessage {
+	payload, _ := json.Marshal(map[string]any{
+		"deptId":      shop.DeptID,
+		"longitude":   shop.Longitude,
+		"latitude":    shop.Latitude,
+		"productList": []map[string]any{productItem(product, amount)},
+	})
+	return payload
+}
+
+func productItem(product ProductOption, amount int) map[string]any {
+	return map[string]any{
+		"amount":    amount,
+		"productId": product.ProductID,
+		"skuCode":   product.SkuCode,
+	}
+}

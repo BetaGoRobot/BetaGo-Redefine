@@ -69,6 +69,11 @@ const (
 	ActionAgentRuntimeReject     = "agent.runtime.reject"
 	ActionLuckinOrderConfirm     = "luckin_order_confirm"
 	ActionLuckinOrderCancel      = "luckin_order_cancel"
+	ActionLuckinShopSelect       = "luckin_shop_select"
+	ActionLuckinProductSelect    = "luckin_product_select"
+	ActionLuckinBindToken        = "luckin_bind_token"
+	ActionLuckinUnbindToken      = "luckin_unbind_token"
+	ActionLuckinViewScope        = "luckin_view_scope"
 
 	RunIDField    = "run_id"
 	StepIDField   = "step_id"
@@ -79,6 +84,16 @@ const (
 	ApprovalDeliveryField = "approval_delivery"
 	PendingOrderIDField   = "pending_order_id"
 	PayloadHashField      = "payload_hash"
+
+	LuckinDeptIDField     = "luckin_dept_id"
+	LuckinDeptNameField   = "luckin_dept_name"
+	LuckinLongitudeField  = "luckin_longitude"
+	LuckinLatitudeField   = "luckin_latitude"
+	LuckinProductIDField  = "luckin_product_id"
+	LuckinSkuCodeField    = "luckin_sku_code"
+	LuckinProductName     = "luckin_product_name"
+	LuckinTokenFormField  = "luckin_token"
+	LuckinScopeFormField  = "luckin_scope"
 )
 
 var (

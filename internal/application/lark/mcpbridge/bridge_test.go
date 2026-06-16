@@ -52,7 +52,7 @@ func TestRegisterAddsAllowedTools(t *testing.T) {
 	}
 }
 
-func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
+func TestHandleShopSearchSendsShopCard(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	var sawAuth string
 	var sawTool string
@@ -60,7 +60,7 @@ func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "my-coffee", Version: "v0.0.1"}, nil)
 	mcp.AddTool(mcpServer, &mcp.Tool{Name: "queryShopList"}, func(ctx context.Context, req *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 		sawTool = req.Params.Name
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"code":0,"data":[{"deptId":245062453,"deptName":"AI点单专用","address":"北京安贞","longitude":116.39,"latitude":39.98}]}`}}}, nil, nil
 	})
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, &mcp.StreamableHTTPOptions{
 		Stateless:    true,
@@ -78,17 +78,17 @@ func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
 		Scope: luckin.CredentialScope{Type: luckin.ScopePersonal, ID: "ou_user"},
 		Token: "token-read",
 	}}
-	pending := &fakePendingOrderService{}
+	cards := &fakeCardSender{}
 	policy, _ := luckin.PolicyByRobotTool("luckin_shop_search")
 	h := handler{
 		policy:    policy,
 		client:    mcpclient.New(mcpclient.ClientOptions{HTTPClient: server.Client()}),
 		resolver:  resolver,
-		pending:   pending,
+		cards:     cards,
 		serverURL: server.URL,
 	}
 	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user", IsP2P: true}
-	args, err := h.ParseTool(`{"keyword":"人民广场"}`)
+	args, err := h.ParseTool(`{"deptName":"人民广场"}`)
 	if err != nil {
 		t.Fatalf("ParseTool error = %v", err)
 	}
@@ -103,15 +103,102 @@ func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
 	if sawTool != "queryShopList" {
 		t.Fatalf("remote tool = %q", sawTool)
 	}
-	if resolver.request.ChatType != luckin.ChatTypePrivate || resolver.request.ChatID != "oc_chat" || resolver.request.OpenID != "ou_user" {
-		t.Fatalf("credential request mismatch: %+v", resolver.request)
-	}
-	if pending.called {
-		t.Fatalf("read tool should not create pending order")
+	if !cards.called {
+		t.Fatalf("shop select card was not sent")
 	}
 	got, ok := meta.GetExtra("luckin_shop_search_result")
 	if !ok || got == "" {
 		t.Fatalf("tool result missing")
+	}
+}
+
+func TestHandleProductSearchRequiresShopSelection(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	resolver := &fakeResolver{credential: luckin.Credential{
+		Scope: luckin.CredentialScope{Type: luckin.ScopePersonal, ID: "ou_user"},
+		Token: "token-read",
+	}}
+	cards := &fakeCardSender{}
+	policy, _ := luckin.PolicyByRobotTool("luckin_product_search")
+	h := handler{
+		policy:   policy,
+		resolver: resolver,
+		cards:    cards,
+		session:  &fakeSessionStore{},
+	}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user", IsP2P: true}
+	args, _ := h.ParseTool(`{"query":"生椰拿铁"}`)
+	if err := h.Handle(context.Background(), nil, meta, args); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	got, _ := meta.GetExtra("luckin_product_search_result")
+	if got == "" {
+		t.Fatalf("expected guidance result")
+	}
+	if cards.called {
+		t.Fatalf("product card should not be sent without shop")
+	}
+}
+
+func TestHandleProductSearchInjectsDeptIDFromSession(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	var sawDeptID float64
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "my-coffee", Version: "v0.0.1"}, nil)
+	mcp.AddTool(mcpServer, &mcp.Tool{Name: "searchProductForMcp"}, func(ctx context.Context, req *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		if v, ok := args["deptId"].(float64); ok {
+			sawDeptID = v
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"code":0,"data":[{"productId":5293,"productName":"生椰拿铁","skuCode":"SP-1"}]}`}}}, nil, nil
+	})
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, &mcp.StreamableHTTPOptions{
+		Stateless:    true,
+		JSONResponse: true,
+	})
+	server := httptest.NewServer(mcpHandler)
+	t.Cleanup(server.Close)
+
+	resolver := &fakeResolver{credential: luckin.Credential{Token: "token-read"}}
+	cards := &fakeCardSender{}
+	session := &fakeSessionStore{shop: luckin.ShopSelection{DeptID: 245062453, DeptName: "AI点单专用"}, ok: true}
+	policy, _ := luckin.PolicyByRobotTool("luckin_product_search")
+	h := handler{
+		policy:    policy,
+		client:    mcpclient.New(mcpclient.ClientOptions{HTTPClient: server.Client()}),
+		resolver:  resolver,
+		cards:     cards,
+		session:   session,
+		serverURL: server.URL,
+	}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user"}
+	args, _ := h.ParseTool(`{"query":"生椰拿铁"}`)
+	if err := h.Handle(context.Background(), nil, meta, args); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if sawDeptID != 245062453 {
+		t.Fatalf("deptId not injected from session: %v", sawDeptID)
+	}
+	if !cards.called {
+		t.Fatalf("product select card was not sent")
+	}
+}
+
+func TestHandleMissingCredentialSendsBindCard(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	resolver := &fakeResolver{err: luckin.ErrCredentialNotFound}
+	cards := &fakeCardSender{}
+	policy, _ := luckin.PolicyByRobotTool("luckin_shop_search")
+	h := handler{
+		policy:   policy,
+		resolver: resolver,
+		cards:    cards,
+	}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user"}
+	args, _ := h.ParseTool(`{"deptName":"人民广场"}`)
+	if err := h.Handle(context.Background(), nil, meta, args); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if !cards.called {
+		t.Fatalf("bind token card was not sent")
 	}
 }
 
@@ -188,11 +275,44 @@ func useWorkspaceConfigPath(t *testing.T) {
 type fakeResolver struct {
 	credential luckin.Credential
 	request    luckin.CredentialRequest
+	err        error
 }
 
 func (r *fakeResolver) Resolve(ctx context.Context, req luckin.CredentialRequest) (luckin.Credential, error) {
 	r.request = req
+	if r.err != nil {
+		return luckin.Credential{}, r.err
+	}
 	return r.credential, nil
+}
+
+type fakeCardSender struct {
+	called bool
+	card   map[string]any
+}
+
+func (s *fakeCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
+	s.called = true
+	s.card = card
+	return nil
+}
+
+type fakeSessionStore struct {
+	shop luckin.ShopSelection
+	ok   bool
+}
+
+func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
+	return s.shop, s.ok
+}
+
+func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
+	s.shop = shop
+	s.ok = true
+}
+
+func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
+	s.ok = false
 }
 
 type fakePendingOrderService struct {
