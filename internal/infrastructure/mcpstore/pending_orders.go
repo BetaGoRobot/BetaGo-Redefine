@@ -27,14 +27,17 @@ func (r *PendingOrderRepository) CreatePendingOrder(ctx context.Context, order l
 
 func (r *PendingOrderRepository) FindPendingOrder(ctx context.Context, id string) (luckin.PendingOrder, error) {
 	ins := r.q.LuckinPendingOrder
-	row, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Take()
+	rows, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Limit(1).Find()
 	if err != nil {
 		return luckin.PendingOrder{}, err
 	}
-	return pendingOrderFromRow(row), nil
+	if len(rows) == 0 {
+		return luckin.PendingOrder{}, luckin.ErrPendingOrderNotFound
+	}
+	return pendingOrderFromRow(rows[0]), nil
 }
 
-func (r *PendingOrderRepository) MarkConfirmed(ctx context.Context, id, confirmedByOpenID string, resultJSON json.RawMessage, now time.Time) error {
+func (r *PendingOrderRepository) MarkConfirmed(ctx context.Context, id, payloadHash, confirmedByOpenID string, resultJSON json.RawMessage, now time.Time) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -46,8 +49,19 @@ func (r *PendingOrderRepository) MarkConfirmed(ctx context.Context, id, confirme
 		"updated_at":           now,
 	}
 	ins := r.q.LuckinPendingOrder
-	_, err := ins.WithContext(ctx).Where(ins.ID.Eq(id)).Updates(updates)
-	return err
+	result, err := ins.WithContext(ctx).
+		Where(ins.ID.Eq(id)).
+		Where(ins.PayloadHash.Eq(payloadHash)).
+		Where(ins.Status.Eq(string(luckin.PendingStatusPending))).
+		Where(ins.ExpiresAt.Gt(now)).
+		Updates(updates)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected == 0 {
+		return luckin.ErrPendingOrderNotConfirmable
+	}
+	return nil
 }
 
 func buildPendingOrderRow(order luckin.PendingOrder) *model.LuckinPendingOrder {

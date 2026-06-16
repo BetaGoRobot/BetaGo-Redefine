@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,11 @@ const (
 	PendingStatusExpired   PendingStatus = "expired"
 	PendingStatusCancelled PendingStatus = "cancelled"
 	PendingStatusFailed    PendingStatus = "failed"
+)
+
+var (
+	ErrPendingOrderNotFound       = errors.New("luckin pending order not found")
+	ErrPendingOrderNotConfirmable = errors.New("luckin pending order cannot be confirmed")
 )
 
 type PendingOrder struct {

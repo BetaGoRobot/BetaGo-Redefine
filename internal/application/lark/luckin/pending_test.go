@@ -21,7 +21,7 @@ func TestNewPendingOrderComputesHashAndExpiry(t *testing.T) {
 		Now:                time.Unix(100, 0),
 	})
 	if order.ID == "" || order.PayloadHash == "" {
-		t.Fatalf("missing id or hash: %+v", order)
+		t.Fatalf("missing id/hash: id_empty=%t hash_empty=%t", order.ID == "", order.PayloadHash == "")
 	}
 	wantHashBytes := sha256.Sum256(payload)
 	if order.PayloadHash != hex.EncodeToString(wantHashBytes[:]) {
@@ -37,7 +37,7 @@ func TestNewPendingOrderComputesHashAndExpiry(t *testing.T) {
 		t.Fatalf("MCPServerName = %q", order.MCPServerName)
 	}
 	if order.AppID != "app" || order.BotOpenID != "bot" {
-		t.Fatalf("app/bot mismatch: %+v", order)
+		t.Fatalf("app/bot mismatch: app=%q bot=%q", order.AppID, order.BotOpenID)
 	}
 }
 

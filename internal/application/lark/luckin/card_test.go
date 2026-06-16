@@ -14,10 +14,37 @@ func TestBuildPendingOrderCardContainsScopeAndActions(t *testing.T) {
 	})
 	text := mustMarshalForTest(card)
 	if !containsAll(text, "群聊默认瑞幸账号", "luckin_order_confirm", "luckin_order_cancel") {
-		t.Fatalf("card missing required content: %s", text)
+		t.Fatalf("card missing required scope/action content")
 	}
 	if !containsAll(text, "po_1", "hash_1", "pending_order_id", "payload_hash") {
-		t.Fatalf("card missing callback fields: %s", text)
+		t.Fatalf("card missing callback fields")
+	}
+}
+
+func TestBuildPendingOrderCardSummarizesPreview(t *testing.T) {
+	card := BuildPendingOrderCard(PendingOrder{
+		ID:              "po_1",
+		PayloadHash:     "hash_1",
+		CredentialScope: CredentialScope{Type: ScopePersonal, ID: "user"},
+		PreviewResult: json.RawMessage(`{
+			"shopInfo":{"deptName":"瑞幸咖啡 上海路店","address":"上海路 1 号","distance":0.8},
+			"productInfoList":[{"name":"生椰拿铁","additionDesc":"少冰 / 标准糖","amount":2}],
+			"discountPrice":19.8,
+			"totalInitialPrice":58,
+			"couponCodeList":["coupon-a"],
+			"aboutTime":"10:30"
+		}`),
+	})
+
+	text := mustMarshalForTest(card)
+	if !containsAll(text, "瑞幸咖啡 上海路店", "上海路 1 号", "0.8km") {
+		t.Fatalf("card missing shop summary")
+	}
+	if !containsAll(text, "生椰拿铁", "少冰 / 标准糖", "x 2") {
+		t.Fatalf("card missing product summary")
+	}
+	if !containsAll(text, "实付 ¥19.8", "原价 ¥58", "优惠券 1 张", "10:30") {
+		t.Fatalf("card missing price/time summary")
 	}
 }
 
@@ -30,7 +57,7 @@ func TestBuildPendingOrderCardDoesNotExposePayload(t *testing.T) {
 	})
 	text := mustMarshalForTest(card)
 	if containsAll(text, "full-order-payload") {
-		t.Fatalf("card exposes order payload: %s", text)
+		t.Fatalf("card exposes order payload")
 	}
 }
 
