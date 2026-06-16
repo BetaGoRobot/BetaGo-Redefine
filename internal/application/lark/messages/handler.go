@@ -80,6 +80,7 @@ func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[
 			}
 		}).
 		WithFeatureChecker(cfgManager.FeatureCheckFunc()).
+		WithStageFilter(newMessageStageFilter()).
 		AddAsync(&ops.RecordMsgOperator{}).
 		AddAsync(&ops.RepeatMsgOperator{}).
 		AddAsync(&ops.ReactMsgOperator{}).

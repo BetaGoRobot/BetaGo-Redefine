@@ -189,10 +189,11 @@ func (m *BaseMetaData) GetOpenID() string {
 }
 
 type (
-	ProcPanicFunc[T, K any] func(context.Context, error, *T, *K)
-	ProcDeferFunc[T, K any] func(context.Context, *T, *K)
-	MetaInitFunc[T, K any]  func(*T) *K
-	Processor[T, K any]     struct {
+	ProcPanicFunc[T, K any]   func(context.Context, error, *T, *K)
+	ProcDeferFunc[T, K any]   func(context.Context, *T, *K)
+	MetaInitFunc[T, K any]    func(*T) *K
+	StageFilterFunc[T, K any] func(context.Context, Stage[T, K], *T, *K) bool
+	Processor[T, K any]       struct {
 		context.Context
 
 		data           *T
@@ -204,6 +205,7 @@ type (
 		metaInitFn     MetaInitFunc[T, K]
 		preRunFn       func(p *Processor[T, K])
 		featureChecker FeatureCheckFunc // 功能检查函数（依赖注入）
+		stageFilter    StageFilterFunc[T, K]
 	}
 )
 
@@ -273,6 +275,11 @@ func (p *Processor[T, K]) NewExecution() *Processor[T, K] {
 // WithFeatureChecker 设置功能检查函数（依赖注入）
 func (p *Processor[T, K]) WithFeatureChecker(checker FeatureCheckFunc) *Processor[T, K] {
 	p.featureChecker = checker
+	return p
+}
+
+func (p *Processor[T, K]) WithStageFilter(filter StageFilterFunc[T, K]) *Processor[T, K] {
+	p.stageFilter = filter
 	return p
 }
 
@@ -479,6 +486,10 @@ func (p *Processor[T, K]) compileStageDAG() (map[string]*stageWrapper[T, K], err
 		if name == "" {
 			return errors.New("stage name cannot be empty")
 		}
+		if p.stageFilter != nil && !p.stageFilter(p.Context, stage, p.data, p.metaData) {
+			logs.L().Ctx(p).Info("Filtered stage before execution", zap.String("stage", name))
+			return nil
+		}
 		if visiting[name] {
 			return errors.Errorf("dependency cycle detected at stage %q", name)
 		}
@@ -500,7 +511,9 @@ func (p *Processor[T, K]) compileStageDAG() (map[string]*stageWrapper[T, K], err
 				delete(visiting, name)
 				return err
 			}
-			node.deps = append(node.deps, nodes[dep.Name()])
+			if depNode, ok := nodes[dep.Name()]; ok {
+				node.deps = append(node.deps, depNode)
+			}
 		}
 		delete(visiting, name)
 		return nil

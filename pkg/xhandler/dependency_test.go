@@ -211,6 +211,89 @@ func TestRunParallelStages_DeduplicatesSharedFetcher(t *testing.T) {
 	}
 }
 
+func TestRunParallelStages_FiltersStageBeforeExecution(t *testing.T) {
+	initTestRuntime()
+
+	var skippedRan atomic.Int32
+	var allowedRan atomic.Int32
+
+	processor := &Processor[testEvent, BaseMetaData]{
+		Context:  context.Background(),
+		data:     &testEvent{},
+		metaData: &BaseMetaData{},
+	}
+	processor.
+		WithStageFilter(func(ctx context.Context, stage Stage[testEvent, BaseMetaData], event *testEvent, meta *BaseMetaData) bool {
+			return stage.Name() != "skip"
+		}).
+		AddAsync(&testOperator{
+			name: "skip",
+			runFn: func(ctx context.Context, event *testEvent, meta *BaseMetaData) error {
+				skippedRan.Add(1)
+				return nil
+			},
+		}).
+		AddAsync(&testOperator{
+			name: "allow",
+			runFn: func(ctx context.Context, event *testEvent, meta *BaseMetaData) error {
+				allowedRan.Add(1)
+				return nil
+			},
+		})
+
+	if err := processor.RunParallelStages(); err != nil {
+		t.Fatalf("RunParallelStages returned error: %v", err)
+	}
+	if got := skippedRan.Load(); got != 0 {
+		t.Fatalf("filtered stage ran %d times, want 0", got)
+	}
+	if got := allowedRan.Load(); got != 1 {
+		t.Fatalf("allowed stage ran %d times, want 1", got)
+	}
+}
+
+func TestRunParallelStages_FilteredDependencyDoesNotBlockDependent(t *testing.T) {
+	initTestRuntime()
+
+	var depRan atomic.Int32
+	var rootRan atomic.Int32
+	dep := &testOperator{
+		name: "dep",
+		runFn: func(ctx context.Context, event *testEvent, meta *BaseMetaData) error {
+			depRan.Add(1)
+			return nil
+		},
+	}
+
+	processor := &Processor[testEvent, BaseMetaData]{
+		Context:  context.Background(),
+		data:     &testEvent{},
+		metaData: &BaseMetaData{},
+	}
+	processor.
+		WithStageFilter(func(ctx context.Context, stage Stage[testEvent, BaseMetaData], event *testEvent, meta *BaseMetaData) bool {
+			return stage.Name() != "dep"
+		}).
+		AddAsync(&testOperator{
+			name: "root",
+			deps: []Stage[testEvent, BaseMetaData]{dep},
+			runFn: func(ctx context.Context, event *testEvent, meta *BaseMetaData) error {
+				rootRan.Add(1)
+				return nil
+			},
+		})
+
+	if err := processor.RunParallelStages(); err != nil {
+		t.Fatalf("RunParallelStages returned error: %v", err)
+	}
+	if got := depRan.Load(); got != 0 {
+		t.Fatalf("filtered dependency ran %d times, want 0", got)
+	}
+	if got := rootRan.Load(); got != 1 {
+		t.Fatalf("dependent stage ran %d times, want 1", got)
+	}
+}
+
 func TestRunParallelStages_ExecutesTransitiveDependencies(t *testing.T) {
 	initTestRuntime()
 

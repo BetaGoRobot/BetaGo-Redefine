@@ -230,6 +230,18 @@ BetaGo-Redefine/
 - 单测中的替身必须使用显式依赖注入后的 fake / stub，或 `goconvey` 一类正式测试框架组织场景与断言。
 - 如果生产代码当前不可测试，应先把依赖收敛到构造参数、deps struct、接口或明确的 context-scoped seam，再写测试；不要为了测试新增可变全局函数 alias。
 
+## 本地测试环境注意事项
+
+`.vscode/launch.json` 的 Go 启动配置使用了 `-tags=custom_skip_vips`。本仓库默认构建会通过 `pkg/utils/img.go` 引入 `github.com/h2non/bimg`，本地如果没有完整的 `libvips` / `glib-2.0` / `gio-2.0` / `gobject-2.0` 开发依赖，相关包会在编译阶段失败。
+
+在 Codex 或本地终端验证 Go 测试时，优先使用与 VS Code 配置一致的 build tag：
+
+```bash
+BETAGO_CONFIG_PATH=.dev/config.toml go test -tags=custom_skip_vips ./internal/application/lark/messages
+```
+
+如果测试仍然失败，再按真实测试输出判断代码问题；不要把缺少 `libvips/glib` 的 pkg-config 错误误判为业务代码回归。
+
 ## 本地开发
 
 ### 前置要求
