@@ -2,14 +2,24 @@ package mcpstore
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
+	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/jellydator/ttlcache/v3"
+	"github.com/redis/go-redis/v9"
 )
 
-const sessionTTL = 30 * time.Minute
+const (
+	// sessionTTL 进程内缓存与 Redis 持久化共用的过期时长。会话态（已选门店 + 购物车）
+	// 需要跨副本/重启可恢复，因此放长到 7 天，超期按“会话过期”处理。
+	sessionTTL = 7 * 24 * time.Hour
+
+	redisShopKeyPfx = "luckin:session:shop:"
+	redisCartKeyPfx = "luckin:session:cart:"
+)
 
 var (
 	defaultSessionStore *SessionStore
@@ -24,6 +34,8 @@ func DefaultSessionStore() *SessionStore {
 	return defaultSessionStore
 }
 
+// SessionStore 两级存储：进程内 ttlcache（L1）+ Redis 持久化（L2）。
+// Redis 不可用时自动降级为纯内存，保证主流程不被影响。
 type SessionStore struct {
 	shops *ttlcache.Cache[string, luckin.ShopSelection]
 	carts *ttlcache.Cache[string, luckin.Cart]
@@ -43,34 +55,88 @@ func NewSessionStore() *SessionStore {
 	return &SessionStore{shops: shops, carts: carts}
 }
 
-func (s *SessionStore) GetShop(_ context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
-	item := s.shops.Get(key.String())
-	if item == nil {
-		return luckin.ShopSelection{}, false
+func (s *SessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
+	if item := s.shops.Get(key.String()); item != nil {
+		return item.Value(), true
 	}
-	return item.Value(), true
+	var shop luckin.ShopSelection
+	if getRedisJSON(ctx, redisShopKeyPfx+key.String(), &shop) {
+		s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
+		return shop, true
+	}
+	return luckin.ShopSelection{}, false
 }
 
-func (s *SessionStore) SetShop(_ context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
+func (s *SessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
 	s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
+	setRedisJSON(ctx, redisShopKeyPfx+key.String(), shop)
 }
 
-func (s *SessionStore) ClearShop(_ context.Context, key luckin.SessionKey) {
+func (s *SessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.shops.Delete(key.String())
+	delRedis(ctx, redisShopKeyPfx+key.String())
 }
 
-func (s *SessionStore) GetCart(_ context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
-	item := s.carts.Get(key.String())
-	if item == nil {
-		return luckin.Cart{}, false
+func (s *SessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
+	if item := s.carts.Get(key.String()); item != nil {
+		return item.Value(), true
 	}
-	return item.Value(), true
+	var cart luckin.Cart
+	if getRedisJSON(ctx, redisCartKeyPfx+key.String(), &cart) {
+		s.carts.Set(key.String(), cart, ttlcache.DefaultTTL)
+		return cart, true
+	}
+	return luckin.Cart{}, false
 }
 
-func (s *SessionStore) SetCart(_ context.Context, key luckin.SessionKey, cart luckin.Cart) {
+func (s *SessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
 	s.carts.Set(key.String(), cart, ttlcache.DefaultTTL)
+	setRedisJSON(ctx, redisCartKeyPfx+key.String(), cart)
 }
 
-func (s *SessionStore) ClearCart(_ context.Context, key luckin.SessionKey) {
+func (s *SessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
 	s.carts.Delete(key.String())
+	delRedis(ctx, redisCartKeyPfx+key.String())
+}
+
+// getRedisJSON 读取并反序列化 Redis 值；Redis/配置未就绪时安全降级。
+func getRedisJSON(ctx context.Context, key string, dst any) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+		}
+	}()
+	client := redis_dal.GetRedisClient()
+	if client == nil {
+		return false
+	}
+	val, err := client.Get(ctx, key).Result()
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal([]byte(val), dst) == nil
+}
+
+func setRedisJSON(ctx context.Context, key string, value any) {
+	defer func() { _ = recover() }()
+	client := redis_dal.GetRedisClient()
+	if client == nil {
+		return
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	if err := client.Set(ctx, key, data, sessionTTL).Err(); err != nil && err != redis.Nil {
+		_ = err
+	}
+}
+
+func delRedis(ctx context.Context, key string) {
+	defer func() { _ = recover() }()
+	client := redis_dal.GetRedisClient()
+	if client == nil {
+		return
+	}
+	_ = client.Del(ctx, key).Err()
 }
