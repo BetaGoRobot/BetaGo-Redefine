@@ -29,6 +29,7 @@ func registerLuckinTools(ins *tools.Impl[larkim.P2MessageReceiveV1]) {
 		Pending:   luckinPendingOrderStore{},
 		Sender:    luckinPendingOrderCardSender{},
 		Cards:     luckinCardSender{},
+		Ephemeral: larkmsg.SendEphemeralCard,
 		Session:   mcpstore.DefaultSessionStore(),
 		Geocoder:  luckinGeocoder(),
 		SystemURL: luckinServerURL(),

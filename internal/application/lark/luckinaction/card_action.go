@@ -21,6 +21,7 @@ import (
 
 func Register() {
 	images := newImageUploader()
+	session := newSessionStore()
 	service := luckin.NewConfirmationServiceWithTracking(
 		pendingStore{},
 		credentialStore{},
@@ -30,25 +31,28 @@ func Register() {
 		images,
 		luckinOrderPollConfig(),
 	)
-	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service, session))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
 
-	session := newSessionStore()
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}, images))
-	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, pendingStore{}, credentialStore{}, images, newOrderTracker()))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, credentialStore{}, images))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinCartUpdate, handleCartUpdate(session))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinCartRemove, handleCartRemove(session))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinCartCheckout, handleCartCheckout(session, draft, pendingStore{}, credentialStore{}))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinCouponApply, handleCouponApply(session, draft, pendingStore{}, credentialStore{}))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderStatus, handleOrderStatus(credentialStore{}, draft))
 
 	writer := newCredentialWriter()
-	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinBindToken, handleBindToken(writer))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinBindToken, handleBindToken(writer, larkmsg.DeleteEphemeralMessage))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinUnbindToken, handleUnbindToken(writer))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinViewScope, handleViewScope(func(ctx context.Context, req luckin.CredentialRequest) (luckin.Credential, error) {
 		return resolveCredential(ctx, credentialStore{}, req)
 	}))
 }
 
-func handleConfirm(service luckin.ConfirmationService) appcardaction.AsyncHandler {
+func handleConfirm(service luckin.ConfirmationService, session luckin.SessionStore) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		id, err := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		if err != nil {
@@ -59,6 +63,7 @@ func handleConfirm(service luckin.ConfirmationService) appcardaction.AsyncHandle
 			return nil, err
 		}
 		msgID := actionCtx.MessageID()
+		key := sessionKey(actionCtx)
 		req := luckin.ConfirmRequest{
 			PendingOrderID: id,
 			PayloadHash:    hash,
@@ -78,6 +83,10 @@ func handleConfirm(service luckin.ConfirmationService) appcardaction.AsyncHandle
 					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("创建订单失败："+err.Error()))
 				}
 				return
+			}
+			// 下单成功后清空购物车，避免重复下单。
+			if session != nil {
+				session.ClearCart(runCtx, key)
 			}
 			if msgID != "" {
 				_ = larkmsg.PatchCardJSON(runCtx, msgID, card)

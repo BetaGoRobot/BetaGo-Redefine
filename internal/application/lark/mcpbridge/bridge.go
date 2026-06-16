@@ -32,6 +32,9 @@ type CardSender interface {
 	SendCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, map[string]any) error
 }
 
+// EphemeralCardSender 发送仅指定用户可见的临时卡（用于绑定 token 引导）。
+type EphemeralCardSender func(ctx context.Context, chatID, openID string, card any) (string, error)
+
 type RegisterOptions struct {
 	Policies  []luckin.ToolPolicy
 	Client    *mcpclient.Client
@@ -39,6 +42,7 @@ type RegisterOptions struct {
 	Pending   PendingOrderService
 	Sender    PendingOrderCardSender
 	Cards     CardSender
+	Ephemeral EphemeralCardSender
 	Session   luckin.SessionStore
 	Geocoder  luckin.Geocoder
 	Images    luckin.ImageUploader
@@ -56,6 +60,7 @@ type handler struct {
 	pending   PendingOrderService
 	sender    PendingOrderCardSender
 	cards     CardSender
+	ephemeral EphemeralCardSender
 	session   luckin.SessionStore
 	geocoder  luckin.Geocoder
 	images    luckin.ImageUploader
@@ -77,6 +82,7 @@ func Register(ins *arktools.Impl[larkim.P2MessageReceiveV1], opts RegisterOption
 			pending:   opts.Pending,
 			sender:    opts.Sender,
 			cards:     opts.Cards,
+			ephemeral: opts.Ephemeral,
 			session:   opts.Session,
 			geocoder:  opts.Geocoder,
 			images:    opts.Images,
@@ -266,6 +272,14 @@ func (h handler) callRemote(ctx context.Context, cred luckin.Credential, payload
 }
 
 func (h handler) guideBindToken(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, req luckin.CredentialRequest) error {
+	// 绑定卡含个人 token 输入，使用临时卡仅发起人可见，避免群内泄露。
+	if h.ephemeral != nil {
+		if _, err := h.ephemeral(ctx, req.ChatID, req.OpenID, luckin.BuildBindTokenCard(req.ChatType)); err == nil {
+			metaData.SetExtra(h.policy.RobotToolName+"_result", "用户尚未绑定瑞幸账号，已发送绑定引导卡片，绑定后请重试")
+			return nil
+		}
+	}
+	// 临时卡不可用或失败时降级为普通卡片，保证引导可达。
 	if h.cards != nil {
 		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildBindTokenCard(req.ChatType)); err != nil {
 			return err

@@ -31,7 +31,7 @@ func TestHandleShopSelectStoresSession(t *testing.T) {
 
 func TestHandleProductSelectRequiresShop(t *testing.T) {
 	session := &memSessionStore{}
-	_, err := handleProductSelect(session, luckin.DraftService{}, nil, nil, nil, nil)(context.Background(), testActionContext(map[string]any{
+	_, err := handleProductSelect(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContext(map[string]any{
 		cardactionproto.LuckinProductIDField: "5293",
 		cardactionproto.LuckinSkuCodeField:   "SP-1",
 	}))
@@ -42,7 +42,7 @@ func TestHandleProductSelectRequiresShop(t *testing.T) {
 
 func TestHandleBindTokenStoresPersonalScope(t *testing.T) {
 	writer := &memCredentialWriter{}
-	resp, err := handleBindToken(writer)(context.Background(), testActionContextWithForm(
+	resp, err := handleBindToken(writer, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken},
 		map[string]any{cardactionproto.LuckinTokenFormField: "token-xyz"},
 	))
@@ -62,7 +62,7 @@ func TestHandleBindTokenStoresPersonalScope(t *testing.T) {
 
 func TestHandleBindTokenAlwaysPersonalScope(t *testing.T) {
 	writer := &memCredentialWriter{}
-	_, err := handleBindToken(writer)(context.Background(), testActionContextWithForm(
+	_, err := handleBindToken(writer, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken},
 		map[string]any{
 			cardactionproto.LuckinTokenFormField: "token-grp",
@@ -133,6 +133,8 @@ func testActionContextWithForm(value, form map[string]any) *appcardaction.Contex
 type memSessionStore struct {
 	shop luckin.ShopSelection
 	ok   bool
+	cart luckin.Cart
+	cok  bool
 }
 
 func (s *memSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -146,6 +148,19 @@ func (s *memSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, sh
 
 func (s *memSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.ok = false
+}
+
+func (s *memSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
+	return s.cart, s.cok
+}
+
+func (s *memSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
+	s.cart = cart
+	s.cok = true
+}
+
+func (s *memSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
+	s.cok = false
 }
 
 type memCredentialWriter struct {

@@ -68,8 +68,7 @@ func TestDraftServiceBuildsPendingOrderWithPreview(t *testing.T) {
 		RequesterOpenID: "user",
 		Credential:      Credential{Token: "token-1", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		Shop:            ShopSelection{DeptID: 100, DeptName: "门店A", Longitude: 1.1, Latitude: 2.2},
-		Product:         ProductOption{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁"},
-		Amount:          1,
+		Items:           []CartItem{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁", Amount: 1}},
 		Now:             time.Unix(100, 0),
 	})
 	if err != nil {

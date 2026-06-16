@@ -25,6 +25,8 @@ func ScopeLabel(scope CredentialScope) string {
 
 func BuildPendingOrderCard(order PendingOrder) map[string]any {
 	summary := previewSummaryFromOrder(order)
+	available := AvailableCouponsFromPreview(order.PreviewResult)
+	selected := selectedCouponsFromPayload(order.CreateOrderPayload)
 	elements := []any{
 		larkmsg.Markdown("**🧾 确认瑞幸订单**"),
 		larkmsg.HintMarkdown("账号：" + ScopeLabel(order.CredentialScope)),
@@ -32,12 +34,16 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 		larkmsg.Markdown("🏬 **门店**\n" + summary.Shop),
 		larkmsg.Markdown("☕ **商品**\n" + summary.Products),
 	}
-	if summary.Coupon != "" {
-		elements = append(elements, larkmsg.Markdown("🎟 **优惠券**\n"+summary.Coupon))
-	}
 	elements = append(elements,
 		larkmsg.Markdown("💰 **价格**\n"+summary.Price),
 		larkmsg.HintMarkdown("⏰ 预计取餐/送达："+summary.AboutTime),
+	)
+	if len(available) > 0 {
+		elements = append(elements, larkmsg.Divider(), couponSelectForm(order, available, selected))
+	} else if summary.Coupon != "" {
+		elements = append(elements, larkmsg.Markdown("🎟 **优惠券**\n"+summary.Coupon))
+	}
+	elements = append(elements,
 		larkmsg.Divider(),
 		larkmsg.HintMarkdown("点击确认将创建瑞幸订单，确认后只创建订单、不会自动支付。"),
 		larkmsg.ButtonRow("none",
@@ -60,6 +66,72 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 		),
 	)
 	return map[string]any(larkmsg.NewCardV2("瑞幸点单", elements, larkmsg.StandardPanelCardV2Options()))
+}
+
+// couponSelectForm 渲染可用优惠券多选 + “应用优惠券”按钮，应用后重新预览刷新价格。
+func couponSelectForm(order PendingOrder, available, selected []string) map[string]any {
+	options := make([]larkmsg.SelectStaticOption, 0, len(available))
+	for _, code := range available {
+		options = append(options, larkmsg.SelectStaticOption{Text: couponLabel(code), Value: code})
+	}
+	apply := larkmsg.Button("应用优惠券", larkmsg.ButtonOptions{
+		Name:           "luckin_coupon_apply",
+		Type:           "default",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinCouponApply,
+		},
+	})
+	return map[string]any{
+		"tag":                "form",
+		"name":               "luckin_coupon_form",
+		"vertical_spacing":   "8px",
+		"horizontal_spacing": "8px",
+		"elements": []any{
+			larkmsg.Markdown("🎟 **优惠券**（可多选后点应用）"),
+			larkmsg.MultiSelectStatic(cardactionproto.LuckinCouponFormField, larkmsg.MultiSelectStaticOptions{
+				Placeholder:    "选择可用优惠券",
+				Width:          "fill",
+				InitialOptions: selected,
+				Options:        options,
+			}),
+			larkmsg.ButtonRow("none", apply),
+		},
+	}
+}
+
+func couponLabel(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "优惠券"
+	}
+	if len(code) <= 12 {
+		return "优惠券 " + code
+	}
+	return "优惠券 " + code[:4] + "…" + code[len(code)-4:]
+}
+
+// AvailableCouponsFromPreview 从 previewOrder 返回 data 中提取可用优惠券编码列表。
+func AvailableCouponsFromPreview(preview json.RawMessage) []string {
+	if len(preview) == 0 {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(preview, &obj); err != nil {
+		return nil
+	}
+	return stringSlice(obj["couponCodeList"])
+}
+
+func selectedCouponsFromPayload(payload json.RawMessage) []string {
+	if len(payload) == 0 {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil
+	}
+	return stringSlice(obj["couponCodeList"])
 }
 
 type previewSummary struct {

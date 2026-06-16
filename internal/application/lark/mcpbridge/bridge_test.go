@@ -301,6 +301,8 @@ func (s *fakeCardSender) SendCard(ctx context.Context, data *larkim.P2MessageRec
 type fakeSessionStore struct {
 	shop luckin.ShopSelection
 	ok   bool
+	cart luckin.Cart
+	cok  bool
 }
 
 func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -314,6 +316,19 @@ func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, s
 
 func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.ok = false
+}
+
+func (s *fakeSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
+	return s.cart, s.cok
+}
+
+func (s *fakeSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
+	s.cart = cart
+	s.cok = true
+}
+
+func (s *fakeSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
+	s.cok = false
 }
 
 type fakeGeocoder struct {

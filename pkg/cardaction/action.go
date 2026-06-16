@@ -72,6 +72,11 @@ const (
 	ActionLuckinShopSelect       = "luckin_shop_select"
 	ActionLuckinProductQuery     = "luckin_product_query"
 	ActionLuckinProductSelect    = "luckin_product_select"
+	ActionLuckinCartUpdate       = "luckin_cart_update"
+	ActionLuckinCartRemove       = "luckin_cart_remove"
+	ActionLuckinCartCheckout     = "luckin_cart_checkout"
+	ActionLuckinCartContinue     = "luckin_cart_continue"
+	ActionLuckinCouponApply      = "luckin_coupon_apply"
 	ActionLuckinOrderStatus      = "luckin_order_status"
 	ActionLuckinBindToken        = "luckin_bind_token"
 	ActionLuckinUnbindToken      = "luckin_unbind_token"
@@ -94,13 +99,17 @@ const (
 	LuckinProductIDField  = "luckin_product_id"
 	LuckinSkuCodeField    = "luckin_sku_code"
 	LuckinProductName     = "luckin_product_name"
+	LuckinUnitPriceField  = "luckin_unit_price"
 	LuckinQueryFormField  = "luckin_query"
+	LuckinQtyFormField    = "luckin_qty"
 	LuckinTokenFormField  = "luckin_token"
 	LuckinScopeFormField  = "luckin_scope"
 	LuckinCouponFormField = "luckin_coupon"
 	LuckinOrderIDField    = "luckin_order_id"
 	// LuckinSpecFormFieldPrefix + attributeId 组成规格选择表单字段名。
 	LuckinSpecFormFieldPrefix = "luckin_spec_"
+	// LuckinCouponFieldPrefix + 序号 组成确认卡上每个可用优惠券的勾选字段名。
+	LuckinCouponFieldPrefix = "luckin_coupon_"
 )
 
 var (

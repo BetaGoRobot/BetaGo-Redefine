@@ -25,20 +25,26 @@ func DefaultSessionStore() *SessionStore {
 }
 
 type SessionStore struct {
-	cache *ttlcache.Cache[string, luckin.ShopSelection]
+	shops *ttlcache.Cache[string, luckin.ShopSelection]
+	carts *ttlcache.Cache[string, luckin.Cart]
 }
 
 func NewSessionStore() *SessionStore {
-	c := ttlcache.New(
+	shops := ttlcache.New(
 		ttlcache.WithTTL[string, luckin.ShopSelection](sessionTTL),
 		ttlcache.WithCapacity[string, luckin.ShopSelection](2000),
 	)
-	go c.Start()
-	return &SessionStore{cache: c}
+	carts := ttlcache.New(
+		ttlcache.WithTTL[string, luckin.Cart](sessionTTL),
+		ttlcache.WithCapacity[string, luckin.Cart](2000),
+	)
+	go shops.Start()
+	go carts.Start()
+	return &SessionStore{shops: shops, carts: carts}
 }
 
 func (s *SessionStore) GetShop(_ context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
-	item := s.cache.Get(key.String())
+	item := s.shops.Get(key.String())
 	if item == nil {
 		return luckin.ShopSelection{}, false
 	}
@@ -46,9 +52,25 @@ func (s *SessionStore) GetShop(_ context.Context, key luckin.SessionKey) (luckin
 }
 
 func (s *SessionStore) SetShop(_ context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
-	s.cache.Set(key.String(), shop, ttlcache.DefaultTTL)
+	s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
 }
 
 func (s *SessionStore) ClearShop(_ context.Context, key luckin.SessionKey) {
-	s.cache.Delete(key.String())
+	s.shops.Delete(key.String())
+}
+
+func (s *SessionStore) GetCart(_ context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
+	item := s.carts.Get(key.String())
+	if item == nil {
+		return luckin.Cart{}, false
+	}
+	return item.Value(), true
+}
+
+func (s *SessionStore) SetCart(_ context.Context, key luckin.SessionKey, cart luckin.Cart) {
+	s.carts.Set(key.String(), cart, ttlcache.DefaultTTL)
+}
+
+func (s *SessionStore) ClearCart(_ context.Context, key luckin.SessionKey) {
+	s.carts.Delete(key.String())
 }

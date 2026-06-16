@@ -14,8 +14,9 @@ import (
 )
 
 func TestHandleConfirmPassesRequestAndRunsTask(t *testing.T) {
+	loadWorkspaceConfigForTest(t)
 	service := &fakeConfirmationService{card: map[string]any{"schema": "2.0"}}
-	task, err := handleConfirm(service)(context.Background(), testActionContextNoMsg(map[string]any{
+	task, err := handleConfirm(service, &memSessionStore{})(context.Background(), testActionContextNoMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 		cardactionproto.PayloadHashField:    "hash_1",
 	}))
@@ -60,7 +61,7 @@ func TestHandleCancelPassesRequestAndRunsTask(t *testing.T) {
 
 func TestHandleConfirmRequiresPayloadHash(t *testing.T) {
 	service := &fakeConfirmationService{}
-	if _, err := handleConfirm(service)(context.Background(), testActionContext(map[string]any{
+	if _, err := handleConfirm(service, &memSessionStore{})(context.Background(), testActionContext(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 	})); err == nil {
 		t.Fatalf("missing hash error = nil")
@@ -149,4 +150,16 @@ func restoreWorkspaceConfigAfterTest(t *testing.T) {
 			t.Errorf("restore workspace config: %v", err)
 		}
 	})
+}
+
+// loadWorkspaceConfigForTest 加载工作区配置，供需要 botidentity/config 的用例使用。
+func loadWorkspaceConfigForTest(t *testing.T) {
+	t.Helper()
+	workspaceConfig, err := filepath.Abs("../../../../.dev/config.toml")
+	if err != nil {
+		t.Fatalf("resolve workspace config: %v", err)
+	}
+	if _, err := infraConfig.LoadFileE(workspaceConfig); err != nil {
+		t.Fatalf("load workspace config: %v", err)
+	}
 }

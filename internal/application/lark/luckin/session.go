@@ -42,6 +42,9 @@ type SessionStore interface {
 	GetShop(context.Context, SessionKey) (ShopSelection, bool)
 	SetShop(context.Context, SessionKey, ShopSelection)
 	ClearShop(context.Context, SessionKey)
+	GetCart(context.Context, SessionKey) (Cart, bool)
+	SetCart(context.Context, SessionKey, Cart)
+	ClearCart(context.Context, SessionKey)
 }
 
 func (k SessionKey) String() string {

@@ -98,8 +98,12 @@ func (d ProductDetail) HasSpecs() bool {
 	return len(d.Attrs) > 0
 }
 
-// BuildSpecSelectCard 渲染规格选择卡：每个属性组一个下拉框，确认后切换规格并下单。
-func BuildSpecSelectCard(shop ShopSelection, detail ProductDetail, imgKey string) map[string]any {
+// BuildSpecSelectCard 渲染规格选择卡：每个属性组一个下拉框，确认后切换规格并加入购物车。
+// amount 为用户在商品卡上选择的数量，随表单一起带回。
+func BuildSpecSelectCard(shop ShopSelection, detail ProductDetail, imgKey string, amount int) map[string]any {
+	if amount <= 0 {
+		amount = 1
+	}
 	formElements := []any{
 		larkmsg.Markdown("**" + detail.ProductName + "**"),
 	}
@@ -127,7 +131,11 @@ func BuildSpecSelectCard(shop ShopSelection, detail ProductDetail, imgKey string
 			Options:       options,
 		}))
 	}
-	confirm := larkmsg.Button("确认规格并下单", larkmsg.ButtonOptions{
+	formElements = append(formElements, larkmsg.TextInput(cardactionproto.LuckinQtyFormField, larkmsg.TextInputOptions{
+		Placeholder:  "数量（默认 1）",
+		DefaultValue: strconv.Itoa(amount),
+	}))
+	confirm := larkmsg.Button("加入购物车", larkmsg.ButtonOptions{
 		Name:           "luckin_spec_submit",
 		Type:           "primary",
 		FormActionType: "submit",
@@ -136,6 +144,7 @@ func BuildSpecSelectCard(shop ShopSelection, detail ProductDetail, imgKey string
 			cardactionproto.LuckinProductIDField: strconv.FormatInt(detail.ProductID, 10),
 			cardactionproto.LuckinSkuCodeField:   detail.SkuCode,
 			cardactionproto.LuckinProductName:    detail.ProductName,
+			cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(detail.Price, 'f', -1, 64),
 		},
 	})
 	formElements = append(formElements, larkmsg.ButtonRow("none", confirm))

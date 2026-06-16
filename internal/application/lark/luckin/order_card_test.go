@@ -121,7 +121,7 @@ func TestBuildSpecSelectCardAndParse(t *testing.T) {
 			},
 		}},
 	}
-	card := BuildSpecSelectCard(ShopSelection{DeptName: "门店A"}, detail, "")
+	card := BuildSpecSelectCard(ShopSelection{DeptName: "门店A"}, detail, "", 1)
 	text := mustMarshalForTest(card)
 	if !containsAll(text, "luckin_spec_1", "杯型", "大杯", "luckin_product_select") {
 		t.Fatalf("spec card missing fields: %s", text)

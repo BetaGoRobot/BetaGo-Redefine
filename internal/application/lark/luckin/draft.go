@@ -3,6 +3,7 @@ package luckin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
@@ -15,8 +16,7 @@ type DraftRequest struct {
 	RequesterOpenID string
 	Credential      Credential
 	Shop            ShopSelection
-	Product         ProductOption
-	Amount          int
+	Items           []CartItem
 	CouponCodeList  []string
 	Now             time.Time
 }
@@ -30,37 +30,21 @@ func NewDraftService(caller ToolCaller, serverURL string) DraftService {
 	return DraftService{caller: caller, serverURL: serverURL}
 }
 
+// Draft 预览购物车（含可选优惠券）并生成待确认订单与确认卡片。
 func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder, map[string]any, error) {
-	amount := req.Amount
-	if amount <= 0 {
-		amount = 1
+	items := req.Items
+	if len(items) == 0 {
+		return PendingOrder{}, nil, errors.New("购物车为空")
 	}
-	payload := createOrderPayload(req.Shop, req.Product, amount, req.CouponCodeList)
+	payload := createOrderPayload(req.Shop, items, req.CouponCodeList)
 
 	preview := json.RawMessage(`{}`)
 	if s.caller != nil {
-		previewArgs := map[string]any{
-			"deptId":      req.Shop.DeptID,
-			"productList": []map[string]any{productItem(req.Product, amount)},
-		}
-		if len(req.CouponCodeList) > 0 {
-			previewArgs["couponCodeList"] = req.CouponCodeList
-		}
-		previewPayload, _ := json.Marshal(previewArgs)
-		res, err := s.caller.CallTool(ctx, mcpclient.CallRequest{
-			Server: mcpclient.ServerConfig{
-				Name:    ServerName,
-				URL:     s.remoteURL(),
-				Headers: map[string]string{"Authorization": "Bearer " + req.Credential.Token},
-				Timeout: DefaultTimeout(),
-			},
-			ToolName:  "previewOrder",
-			Arguments: previewPayload,
-		})
+		data, err := s.previewCart(ctx, req.Credential, req.Shop, items, req.CouponCodeList)
 		if err != nil {
 			return PendingOrder{}, nil, err
 		}
-		if data := ExtractData(res.Content); len(data) > 0 {
+		if len(data) > 0 {
 			preview = data
 		}
 	}
@@ -76,6 +60,35 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 		Now:                req.Now,
 	})
 	return order, BuildPendingOrderCard(order), nil
+}
+
+// previewCart 调用 previewOrder 返回业务 data（含 discountPrice / couponCodeList 等）。
+func (s DraftService) previewCart(ctx context.Context, cred Credential, shop ShopSelection, items []CartItem, coupons []string) (json.RawMessage, error) {
+	if s.caller == nil {
+		return nil, nil
+	}
+	previewArgs := map[string]any{
+		"deptId":      shop.DeptID,
+		"productList": productItems(items),
+	}
+	if len(coupons) > 0 {
+		previewArgs["couponCodeList"] = coupons
+	}
+	previewPayload, _ := json.Marshal(previewArgs)
+	res, err := s.caller.CallTool(ctx, s.callReq(cred, "previewOrder", previewPayload))
+	if err != nil {
+		return nil, err
+	}
+	return ExtractData(res.Content), nil
+}
+
+// PreviewCart 预览购物车并返回（预览 data、可用优惠券编码列表）。
+func (s DraftService) PreviewCart(ctx context.Context, cred Credential, shop ShopSelection, items []CartItem, coupons []string) (json.RawMessage, []string, error) {
+	data, err := s.previewCart(ctx, cred, shop, items, coupons)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, AvailableCouponsFromPreview(data), nil
 }
 
 func (s DraftService) remoteURL() string {
@@ -184,12 +197,12 @@ func (s DraftService) OrderDetail(ctx context.Context, cred Credential, orderID 
 	return OrderDetailFromResult(res.Content), nil
 }
 
-func createOrderPayload(shop ShopSelection, product ProductOption, amount int, couponCodeList []string) json.RawMessage {
+func createOrderPayload(shop ShopSelection, items []CartItem, couponCodeList []string) json.RawMessage {
 	args := map[string]any{
 		"deptId":      shop.DeptID,
 		"longitude":   shop.Longitude,
 		"latitude":    shop.Latitude,
-		"productList": []map[string]any{productItem(product, amount)},
+		"productList": productItems(items),
 	}
 	if len(couponCodeList) > 0 {
 		args["couponCodeList"] = couponCodeList
@@ -198,10 +211,18 @@ func createOrderPayload(shop ShopSelection, product ProductOption, amount int, c
 	return payload
 }
 
-func productItem(product ProductOption, amount int) map[string]any {
-	return map[string]any{
-		"amount":    amount,
-		"productId": product.ProductID,
-		"skuCode":   product.SkuCode,
+func productItems(items []CartItem) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		amount := item.Amount
+		if amount <= 0 {
+			amount = 1
+		}
+		out = append(out, map[string]any{
+			"amount":    amount,
+			"productId": item.ProductID,
+			"skuCode":   item.SkuCode,
+		})
 	}
+	return out
 }

@@ -81,8 +81,8 @@ func shopMetaLine(shop ShopOption) string {
 	return strings.Join(parts, "    ")
 }
 
-// BuildProductSelectCard 渲染商品列表，每个商品左图右文，附下单按钮。imageKeys 为 productID->img_key。
-// 列表整体包在一个 form 内，底部含可选优惠券输入框，点选商品时一并提交。
+// BuildProductSelectCard 渲染商品搜索结果，每个商品左图右文，提供数量输入与“加入购物车”按钮。
+// 每个商品独立成一个 form 以便提交各自的数量；imageKeys 为 productID->img_key。
 func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageKeys map[int64]string) map[string]any {
 	header := []any{
 		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
@@ -91,27 +91,19 @@ func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageK
 		header = append(header, larkmsg.Markdown("没有找到匹配商品，换个关键词再搜。"))
 		return wrapCard(append(header, productQueryForm(shop)...))
 	}
-	header = append(header, larkmsg.HintMarkdown("选择商品下单（如有优惠券，先在下方填写）："))
+	header = append(header, larkmsg.HintMarkdown("选择数量后加入购物车，可继续搜索其它商品："))
 
-	formElements := make([]any, 0, len(products)*2+2)
-	formElements = append(formElements, larkmsg.TextInput(cardactionproto.LuckinCouponFormField, larkmsg.TextInputOptions{
-		Placeholder: "可选：优惠券编码，多个用英文逗号分隔",
-	}))
+	body := make([]any, 0, len(products)*2+2)
 	for _, product := range products {
-		formElements = append(formElements, larkmsg.Divider(), productRow(product, imageKeys[product.ProductID]))
+		body = append(body, larkmsg.Divider(), productRow(product, imageKeys[product.ProductID]))
 	}
-	form := map[string]any{
-		"tag":                "form",
-		"name":               "luckin_product_form",
-		"vertical_spacing":   "8px",
-		"horizontal_spacing": "8px",
-		"elements":           formElements,
-	}
-	tail := append([]any{form, larkmsg.Divider()}, productQueryForm(shop)...)
+	tail := append(body, larkmsg.Divider())
+	tail = append(tail, productQueryForm(shop)...)
 	return wrapCard(append(header, tail...))
 }
 
 func productRow(product ProductOption, imgKey string) map[string]any {
+	idValue := strconv.FormatInt(product.ProductID, 10)
 	info := []any{larkmsg.Markdown("**" + product.ProductName + "**")}
 	if priceLine := productPriceLine(product); priceLine != "" {
 		info = append(info, larkmsg.Markdown(priceLine))
@@ -119,17 +111,32 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 	if len(product.Tags) > 0 {
 		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
 	}
-	info = append(info, larkmsg.ButtonRow("none", larkmsg.Button("下这杯", larkmsg.ButtonOptions{
+	addBtn := larkmsg.Button("加入购物车", larkmsg.ButtonOptions{
 		Type:           "primary",
-		Name:           "luckin_select_" + strconv.FormatInt(product.ProductID, 10),
+		Name:           "luckin_select_" + idValue,
 		FormActionType: "submit",
 		Payload: map[string]any{
 			cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
-			cardactionproto.LuckinProductIDField: strconv.FormatInt(product.ProductID, 10),
+			cardactionproto.LuckinProductIDField: idValue,
 			cardactionproto.LuckinSkuCodeField:   product.SkuCode,
 			cardactionproto.LuckinProductName:    product.ProductName,
+			cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(productUnitPrice(product), 'f', -1, 64),
 		},
-	})))
+	})
+	form := map[string]any{
+		"tag":                "form",
+		"name":               "luckin_add_form_" + idValue,
+		"vertical_spacing":   "8px",
+		"horizontal_spacing": "8px",
+		"elements": []any{
+			larkmsg.TextInput(cardactionproto.LuckinQtyFormField, larkmsg.TextInputOptions{
+				Placeholder:  "数量（默认 1）",
+				DefaultValue: "1",
+			}),
+			larkmsg.ButtonRow("none", addBtn),
+		},
+	}
+	info = append(info, form)
 
 	if imgKey == "" {
 		return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
@@ -156,11 +163,15 @@ func productPriceLine(product ProductOption) string {
 	if product.Price > 0 && product.InitialPice > product.Price {
 		return "<font color='red'>¥" + trimFloat(product.Price) + "</font>  <font color='grey'>~~¥" + trimFloat(product.InitialPice) + "~~</font>"
 	}
-	price := product.Price
-	if price <= 0 {
-		price = product.InitialPice
-	}
+	price := productUnitPrice(product)
 	return "<font color='red'>¥" + trimFloat(price) + "</font>"
+}
+
+func productUnitPrice(product ProductOption) float64 {
+	if product.Price > 0 {
+		return product.Price
+	}
+	return product.InitialPice
 }
 
 // BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。

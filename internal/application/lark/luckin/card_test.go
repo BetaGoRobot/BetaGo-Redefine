@@ -43,8 +43,12 @@ func TestBuildPendingOrderCardSummarizesPreview(t *testing.T) {
 	if !containsAll(text, "生椰拿铁", "少冰 / 标准糖", "x 2") {
 		t.Fatalf("card missing product summary")
 	}
-	if !containsAll(text, "实付 ¥19.8", "原价 ¥58", "优惠券 1 张", "10:30") {
+	if !containsAll(text, "实付 ¥19.8", "原价 ¥58", "10:30") {
 		t.Fatalf("card missing price/time summary")
+	}
+	// 有可用优惠券时渲染多选表单供选择。
+	if !containsAll(text, "luckin_coupon", "luckin_coupon_apply", "coupon-a") {
+		t.Fatalf("card missing coupon select form")
 	}
 }
 
