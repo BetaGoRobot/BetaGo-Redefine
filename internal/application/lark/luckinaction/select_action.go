@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -38,7 +39,7 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 	}
 }
 
-func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore) appcardaction.AsyncHandler {
+func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore, images luckin.ImageUploader) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		if session == nil {
 			return nil, errors.New("会话已过期，请重新选择门店")
@@ -72,7 +73,8 @@ func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, 
 				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, query))
 				return
 			}
-			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, products)); err != nil {
+			imageKeys := luckin.UploadProductImages(runCtx, images, products)
+			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, products, imageKeys)); err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin patch product card failed", zap.String("message_id", msgID), zap.Error(err))
 			}
 		}, nil
@@ -83,48 +85,108 @@ type pendingOrderCreator interface {
 	CreatePendingOrder(context.Context, luckin.PendingOrder) error
 }
 
-func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderCreator, tokens luckin.CredentialStore) appcardaction.SyncHandler {
-	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+// handleProductSelect 异步处理：有规格则先弹规格卡，否则直接生成订单确认卡。
+func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderCreator, tokens luckin.CredentialStore, images luckin.ImageUploader, orders luckin.OrderTracker) appcardaction.AsyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		if session == nil {
-			return appcardaction.ErrorToast("会话已过期，请重新选择门店"), nil
+			return nil, errors.New("会话已过期，请重新选择门店")
 		}
 		shop, ok := session.GetShop(ctx, sessionKey(actionCtx))
 		if !ok {
-			return appcardaction.ErrorToast("请先选择门店"), nil
+			return nil, errors.New("请先选择门店")
 		}
 		productID, err := strconv.ParseInt(actionValue(actionCtx, cardactionproto.LuckinProductIDField), 10, 64)
 		if err != nil {
-			return appcardaction.ErrorToast("商品信息无效"), nil
+			return nil, errors.New("商品信息无效")
 		}
+		msgID := strings.TrimSpace(actionCtx.MessageID())
+		if msgID == "" {
+			return nil, errors.New("message id is required")
+		}
+		skuCode := actionValue(actionCtx, cardactionproto.LuckinSkuCodeField)
+		productName := actionValue(actionCtx, cardactionproto.LuckinProductName)
+		specSelections := luckin.ParseSpecSelection(formValuesWithPrefix(actionCtx, cardactionproto.LuckinSpecFormFieldPrefix))
+		fromSpecForm := len(specSelections) > 0
 		req := credentialRequestFromAction(actionCtx)
-		cred, err := resolveCredential(ctx, tokens, req)
-		if err != nil {
-			return appcardaction.InfoToastWithRawCardPayload("请先绑定瑞幸账号", luckin.BuildBindTokenCard(req.ChatType)), nil
-		}
-		order, card, err := draft.Draft(ctx, luckin.DraftRequest{
-			AppID:           req.AppID,
-			BotOpenID:       req.BotOpenID,
-			ChatID:          req.ChatID,
-			RequesterOpenID: req.OpenID,
-			Credential:      cred,
-			Shop:            shop,
-			Product: luckin.ProductOption{
-				ProductID:   productID,
-				SkuCode:     actionValue(actionCtx, cardactionproto.LuckinSkuCodeField),
-				ProductName: actionValue(actionCtx, cardactionproto.LuckinProductName),
-			},
-			Amount: 1,
-			Now:    time.Now(),
-		})
-		if err != nil {
-			return appcardaction.ErrorToast(err.Error()), nil
-		}
-		if pending != nil {
-			if err := pending.CreatePendingOrder(ctx, order); err != nil {
-				return appcardaction.ErrorToast(err.Error()), nil
+
+		return func(runCtx context.Context) {
+			cred, err := resolveCredential(runCtx, tokens, req)
+			if err != nil {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildBindTokenCard(req.ChatType))
+				return
 			}
+
+			// 第一次点选商品且未走过规格表单时，若商品有规格，先弹规格选择卡。
+			if !fromSpecForm {
+				detail, derr := draft.ProductDetail(runCtx, cred, shop, productID)
+				if derr == nil && detail.HasSpecs() {
+					imgKey := ""
+					if images != nil && detail.PictureURL != "" {
+						imgKey = images.UploadByURL(runCtx, detail.PictureURL)
+					}
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildSpecSelectCard(shop, detail, imgKey))
+					return
+				}
+			} else {
+				// 规格表单提交：切换规格拿到最新 sku/价格。
+				if detail, serr := draft.SwitchSpec(runCtx, cred, shop, productID, skuCode, specSelections); serr == nil && detail.SkuCode != "" {
+					skuCode = detail.SkuCode
+				}
+			}
+
+			order, card, err := draft.Draft(runCtx, luckin.DraftRequest{
+				AppID:           req.AppID,
+				BotOpenID:       req.BotOpenID,
+				ChatID:          req.ChatID,
+				RequesterOpenID: req.OpenID,
+				Credential:      cred,
+				Shop:            shop,
+				Product: luckin.ProductOption{
+					ProductID:   productID,
+					SkuCode:     skuCode,
+					ProductName: productName,
+				},
+				Amount: 1,
+				Now:    time.Now(),
+			})
+			if err != nil {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, productName))
+				return
+			}
+			if pending != nil {
+				if err := pending.CreatePendingOrder(runCtx, order); err != nil {
+					logs.L().Ctx(runCtx).Warn("luckin create pending order failed", zap.Error(err))
+					return
+				}
+			}
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, card)
+		}, nil
+	}
+}
+
+// handleOrderStatus 实时查询订单状态并刷新卡片。
+func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService) appcardaction.AsyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
+		orderID := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinOrderIDField))
+		if orderID == "" {
+			return nil, errors.New("订单号缺失")
 		}
-		return appcardaction.InfoToastWithRawCardPayload("已生成订单确认卡片", card), nil
+		msgID := strings.TrimSpace(actionCtx.MessageID())
+		req := credentialRequestFromAction(actionCtx)
+		return func(runCtx context.Context) {
+			cred, err := resolveCredential(runCtx, tokens, req)
+			if err != nil {
+				return
+			}
+			detail, err := draft.OrderDetail(runCtx, cred, orderID)
+			if err != nil {
+				logs.L().Ctx(runCtx).Warn("luckin query order detail failed", zap.String("order_id", orderID), zap.Error(err))
+				return
+			}
+			if msgID != "" {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderStatusCard(detail))
+			}
+		}, nil
 	}
 }
 
@@ -250,6 +312,23 @@ func formValue(actionCtx *appcardaction.Context, key string) string {
 	return v
 }
 
+// formValuesWithPrefix 收集表单中以指定前缀开头的字段值（用于规格选择）。
+func formValuesWithPrefix(actionCtx *appcardaction.Context, prefix string) map[string]string {
+	out := make(map[string]string)
+	if actionCtx == nil || actionCtx.Action == nil {
+		return out
+	}
+	for k, v := range actionCtx.Action.FormValue {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 func parseFloat(s string) float64 {
 	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	return f
@@ -278,4 +357,37 @@ func newCredentialWriter() luckin.CredentialWriter {
 func resolveCredential(ctx context.Context, tokens luckin.CredentialStore, req luckin.CredentialRequest) (luckin.Credential, error) {
 	resolver := luckin.NewCredentialResolver(tokens, luckinSystemToken())
 	return resolver.Resolve(ctx, req)
+}
+
+func newImageUploader() luckin.ImageUploader {
+	return luckin.NewCachedImageUploader(larkimg.UploadPicture2Lark)
+}
+
+func newOrderTracker() luckin.OrderTracker {
+	db := infraDB.DB()
+	if db == nil {
+		return nil
+	}
+	return mcpstore.NewOrderRepository(db)
+}
+
+func luckinOrderPollConfig() luckin.OrderPollConfig {
+	cfg := luckinOrderConfig()
+	pollCfg := luckin.DefaultOrderPollConfig()
+	if cfg == nil {
+		return pollCfg
+	}
+	if cfg.OrderPollIntervalSeconds > 0 {
+		pollCfg.PollInterval = time.Duration(cfg.OrderPollIntervalSeconds) * time.Second
+	}
+	if cfg.OrderPollMaxSeconds > 0 {
+		pollCfg.PollMax = time.Duration(cfg.OrderPollMaxSeconds) * time.Second
+	}
+	if cfg.UnpaidTimeoutSeconds > 0 {
+		pollCfg.UnpaidTimeout = time.Duration(cfg.UnpaidTimeoutSeconds) * time.Second
+	}
+	if cfg.UnpaidRemindThresholdSeconds > 0 {
+		pollCfg.UnpaidRemindAt = time.Duration(cfg.UnpaidRemindThresholdSeconds) * time.Second
+	}
+	return pollCfg
 }

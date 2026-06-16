@@ -40,6 +40,11 @@ type LuckinMCPConfig struct {
 	ServerURL      string `json:"server_url" yaml:"server_url" toml:"server_url"`
 	// AmapKey 为高德 Web 服务 key，用于把用户描述的地点转为经纬度（GCJ-02，与瑞幸坐标系一致）。
 	AmapKey string `json:"amap_key" yaml:"amap_key" toml:"amap_key"`
+	// 订单生命周期轮询相关阈值（秒），为 0 时使用默认值。
+	UnpaidRemindThresholdSeconds int `json:"unpaid_remind_threshold_seconds" yaml:"unpaid_remind_threshold_seconds" toml:"unpaid_remind_threshold_seconds"`
+	UnpaidTimeoutSeconds         int `json:"unpaid_timeout_seconds" yaml:"unpaid_timeout_seconds" toml:"unpaid_timeout_seconds"`
+	OrderPollIntervalSeconds     int `json:"order_poll_interval_seconds" yaml:"order_poll_interval_seconds" toml:"order_poll_interval_seconds"`
+	OrderPollMaxSeconds          int `json:"order_poll_max_seconds" yaml:"order_poll_max_seconds" toml:"order_poll_max_seconds"`
 }
 
 type RuntimeConfig struct {

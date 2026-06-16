@@ -18,11 +18,15 @@ import (
 )
 
 func Register() {
-	service := luckin.NewConfirmationService(
+	images := newImageUploader()
+	service := luckin.NewConfirmationServiceWithTracking(
 		pendingStore{},
 		credentialStore{},
 		mcpclient.New(mcpclient.ClientOptions{}),
 		luckinServerURL(),
+		newOrderTracker(),
+		images,
+		luckinOrderPollConfig(),
 	)
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
@@ -30,8 +34,9 @@ func Register() {
 	session := newSessionStore()
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
-	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}))
-	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, pendingStore{}, credentialStore{}))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}, images))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, pendingStore{}, credentialStore{}, images, newOrderTracker()))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderStatus, handleOrderStatus(credentialStore{}, draft))
 
 	writer := newCredentialWriter()
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinBindToken, handleBindToken(writer))
@@ -56,6 +61,7 @@ func handleConfirm(service luckin.ConfirmationService) appcardaction.SyncHandler
 			PayloadHash:    hash,
 			OperatorOpenID: actionCtx.OpenID(),
 			ChatID:         actionCtx.ChatID(),
+			MessageID:      actionCtx.MessageID(),
 			Now:            time.Now(),
 		})
 		if err != nil {
@@ -148,6 +154,10 @@ func luckinRuntimeConfig() *infraConfig.LuckinMCPConfig {
 		return nil
 	}
 	return cfg.LuckinMCPConfig
+}
+
+func luckinOrderConfig() *infraConfig.LuckinMCPConfig {
+	return luckinRuntimeConfig()
 }
 
 type pendingStore struct{}

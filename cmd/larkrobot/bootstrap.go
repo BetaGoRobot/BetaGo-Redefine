@@ -11,6 +11,7 @@ import (
 	chatmetrics "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chatmetrics"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckinaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
@@ -296,6 +297,19 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			return nil
 		},
 		Stats: components.scheduleExecutor.Stats,
+	}))
+
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "luckin_order_poller",
+		Critical: false,
+		Start: func(context.Context) error {
+			luckinaction.StartOrderPoller()
+			return nil
+		},
+		Stop: func(context.Context) error {
+			luckinaction.StopOrderPoller()
+			return nil
+		},
 	}))
 
 	app.AddModule(appruntime.NewLarkWSModule(

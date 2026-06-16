@@ -41,6 +41,7 @@ type RegisterOptions struct {
 	Cards     CardSender
 	Session   luckin.SessionStore
 	Geocoder  luckin.Geocoder
+	Images    luckin.ImageUploader
 	SystemURL string
 }
 
@@ -57,6 +58,7 @@ type handler struct {
 	cards     CardSender
 	session   luckin.SessionStore
 	geocoder  luckin.Geocoder
+	images    luckin.ImageUploader
 	serverURL string
 }
 
@@ -77,6 +79,7 @@ func Register(ins *arktools.Impl[larkim.P2MessageReceiveV1], opts RegisterOption
 			cards:     opts.Cards,
 			session:   opts.Session,
 			geocoder:  opts.Geocoder,
+			images:    opts.Images,
 			serverURL: opts.SystemURL,
 		})
 	}
@@ -191,8 +194,9 @@ func (h handler) handleProductSearch(ctx context.Context, data *larkim.P2Message
 		return err
 	}
 	products := luckin.ProductOptionsFromResult(res.Content, 5)
+	imageKeys := luckin.UploadProductImages(ctx, h.images, products)
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, products)); err != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, products, imageKeys)); err != nil {
 			return err
 		}
 	}

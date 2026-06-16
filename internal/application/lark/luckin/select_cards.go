@@ -1,6 +1,7 @@
 package luckin
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -10,99 +11,148 @@ import (
 )
 
 type ShopOption struct {
-	DeptID    int64
-	DeptName  string
-	Address   string
-	Distance  float64
-	Longitude float64
-	Latitude  float64
+	DeptID        int64
+	DeptName      string
+	Address       string
+	Distance      float64
+	Longitude     float64
+	Latitude      float64
+	WorkTimeStart string
+	WorkTimeEnd   string
+	Tags          []string
 }
 
 type ProductOption struct {
 	ProductID   int64
 	SkuCode     string
 	ProductName string
+	PictureURL  string
 	Price       float64
+	InitialPice float64
+	Tags        []string
 }
 
 func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 	elements := []any{
-		map[string]any{"tag": "markdown", "content": "**选择瑞幸门店**"},
-		map[string]any{"tag": "markdown", "content": "关键词：" + keyword},
+		larkmsg.Markdown("**选择瑞幸门店**"),
+		larkmsg.HintMarkdown("位置：" + keyword),
 	}
 	if len(shops) == 0 {
-		elements = append(elements, map[string]any{"tag": "markdown", "content": "没有找到匹配门店，换个关键词试试。"})
+		elements = append(elements, larkmsg.Markdown("没有找到附近门店，换个更具体的位置试试。"))
 		return wrapCard(elements)
 	}
-	for _, shop := range shops {
-		label := shop.DeptName
-		desc := strings.TrimSpace(shop.Address)
-		if desc != "" {
-			label += "｜" + desc
+	for i, shop := range shops {
+		if i > 0 {
+			elements = append(elements, larkmsg.Divider())
 		}
-		elements = append(elements,
-			map[string]any{"tag": "markdown", "content": label},
-			map[string]any{
-				"tag":  "button",
-				"text": map[string]any{"tag": "plain_text", "content": "选这家"},
-				"type": "primary",
-				"behaviors": []any{map[string]any{
-					"type": "callback",
-					"value": map[string]any{
-						cardactionproto.ActionField:        cardactionproto.ActionLuckinShopSelect,
-						cardactionproto.LuckinDeptIDField:   strconv.FormatInt(shop.DeptID, 10),
-						cardactionproto.LuckinDeptNameField: shop.DeptName,
-						cardactionproto.LuckinLongitudeField: strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
-						cardactionproto.LuckinLatitudeField:  strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
-					},
-				}},
+		title := "**" + shop.DeptName + "**"
+		if shop.Distance > 0 {
+			title += "  ·  " + strconv.FormatFloat(shop.Distance, 'f', 1, 64) + "km"
+		}
+		elements = append(elements, larkmsg.Markdown(title))
+		if addr := strings.TrimSpace(shop.Address); addr != "" {
+			elements = append(elements, larkmsg.HintMarkdown("📍 "+addr))
+		}
+		if meta := shopMetaLine(shop); meta != "" {
+			elements = append(elements, larkmsg.HintMarkdown(meta))
+		}
+		elements = append(elements, larkmsg.ButtonRow("none", larkmsg.Button("选这家", larkmsg.ButtonOptions{
+			Type: "primary",
+			Payload: map[string]any{
+				cardactionproto.ActionField:          cardactionproto.ActionLuckinShopSelect,
+				cardactionproto.LuckinDeptIDField:    strconv.FormatInt(shop.DeptID, 10),
+				cardactionproto.LuckinDeptNameField:  shop.DeptName,
+				cardactionproto.LuckinLongitudeField: strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
+				cardactionproto.LuckinLatitudeField:  strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
 			},
-		)
+		})))
 	}
 	return wrapCard(elements)
 }
 
-func BuildProductSelectCard(shop ShopSelection, products []ProductOption) map[string]any {
+func shopMetaLine(shop ShopOption) string {
+	parts := make([]string, 0, 2)
+	if shop.WorkTimeStart != "" && shop.WorkTimeEnd != "" {
+		parts = append(parts, "🕐 "+shop.WorkTimeStart+"-"+shop.WorkTimeEnd)
+	}
+	if len(shop.Tags) > 0 {
+		parts = append(parts, "🏷 "+strings.Join(shop.Tags, "/"))
+	}
+	return strings.Join(parts, "    ")
+}
+
+// BuildProductSelectCard 渲染商品列表，每个商品左图右文，附下单按钮。imageKeys 为 productID->img_key。
+func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageKeys map[int64]string) map[string]any {
 	header := []any{
-		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
+		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
 	}
 	if len(products) == 0 {
-		header = append(header, map[string]any{"tag": "markdown", "content": "没有找到匹配商品，换个关键词再搜。"})
+		header = append(header, larkmsg.Markdown("没有找到匹配商品，换个关键词再搜。"))
 		return wrapCard(append(header, productQueryForm(shop)...))
 	}
-	header = append(header, map[string]any{"tag": "markdown", "content": "选择商品："})
+	header = append(header, larkmsg.HintMarkdown("选择商品下单："))
 	for _, product := range products {
-		label := product.ProductName
-		if product.Price > 0 {
-			label += "｜¥" + strconv.FormatFloat(product.Price, 'f', -1, 64)
-		}
-		header = append(header,
-			map[string]any{"tag": "markdown", "content": label},
-			map[string]any{
-				"tag":  "button",
-				"text": map[string]any{"tag": "plain_text", "content": "下这杯"},
-				"type": "primary",
-				"behaviors": []any{map[string]any{
-					"type": "callback",
-					"value": map[string]any{
-						cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
-						cardactionproto.LuckinProductIDField: strconv.FormatInt(product.ProductID, 10),
-						cardactionproto.LuckinSkuCodeField:   product.SkuCode,
-						cardactionproto.LuckinProductName:    product.ProductName,
-					},
-				}},
-			},
-		)
+		header = append(header, larkmsg.Divider(), productRow(product, imageKeys[product.ProductID]))
 	}
-	header = append(header, map[string]any{"tag": "hr"})
+	header = append(header, larkmsg.Divider())
 	return wrapCard(append(header, productQueryForm(shop)...))
+}
+
+func productRow(product ProductOption, imgKey string) map[string]any {
+	info := []any{larkmsg.Markdown("**" + product.ProductName + "**")}
+	if priceLine := productPriceLine(product); priceLine != "" {
+		info = append(info, larkmsg.Markdown(priceLine))
+	}
+	if len(product.Tags) > 0 {
+		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
+	}
+	info = append(info, larkmsg.ButtonRow("none", larkmsg.Button("下这杯", larkmsg.ButtonOptions{
+		Type: "primary",
+		Payload: map[string]any{
+			cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
+			cardactionproto.LuckinProductIDField: strconv.FormatInt(product.ProductID, 10),
+			cardactionproto.LuckinSkuCodeField:   product.SkuCode,
+			cardactionproto.LuckinProductName:    product.ProductName,
+		},
+	})))
+
+	if imgKey == "" {
+		return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
+		}}
+	}
+	return map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "stretch",
+		"horizontal_spacing": "12px",
+		"columns": []any{
+			map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{
+				map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"},
+			}},
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": info},
+		},
+	}
+}
+
+func productPriceLine(product ProductOption) string {
+	if product.Price <= 0 && product.InitialPice <= 0 {
+		return ""
+	}
+	if product.Price > 0 && product.InitialPice > product.Price {
+		return "<font color='red'>¥" + trimFloat(product.Price) + "</font>  <font color='grey'>~~¥" + trimFloat(product.InitialPice) + "~~</font>"
+	}
+	price := product.Price
+	if price <= 0 {
+		price = product.InitialPice
+	}
+	return "<font color='red'>¥" + trimFloat(price) + "</font>"
 }
 
 // BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。
 func BuildProductQueryCard(shop ShopSelection) map[string]any {
 	elements := []any{
-		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
-		map[string]any{"tag": "markdown", "content": "想喝点什么？输入商品关键词搜索。"},
+		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
+		larkmsg.HintMarkdown("想喝点什么？输入商品关键词搜索。"),
 	}
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
@@ -111,16 +161,16 @@ func BuildProductQueryCard(shop ShopSelection) map[string]any {
 // BuildProductSearchingCard 在异步搜索商品期间展示的过渡卡片。
 func BuildProductSearchingCard(shop ShopSelection, query string) map[string]any {
 	return wrapCard([]any{
-		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
-		map[string]any{"tag": "markdown", "content": "正在搜索「" + query + "」，请稍候…"},
+		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
+		larkmsg.HintMarkdown("正在搜索「" + query + "」，请稍候…"),
 	})
 }
 
 // BuildProductSearchErrorCard 在异步搜索失败时展示，并保留搜索表单方便重试。
 func BuildProductSearchErrorCard(shop ShopSelection, query string) map[string]any {
 	elements := []any{
-		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
-		map[string]any{"tag": "markdown", "content": "搜索「" + query + "」失败，请重试或换个关键词。"},
+		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
+		larkmsg.Markdown("搜索「" + query + "」失败，请重试或换个关键词。"),
 	}
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
@@ -207,12 +257,15 @@ func ShopOptionsFromResult(content json.RawMessage, limit int) []ShopOption {
 			continue
 		}
 		out = append(out, ShopOption{
-			DeptID:    deptID,
-			DeptName:  stringValue(obj["deptName"]),
-			Address:   stringValue(obj["address"]),
-			Distance:  numberFloat(obj["distance"]),
-			Longitude: numberFloat(obj["longitude"]),
-			Latitude:  numberFloat(obj["latitude"]),
+			DeptID:        deptID,
+			DeptName:      stringValue(obj["deptName"]),
+			Address:       stringValue(obj["address"]),
+			Distance:      numberFloat(obj["distance"]),
+			Longitude:     numberFloat(obj["longitude"]),
+			Latitude:      numberFloat(obj["latitude"]),
+			WorkTimeStart: stringValue(obj["workTimeStart"]),
+			WorkTimeEnd:   stringValue(obj["workTimeEnd"]),
+			Tags:          stringSlice(obj["deptTags"]),
 		})
 		if limit > 0 && len(out) >= limit {
 			break
@@ -237,18 +290,48 @@ func ProductOptionsFromResult(content json.RawMessage, limit int) []ProductOptio
 		if name == "" {
 			name = stringValue(obj["name"])
 		}
-		price := numberFloat(obj["estimatePrice"])
-		if price == 0 {
-			price = numberFloat(obj["initialPrice"])
-		}
 		out = append(out, ProductOption{
 			ProductID:   productID,
 			SkuCode:     stringValue(obj["skuCode"]),
 			ProductName: name,
-			Price:       price,
+			PictureURL:  stringValue(obj["pictureUrl"]),
+			Price:       numberFloat(obj["estimatePrice"]),
+			InitialPice: numberFloat(obj["initialPrice"]),
+			Tags:        stringSlice(obj["tags"]),
 		})
 		if limit > 0 && len(out) >= limit {
 			break
+		}
+	}
+	return out
+}
+
+func stringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s := strings.TrimSpace(stringValue(item)); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// UploadProductImages 上传商品图片并返回 productID->img_key 映射，失败的商品降级为纯文字。
+func UploadProductImages(ctx context.Context, uploader ImageUploader, products []ProductOption) map[int64]string {
+	if uploader == nil {
+		return nil
+	}
+	out := make(map[int64]string, len(products))
+	for _, p := range products {
+		if p.PictureURL == "" {
+			continue
+		}
+		if key := uploader.UploadByURL(ctx, p.PictureURL); key != "" {
+			out[p.ProductID] = key
 		}
 	}
 	return out

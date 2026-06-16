@@ -105,6 +105,80 @@ func (s DraftService) SearchProducts(ctx context.Context, cred Credential, shop 
 	return ProductOptionsFromResult(res.Content, limit), nil
 }
 
+// ProductDetail 查询商品详情（含规格属性）。
+func (s DraftService) ProductDetail(ctx context.Context, cred Credential, shop ShopSelection, productID int64) (ProductDetail, error) {
+	if s.caller == nil {
+		return ProductDetail{}, nil
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"deptId":    shop.DeptID,
+		"productId": productID,
+	})
+	res, err := s.caller.CallTool(ctx, s.callReq(cred, "queryProductDetailInfo", payload))
+	if err != nil {
+		return ProductDetail{}, err
+	}
+	return ProductDetailFromResult(res.Content), nil
+}
+
+// SwitchSpec 按用户选中的规格切换商品，返回切换后的商品详情（含最新价格/sku）。
+func (s DraftService) SwitchSpec(ctx context.Context, cred Credential, shop ShopSelection, productID int64, skuCode string, selections map[int64]int64) (ProductDetail, error) {
+	if s.caller == nil {
+		return ProductDetail{}, nil
+	}
+	detail := ProductDetail{ProductID: productID, SkuCode: skuCode}
+	for attrID, subID := range selections {
+		payload, _ := json.Marshal(map[string]any{
+			"deptId":    shop.DeptID,
+			"productId": productID,
+			"skuCode":   detail.SkuCode,
+			"attrOperationParam": map[string]any{
+				"attributeId": attrID,
+				"subAttr": map[string]any{
+					"attributeId": subID,
+					"operation":   3,
+				},
+			},
+			"amount": 1,
+		})
+		res, err := s.caller.CallTool(ctx, s.callReq(cred, "switchProduct", payload))
+		if err != nil {
+			return ProductDetail{}, err
+		}
+		switched := ProductDetailFromResult(res.Content)
+		if switched.ProductID != 0 {
+			detail = switched
+		}
+	}
+	return detail, nil
+}
+
+func (s DraftService) callReq(cred Credential, tool string, payload json.RawMessage) mcpclient.CallRequest {
+	return mcpclient.CallRequest{
+		Server: mcpclient.ServerConfig{
+			Name:    ServerName,
+			URL:     s.remoteURL(),
+			Headers: map[string]string{"Authorization": "Bearer " + cred.Token},
+			Timeout: DefaultTimeout(),
+		},
+		ToolName:  tool,
+		Arguments: payload,
+	}
+}
+
+// OrderDetail 查询订单详情（状态/取餐码/预计时间等）。
+func (s DraftService) OrderDetail(ctx context.Context, cred Credential, orderID string) (OrderDetail, error) {
+	if s.caller == nil {
+		return OrderDetail{}, nil
+	}
+	payload, _ := json.Marshal(map[string]any{"orderId": orderID})
+	res, err := s.caller.CallTool(ctx, s.callReq(cred, "queryOrderDetailInfo", payload))
+	if err != nil {
+		return OrderDetail{}, err
+	}
+	return OrderDetailFromResult(res.Content), nil
+}
+
 func createOrderPayload(shop ShopSelection, product ProductOption, amount int) json.RawMessage {
 	payload, _ := json.Marshal(map[string]any{
 		"deptId":      shop.DeptID,

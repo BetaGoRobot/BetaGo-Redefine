@@ -23,6 +23,13 @@ type ShopSelection struct {
 	Latitude  float64
 }
 
+// ProductSelection 记录用户已选商品及当前规格，用于规格切换与下单。
+type ProductSelection struct {
+	ProductID   int64
+	SkuCode     string
+	ProductName string
+}
+
 type SessionKey struct {
 	Provider  string
 	AppID     string

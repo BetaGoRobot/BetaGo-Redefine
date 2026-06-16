@@ -72,6 +72,7 @@ const (
 	ActionLuckinShopSelect       = "luckin_shop_select"
 	ActionLuckinProductQuery     = "luckin_product_query"
 	ActionLuckinProductSelect    = "luckin_product_select"
+	ActionLuckinOrderStatus      = "luckin_order_status"
 	ActionLuckinBindToken        = "luckin_bind_token"
 	ActionLuckinUnbindToken      = "luckin_unbind_token"
 	ActionLuckinViewScope        = "luckin_view_scope"
@@ -96,6 +97,9 @@ const (
 	LuckinQueryFormField  = "luckin_query"
 	LuckinTokenFormField  = "luckin_token"
 	LuckinScopeFormField  = "luckin_scope"
+	LuckinOrderIDField    = "luckin_order_id"
+	// LuckinSpecFormFieldPrefix + attributeId 组成规格选择表单字段名。
+	LuckinSpecFormFieldPrefix = "luckin_spec_"
 )
 
 var (

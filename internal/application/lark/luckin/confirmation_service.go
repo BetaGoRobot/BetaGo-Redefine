@@ -19,6 +19,7 @@ type ConfirmRequest struct {
 	PayloadHash    string
 	OperatorOpenID string
 	ChatID         string
+	MessageID      string
 	Now            time.Time
 }
 
@@ -45,10 +46,46 @@ type confirmationService struct {
 	tokens    CredentialStore
 	caller    ToolCaller
 	serverURL string
+	tracker   OrderTracker
+	images    ImageUploader
+	pollCfg   OrderPollConfig
+}
+
+// OrderPollConfig 订单轮询相关时间阈值。
+type OrderPollConfig struct {
+	PollInterval   time.Duration
+	PollMax        time.Duration
+	UnpaidTimeout  time.Duration
+	UnpaidRemindAt time.Duration
+}
+
+func DefaultOrderPollConfig() OrderPollConfig {
+	return OrderPollConfig{
+		PollInterval:   30 * time.Second,
+		PollMax:        2 * time.Hour,
+		UnpaidTimeout:  15 * time.Minute,
+		UnpaidRemindAt: 10 * time.Minute,
+	}
 }
 
 func NewConfirmationService(store PendingOrderStore, tokens CredentialStore, caller ToolCaller, serverURL string) ConfirmationService {
-	return confirmationService{store: store, tokens: tokens, caller: caller, serverURL: strings.TrimSpace(serverURL)}
+	return confirmationService{store: store, tokens: tokens, caller: caller, serverURL: strings.TrimSpace(serverURL), pollCfg: DefaultOrderPollConfig()}
+}
+
+// NewConfirmationServiceWithTracking 额外接入订单跟踪与二维码上传。
+func NewConfirmationServiceWithTracking(store PendingOrderStore, tokens CredentialStore, caller ToolCaller, serverURL string, tracker OrderTracker, images ImageUploader, pollCfg OrderPollConfig) ConfirmationService {
+	if pollCfg.PollInterval == 0 {
+		pollCfg = DefaultOrderPollConfig()
+	}
+	return confirmationService{
+		store:     store,
+		tokens:    tokens,
+		caller:    caller,
+		serverURL: strings.TrimSpace(serverURL),
+		tracker:   tracker,
+		images:    images,
+		pollCfg:   pollCfg,
+	}
 }
 
 func (s confirmationService) Confirm(ctx context.Context, req ConfirmRequest) (map[string]any, error) {
@@ -88,7 +125,38 @@ func (s confirmationService) Confirm(ctx context.Context, req ConfirmRequest) (m
 	if err := s.store.MarkConfirmed(ctx, order.ID, order.PayloadHash, req.OperatorOpenID, result.Content, now); err != nil {
 		return nil, err
 	}
-	return BuildOrderCreatedCard(result.Content), nil
+
+	created := OrderCreatedFromResult(result.Content)
+	qrImgKey := ""
+	if s.images != nil && created.QRCodeURL != "" {
+		qrImgKey = s.images.UploadByURL(ctx, created.QRCodeURL)
+	}
+	// 记录订单以便后台轮询生命周期；失败不阻断下单成功反馈。
+	if s.tracker != nil && created.OrderID != "" {
+		record := OrderRecord{
+			OrderID:         created.OrderID,
+			AppID:           order.AppID,
+			BotOpenID:       order.BotOpenID,
+			ChatID:          order.ChatID,
+			RequesterOpenID: order.RequesterOpenID,
+			CredentialScope: order.CredentialScope,
+			MessageID:       req.MessageID,
+			Status:          OrderRecordActive,
+			LastRemoteStatus: OrderStatusUnpaid,
+			NeedPay:         created.NeedPay,
+			PayURL:          created.PayURL,
+			QRCodeURL:       created.QRCodeURL,
+			DiscountPrice:   created.DiscountPrice,
+			NextPollAt:      now.Add(s.pollCfg.PollInterval),
+			PollDeadline:    now.Add(s.pollCfg.PollMax),
+			CreatedAt:       now,
+		}
+		if err := s.tracker.CreateOrder(ctx, record); err != nil {
+			// 仅记录，不影响用户拿到下单卡片。
+			_ = err
+		}
+	}
+	return BuildOrderCreatedCard(result.Content, qrImgKey), nil
 }
 
 func (s confirmationService) Cancel(ctx context.Context, req CancelRequest) error {
@@ -124,21 +192,4 @@ func confirmRequestMatches(order PendingOrder, req ConfirmRequest, now time.Time
 		strings.TrimSpace(order.RequesterOpenID) == strings.TrimSpace(req.OperatorOpenID) &&
 		order.Status == PendingStatusPending &&
 		order.ExpiresAt.After(now)
-}
-
-func BuildOrderCreatedCard(result json.RawMessage) map[string]any {
-	content := strings.TrimSpace(string(result))
-	if content == "" {
-		content = "{}"
-	}
-	return map[string]any{
-		"schema": "2.0",
-		"config": map[string]any{"wide_screen_mode": true},
-		"body": map[string]any{
-			"elements": []any{
-				map[string]any{"tag": "markdown", "content": "**瑞幸订单已创建**"},
-				map[string]any{"tag": "markdown", "content": "订单结果：" + content},
-			},
-		},
-	}
 }

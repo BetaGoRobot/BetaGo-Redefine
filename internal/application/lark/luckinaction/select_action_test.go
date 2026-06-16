@@ -31,15 +31,12 @@ func TestHandleShopSelectStoresSession(t *testing.T) {
 
 func TestHandleProductSelectRequiresShop(t *testing.T) {
 	session := &memSessionStore{}
-	resp, err := handleProductSelect(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContext(map[string]any{
+	_, err := handleProductSelect(session, luckin.DraftService{}, nil, nil, nil, nil)(context.Background(), testActionContext(map[string]any{
 		cardactionproto.LuckinProductIDField: "5293",
 		cardactionproto.LuckinSkuCodeField:   "SP-1",
 	}))
-	if err != nil {
-		t.Fatalf("handleProductSelect error = %v", err)
-	}
-	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
-		t.Fatalf("expected error toast, got %+v", resp)
+	if err == nil {
+		t.Fatalf("expected error when shop missing")
 	}
 }
 
@@ -98,7 +95,7 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	session := &memSessionStore{}
 
 	// 无门店时返回错误，不产生异步任务。
-	if _, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+	if _, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
 	)); err == nil {
@@ -107,7 +104,7 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 
 	// 有门店但关键词为空时报错。
 	session.SetShop(context.Background(), luckin.SessionKey{}, luckin.ShopSelection{DeptID: 1, DeptName: "门店A"})
-	if _, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+	if _, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: ""},
 	)); err == nil {
@@ -115,7 +112,7 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	}
 
 	// 正常情况下返回一个非空异步任务。
-	task, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+	task, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
 	))
