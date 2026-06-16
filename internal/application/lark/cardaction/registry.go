@@ -54,6 +54,13 @@ func RegisterSync(action string, handler SyncHandler) {
 	})
 }
 
+func RegisterSyncIfAbsent(action string, handler SyncHandler) {
+	defaultRegistry.registerIfAbsent(action, entry{
+		mode: ModeSync,
+		sync: handler,
+	})
+}
+
 func RegisterAsync(action string, handler AsyncHandler) {
 	defaultRegistry.register(action, entry{
 		mode:  ModeAsync,
@@ -122,6 +129,16 @@ func (r *registry) register(action string, handler entry) {
 
 	if _, exists := r.handlers[action]; exists {
 		panic("duplicate card action handler: " + action)
+	}
+	r.handlers[action] = handler
+}
+
+func (r *registry) registerIfAbsent(action string, handler entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.handlers[action]; exists {
+		return
 	}
 	r.handlers[action] = handler
 }

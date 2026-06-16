@@ -37,6 +37,8 @@ var (
 	InteractionStat       *interactionStat
 	LarkImg               *larkImg
 	LlmTokenUsageRecord   *llmTokenUsageRecord
+	LuckinPendingOrder    *luckinPendingOrder
+	McpCredential         *mcpCredential
 	MessageLog            *messageLog
 	MsgTraceLog           *msgTraceLog
 	PermissionGrant       *permissionGrant
@@ -79,6 +81,8 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	InteractionStat = &Q.InteractionStat
 	LarkImg = &Q.LarkImg
 	LlmTokenUsageRecord = &Q.LlmTokenUsageRecord
+	LuckinPendingOrder = &Q.LuckinPendingOrder
+	McpCredential = &Q.McpCredential
 	MessageLog = &Q.MessageLog
 	MsgTraceLog = &Q.MsgTraceLog
 	PermissionGrant = &Q.PermissionGrant
@@ -122,6 +126,8 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		InteractionStat:       newInteractionStat(db, opts...),
 		LarkImg:               newLarkImg(db, opts...),
 		LlmTokenUsageRecord:   newLlmTokenUsageRecord(db, opts...),
+		LuckinPendingOrder:    newLuckinPendingOrder(db, opts...),
+		McpCredential:         newMcpCredential(db, opts...),
 		MessageLog:            newMessageLog(db, opts...),
 		MsgTraceLog:           newMsgTraceLog(db, opts...),
 		PermissionGrant:       newPermissionGrant(db, opts...),
@@ -166,6 +172,8 @@ type Query struct {
 	InteractionStat       interactionStat
 	LarkImg               larkImg
 	LlmTokenUsageRecord   llmTokenUsageRecord
+	LuckinPendingOrder    luckinPendingOrder
+	McpCredential         mcpCredential
 	MessageLog            messageLog
 	MsgTraceLog           msgTraceLog
 	PermissionGrant       permissionGrant
@@ -211,6 +219,8 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		InteractionStat:       q.InteractionStat.clone(db),
 		LarkImg:               q.LarkImg.clone(db),
 		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.clone(db),
+		LuckinPendingOrder:    q.LuckinPendingOrder.clone(db),
+		McpCredential:         q.McpCredential.clone(db),
 		MessageLog:            q.MessageLog.clone(db),
 		MsgTraceLog:           q.MsgTraceLog.clone(db),
 		PermissionGrant:       q.PermissionGrant.clone(db),
@@ -263,6 +273,8 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		InteractionStat:       q.InteractionStat.replaceDB(db),
 		LarkImg:               q.LarkImg.replaceDB(db),
 		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.replaceDB(db),
+		LuckinPendingOrder:    q.LuckinPendingOrder.replaceDB(db),
+		McpCredential:         q.McpCredential.replaceDB(db),
 		MessageLog:            q.MessageLog.replaceDB(db),
 		MsgTraceLog:           q.MsgTraceLog.replaceDB(db),
 		PermissionGrant:       q.PermissionGrant.replaceDB(db),
@@ -305,6 +317,8 @@ type queryCtx struct {
 	InteractionStat       IInteractionStatDo
 	LarkImg               ILarkImgDo
 	LlmTokenUsageRecord   ILlmTokenUsageRecordDo
+	LuckinPendingOrder    ILuckinPendingOrderDo
+	McpCredential         IMcpCredentialDo
 	MessageLog            IMessageLogDo
 	MsgTraceLog           IMsgTraceLogDo
 	PermissionGrant       IPermissionGrantDo
@@ -347,6 +361,8 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		InteractionStat:       q.InteractionStat.WithContext(ctx),
 		LarkImg:               q.LarkImg.WithContext(ctx),
 		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.WithContext(ctx),
+		LuckinPendingOrder:    q.LuckinPendingOrder.WithContext(ctx),
+		McpCredential:         q.McpCredential.WithContext(ctx),
 		MessageLog:            q.MessageLog.WithContext(ctx),
 		MsgTraceLog:           q.MsgTraceLog.WithContext(ctx),
 		PermissionGrant:       q.PermissionGrant.WithContext(ctx),

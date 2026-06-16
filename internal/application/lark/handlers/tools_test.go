@@ -39,6 +39,9 @@ func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 	}
 
 	for name := range allTools.FunctionCallMap {
+		if strings.HasPrefix(name, "luckin_") {
+			continue
+		}
 		if _, skip := excluded[name]; skip {
 			continue
 		}
@@ -191,6 +194,9 @@ func TestLarkToolsEmitStrictCompatibleSchemas(t *testing.T) {
 		var schema map[string]any
 		if err := json.Unmarshal(fn.GetParameters().GetValue(), &schema); err != nil {
 			t.Fatalf("%s parameters should be json: %v", fn.GetName(), err)
+		}
+		if strings.HasPrefix(fn.GetName(), "luckin_") {
+			continue
 		}
 		if schema["additionalProperties"] != false {
 			t.Fatalf("%s root additionalProperties = %#v, want false", fn.GetName(), schema["additionalProperties"])

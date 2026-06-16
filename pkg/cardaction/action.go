@@ -67,6 +67,8 @@ const (
 	ActionWordChunkDetail        = "wordcount.chunk.detail"
 	ActionAgentRuntimeResume     = "agent.runtime.resume"
 	ActionAgentRuntimeReject     = "agent.runtime.reject"
+	ActionLuckinOrderConfirm     = "luckin_order_confirm"
+	ActionLuckinOrderCancel      = "luckin_order_cancel"
 
 	RunIDField    = "run_id"
 	StepIDField   = "step_id"
@@ -75,6 +77,8 @@ const (
 	TokenField    = "token"
 
 	ApprovalDeliveryField = "approval_delivery"
+	PendingOrderIDField   = "pending_order_id"
+	PayloadHashField      = "payload_hash"
 )
 
 var (

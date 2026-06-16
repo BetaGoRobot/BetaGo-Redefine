@@ -4,6 +4,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gen"
+	"gorm.io/gen/field"
 	"gorm.io/gorm"
 )
 
@@ -62,6 +63,24 @@ func main() {
 			tables = append(tables, g.GenerateModel(tableName,
 				gen.FieldType("run_at", "*time.Time"),
 				gen.FieldType("last_run_at", "*time.Time"),
+			))
+		case "luckin_pending_orders":
+			tables = append(tables, g.GenerateModel(tableName,
+				gen.FieldType("create_order_payload", "datatypes.JSON"),
+				gen.FieldType("preview_result", "datatypes.JSON"),
+				gen.FieldType("result_json", "datatypes.JSON"),
+				gen.FieldGORMTag("create_order_payload", func(tag field.GormTag) field.GormTag {
+					tag.Append("type", "jsonb")
+					return tag
+				}),
+				gen.FieldGORMTag("preview_result", func(tag field.GormTag) field.GormTag {
+					tag.Append("type", "jsonb")
+					return tag
+				}),
+				gen.FieldGORMTag("result_json", func(tag field.GormTag) field.GormTag {
+					tag.Append("type", "jsonb")
+					return tag
+				}),
 			))
 		default:
 			tables = append(tables, g.GenerateModel(tableName))
