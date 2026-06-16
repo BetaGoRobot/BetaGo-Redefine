@@ -108,6 +108,24 @@ func BuildProductQueryCard(shop ShopSelection) map[string]any {
 	return wrapCard(elements)
 }
 
+// BuildProductSearchingCard 在异步搜索商品期间展示的过渡卡片。
+func BuildProductSearchingCard(shop ShopSelection, query string) map[string]any {
+	return wrapCard([]any{
+		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
+		map[string]any{"tag": "markdown", "content": "正在搜索「" + query + "」，请稍候…"},
+	})
+}
+
+// BuildProductSearchErrorCard 在异步搜索失败时展示，并保留搜索表单方便重试。
+func BuildProductSearchErrorCard(shop ShopSelection, query string) map[string]any {
+	elements := []any{
+		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
+		map[string]any{"tag": "markdown", "content": "搜索「" + query + "」失败，请重试或换个关键词。"},
+	}
+	elements = append(elements, productQueryForm(shop)...)
+	return wrapCard(elements)
+}
+
 // productQueryForm 返回一个商品搜索表单（输入框 + 搜索按钮），提交后在卡片内刷新商品列表。
 func productQueryForm(shop ShopSelection) []any {
 	submit := larkmsg.Button("搜索商品", larkmsg.ButtonOptions{

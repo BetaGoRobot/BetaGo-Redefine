@@ -94,6 +94,39 @@ func TestHandleUnbindToken(t *testing.T) {
 	}
 }
 
+func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
+	session := &memSessionStore{}
+
+	// 无门店时返回错误，不产生异步任务。
+	if _, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
+		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
+	)); err == nil {
+		t.Fatalf("expected error when shop missing")
+	}
+
+	// 有门店但关键词为空时报错。
+	session.SetShop(context.Background(), luckin.SessionKey{}, luckin.ShopSelection{DeptID: 1, DeptName: "门店A"})
+	if _, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
+		map[string]any{cardactionproto.LuckinQueryFormField: ""},
+	)); err == nil {
+		t.Fatalf("expected error when query empty")
+	}
+
+	// 正常情况下返回一个非空异步任务。
+	task, err := handleProductQuery(session, luckin.DraftService{}, nil)(context.Background(), testActionContextWithForm(
+		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
+		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
+	))
+	if err != nil {
+		t.Fatalf("handleProductQuery error = %v", err)
+	}
+	if task == nil {
+		t.Fatalf("expected async task")
+	}
+}
+
 func testActionContextWithForm(value, form map[string]any) *appcardaction.Context {
 	ctx := testActionContext(value)
 	ctx.Action.FormValue = form

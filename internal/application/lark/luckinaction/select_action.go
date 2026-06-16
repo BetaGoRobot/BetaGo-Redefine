@@ -2,6 +2,7 @@ package luckinaction
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -36,29 +38,44 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 	}
 }
 
-func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore) appcardaction.SyncHandler {
-	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore) appcardaction.AsyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		if session == nil {
-			return appcardaction.ErrorToast("会话已过期，请重新选择门店"), nil
+			return nil, errors.New("会话已过期，请重新选择门店")
 		}
 		shop, ok := session.GetShop(ctx, sessionKey(actionCtx))
 		if !ok {
-			return appcardaction.ErrorToast("请先选择门店"), nil
+			return nil, errors.New("请先选择门店")
 		}
 		query := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinQueryFormField))
 		if query == "" {
-			return appcardaction.ErrorToast("请输入商品关键词"), nil
+			return nil, errors.New("请输入商品关键词")
+		}
+		msgID := strings.TrimSpace(actionCtx.MessageID())
+		if msgID == "" {
+			return nil, errors.New("message id is required")
 		}
 		req := credentialRequestFromAction(actionCtx)
-		cred, err := resolveCredential(ctx, tokens, req)
-		if err != nil {
-			return appcardaction.InfoToastWithRawCardPayload("请先绑定瑞幸账号", luckin.BuildBindTokenCard(req.ChatType)), nil
-		}
-		products, err := draft.SearchProducts(ctx, cred, shop, query, 5)
-		if err != nil {
-			return appcardaction.ErrorToast(err.Error()), nil
-		}
-		return appcardaction.InfoToastWithRawCardPayload("商品搜索结果", luckin.BuildProductSelectCard(shop, products)), nil
+
+		return func(runCtx context.Context) {
+			// 先把卡片更新为“搜索中”，避免用户以为无响应。
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchingCard(shop, query))
+
+			cred, err := resolveCredential(runCtx, tokens, req)
+			if err != nil {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildBindTokenCard(req.ChatType))
+				return
+			}
+			products, err := draft.SearchProducts(runCtx, cred, shop, query, 5)
+			if err != nil {
+				logs.L().Ctx(runCtx).Warn("luckin product search failed", zap.String("query", query), zap.Error(err))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, query))
+				return
+			}
+			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, products)); err != nil {
+				logs.L().Ctx(runCtx).Warn("luckin patch product card failed", zap.String("message_id", msgID), zap.Error(err))
+			}
+		}, nil
 	}
 }
 

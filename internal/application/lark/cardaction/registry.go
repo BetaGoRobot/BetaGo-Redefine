@@ -68,6 +68,13 @@ func RegisterAsync(action string, handler AsyncHandler) {
 	})
 }
 
+func RegisterAsyncIfAbsent(action string, handler AsyncHandler) {
+	defaultRegistry.registerIfAbsent(action, entry{
+		mode:  ModeAsync,
+		async: handler,
+	})
+}
+
 func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaData *xhandler.BaseMetaData) (*callback.CardActionTriggerResponse, error) {
 	action, err := cardactionproto.Parse(event)
 	if err != nil {
