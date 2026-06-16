@@ -32,7 +32,33 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 		if session != nil {
 			session.SetShop(ctx, sessionKey(actionCtx), shop)
 		}
-		return appcardaction.InfoToast("已选门店：" + shop.DeptName + "，告诉我想喝什么"), nil
+		return appcardaction.InfoToastWithRawCardPayload("已选门店："+shop.DeptName, luckin.BuildProductQueryCard(shop)), nil
+	}
+}
+
+func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore) appcardaction.SyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+		if session == nil {
+			return appcardaction.ErrorToast("会话已过期，请重新选择门店"), nil
+		}
+		shop, ok := session.GetShop(ctx, sessionKey(actionCtx))
+		if !ok {
+			return appcardaction.ErrorToast("请先选择门店"), nil
+		}
+		query := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinQueryFormField))
+		if query == "" {
+			return appcardaction.ErrorToast("请输入商品关键词"), nil
+		}
+		req := credentialRequestFromAction(actionCtx)
+		cred, err := resolveCredential(ctx, tokens, req)
+		if err != nil {
+			return appcardaction.InfoToastWithRawCardPayload("请先绑定瑞幸账号", luckin.BuildBindTokenCard(req.ChatType)), nil
+		}
+		products, err := draft.SearchProducts(ctx, cred, shop, query, 5)
+		if err != nil {
+			return appcardaction.ErrorToast(err.Error()), nil
+		}
+		return appcardaction.InfoToastWithRawCardPayload("商品搜索结果", luckin.BuildProductSelectCard(shop, products)), nil
 	}
 }
 

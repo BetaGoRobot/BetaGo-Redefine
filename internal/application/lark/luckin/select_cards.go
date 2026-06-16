@@ -62,20 +62,20 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 }
 
 func BuildProductSelectCard(shop ShopSelection, products []ProductOption) map[string]any {
-	elements := []any{
-		map[string]any{"tag": "markdown", "content": "**选择瑞幸商品**"},
-		map[string]any{"tag": "markdown", "content": "门店：" + shop.DeptName},
+	header := []any{
+		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
 	}
 	if len(products) == 0 {
-		elements = append(elements, map[string]any{"tag": "markdown", "content": "没有找到匹配商品，换个说法试试。"})
-		return wrapCard(elements)
+		header = append(header, map[string]any{"tag": "markdown", "content": "没有找到匹配商品，换个关键词再搜。"})
+		return wrapCard(append(header, productQueryForm(shop)...))
 	}
+	header = append(header, map[string]any{"tag": "markdown", "content": "选择商品："})
 	for _, product := range products {
 		label := product.ProductName
 		if product.Price > 0 {
 			label += "｜¥" + strconv.FormatFloat(product.Price, 'f', -1, 64)
 		}
-		elements = append(elements,
+		header = append(header,
 			map[string]any{"tag": "markdown", "content": label},
 			map[string]any{
 				"tag":  "button",
@@ -93,7 +93,48 @@ func BuildProductSelectCard(shop ShopSelection, products []ProductOption) map[st
 			},
 		)
 	}
+	header = append(header, map[string]any{"tag": "hr"})
+	return wrapCard(append(header, productQueryForm(shop)...))
+}
+
+// BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。
+func BuildProductQueryCard(shop ShopSelection) map[string]any {
+	elements := []any{
+		map[string]any{"tag": "markdown", "content": "**已选门店：" + shop.DeptName + "**"},
+		map[string]any{"tag": "markdown", "content": "想喝点什么？输入商品关键词搜索。"},
+	}
+	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
+}
+
+// productQueryForm 返回一个商品搜索表单（输入框 + 搜索按钮），提交后在卡片内刷新商品列表。
+func productQueryForm(shop ShopSelection) []any {
+	return []any{
+		map[string]any{
+			"tag":  "form",
+			"name": "luckin_product_query_form",
+			"elements": []any{
+				map[string]any{
+					"tag":         "input",
+					"name":        cardactionproto.LuckinQueryFormField,
+					"label":       map[string]any{"tag": "plain_text", "content": "商品关键词"},
+					"placeholder": map[string]any{"tag": "plain_text", "content": "例如：生椰拿铁"},
+				},
+				map[string]any{
+					"tag":              "button",
+					"text":             map[string]any{"tag": "plain_text", "content": "搜索商品"},
+					"type":             "primary",
+					"form_action_type": "submit",
+					"behaviors": []any{map[string]any{
+						"type": "callback",
+						"value": map[string]any{
+							cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery,
+						},
+					}},
+				},
+			},
+		},
+	}
 }
 
 func BuildBindTokenCard(chatType ChatType) map[string]any {

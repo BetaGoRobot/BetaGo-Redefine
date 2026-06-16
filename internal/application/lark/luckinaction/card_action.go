@@ -30,6 +30,7 @@ func Register() {
 	session := newSessionStore()
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}))
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, pendingStore{}, credentialStore{}))
 
 	writer := newCredentialWriter()

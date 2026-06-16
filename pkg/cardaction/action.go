@@ -70,6 +70,7 @@ const (
 	ActionLuckinOrderConfirm     = "luckin_order_confirm"
 	ActionLuckinOrderCancel      = "luckin_order_cancel"
 	ActionLuckinShopSelect       = "luckin_shop_select"
+	ActionLuckinProductQuery     = "luckin_product_query"
 	ActionLuckinProductSelect    = "luckin_product_select"
 	ActionLuckinBindToken        = "luckin_bind_token"
 	ActionLuckinUnbindToken      = "luckin_unbind_token"
@@ -92,6 +93,7 @@ const (
 	LuckinProductIDField  = "luckin_product_id"
 	LuckinSkuCodeField    = "luckin_sku_code"
 	LuckinProductName     = "luckin_product_name"
+	LuckinQueryFormField  = "luckin_query"
 	LuckinTokenFormField  = "luckin_token"
 	LuckinScopeFormField  = "luckin_scope"
 )

@@ -80,6 +80,31 @@ func (s DraftService) remoteURL() string {
 	return ServerURL
 }
 
+// SearchProducts 按门店 + 关键词搜索商品，用于卡片内的商品搜索表单。
+func (s DraftService) SearchProducts(ctx context.Context, cred Credential, shop ShopSelection, query string, limit int) ([]ProductOption, error) {
+	if s.caller == nil {
+		return nil, nil
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"deptId": shop.DeptID,
+		"query":  query,
+	})
+	res, err := s.caller.CallTool(ctx, mcpclient.CallRequest{
+		Server: mcpclient.ServerConfig{
+			Name:    ServerName,
+			URL:     s.remoteURL(),
+			Headers: map[string]string{"Authorization": "Bearer " + cred.Token},
+			Timeout: DefaultTimeout(),
+		},
+		ToolName:  "searchProductForMcp",
+		Arguments: payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ProductOptionsFromResult(res.Content, limit), nil
+}
+
 func createOrderPayload(shop ShopSelection, product ProductOption, amount int) json.RawMessage {
 	payload, _ := json.Marshal(map[string]any{
 		"deptId":      shop.DeptID,
