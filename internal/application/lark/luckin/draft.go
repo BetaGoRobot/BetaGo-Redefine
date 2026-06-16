@@ -63,16 +63,18 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 }
 
 // previewCart 调用 previewOrder 返回业务 data（含 discountPrice / couponCodeList 等）。
+// 始终显式传 couponCodeList：未选券时传空数组，避免瑞幸自动套用最优券导致预估价被打折。
 func (s DraftService) previewCart(ctx context.Context, cred Credential, shop ShopSelection, items []CartItem, coupons []string) (json.RawMessage, error) {
 	if s.caller == nil {
 		return nil, nil
 	}
-	previewArgs := map[string]any{
-		"deptId":      shop.DeptID,
-		"productList": productItems(items),
+	if coupons == nil {
+		coupons = []string{}
 	}
-	if len(coupons) > 0 {
-		previewArgs["couponCodeList"] = coupons
+	previewArgs := map[string]any{
+		"deptId":         shop.DeptID,
+		"productList":    productItems(items),
+		"couponCodeList": coupons,
 	}
 	previewPayload, _ := json.Marshal(previewArgs)
 	res, err := s.caller.CallTool(ctx, s.callReq(cred, "previewOrder", previewPayload))
@@ -198,14 +200,15 @@ func (s DraftService) OrderDetail(ctx context.Context, cred Credential, orderID 
 }
 
 func createOrderPayload(shop ShopSelection, items []CartItem, couponCodeList []string) json.RawMessage {
-	args := map[string]any{
-		"deptId":      shop.DeptID,
-		"longitude":   shop.Longitude,
-		"latitude":    shop.Latitude,
-		"productList": productItems(items),
+	if couponCodeList == nil {
+		couponCodeList = []string{}
 	}
-	if len(couponCodeList) > 0 {
-		args["couponCodeList"] = couponCodeList
+	args := map[string]any{
+		"deptId":         shop.DeptID,
+		"longitude":      shop.Longitude,
+		"latitude":       shop.Latitude,
+		"productList":    productItems(items),
+		"couponCodeList": couponCodeList,
 	}
 	payload, _ := json.Marshal(args)
 	return payload
