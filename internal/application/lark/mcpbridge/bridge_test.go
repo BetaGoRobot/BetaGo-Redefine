@@ -2,7 +2,6 @@ package mcpbridge
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -53,25 +53,21 @@ func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	var sawAuth string
 	var sawTool string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
-		var req struct {
-			ID     int64 `json:"id"`
-			Params struct {
-				Name string `json:"name"`
-			} `json:"params"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode mcp request: %v", err)
-		}
+
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "my-coffee", Version: "v0.0.1"}, nil)
+	mcp.AddTool(mcpServer, &mcp.Tool{Name: "queryShopList"}, func(ctx context.Context, req *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 		sawTool = req.Params.Name
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result": map[string]any{
-				"content": []any{map[string]any{"type": "text", "text": "ok"}},
-			},
-		})
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+	})
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, &mcp.StreamableHTTPOptions{
+		Stateless:    true,
+		JSONResponse: true,
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if v := r.Header.Get("Authorization"); v != "" {
+			sawAuth = v
+		}
+		mcpHandler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
 
@@ -83,7 +79,7 @@ func TestHandleReadToolCallsRemoteMCPWithResolvedCredential(t *testing.T) {
 	policy, _ := luckin.PolicyByRobotTool("luckin_shop_search")
 	h := handler{
 		policy:    policy,
-		client:    mcpclient.New(mcpclient.ClientOptions{}),
+		client:    mcpclient.New(mcpclient.ClientOptions{HTTPClient: server.Client()}),
 		resolver:  resolver,
 		pending:   pending,
 		serverURL: server.URL,

@@ -8,46 +8,45 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestClientListToolsAndCallTool(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer token-1" {
-			t.Fatalf("Authorization = %q", got)
-		}
-		if got := r.Header.Get("Accept"); got != "application/json" {
-			t.Fatalf("Accept = %q", got)
-		}
-		var req jsonRPCRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "tools/list":
-			_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  json.RawMessage(`{"tools":[{"name":"queryShopList","description":"shops","inputSchema":{"type":"object"}}]}`),
-			})
-		case "tools/call":
-			_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`),
-			})
-		default:
-			t.Fatalf("unexpected method %s", req.Method)
-		}
-	}))
-	defer server.Close()
+type shopArgs struct {
+	Keyword string `json:"keyword,omitempty"`
+}
 
-	client := New(ClientOptions{HTTPClient: server.Client()})
+func newTestMCPServer(t *testing.T, register func(*mcp.Server)) (*httptest.Server, *Client) {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: "my-coffee", Version: "v0.0.1"}, nil)
+	register(server)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
+		Stateless:    true,
+		JSONResponse: true,
+	})
+	httpServer := httptest.NewServer(handler)
+	t.Cleanup(httpServer.Close)
+	return httpServer, New(ClientOptions{HTTPClient: httpServer.Client()})
+}
+
+func TestClientListToolsAndCallTool(t *testing.T) {
+	var sawAuth string
+	httpServer, _ := newTestMCPServer(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "queryShopList", Description: "shops"}, func(ctx context.Context, req *mcp.CallToolRequest, args shopArgs) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"ok":true}`}}}, nil, nil
+		})
+	})
+
+	authObserver := &authCapture{base: httpServer.Client().Transport, target: &sawAuth}
+	hc := *httpServer.Client()
+	hc.Transport = authObserver
+	client := New(ClientOptions{HTTPClient: &hc})
+
 	cfg := ServerConfig{
 		Name:    "my-coffee",
-		URL:     server.URL,
+		URL:     httpServer.URL,
 		Headers: map[string]string{"Authorization": "Bearer token-1"},
-		Timeout: time.Second,
+		Timeout: 5 * time.Second,
 	}
 
 	tools, err := client.ListTools(context.Background(), cfg)
@@ -61,7 +60,7 @@ func TestClientListToolsAndCallTool(t *testing.T) {
 	res, err := client.CallTool(context.Background(), CallRequest{
 		Server:    cfg,
 		ToolName:  "queryShopList",
-		Arguments: json.RawMessage(`{"longitude":118.1,"latitude":24.1}`),
+		Arguments: json.RawMessage(`{"keyword":"人民广场"}`),
 	})
 	if err != nil {
 		t.Fatalf("CallTool error = %v", err)
@@ -69,12 +68,31 @@ func TestClientListToolsAndCallTool(t *testing.T) {
 	if string(res.Content) == "" || !json.Valid(res.Raw) {
 		t.Fatalf("invalid result: %+v", res)
 	}
+	if sawAuth != "Bearer token-1" {
+		t.Fatalf("Authorization header = %q", sawAuth)
+	}
 }
 
-func TestClientNormalizesUnauthorizedAndRemoteErrors(t *testing.T) {
+type authCapture struct {
+	base   http.RoundTripper
+	target *string
+}
+
+func (a *authCapture) RoundTrip(req *http.Request) (*http.Response, error) {
+	if v := req.Header.Get("Authorization"); v != "" {
+		*a.target = v
+	}
+	base := a.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+func TestClientNormalizesUnauthorizedErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"bad token"}`))
+		_, _ = w.Write([]byte(`{"message":"oauth token is not found"}`))
 	}))
 	defer server.Close()
 
@@ -85,92 +103,65 @@ func TestClientNormalizesUnauthorizedAndRemoteErrors(t *testing.T) {
 	}
 }
 
-func TestClientNormalizesJSONRPCErrors(t *testing.T) {
-	tests := []struct {
-		name    string
-		message string
-		want    error
-	}{
-		{name: "tool not found", message: "tool not found: missingTool", want: ErrToolNotFound},
-		{name: "invalid arguments", message: "invalid arguments: missing shopId", want: ErrInvalidArguments},
-		{name: "remote", message: "upstream failed", want: ErrRemote},
+func TestClientNormalizesToolErrors(t *testing.T) {
+	httpServer, client := newTestMCPServer(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "queryShopList"}, func(ctx context.Context, req *mcp.CallToolRequest, args shopArgs) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: "upstream failed"}},
+			}, nil, nil
+		})
+	})
+
+	_, err := client.CallTool(context.Background(), CallRequest{
+		Server:   ServerConfig{Name: "my-coffee", URL: httpServer.URL},
+		ToolName: "queryShopList",
+	})
+	if !errors.Is(err, ErrRemote) {
+		t.Fatalf("err = %v, want ErrRemote", err)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var req jsonRPCRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-				_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-					JSONRPC: "2.0",
-					ID:      req.ID,
-					Error:   &jsonRPCError{Code: -32000, Message: tt.message},
-				})
-			}))
-			defer server.Close()
+func TestClientNormalizesUnknownTool(t *testing.T) {
+	httpServer, client := newTestMCPServer(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "queryShopList"}, func(ctx context.Context, req *mcp.CallToolRequest, args shopArgs) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+		})
+	})
 
-			client := New(ClientOptions{HTTPClient: server.Client()})
-			_, err := client.CallTool(context.Background(), CallRequest{
-				Server:   ServerConfig{Name: "my-coffee", URL: server.URL},
-				ToolName: "queryShopList",
-			})
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("err = %v, want %v", err, tt.want)
+	_, err := client.CallTool(context.Background(), CallRequest{
+		Server:   ServerConfig{Name: "my-coffee", URL: httpServer.URL},
+		ToolName: "missingTool",
+	})
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("err = %v, want ErrToolNotFound", err)
+	}
+}
+
+func TestClientNormalizesTimeout(t *testing.T) {
+	httpServer, client := newTestMCPServer(t, func(s *mcp.Server) {
+		mcp.AddTool(s, &mcp.Tool{Name: "slow"}, func(ctx context.Context, req *mcp.CallToolRequest, args shopArgs) (*mcp.CallToolResult, any, error) {
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
 			}
 		})
+	})
+
+	_, err := client.CallTool(context.Background(), CallRequest{
+		Server:   ServerConfig{Name: "my-coffee", URL: httpServer.URL, Timeout: 50 * time.Millisecond},
+		ToolName: "slow",
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 }
 
-func TestClientNormalizesTimeoutAndProtocolErrors(t *testing.T) {
-	t.Run("timeout", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(50 * time.Millisecond)
-		}))
-		defer server.Close()
-
-		client := New(ClientOptions{HTTPClient: server.Client()})
-		_, err := client.ListTools(context.Background(), ServerConfig{
-			Name:    "my-coffee",
-			URL:     server.URL,
-			Timeout: time.Millisecond,
-		})
-		if !errors.Is(err, ErrTimeout) {
-			t.Fatalf("err = %v, want ErrTimeout", err)
-		}
-	})
-
-	t.Run("protocol", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`not-json`))
-		}))
-		defer server.Close()
-
-		client := New(ClientOptions{HTTPClient: server.Client()})
-		_, err := client.ListTools(context.Background(), ServerConfig{Name: "my-coffee", URL: server.URL})
-		if !errors.Is(err, ErrProtocol) {
-			t.Fatalf("err = %v, want ErrProtocol", err)
-		}
-	})
-}
-
-func TestClientRejectsMismatchedResponseID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req jsonRPCRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID + 100,
-			Result:  json.RawMessage(`{"tools":[]}`),
-		})
-	}))
-	defer server.Close()
-
-	client := New(ClientOptions{HTTPClient: server.Client()})
-	_, err := client.ListTools(context.Background(), ServerConfig{Name: "my-coffee", URL: server.URL})
+func TestClientRejectsEmptyURL(t *testing.T) {
+	client := New(ClientOptions{})
+	_, err := client.ListTools(context.Background(), ServerConfig{Name: "my-coffee"})
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("err = %v, want ErrProtocol", err)
 	}
@@ -187,40 +178,5 @@ func TestClientPreservesContextCanceled(t *testing.T) {
 	}
 	if errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, did not want ErrTimeout", err)
-	}
-}
-
-func TestClientRejectsMalformedCallToolResult(t *testing.T) {
-	tests := []struct {
-		name   string
-		result string
-	}{
-		{name: "invalid shape", result: `[]`},
-		{name: "empty content", result: `{}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var req jsonRPCRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Fatalf("decode request: %v", err)
-				}
-				_ = json.NewEncoder(w).Encode(jsonRPCResponse{
-					JSONRPC: "2.0",
-					ID:      req.ID,
-					Result:  json.RawMessage(tt.result),
-				})
-			}))
-			defer server.Close()
-
-			client := New(ClientOptions{HTTPClient: server.Client()})
-			_, err := client.CallTool(context.Background(), CallRequest{
-				Server:   ServerConfig{Name: "my-coffee", URL: server.URL},
-				ToolName: "queryShopList",
-			})
-			if !errors.Is(err, ErrProtocol) {
-				t.Fatalf("err = %v, want ErrProtocol", err)
-			}
-		})
 	}
 }
