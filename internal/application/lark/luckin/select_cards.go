@@ -111,7 +111,11 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 	if len(product.Tags) > 0 {
 		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
 	}
-	addBtn := larkmsg.Button("加入购物车", larkmsg.ButtonOptions{
+	info = append(info, larkmsg.TextInput(cardactionproto.LuckinQtyFormField, larkmsg.TextInputOptions{
+		Placeholder:  "数量（默认 1）",
+		DefaultValue: "1",
+	}))
+	info = append(info, larkmsg.ButtonRow("none", larkmsg.Button("加入购物车", larkmsg.ButtonOptions{
 		Type:           "primary",
 		Name:           "luckin_select_" + idValue,
 		FormActionType: "submit",
@@ -122,37 +126,34 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 			cardactionproto.LuckinProductName:    product.ProductName,
 			cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(productUnitPrice(product), 'f', -1, 64),
 		},
-	})
-	form := map[string]any{
+	})))
+
+	var rowBody map[string]any
+	if imgKey == "" {
+		rowBody = map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
+		}}
+	} else {
+		rowBody = map[string]any{
+			"tag":                "column_set",
+			"flex_mode":          "stretch",
+			"horizontal_spacing": "12px",
+			"columns": []any{
+				map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{
+					map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"},
+				}},
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": info},
+			},
+		}
+	}
+	// form 必须是卡片根级元素，因此让 form 包住整行 column_set，
+	// 数量输入与提交按钮作为 form 的后代被一并提交。
+	return map[string]any{
 		"tag":                "form",
 		"name":               "luckin_add_form_" + idValue,
 		"vertical_spacing":   "8px",
 		"horizontal_spacing": "8px",
-		"elements": []any{
-			larkmsg.TextInput(cardactionproto.LuckinQtyFormField, larkmsg.TextInputOptions{
-				Placeholder:  "数量（默认 1）",
-				DefaultValue: "1",
-			}),
-			larkmsg.ButtonRow("none", addBtn),
-		},
-	}
-	info = append(info, form)
-
-	if imgKey == "" {
-		return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
-			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
-		}}
-	}
-	return map[string]any{
-		"tag":                "column_set",
-		"flex_mode":          "stretch",
-		"horizontal_spacing": "12px",
-		"columns": []any{
-			map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{
-				map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"},
-			}},
-			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": info},
-		},
+		"elements":           []any{rowBody},
 	}
 }
 
