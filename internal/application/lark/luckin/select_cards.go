@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
@@ -109,88 +110,70 @@ func BuildProductQueryCard(shop ShopSelection) map[string]any {
 
 // productQueryForm 返回一个商品搜索表单（输入框 + 搜索按钮），提交后在卡片内刷新商品列表。
 func productQueryForm(shop ShopSelection) []any {
+	submit := larkmsg.Button("搜索商品", larkmsg.ButtonOptions{
+		Name:           "luckin_product_query_submit",
+		Type:           "primary",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery,
+		},
+	})
 	return []any{
 		map[string]any{
-			"tag":  "form",
-			"name": "luckin_product_query_form",
+			"tag":                "form",
+			"name":               "luckin_product_query_form",
+			"vertical_spacing":   "8px",
+			"horizontal_spacing": "8px",
 			"elements": []any{
-				map[string]any{
-					"tag":         "input",
-					"name":        cardactionproto.LuckinQueryFormField,
-					"label":       map[string]any{"tag": "plain_text", "content": "商品关键词"},
-					"placeholder": map[string]any{"tag": "plain_text", "content": "例如：生椰拿铁"},
-				},
-				map[string]any{
-					"tag":              "button",
-					"text":             map[string]any{"tag": "plain_text", "content": "搜索商品"},
-					"type":             "primary",
-					"form_action_type": "submit",
-					"behaviors": []any{map[string]any{
-						"type": "callback",
-						"value": map[string]any{
-							cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery,
-						},
-					}},
-				},
+				larkmsg.TextInput(cardactionproto.LuckinQueryFormField, larkmsg.TextInputOptions{
+					Placeholder: "例如：生椰拿铁",
+				}),
+				larkmsg.ButtonRow("none", submit),
 			},
 		},
 	}
 }
 
 func BuildBindTokenCard(chatType ChatType) map[string]any {
-	elements := []any{
+	formElements := []any{
 		map[string]any{"tag": "markdown", "content": "**绑定瑞幸账号**"},
 		map[string]any{"tag": "markdown", "content": "请到 [瑞幸开放平台](https://open.lkcoffee.com) 登录后复制 Token，粘贴到下方完成绑定。Token 仅加密保存，机器人不会展示完整内容。"},
-		map[string]any{
-			"tag":        "input",
-			"name":       cardactionproto.LuckinTokenFormField,
-			"label":      map[string]any{"tag": "plain_text", "content": "瑞幸 Token"},
-			"placeholder": map[string]any{"tag": "plain_text", "content": "粘贴 Bearer Token"},
-		},
-	}
-	value := map[string]any{
-		cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken,
+		larkmsg.TextInput(cardactionproto.LuckinTokenFormField, larkmsg.TextInputOptions{
+			Placeholder: "粘贴 Bearer Token",
+		}),
 	}
 	if chatType == ChatTypeGroup {
-		elements = append(elements, map[string]any{
-			"tag":  "select_static",
-			"name": cardactionproto.LuckinScopeFormField,
-			"placeholder": map[string]any{"tag": "plain_text", "content": "选择作用域"},
-			"options": []any{
-				map[string]any{"text": map[string]any{"tag": "plain_text", "content": "仅个人使用"}, "value": string(ScopePersonal)},
-				map[string]any{"text": map[string]any{"tag": "plain_text", "content": "本群默认"}, "value": string(ScopeChat)},
+		formElements = append(formElements, larkmsg.SelectStatic(cardactionproto.LuckinScopeFormField, larkmsg.SelectStaticOptions{
+			Placeholder: "选择作用域",
+			Width:       "fill",
+			Options: []larkmsg.SelectStaticOption{
+				{Text: "仅个人使用", Value: string(ScopePersonal)},
+				{Text: "本群默认", Value: string(ScopeChat)},
 			},
-		})
+		}))
 	}
-	elements = append(elements, map[string]any{
-		"tag":             "button",
-		"text":            map[string]any{"tag": "plain_text", "content": "提交绑定"},
-		"type":            "primary",
-		"form_action_type": "submit",
-		"behaviors": []any{map[string]any{
-			"type":  "callback",
-			"value": value,
-		}},
-	})
-	return map[string]any{
-		"schema": "2.0",
-		"config": map[string]any{"wide_screen_mode": true},
-		"body": map[string]any{
-			"elements": []any{
-				map[string]any{"tag": "form", "name": "luckin_bind_form", "elements": elements},
-			},
+	submit := larkmsg.Button("提交绑定", larkmsg.ButtonOptions{
+		Name:           "luckin_bind_submit",
+		Type:           "primary",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken,
 		},
-	}
+	})
+	formElements = append(formElements, larkmsg.ButtonRow("none", submit))
+	return wrapCard([]any{
+		map[string]any{
+			"tag":                "form",
+			"name":               "luckin_bind_form",
+			"vertical_spacing":   "8px",
+			"horizontal_spacing": "8px",
+			"elements":           formElements,
+		},
+	})
 }
 
 func wrapCard(elements []any) map[string]any {
-	return map[string]any{
-		"schema": "2.0",
-		"config": map[string]any{"wide_screen_mode": true},
-		"body": map[string]any{
-			"elements": elements,
-		},
-	}
+	return map[string]any(larkmsg.NewCardV2("瑞幸点单", elements, larkmsg.StandardPanelCardV2Options()))
 }
 
 func ShopOptionsFromResult(content json.RawMessage, limit int) []ShopOption {
