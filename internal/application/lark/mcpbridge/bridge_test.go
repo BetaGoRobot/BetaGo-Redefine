@@ -130,12 +130,14 @@ func TestHandlePrepareCreateStoresPendingOrderWithoutRemoteCall(t *testing.T) {
 		Token: "token-create",
 	}}
 	pending := &fakePendingOrderService{}
+	sender := &fakePendingOrderCardSender{}
 	policy, _ := luckin.PolicyByRobotTool("luckin_order_prepare_create")
 	h := handler{
 		policy:    policy,
 		client:    mcpclient.New(mcpclient.ClientOptions{}),
 		resolver:  resolver,
 		pending:   pending,
+		sender:    sender,
 		serverURL: server.URL,
 	}
 	meta := &xhandler.BaseMetaData{ChatID: "oc_group", OpenID: "ou_user"}
@@ -162,6 +164,9 @@ func TestHandlePrepareCreateStoresPendingOrderWithoutRemoteCall(t *testing.T) {
 	}
 	if pending.order.PayloadHash == "" || pending.order.ID == "" {
 		t.Fatalf("pending id/hash missing")
+	}
+	if !sender.called || sender.order.ID != pending.order.ID {
+		t.Fatalf("pending order confirmation card was not sent")
 	}
 	if resolver.request.ChatType != luckin.ChatTypeGroup {
 		t.Fatalf("credential request chat type = %q", resolver.request.ChatType)
@@ -197,6 +202,17 @@ type fakePendingOrderService struct {
 }
 
 func (s *fakePendingOrderService) CreatePendingOrder(ctx context.Context, order luckin.PendingOrder) error {
+	s.called = true
+	s.order = order
+	return nil
+}
+
+type fakePendingOrderCardSender struct {
+	called bool
+	order  luckin.PendingOrder
+}
+
+func (s *fakePendingOrderCardSender) SendPendingOrderCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, order luckin.PendingOrder) error {
 	s.called = true
 	s.order = order
 	return nil

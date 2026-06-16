@@ -22,11 +22,16 @@ type PendingOrderService interface {
 	CreatePendingOrder(context.Context, luckin.PendingOrder) error
 }
 
+type PendingOrderCardSender interface {
+	SendPendingOrderCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, luckin.PendingOrder) error
+}
+
 type RegisterOptions struct {
 	Policies  []luckin.ToolPolicy
 	Client    *mcpclient.Client
 	Resolver  CredentialResolver
 	Pending   PendingOrderService
+	Sender    PendingOrderCardSender
 	SystemURL string
 }
 
@@ -39,6 +44,7 @@ type handler struct {
 	client    *mcpclient.Client
 	resolver  CredentialResolver
 	pending   PendingOrderService
+	sender    PendingOrderCardSender
 	serverURL string
 }
 
@@ -55,6 +61,7 @@ func Register(ins *arktools.Impl[larkim.P2MessageReceiveV1], opts RegisterOption
 			client:    opts.Client,
 			resolver:  opts.Resolver,
 			pending:   opts.Pending,
+			sender:    opts.Sender,
 			serverURL: opts.SystemURL,
 		})
 	}
@@ -114,6 +121,11 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 		})
 		if err := h.pending.CreatePendingOrder(ctx, order); err != nil {
 			return err
+		}
+		if h.sender != nil {
+			if err := h.sender.SendPendingOrderCard(ctx, data, metaData, order); err != nil {
+				return err
+			}
 		}
 		metaData.SetExtra(h.policy.RobotToolName+"_result", "瑞幸订单确认卡片已发送，请由发起人确认后再创建订单")
 		return nil

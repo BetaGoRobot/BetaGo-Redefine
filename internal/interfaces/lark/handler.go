@@ -8,6 +8,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckinaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -205,6 +206,7 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 	// 记录一下操作记录
 	defer func() { go recordCardAction(ctx, cardAction) }()
 	appcardaction.RegisterBuiltins()
+	luckinaction.Register()
 	resp, dispatchErr := appcardaction.Dispatch(ctx, cardAction, metaData)
 	if dispatchErr != nil {
 		logs.L().Ctx(ctx).Warn("dispatch card action failed", zap.Error(dispatchErr))

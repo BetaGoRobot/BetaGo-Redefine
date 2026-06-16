@@ -11,6 +11,7 @@ import (
 func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := buildTools(true, true, true, true)
 	xcommand.RegisterTool(ins, PermissionManage)
+	registerLuckinTools(ins)
 	return ins
 }
 

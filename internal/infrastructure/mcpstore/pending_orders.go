@@ -64,6 +64,33 @@ func (r *PendingOrderRepository) MarkConfirmed(ctx context.Context, id, payloadH
 	return nil
 }
 
+func (r *PendingOrderRepository) MarkCancelled(ctx context.Context, id, payloadHash, operatorOpenID, chatID string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	updates := map[string]any{
+		"status":               string(luckin.PendingStatusCancelled),
+		"confirmed_by_open_id": operatorOpenID,
+		"updated_at":           now,
+	}
+	ins := r.q.LuckinPendingOrder
+	result, err := ins.WithContext(ctx).
+		Where(ins.ID.Eq(id)).
+		Where(ins.PayloadHash.Eq(payloadHash)).
+		Where(ins.ChatID.Eq(chatID)).
+		Where(ins.RequesterOpenID.Eq(operatorOpenID)).
+		Where(ins.Status.Eq(string(luckin.PendingStatusPending))).
+		Where(ins.ExpiresAt.Gt(now)).
+		Updates(updates)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected == 0 {
+		return luckin.ErrPendingOrderNotConfirmable
+	}
+	return nil
+}
+
 func buildPendingOrderRow(order luckin.PendingOrder) *model.LuckinPendingOrder {
 	confirmedAt := time.Time{}
 	if order.ConfirmedAt != nil {
