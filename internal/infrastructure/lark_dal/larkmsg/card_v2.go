@@ -356,7 +356,7 @@ func MultiSelectStatic(name string, opts MultiSelectStaticOptions) map[string]an
 			}
 		}
 		if len(initial) > 0 {
-			element["initial_options"] = initial
+			element["selected_values"] = initial
 		}
 	}
 	if len(opts.Options) > 0 {
