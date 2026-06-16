@@ -53,7 +53,7 @@ func (luckinRuntimeResolver) Resolve(ctx context.Context, req luckin.CredentialR
 	if err != nil {
 		return luckin.Credential{}, err
 	}
-	resolver := luckin.NewCredentialResolver(store, luckinSystemToken())
+	resolver := luckin.NewCredentialResolver(store, "")
 	return resolver.Resolve(ctx, req)
 }
 
@@ -71,14 +71,6 @@ func newLuckinCredentialStore() (*mcpstore.CredentialRepository, error) {
 		return nil, err
 	}
 	return mcpstore.NewCredentialRepository(db, codec), nil
-}
-
-func luckinSystemToken() string {
-	cfg := luckinRuntimeConfig()
-	if cfg == nil {
-		return ""
-	}
-	return strings.TrimSpace(cfg.SystemToken)
 }
 
 func luckinCredentialsKey() string {

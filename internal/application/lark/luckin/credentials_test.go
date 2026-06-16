@@ -22,29 +22,11 @@ func (f fakeCredentialStore) FindToken(ctx context.Context, lookup CredentialLoo
 	return Credential{Provider: ProviderLuckin, Scope: lookup.Scope, Token: token, TokenHint: MaskToken(token)}, nil
 }
 
-func TestResolverPrefersChatThenPersonalThenSystemForGroup(t *testing.T) {
-	store := fakeCredentialStore{values: map[CredentialLookup]string{
-		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopeChat, ID: "chat"}}:     "chat-token",
-		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}}: "user-token",
-	}}
-	resolver := NewCredentialResolver(store, "system-token")
-
-	cred, err := resolver.Resolve(context.Background(), CredentialRequest{
-		AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user", ChatType: ChatTypeGroup,
-	})
-	if err != nil {
-		t.Fatalf("Resolve error = %v", err)
-	}
-	if cred.Token != "chat-token" || cred.Scope.Type != ScopeChat {
-		t.Fatalf("credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
-	}
-}
-
-func TestResolverGroupFallsBackToPersonalThenSystem(t *testing.T) {
+func TestResolverUsesPersonalToken(t *testing.T) {
 	store := fakeCredentialStore{values: map[CredentialLookup]string{
 		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}}: "user-token",
 	}}
-	resolver := NewCredentialResolver(store, "system-token")
+	resolver := NewCredentialResolver(store, "")
 
 	cred, err := resolver.Resolve(context.Background(), CredentialRequest{
 		AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user", ChatType: ChatTypeGroup,
@@ -55,25 +37,26 @@ func TestResolverGroupFallsBackToPersonalThenSystem(t *testing.T) {
 	if cred.Token != "user-token" || cred.Scope.Type != ScopePersonal {
 		t.Fatalf("credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
 	}
+}
 
-	resolver = NewCredentialResolver(fakeCredentialStore{values: map[CredentialLookup]string{}}, "system-token")
-	cred, err = resolver.Resolve(context.Background(), CredentialRequest{
+func TestResolverIgnoresChatAndSystemTokens(t *testing.T) {
+	// 即使存在群聊 token，也只解析个人；个人不存在则返回未找到（不再回退系统）。
+	store := fakeCredentialStore{values: map[CredentialLookup]string{
+		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopeChat, ID: "chat"}}: "chat-token",
+	}}
+	resolver := NewCredentialResolver(store, "system-token")
+	if _, err := resolver.Resolve(context.Background(), CredentialRequest{
 		AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user", ChatType: ChatTypeGroup,
-	})
-	if err != nil {
-		t.Fatalf("Resolve system fallback error = %v", err)
-	}
-	if cred.Token != "system-token" || cred.Scope.Type != ScopeSystem {
-		t.Fatalf("system credential mismatch: scope=%s hint=%s", cred.Scope.Type, cred.TokenHint)
+	}); !errors.Is(err, ErrCredentialNotFound) {
+		t.Fatalf("err = %v, want ErrCredentialNotFound", err)
 	}
 }
 
 func TestResolverPrivateUsesPersonalFirst(t *testing.T) {
 	store := fakeCredentialStore{values: map[CredentialLookup]string{
-		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopeChat, ID: "chat"}}:     "chat-token",
 		{Provider: ProviderLuckin, AppID: "app", BotOpenID: "bot", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}}: "user-token",
 	}}
-	resolver := NewCredentialResolver(store, "system-token")
+	resolver := NewCredentialResolver(store, "")
 
 	cred, err := resolver.Resolve(context.Background(), CredentialRequest{
 		AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user", ChatType: ChatTypePrivate,

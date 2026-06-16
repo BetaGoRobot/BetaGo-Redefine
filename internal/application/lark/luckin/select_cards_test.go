@@ -47,13 +47,14 @@ func TestBuildProductSelectCardContainsCallbackValues(t *testing.T) {
 	}
 }
 
-func TestBuildBindTokenCardGroupHasScopeSelect(t *testing.T) {
+func TestBuildBindTokenCardIsPersonalOnly(t *testing.T) {
 	text := mustMarshalForTest(BuildBindTokenCard(ChatTypeGroup))
-	if !containsAll(text, "luckin_bind_token", "luckin_token", "luckin_scope", "open.lkcoffee.com") {
+	if !containsAll(text, "luckin_bind_token", "luckin_token", "open.lkcoffee.com") {
 		t.Fatalf("bind card missing fields: %s", text)
 	}
-	if containsAll(mustMarshalForTest(BuildBindTokenCard(ChatTypePrivate)), "luckin_scope") {
-		t.Fatalf("private bind card should not have scope select")
+	// 个人专属：不再有作用域选择。
+	if containsAll(text, "luckin_scope") {
+		t.Fatalf("bind card should not have scope select: %s", text)
 	}
 }
 

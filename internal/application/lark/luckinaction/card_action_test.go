@@ -13,15 +13,19 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
 
-func TestHandleConfirmPassesRequestAndReturnsCard(t *testing.T) {
+func TestHandleConfirmPassesRequestAndRunsTask(t *testing.T) {
 	service := &fakeConfirmationService{card: map[string]any{"schema": "2.0"}}
-	resp, err := handleConfirm(service)(context.Background(), testActionContext(map[string]any{
+	task, err := handleConfirm(service)(context.Background(), testActionContextNoMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 		cardactionproto.PayloadHashField:    "hash_1",
 	}))
 	if err != nil {
 		t.Fatalf("handleConfirm error = %v", err)
 	}
+	if task == nil {
+		t.Fatalf("expected async task")
+	}
+	task(context.Background())
 	if !service.confirmCalled {
 		t.Fatalf("Confirm was not called")
 	}
@@ -31,31 +35,26 @@ func TestHandleConfirmPassesRequestAndReturnsCard(t *testing.T) {
 	if service.confirmReq.OperatorOpenID != "ou_user" || service.confirmReq.ChatID != "oc_chat" {
 		t.Fatalf("confirm request operator/chat mismatch")
 	}
-	if service.confirmReq.Now.IsZero() {
-		t.Fatalf("confirm request Now is zero")
-	}
-	if resp == nil || resp.Toast == nil || resp.Toast.Type != "info" || resp.Card == nil || resp.Card.Type != "raw" {
-		t.Fatalf("unexpected confirm response: %+v", resp)
-	}
 }
 
-func TestHandleCancelPassesRequest(t *testing.T) {
+func TestHandleCancelPassesRequestAndRunsTask(t *testing.T) {
 	service := &fakeConfirmationService{}
-	resp, err := handleCancel(service)(context.Background(), testActionContext(map[string]any{
+	task, err := handleCancel(service)(context.Background(), testActionContextNoMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 		cardactionproto.PayloadHashField:    "hash_1",
 	}))
 	if err != nil {
 		t.Fatalf("handleCancel error = %v", err)
 	}
+	if task == nil {
+		t.Fatalf("expected async task")
+	}
+	task(context.Background())
 	if !service.cancelCalled {
 		t.Fatalf("Cancel was not called")
 	}
 	if service.cancelReq.PendingOrderID != "po_1" || service.cancelReq.PayloadHash != "hash_1" {
 		t.Fatalf("cancel request id/hash mismatch")
-	}
-	if resp == nil || resp.Toast == nil || resp.Toast.Type != "info" {
-		t.Fatalf("unexpected cancel response: %+v", resp)
 	}
 }
 
@@ -71,22 +70,8 @@ func TestHandleConfirmRequiresPayloadHash(t *testing.T) {
 	}
 }
 
-func TestCredentialStoreReturnsSystemToken(t *testing.T) {
-	writeLuckinConfigForTest(t, "system-token", "", "")
-	cred, err := credentialStore{}.FindToken(context.Background(), luckin.CredentialLookup{
-		Provider: luckin.ProviderLuckin,
-		Scope:    luckin.CredentialScope{Type: luckin.ScopeSystem},
-	})
-	if err != nil {
-		t.Fatalf("FindToken error = %v", err)
-	}
-	if cred.Token != "system-token" || cred.TokenHint != "****oken" {
-		t.Fatalf("system credential mismatch: hint=%q len=%d", cred.TokenHint, len(cred.Token))
-	}
-}
-
 func TestRegisterUsesConfiguredServerURL(t *testing.T) {
-	writeLuckinConfigForTest(t, "", "", "https://luckin.example/mcp")
+	writeLuckinConfigForTest(t, "", "https://luckin.example/mcp")
 	if got := luckinServerURL(); got != "https://luckin.example/mcp" {
 		t.Fatalf("luckinServerURL() = %q", got)
 	}
@@ -98,6 +83,19 @@ func testActionContext(value map[string]any) *appcardaction.Context {
 			Event: &callback.CardActionTriggerRequest{
 				Operator: &callback.Operator{OpenID: "ou_user"},
 				Context:  &callback.Context{OpenChatID: "oc_chat", OpenMessageID: "om_msg"},
+			},
+		},
+		Action: &cardactionproto.Parsed{Value: value},
+	}
+}
+
+// testActionContextNoMsg 不带 message id，使异步任务跳过 PatchCardJSON（避免单测触发 Lark 客户端）。
+func testActionContextNoMsg(value map[string]any) *appcardaction.Context {
+	return &appcardaction.Context{
+		Event: &callback.CardActionTriggerEvent{
+			Event: &callback.CardActionTriggerRequest{
+				Operator: &callback.Operator{OpenID: "ou_user"},
+				Context:  &callback.Context{OpenChatID: "oc_chat"},
 			},
 		},
 		Action: &cardactionproto.Parsed{Value: value},
@@ -124,13 +122,12 @@ func (s *fakeConfirmationService) Cancel(ctx context.Context, req luckin.CancelR
 	return nil
 }
 
-func writeLuckinConfigForTest(t *testing.T, systemToken, credentialsKey, serverURL string) {
+func writeLuckinConfigForTest(t *testing.T, credentialsKey, serverURL string) {
 	t.Helper()
 	restoreWorkspaceConfigAfterTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	content := "[luckin_mcp]\n" +
-		"system_token = \"" + systemToken + "\"\n" +
 		"credentials_key = \"" + credentialsKey + "\"\n" +
 		"server_url = \"" + serverURL + "\"\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {

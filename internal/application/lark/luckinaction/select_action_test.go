@@ -60,7 +60,7 @@ func TestHandleBindTokenStoresPersonalScope(t *testing.T) {
 	}
 }
 
-func TestHandleBindTokenGroupScope(t *testing.T) {
+func TestHandleBindTokenAlwaysPersonalScope(t *testing.T) {
 	writer := &memCredentialWriter{}
 	_, err := handleBindToken(writer)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken},
@@ -72,8 +72,8 @@ func TestHandleBindTokenGroupScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleBindToken error = %v", err)
 	}
-	if writer.lookup.Scope.Type != luckin.ScopeChat {
-		t.Fatalf("chat scope not stored: %+v", writer.lookup)
+	if writer.lookup.Scope.Type != luckin.ScopePersonal {
+		t.Fatalf("scope should be forced personal: %+v", writer.lookup)
 	}
 }
 

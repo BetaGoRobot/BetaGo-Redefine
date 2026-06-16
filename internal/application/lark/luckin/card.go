@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
@@ -24,53 +25,48 @@ func ScopeLabel(scope CredentialScope) string {
 
 func BuildPendingOrderCard(order PendingOrder) map[string]any {
 	summary := previewSummaryFromOrder(order)
-	return map[string]any{
-		"schema": "2.0",
-		"config": map[string]any{"wide_screen_mode": true},
-		"body": map[string]any{
-			"elements": []any{
-				map[string]any{"tag": "markdown", "content": "**瑞幸订单确认**"},
-				map[string]any{"tag": "markdown", "content": "账号作用域：" + ScopeLabel(order.CredentialScope)},
-				map[string]any{"tag": "markdown", "content": "门店：" + summary.Shop},
-				map[string]any{"tag": "markdown", "content": "商品：" + summary.Products},
-				map[string]any{"tag": "markdown", "content": "价格优惠：" + summary.Price},
-				map[string]any{"tag": "markdown", "content": "预计取餐/送达：" + summary.AboutTime},
-				map[string]any{"tag": "markdown", "content": "点击确认将创建瑞幸订单，但不会自动支付。"},
-				map[string]any{
-					"tag":  "button",
-					"text": map[string]any{"tag": "plain_text", "content": "确认下单"},
-					"type": "primary",
-					"behaviors": []any{map[string]any{
-						"type": "callback",
-						"value": map[string]any{
-							cardactionproto.ActionField:         cardactionproto.ActionLuckinOrderConfirm,
-							cardactionproto.PendingOrderIDField: order.ID,
-							cardactionproto.PayloadHashField:    order.PayloadHash,
-						},
-					}},
-				},
-				map[string]any{
-					"tag":  "button",
-					"text": map[string]any{"tag": "plain_text", "content": "取消"},
-					"type": "default",
-					"behaviors": []any{map[string]any{
-						"type": "callback",
-						"value": map[string]any{
-							cardactionproto.ActionField:         cardactionproto.ActionLuckinOrderCancel,
-							cardactionproto.PendingOrderIDField: order.ID,
-							cardactionproto.PayloadHashField:    order.PayloadHash,
-						},
-					}},
-				},
-			},
-		},
+	elements := []any{
+		larkmsg.Markdown("**🧾 确认瑞幸订单**"),
+		larkmsg.HintMarkdown("账号：" + ScopeLabel(order.CredentialScope)),
+		larkmsg.Divider(),
+		larkmsg.Markdown("🏬 **门店**\n" + summary.Shop),
+		larkmsg.Markdown("☕ **商品**\n" + summary.Products),
 	}
+	if summary.Coupon != "" {
+		elements = append(elements, larkmsg.Markdown("🎟 **优惠券**\n"+summary.Coupon))
+	}
+	elements = append(elements,
+		larkmsg.Markdown("💰 **价格**\n"+summary.Price),
+		larkmsg.HintMarkdown("⏰ 预计取餐/送达："+summary.AboutTime),
+		larkmsg.Divider(),
+		larkmsg.HintMarkdown("点击确认将创建瑞幸订单，确认后只创建订单、不会自动支付。"),
+		larkmsg.ButtonRow("none",
+			larkmsg.Button("确认下单", larkmsg.ButtonOptions{
+				Type: "primary",
+				Payload: map[string]any{
+					cardactionproto.ActionField:         cardactionproto.ActionLuckinOrderConfirm,
+					cardactionproto.PendingOrderIDField: order.ID,
+					cardactionproto.PayloadHashField:    order.PayloadHash,
+				},
+			}),
+			larkmsg.Button("取消", larkmsg.ButtonOptions{
+				Type: "default",
+				Payload: map[string]any{
+					cardactionproto.ActionField:         cardactionproto.ActionLuckinOrderCancel,
+					cardactionproto.PendingOrderIDField: order.ID,
+					cardactionproto.PayloadHashField:    order.PayloadHash,
+				},
+			}),
+		),
+	)
+	return map[string]any(larkmsg.NewCardV2("瑞幸点单", elements, larkmsg.StandardPanelCardV2Options()))
 }
 
 type previewSummary struct {
 	Shop      string
 	Products  string
 	Price     string
+	Coupon    string
 	AboutTime string
 }
 
@@ -130,10 +126,12 @@ func previewSummaryFromOrder(order PendingOrder) previewSummary {
 	priceParts := nonEmptyStrings(
 		moneyValue("实付", preview["discountPrice"]),
 		moneyValue("原价", preview["totalInitialPrice"]),
-		couponValue(preview["couponCodeList"]),
 	)
 	if len(priceParts) > 0 {
 		summary.Price = strings.Join(priceParts, "；")
+	}
+	if coupon := couponValue(preview["couponCodeList"]); coupon != "" {
+		summary.Coupon = coupon
 	}
 
 	if about := timeValue(preview["aboutTime"]); about != "" {

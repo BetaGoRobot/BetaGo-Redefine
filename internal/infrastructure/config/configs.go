@@ -35,7 +35,6 @@ type BaseConfig struct {
 }
 
 type LuckinMCPConfig struct {
-	SystemToken    string `json:"system_token" yaml:"system_token" toml:"system_token"`
 	CredentialsKey string `json:"credentials_key" yaml:"credentials_key" toml:"credentials_key"`
 	ServerURL      string `json:"server_url" yaml:"server_url" toml:"server_url"`
 	// AmapKey 为高德 Web 服务 key，用于把用户描述的地点转为经纬度（GCJ-02，与瑞幸坐标系一致）。

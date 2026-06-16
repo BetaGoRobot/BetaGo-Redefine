@@ -107,6 +107,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 		productName := actionValue(actionCtx, cardactionproto.LuckinProductName)
 		specSelections := luckin.ParseSpecSelection(formValuesWithPrefix(actionCtx, cardactionproto.LuckinSpecFormFieldPrefix))
 		fromSpecForm := len(specSelections) > 0
+		coupons := parseCoupons(formValue(actionCtx, cardactionproto.LuckinCouponFormField))
 		req := credentialRequestFromAction(actionCtx)
 
 		return func(runCtx context.Context) {
@@ -146,8 +147,9 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 					SkuCode:     skuCode,
 					ProductName: productName,
 				},
-				Amount: 1,
-				Now:    time.Now(),
+				Amount:         1,
+				CouponCodeList: coupons,
+				Now:            time.Now(),
 			})
 			if err != nil {
 				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, productName))
@@ -259,11 +261,7 @@ func handleViewScope(resolver luckin.CredentialResolverFunc) appcardaction.SyncH
 }
 
 func resolveBindScope(actionCtx *appcardaction.Context, req luckin.CredentialRequest) luckin.CredentialScope {
-	if scope := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinScopeFormField)); scope != "" {
-		if luckin.ScopeType(scope) == luckin.ScopeChat {
-			return luckin.CredentialScope{Type: luckin.ScopeChat, ID: req.ChatID}
-		}
-	}
+	// 仅支持个人作用域：优惠券归属与隐私要求，不再支持群聊默认/系统默认。
 	return luckin.CredentialScope{Type: luckin.ScopePersonal, ID: req.OpenID}
 }
 
@@ -334,6 +332,23 @@ func parseFloat(s string) float64 {
 	return f
 }
 
+// parseCoupons 把逗号分隔的优惠券输入解析为列表（支持中英文逗号）。
+func parseCoupons(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.ReplaceAll(raw, "，", ",")
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func newSessionStore() luckin.SessionStore {
 	return mcpstore.DefaultSessionStore()
 }
@@ -355,7 +370,7 @@ func newCredentialWriter() luckin.CredentialWriter {
 }
 
 func resolveCredential(ctx context.Context, tokens luckin.CredentialStore, req luckin.CredentialRequest) (luckin.Credential, error) {
-	resolver := luckin.NewCredentialResolver(tokens, luckinSystemToken())
+	resolver := luckin.NewCredentialResolver(tokens, "")
 	return resolver.Resolve(ctx, req)
 }
 

@@ -97,6 +97,7 @@ const (
 	LuckinQueryFormField  = "luckin_query"
 	LuckinTokenFormField  = "luckin_token"
 	LuckinScopeFormField  = "luckin_scope"
+	LuckinCouponFormField = "luckin_coupon"
 	LuckinOrderIDField    = "luckin_order_id"
 	// LuckinSpecFormFieldPrefix + attributeId 组成规格选择表单字段名。
 	LuckinSpecFormFieldPrefix = "luckin_spec_"

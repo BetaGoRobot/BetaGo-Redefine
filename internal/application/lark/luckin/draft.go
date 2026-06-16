@@ -17,6 +17,7 @@ type DraftRequest struct {
 	Shop            ShopSelection
 	Product         ProductOption
 	Amount          int
+	CouponCodeList  []string
 	Now             time.Time
 }
 
@@ -34,14 +35,18 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 	if amount <= 0 {
 		amount = 1
 	}
-	payload := createOrderPayload(req.Shop, req.Product, amount)
+	payload := createOrderPayload(req.Shop, req.Product, amount, req.CouponCodeList)
 
 	preview := json.RawMessage(`{}`)
 	if s.caller != nil {
-		previewPayload, _ := json.Marshal(map[string]any{
+		previewArgs := map[string]any{
 			"deptId":      req.Shop.DeptID,
 			"productList": []map[string]any{productItem(req.Product, amount)},
-		})
+		}
+		if len(req.CouponCodeList) > 0 {
+			previewArgs["couponCodeList"] = req.CouponCodeList
+		}
+		previewPayload, _ := json.Marshal(previewArgs)
 		res, err := s.caller.CallTool(ctx, mcpclient.CallRequest{
 			Server: mcpclient.ServerConfig{
 				Name:    ServerName,
@@ -179,13 +184,17 @@ func (s DraftService) OrderDetail(ctx context.Context, cred Credential, orderID 
 	return OrderDetailFromResult(res.Content), nil
 }
 
-func createOrderPayload(shop ShopSelection, product ProductOption, amount int) json.RawMessage {
-	payload, _ := json.Marshal(map[string]any{
+func createOrderPayload(shop ShopSelection, product ProductOption, amount int, couponCodeList []string) json.RawMessage {
+	args := map[string]any{
 		"deptId":      shop.DeptID,
 		"longitude":   shop.Longitude,
 		"latitude":    shop.Latitude,
 		"productList": []map[string]any{productItem(product, amount)},
-	})
+	}
+	if len(couponCodeList) > 0 {
+		args["couponCodeList"] = couponCodeList
+	}
+	payload, _ := json.Marshal(args)
 	return payload
 }
 

@@ -11,10 +11,12 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
-	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
+	"go.uber.org/zap"
 )
 
 func Register() {
@@ -28,8 +30,8 @@ func Register() {
 		images,
 		luckinOrderPollConfig(),
 	)
-	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
-	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
 
 	session := newSessionStore()
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
@@ -46,8 +48,8 @@ func Register() {
 	}))
 }
 
-func handleConfirm(service luckin.ConfirmationService) appcardaction.SyncHandler {
-	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+func handleConfirm(service luckin.ConfirmationService) appcardaction.AsyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		id, err := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		if err != nil {
 			return nil, err
@@ -56,23 +58,36 @@ func handleConfirm(service luckin.ConfirmationService) appcardaction.SyncHandler
 		if err != nil {
 			return nil, err
 		}
-		card, err := service.Confirm(ctx, luckin.ConfirmRequest{
+		msgID := actionCtx.MessageID()
+		req := luckin.ConfirmRequest{
 			PendingOrderID: id,
 			PayloadHash:    hash,
 			OperatorOpenID: actionCtx.OpenID(),
 			ChatID:         actionCtx.ChatID(),
-			MessageID:      actionCtx.MessageID(),
+			MessageID:      msgID,
 			Now:            time.Now(),
-		})
-		if err != nil {
-			return appcardaction.ErrorToast(err.Error()), nil
 		}
-		return appcardaction.InfoToastWithRawCardPayload("瑞幸订单已创建", card), nil
+		return func(runCtx context.Context) {
+			if msgID != "" {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderProcessingCard("正在为你创建瑞幸订单…"))
+			}
+			card, err := service.Confirm(runCtx, req)
+			if err != nil {
+				logs.L().Ctx(runCtx).Warn("luckin confirm order failed", zap.String("pending_id", id), zap.Error(err))
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("创建订单失败："+err.Error()))
+				}
+				return
+			}
+			if msgID != "" {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, card)
+			}
+		}, nil
 	}
 }
 
-func handleCancel(service luckin.ConfirmationService) appcardaction.SyncHandler {
-	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+func handleCancel(service luckin.ConfirmationService) appcardaction.AsyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		id, err := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		if err != nil {
 			return nil, err
@@ -81,34 +96,33 @@ func handleCancel(service luckin.ConfirmationService) appcardaction.SyncHandler 
 		if err != nil {
 			return nil, err
 		}
-		if err := service.Cancel(ctx, luckin.CancelRequest{
+		msgID := actionCtx.MessageID()
+		req := luckin.CancelRequest{
 			PendingOrderID: id,
 			PayloadHash:    hash,
 			OperatorOpenID: actionCtx.OpenID(),
 			ChatID:         actionCtx.ChatID(),
 			Now:            time.Now(),
-		}); err != nil {
-			return appcardaction.ErrorToast(err.Error()), nil
 		}
-		return appcardaction.InfoToast("瑞幸订单已取消"), nil
+		return func(runCtx context.Context) {
+			if err := service.Cancel(runCtx, req); err != nil {
+				logs.L().Ctx(runCtx).Warn("luckin cancel order failed", zap.String("pending_id", id), zap.Error(err))
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("取消失败："+err.Error()))
+				}
+				return
+			}
+			if msgID != "" {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderProcessingCard("瑞幸订单已取消"))
+			}
+		}, nil
 	}
 }
 
 type credentialStore struct{}
 
 func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLookup) (luckin.Credential, error) {
-	if lookup.Scope.Type == luckin.ScopeSystem {
-		token := luckinSystemToken()
-		if token == "" {
-			return luckin.Credential{}, luckin.ErrCredentialNotFound
-		}
-		return luckin.Credential{
-			Provider:  luckin.ProviderLuckin,
-			Scope:     lookup.Scope,
-			Token:     token,
-			TokenHint: luckin.MaskToken(token),
-		}, nil
-	}
+	// 仅支持个人凭证：不再支持系统/群级 token。
 	db := infraDB.DB()
 	if db == nil {
 		return luckin.Credential{}, luckin.ErrCredentialNotFound
@@ -122,14 +136,6 @@ func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLo
 		return luckin.Credential{}, err
 	}
 	return mcpstore.NewCredentialRepository(db, codec).FindToken(ctx, lookup)
-}
-
-func luckinSystemToken() string {
-	cfg := luckinRuntimeConfig()
-	if cfg == nil {
-		return ""
-	}
-	return strings.TrimSpace(cfg.SystemToken)
 }
 
 func luckinCredentialsKey() string {

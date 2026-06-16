@@ -9,11 +9,8 @@ import (
 )
 
 func TestLuckinRuntimeConfigReadsCredentialsKeyFromConfig(t *testing.T) {
-	writeLuckinRuntimeConfigForTest(t, "system-token", "0123456789abcdef0123456789abcdef", "https://luckin.example/mcp")
+	writeLuckinRuntimeConfigForTest(t, "0123456789abcdef0123456789abcdef", "https://luckin.example/mcp")
 
-	if got := luckinSystemToken(); got != "system-token" {
-		t.Fatalf("luckinSystemToken() = %q", got)
-	}
 	if got := luckinCredentialsKey(); got != "0123456789abcdef0123456789abcdef" {
 		t.Fatalf("luckinCredentialsKey() = %q", got)
 	}
@@ -22,13 +19,12 @@ func TestLuckinRuntimeConfigReadsCredentialsKeyFromConfig(t *testing.T) {
 	}
 }
 
-func writeLuckinRuntimeConfigForTest(t *testing.T, systemToken, credentialsKey, serverURL string) {
+func writeLuckinRuntimeConfigForTest(t *testing.T, credentialsKey, serverURL string) {
 	t.Helper()
 	restoreWorkspaceConfigAfterTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	content := "[luckin_mcp]\n" +
-		"system_token = \"" + systemToken + "\"\n" +
 		"credentials_key = \"" + credentialsKey + "\"\n" +
 		"server_url = \"" + serverURL + "\"\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {

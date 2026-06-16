@@ -64,40 +64,21 @@ type CredentialWriter interface {
 type CredentialResolverFunc func(context.Context, CredentialRequest) (Credential, error)
 
 type CredentialResolver struct {
-	store       CredentialStore
-	systemToken string
+	store CredentialStore
 }
 
 func NewCredentialResolver(store CredentialStore, systemToken string) CredentialResolver {
-	return CredentialResolver{store: store, systemToken: strings.TrimSpace(systemToken)}
+	// systemToken 参数保留以兼容调用方签名，但因涉及优惠券个人归属，已不再使用系统/群级凭证。
+	_ = systemToken
+	return CredentialResolver{store: store}
 }
 
+// Resolve 只解析发起人个人 token。出于优惠券归属与隐私考虑，不再支持系统默认或群聊默认凭证。
 func (r CredentialResolver) Resolve(ctx context.Context, req CredentialRequest) (Credential, error) {
-	if req.ChatType == ChatTypeGroup && req.ChatID != "" {
-		if cred, err := r.find(ctx, req, CredentialScope{Type: ScopeChat, ID: req.ChatID}); err == nil {
-			return cred, nil
-		} else if !errors.Is(err, ErrCredentialNotFound) {
-			return Credential{}, err
-		}
+	if req.OpenID == "" {
+		return Credential{}, ErrCredentialNotFound
 	}
-
-	if req.OpenID != "" {
-		if cred, err := r.find(ctx, req, CredentialScope{Type: ScopePersonal, ID: req.OpenID}); err == nil {
-			return cred, nil
-		} else if !errors.Is(err, ErrCredentialNotFound) {
-			return Credential{}, err
-		}
-	}
-
-	if r.systemToken != "" {
-		return Credential{
-			Provider:  ProviderLuckin,
-			Scope:     CredentialScope{Type: ScopeSystem},
-			Token:     r.systemToken,
-			TokenHint: MaskToken(r.systemToken),
-		}, nil
-	}
-	return Credential{}, ErrCredentialNotFound
+	return r.find(ctx, req, CredentialScope{Type: ScopePersonal, ID: req.OpenID})
 }
 
 func (r CredentialResolver) find(ctx context.Context, req CredentialRequest, scope CredentialScope) (Credential, error) {

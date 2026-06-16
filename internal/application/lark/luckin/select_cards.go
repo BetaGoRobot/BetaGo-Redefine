@@ -82,6 +82,7 @@ func shopMetaLine(shop ShopOption) string {
 }
 
 // BuildProductSelectCard 渲染商品列表，每个商品左图右文，附下单按钮。imageKeys 为 productID->img_key。
+// 列表整体包在一个 form 内，底部含可选优惠券输入框，点选商品时一并提交。
 func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageKeys map[int64]string) map[string]any {
 	header := []any{
 		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
@@ -90,12 +91,24 @@ func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageK
 		header = append(header, larkmsg.Markdown("没有找到匹配商品，换个关键词再搜。"))
 		return wrapCard(append(header, productQueryForm(shop)...))
 	}
-	header = append(header, larkmsg.HintMarkdown("选择商品下单："))
+	header = append(header, larkmsg.HintMarkdown("选择商品下单（如有优惠券，先在下方填写）："))
+
+	formElements := make([]any, 0, len(products)*2+2)
+	formElements = append(formElements, larkmsg.TextInput(cardactionproto.LuckinCouponFormField, larkmsg.TextInputOptions{
+		Placeholder: "可选：优惠券编码，多个用英文逗号分隔",
+	}))
 	for _, product := range products {
-		header = append(header, larkmsg.Divider(), productRow(product, imageKeys[product.ProductID]))
+		formElements = append(formElements, larkmsg.Divider(), productRow(product, imageKeys[product.ProductID]))
 	}
-	header = append(header, larkmsg.Divider())
-	return wrapCard(append(header, productQueryForm(shop)...))
+	form := map[string]any{
+		"tag":                "form",
+		"name":               "luckin_product_form",
+		"vertical_spacing":   "8px",
+		"horizontal_spacing": "8px",
+		"elements":           formElements,
+	}
+	tail := append([]any{form, larkmsg.Divider()}, productQueryForm(shop)...)
+	return wrapCard(append(header, tail...))
 }
 
 func productRow(product ProductOption, imgKey string) map[string]any {
@@ -107,7 +120,9 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
 	}
 	info = append(info, larkmsg.ButtonRow("none", larkmsg.Button("下这杯", larkmsg.ButtonOptions{
-		Type: "primary",
+		Type:           "primary",
+		Name:           "luckin_select_" + strconv.FormatInt(product.ProductID, 10),
+		FormActionType: "submit",
 		Payload: map[string]any{
 			cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
 			cardactionproto.LuckinProductIDField: strconv.FormatInt(product.ProductID, 10),
@@ -204,21 +219,12 @@ func productQueryForm(shop ShopSelection) []any {
 
 func BuildBindTokenCard(chatType ChatType) map[string]any {
 	formElements := []any{
-		map[string]any{"tag": "markdown", "content": "**绑定瑞幸账号**"},
-		map[string]any{"tag": "markdown", "content": "请到 [瑞幸开放平台](https://open.lkcoffee.com) 登录后复制 Token，粘贴到下方完成绑定。Token 仅加密保存，机器人不会展示完整内容。"},
+		larkmsg.Markdown("**绑定瑞幸账号**"),
+		larkmsg.Markdown("请到 [瑞幸开放平台](https://open.lkcoffee.com) 登录后复制 Token，粘贴到下方完成绑定。Token 仅加密保存，机器人不会展示完整内容。"),
+		larkmsg.HintMarkdown("出于优惠券归属与隐私考虑，Token 仅按个人绑定，仅你自己可用。"),
 		larkmsg.TextInput(cardactionproto.LuckinTokenFormField, larkmsg.TextInputOptions{
 			Placeholder: "粘贴 Bearer Token",
 		}),
-	}
-	if chatType == ChatTypeGroup {
-		formElements = append(formElements, larkmsg.SelectStatic(cardactionproto.LuckinScopeFormField, larkmsg.SelectStaticOptions{
-			Placeholder: "选择作用域",
-			Width:       "fill",
-			Options: []larkmsg.SelectStaticOption{
-				{Text: "仅个人使用", Value: string(ScopePersonal)},
-				{Text: "本群默认", Value: string(ScopeChat)},
-			},
-		}))
 	}
 	submit := larkmsg.Button("提交绑定", larkmsg.ButtonOptions{
 		Name:           "luckin_bind_submit",

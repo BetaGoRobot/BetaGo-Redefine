@@ -96,10 +96,20 @@ func orderStatusButton(orderID string) map[string]any {
 	return larkmsg.Button("查看订单状态", larkmsg.ButtonOptions{
 		Type: "default",
 		Payload: map[string]any{
-			cardactionproto.ActionField:       cardactionproto.ActionLuckinOrderStatus,
+			cardactionproto.ActionField:        cardactionproto.ActionLuckinOrderStatus,
 			cardactionproto.LuckinOrderIDField: orderID,
 		},
 	})
+}
+
+// BuildOrderProcessingCard 操作进行中的过渡卡片。
+func BuildOrderProcessingCard(message string) map[string]any {
+	return wrapCard([]any{larkmsg.Markdown(message)})
+}
+
+// BuildOrderFailedCard 操作失败提示卡片。
+func BuildOrderFailedCard(message string) map[string]any {
+	return wrapCard([]any{larkmsg.Markdown("⚠️ " + message)})
 }
 
 // OrderDetail 解析 queryOrderDetailInfo 结果，用于状态卡与轮询。
