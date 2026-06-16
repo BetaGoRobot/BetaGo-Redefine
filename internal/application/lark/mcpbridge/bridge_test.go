@@ -44,8 +44,11 @@ func TestRegisterAddsAllowedTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("prepare-create unit missing")
 	}
-	if unit.Parameters == nil || !unit.Parameters.AdditionalProperties {
-		t.Fatalf("prepare-create tool params should allow raw MCP arguments")
+	if unit.Parameters == nil || len(unit.Parameters.Props) == 0 {
+		t.Fatalf("prepare-create tool params should expose the createOrder schema")
+	}
+	if _, ok := unit.Parameters.Props["productList"]; !ok {
+		t.Fatalf("prepare-create tool params missing productList")
 	}
 }
 

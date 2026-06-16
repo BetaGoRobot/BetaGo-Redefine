@@ -78,8 +78,11 @@ func (h handler) ParseTool(raw string) (rawArgs, error) {
 }
 
 func (h handler) ToolSpec() xcommand.ToolSpec {
-	params := arktools.NewParams("object")
-	params.AdditionalProperties = true
+	params := h.policy.Params
+	if params == nil {
+		params = arktools.NewParams("object")
+		params.AdditionalProperties = true
+	}
 	return xcommand.ToolSpec{
 		Name:   h.policy.RobotToolName,
 		Desc:   h.policy.Description,
