@@ -110,7 +110,12 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 		skuCode := actionValue(actionCtx, cardactionproto.LuckinSkuCodeField)
 		productName := actionValue(actionCtx, cardactionproto.LuckinProductName)
 		unitPrice := parseFloat(actionValue(actionCtx, cardactionproto.LuckinUnitPriceField))
-		amount := luckin.ClampAmount(parseAmount(formValue(actionCtx, cardactionproto.LuckinQtyFormField)))
+		// 商品卡每行 qty 字段名带 productID 后缀以避免同卡重名；规格卡用无后缀字段。
+		qtyRaw := formValue(actionCtx, luckin.QtyFormField(productID))
+		if qtyRaw == "" {
+			qtyRaw = formValue(actionCtx, cardactionproto.LuckinQtyFormField)
+		}
+		amount := luckin.ClampAmount(parseAmount(qtyRaw))
 		specSelections := luckin.ParseSpecSelection(formValuesWithPrefix(actionCtx, cardactionproto.LuckinSpecFormFieldPrefix))
 		fromSpecForm := len(specSelections) > 0
 		key := sessionKey(actionCtx)

@@ -111,7 +111,7 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 	if len(product.Tags) > 0 {
 		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
 	}
-	info = append(info, larkmsg.TextInput(cardactionproto.LuckinQtyFormField, larkmsg.TextInputOptions{
+	info = append(info, larkmsg.TextInput(QtyFormField(product.ProductID), larkmsg.TextInputOptions{
 		Placeholder:  "数量（默认 1）",
 		DefaultValue: "1",
 	}))
@@ -173,6 +173,11 @@ func productUnitPrice(product ProductOption) float64 {
 		return product.Price
 	}
 	return product.InitialPice
+}
+
+// QtyFormField 为每个商品生成唯一的数量字段名，避免同一卡片内 name 冲突。
+func QtyFormField(productID int64) string {
+	return cardactionproto.LuckinQtyFormField + "_" + strconv.FormatInt(productID, 10)
 }
 
 // BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。
