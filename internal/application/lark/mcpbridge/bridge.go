@@ -138,6 +138,8 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 	}
 
 	switch h.policy.RobotToolName {
+	case "luckin_bind_token_guide":
+		return h.guideBindToken(ctx, data, metaData, req)
 	case "luckin_shop_search":
 		return h.handleShopSearch(ctx, data, metaData, cred, arg)
 	case "luckin_product_search":

@@ -23,6 +23,7 @@ type ToolPolicy struct {
 
 func ToolPolicies() []ToolPolicy {
 	return []ToolPolicy{
+		{RobotToolName: "luckin_bind_token_guide", Description: "发送瑞幸账号 Token 绑定/重新绑定引导卡片", DirectLLM: true, Params: bindTokenGuideParams()},
 		{RobotToolName: "luckin_shop_search", MCPToolName: "queryShopList", Description: "查询瑞幸咖啡门店列表", DirectLLM: true, Params: shopSearchParams()},
 		{RobotToolName: "luckin_product_search", MCPToolName: "searchProductForMcp", Description: "按用户查询文本搜索瑞幸商品", DirectLLM: true, Params: productSearchParams()},
 		{RobotToolName: "luckin_product_detail", MCPToolName: "queryProductDetailInfo", Description: "查询瑞幸商品详情", DirectLLM: true, Params: productDetailParams()},
@@ -31,6 +32,10 @@ func ToolPolicies() []ToolPolicy {
 		{RobotToolName: "luckin_order_detail", MCPToolName: "queryOrderDetailInfo", Description: "查询瑞幸订单详情", DirectLLM: true, Params: orderDetailParams()},
 		{RobotToolName: "luckin_order_prepare_create", MCPToolName: "createOrder", Description: "创建待确认瑞幸订单草稿，不直接下单", DirectLLM: true, HighRisk: true, Params: orderCreateParams()},
 	}
+}
+
+func bindTokenGuideParams() *arktools.Param {
+	return arktools.NewParams("object")
 }
 
 func shopSearchParams() *arktools.Param {

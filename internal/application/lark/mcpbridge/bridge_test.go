@@ -22,6 +22,7 @@ func TestRegisterAddsAllowedTools(t *testing.T) {
 
 	foundCreateOrder := false
 	foundPrepare := false
+	foundBindGuide := false
 	for _, spec := range specs {
 		if spec.GetToolFunction() == nil {
 			continue
@@ -33,12 +34,18 @@ func TestRegisterAddsAllowedTools(t *testing.T) {
 		if name == "luckin_order_prepare_create" {
 			foundPrepare = true
 		}
+		if name == "luckin_bind_token_guide" {
+			foundBindGuide = true
+		}
 	}
 	if foundCreateOrder {
 		t.Fatalf("raw createOrder was registered")
 	}
 	if !foundPrepare {
 		t.Fatalf("prepare-create tool missing")
+	}
+	if !foundBindGuide {
+		t.Fatalf("bind-token guide tool missing")
 	}
 	unit, ok := ins.Get("luckin_order_prepare_create")
 	if !ok {
@@ -49,6 +56,30 @@ func TestRegisterAddsAllowedTools(t *testing.T) {
 	}
 	if _, ok := unit.Parameters.Props["productList"]; !ok {
 		t.Fatalf("prepare-create tool params missing productList")
+	}
+}
+
+func TestHandleBindTokenGuideSendsCardEvenWhenCredentialExists(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	resolver := &fakeResolver{credential: luckin.Credential{Token: "token-read"}}
+	cards := &fakeCardSender{}
+	policy, _ := luckin.PolicyByRobotTool("luckin_bind_token_guide")
+	h := handler{
+		policy:   policy,
+		resolver: resolver,
+		cards:    cards,
+	}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user"}
+	args, _ := h.ParseTool(`{}`)
+	if err := h.Handle(context.Background(), nil, meta, args); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if !cards.called {
+		t.Fatalf("bind token guide card was not sent")
+	}
+	got, _ := meta.GetExtra("luckin_bind_token_guide_result")
+	if got == "" {
+		t.Fatalf("tool result missing")
 	}
 }
 
