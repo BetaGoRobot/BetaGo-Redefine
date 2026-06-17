@@ -32,7 +32,7 @@ require (
 	github.com/opensearch-project/opensearch-go v1.1.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
-	github.com/pelletier/go-toml/v2 v2.3.1
+	github.com/pelletier/go-toml/v2 v2.4.0
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.20.1
 	github.com/rivo/uniseg v0.4.7
@@ -66,7 +66,6 @@ require (
 	github.com/go-openapi/runtime/server-middleware v0.30.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/issue9/errwrap v0.3.2 // indirect
-	github.com/larksuite/oapi-sdk-go v1.1.48 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
