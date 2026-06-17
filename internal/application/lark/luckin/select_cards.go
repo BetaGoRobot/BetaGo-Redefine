@@ -38,7 +38,8 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 		larkmsg.HintMarkdown("位置：" + keyword),
 	}
 	if len(shops) == 0 {
-		elements = append(elements, larkmsg.Markdown("没有找到附近门店，换个更具体的位置试试。"))
+		elements = append(elements, larkmsg.Markdown("没有找到附近门店，换个更具体的位置再搜。"))
+		elements = append(elements, shopSearchForm()...)
 		return wrapCard(elements)
 	}
 	for i, shop := range shops {
@@ -67,7 +68,64 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 			},
 		})))
 	}
+	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("不是这些？换个位置重新搜："))
+	elements = append(elements, shopSearchForm()...)
 	return wrapCard(elements)
+}
+
+// BuildSessionExpiredCard 会话过期（曾选过门店但已失效）时展示，提供位置输入直接重选门店，
+// 无需用户从头自然语言交互。
+func BuildSessionExpiredCard() map[string]any {
+	elements := []any{
+		larkmsg.Markdown("**⏰ 点单会话已过期**"),
+		larkmsg.HintMarkdown("之前选择的门店与购物车已失效，输入位置重新选择门店即可继续。"),
+	}
+	elements = append(elements, shopSearchForm()...)
+	return wrapCard(elements)
+}
+
+// BuildShopStartCard 尚未选择门店时展示，提供位置输入开始选店。
+func BuildShopStartCard() map[string]any {
+	elements := []any{
+		larkmsg.Markdown("**选择瑞幸门店**"),
+		larkmsg.HintMarkdown("输入位置搜索附近门店。"),
+	}
+	elements = append(elements, shopSearchForm()...)
+	return wrapCard(elements)
+}
+
+// BuildShopSearchingCard 门店搜索异步进行中的过渡卡片。
+func BuildShopSearchingCard(location string) map[string]any {
+	return wrapCard([]any{
+		larkmsg.Markdown("**选择瑞幸门店**"),
+		larkmsg.HintMarkdown("正在按「" + location + "」查询附近门店，请稍候…"),
+	})
+}
+
+// shopSearchForm 位置输入 + 搜索按钮，提交后在卡片内异步刷新门店列表。
+func shopSearchForm() []any {
+	submit := larkmsg.Button("搜索门店", larkmsg.ButtonOptions{
+		Name:           "luckin_shop_search_submit",
+		Type:           "primary",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinShopSearch,
+		},
+	})
+	return []any{
+		map[string]any{
+			"tag":                "form",
+			"name":               "luckin_shop_search_form",
+			"vertical_spacing":   "8px",
+			"horizontal_spacing": "8px",
+			"elements": []any{
+				larkmsg.TextInput(cardactionproto.LuckinLocationFormField, larkmsg.TextInputOptions{
+					Placeholder: "输入位置，如：上海人民广场",
+				}),
+				larkmsg.ButtonRow("none", submit),
+			},
+		},
+	}
 }
 
 func shopMetaLine(shop ShopOption) string {

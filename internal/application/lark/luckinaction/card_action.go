@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/geocode"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
@@ -35,7 +36,9 @@ func Register() {
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
 
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
+	geocoder := newGeocoder()
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinShopSearch, handleShopSearch(session, draft, geocoder, credentialStore{}))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}, images))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, credentialStore{}, images))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinCartUpdate, handleCartUpdate(session))
@@ -173,6 +176,17 @@ func luckinRuntimeConfig() *infraConfig.LuckinMCPConfig {
 
 func luckinOrderConfig() *infraConfig.LuckinMCPConfig {
 	return luckinRuntimeConfig()
+}
+
+func newGeocoder() luckin.Geocoder {
+	amapKey := ""
+	if cfg := luckinRuntimeConfig(); cfg != nil {
+		amapKey = strings.TrimSpace(cfg.AmapKey)
+	}
+	return geocode.NewCached(
+		geocode.NewAmapProvider(amapKey),
+		geocode.NewNominatimProvider(),
+	)
 }
 
 type pendingStore struct{}

@@ -31,12 +31,15 @@ func TestHandleShopSelectStoresSession(t *testing.T) {
 
 func TestHandleProductSelectRequiresShop(t *testing.T) {
 	session := &memSessionStore{}
-	_, err := handleProductSelect(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContext(map[string]any{
+	task, err := handleProductSelect(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContext(map[string]any{
 		cardactionproto.LuckinProductIDField: "5293",
 		cardactionproto.LuckinSkuCodeField:   "SP-1",
 	}))
-	if err == nil {
-		t.Fatalf("expected error when shop missing")
+	if err != nil {
+		t.Fatalf("handleProductSelect error = %v", err)
+	}
+	if task == nil {
+		t.Fatalf("expected patch task when shop missing")
 	}
 }
 
@@ -94,12 +97,16 @@ func TestHandleUnbindToken(t *testing.T) {
 func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	session := &memSessionStore{}
 
-	// 无门店时返回错误，不产生异步任务。
-	if _, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
+	// 无门店时返回过期/未选择卡片刷新任务。
+	task, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
-	)); err == nil {
-		t.Fatalf("expected error when shop missing")
+	))
+	if err != nil {
+		t.Fatalf("handleProductQuery error = %v", err)
+	}
+	if task == nil {
+		t.Fatalf("expected patch task when shop missing")
 	}
 
 	// 有门店但关键词为空时报错。
@@ -112,7 +119,7 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	}
 
 	// 正常情况下返回一个非空异步任务。
-	task, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
+	task, err = handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
 	))
@@ -135,6 +142,7 @@ type memSessionStore struct {
 	ok   bool
 	cart luckin.Cart
 	cok  bool
+	seen bool
 }
 
 func (s *memSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -144,6 +152,7 @@ func (s *memSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (l
 func (s *memSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
 	s.shop = shop
 	s.ok = true
+	s.seen = true
 }
 
 func (s *memSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
@@ -157,10 +166,15 @@ func (s *memSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (l
 func (s *memSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
 	s.cart = cart
 	s.cok = true
+	s.seen = true
 }
 
 func (s *memSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
 	s.cok = false
+}
+
+func (s *memSessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
+	return s.seen
 }
 
 type memCredentialWriter struct {

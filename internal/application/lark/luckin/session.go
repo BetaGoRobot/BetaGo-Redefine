@@ -45,6 +45,8 @@ type SessionStore interface {
 	GetCart(context.Context, SessionKey) (Cart, bool)
 	SetCart(context.Context, SessionKey, Cart)
 	ClearCart(context.Context, SessionKey)
+	// Seen 报告该会话此前是否选过门店/加过购物车，用于区分“会话已过期”与“从未开始点单”。
+	Seen(context.Context, SessionKey) bool
 }
 
 func (k SessionKey) String() string {

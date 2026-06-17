@@ -100,6 +100,26 @@ func (s DraftService) remoteURL() string {
 	return ServerURL
 }
 
+// SearchShops 按经纬度查询附近门店，用于卡片内的门店搜索/重选表单。
+func (s DraftService) SearchShops(ctx context.Context, cred Credential, point GeoPoint, keyword string, limit int) ([]ShopOption, error) {
+	if s.caller == nil {
+		return nil, nil
+	}
+	args := map[string]any{
+		"longitude": point.Longitude,
+		"latitude":  point.Latitude,
+	}
+	if keyword != "" {
+		args["deptName"] = keyword
+	}
+	payload, _ := json.Marshal(args)
+	res, err := s.caller.CallTool(ctx, s.callReq(cred, "queryShopList", payload))
+	if err != nil {
+		return nil, err
+	}
+	return ShopOptionsFromResult(res.Content, limit), nil
+}
+
 // SearchProducts 按门店 + 关键词搜索商品，用于卡片内的商品搜索表单。
 func (s DraftService) SearchProducts(ctx context.Context, cred Credential, shop ShopSelection, query string, limit int) ([]ProductOption, error) {
 	if s.caller == nil {

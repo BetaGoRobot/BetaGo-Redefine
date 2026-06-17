@@ -303,6 +303,7 @@ type fakeSessionStore struct {
 	ok   bool
 	cart luckin.Cart
 	cok  bool
+	seen bool
 }
 
 func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -312,6 +313,7 @@ func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (
 func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
 	s.shop = shop
 	s.ok = true
+	s.seen = true
 }
 
 func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
@@ -325,10 +327,15 @@ func (s *fakeSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (
 func (s *fakeSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
 	s.cart = cart
 	s.cok = true
+	s.seen = true
 }
 
 func (s *fakeSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
 	s.cok = false
+}
+
+func (s *fakeSessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
+	return s.seen
 }
 
 type fakeGeocoder struct {
