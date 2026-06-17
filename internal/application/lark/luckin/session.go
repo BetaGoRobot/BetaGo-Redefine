@@ -18,6 +18,7 @@ type Geocoder interface {
 type ShopSelection struct {
 	DeptID   int64
 	DeptName string
+	Address  string
 	// Longitude/Latitude 来自门店搜索结果本身，仅内部用于下单，不向用户/模型暴露。
 	Longitude float64
 	Latitude  float64
@@ -42,6 +43,7 @@ type SessionStore interface {
 	GetShop(context.Context, SessionKey) (ShopSelection, bool)
 	SetShop(context.Context, SessionKey, ShopSelection)
 	ClearShop(context.Context, SessionKey)
+	GetRecentShops(context.Context, SessionKey, int) []ShopSelection
 	GetCart(context.Context, SessionKey) (Cart, bool)
 	SetCart(context.Context, SessionKey, Cart)
 	ClearCart(context.Context, SessionKey)

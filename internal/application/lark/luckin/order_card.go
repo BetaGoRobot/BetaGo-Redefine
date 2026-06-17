@@ -16,6 +16,8 @@ const (
 	OrderStatusReady     = 60  // 等待取餐
 	OrderStatusCompleted = 80  // 已完成
 	OrderStatusCancelled = 100 // 已取消
+
+	OrderStatusModeReply = "reply"
 )
 
 // IsTerminalOrderStatus 判断是否为终止状态（已完成/已取消），轮询命中即停止。
@@ -81,7 +83,7 @@ func BuildOrderCreatedCard(content json.RawMessage, qrImgKey string) map[string]
 		if created.PayURL != "" {
 			buttons = append(buttons, larkmsg.Button("去微信支付", larkmsg.ButtonOptions{Type: "primary", URL: created.PayURL}))
 		}
-		buttons = append(buttons, orderStatusButton(created.OrderID))
+		buttons = append(buttons, orderStatusButton(created.OrderID, OrderStatusModeReply))
 		elements = append(elements, larkmsg.ButtonRow("none", buttons...))
 	} else {
 		elements = append(elements,
@@ -92,13 +94,17 @@ func BuildOrderCreatedCard(content json.RawMessage, qrImgKey string) map[string]
 	return wrapCard(elements)
 }
 
-func orderStatusButton(orderID string) map[string]any {
+func orderStatusButton(orderID string, mode ...string) map[string]any {
+	payload := map[string]any{
+		cardactionproto.ActionField:        cardactionproto.ActionLuckinOrderStatus,
+		cardactionproto.LuckinOrderIDField: orderID,
+	}
+	if len(mode) > 0 && mode[0] != "" {
+		payload[cardactionproto.LuckinStatusModeField] = mode[0]
+	}
 	return larkmsg.Button("查看订单状态", larkmsg.ButtonOptions{
-		Type: "default",
-		Payload: map[string]any{
-			cardactionproto.ActionField:        cardactionproto.ActionLuckinOrderStatus,
-			cardactionproto.LuckinOrderIDField: orderID,
-		},
+		Type:    "default",
+		Payload: payload,
 	})
 }
 
@@ -127,19 +133,19 @@ func BuildOrderFailedCard(message string) map[string]any {
 
 // OrderDetail 解析 queryOrderDetailInfo 结果，用于状态卡与轮询。
 type OrderDetail struct {
-	OrderID        string
-	Status         int
-	StatusName     string
-	AboutTime      int64
-	TakeMealCode   string
-	ShopName       string
-	ShopAddress    string
-	Products       []OrderDetailProduct
+	OrderID      string
+	Status       int
+	StatusName   string
+	AboutTime    int64
+	TakeMealCode string
+	ShopName     string
+	ShopAddress  string
+	Products     []OrderDetailProduct
 }
 
 type OrderDetailProduct struct {
-	Name    string
-	Amount  int
+	Name     string
+	Amount   int
 	Addition string
 }
 

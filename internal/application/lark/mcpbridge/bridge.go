@@ -157,7 +157,13 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 func (h handler) handleShopSearch(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cred luckin.Credential, arg rawArgs) error {
 	locationText := stringArg(arg.JSON, "locationText")
 	if locationText == "" {
-		metaData.SetExtra(h.policy.RobotToolName+"_result", "请提供一个用于定位的地点描述，例如“上海人民广场”")
+		if h.cards != nil {
+			req := credentialRequestFromMessage(data, metaData)
+			if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopStartCard(h.recentShops(ctx, req, 3))); err != nil {
+				return err
+			}
+		}
+		metaData.SetExtra(h.policy.RobotToolName+"_result", "已发送门店搜索入口卡片，等待用户输入位置关键词或选择最近门店")
 		return nil
 	}
 	if h.geocoder == nil {
@@ -351,6 +357,13 @@ func (h handler) lookupShop(ctx context.Context, req luckin.CredentialRequest) (
 		return luckin.ShopSelection{}, false
 	}
 	return h.session.GetShop(ctx, luckin.NewSessionKey(req))
+}
+
+func (h handler) recentShops(ctx context.Context, req luckin.CredentialRequest, limit int) []luckin.ShopSelection {
+	if h.session == nil {
+		return nil
+	}
+	return h.session.GetRecentShops(ctx, luckin.NewSessionKey(req), limit)
 }
 
 func (h handler) remoteURL() string {

@@ -2,6 +2,8 @@ package luckinaction
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
@@ -26,6 +28,9 @@ func TestHandleShopSelectStoresSession(t *testing.T) {
 	shop, ok := session.shop, session.ok
 	if !ok || shop.DeptID != 245062453 || shop.Longitude == 0 {
 		t.Fatalf("session not stored: %+v ok=%v", shop, ok)
+	}
+	if len(session.recent) != 1 || session.recent[0].DeptID != 245062453 {
+		t.Fatalf("recent shop not stored: %+v", session.recent)
 	}
 }
 
@@ -131,6 +136,25 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	}
 }
 
+func TestShopStartCardUsesRecentShops(t *testing.T) {
+	session := &memSessionStore{
+		recent: []luckin.ShopSelection{{DeptID: 245062453, DeptName: "AI点单专用", Address: "北京安贞", Longitude: 116.39, Latitude: 39.98}},
+	}
+	card := sessionMissingCard(context.Background(), session, testActionContext(map[string]any{}))
+	text := mustMarshalForTest(card)
+	if !strings.Contains(text, "AI点单专用") || !strings.Contains(text, cardactionproto.LuckinLocationFormField) {
+		t.Fatalf("start card missing recent shop or location input: %s", text)
+	}
+}
+
+func mustMarshalForTest(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
 func testActionContextWithForm(value, form map[string]any) *appcardaction.Context {
 	ctx := testActionContext(value)
 	ctx.Action.FormValue = form
@@ -138,11 +162,12 @@ func testActionContextWithForm(value, form map[string]any) *appcardaction.Contex
 }
 
 type memSessionStore struct {
-	shop luckin.ShopSelection
-	ok   bool
-	cart luckin.Cart
-	cok  bool
-	seen bool
+	shop   luckin.ShopSelection
+	ok     bool
+	cart   luckin.Cart
+	cok    bool
+	seen   bool
+	recent []luckin.ShopSelection
 }
 
 func (s *memSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -153,10 +178,18 @@ func (s *memSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, sh
 	s.shop = shop
 	s.ok = true
 	s.seen = true
+	s.recent = append([]luckin.ShopSelection{shop}, s.recent...)
 }
 
 func (s *memSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.ok = false
+}
+
+func (s *memSessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+	if limit > 0 && len(s.recent) > limit {
+		return s.recent[:limit]
+	}
+	return s.recent
 }
 
 func (s *memSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {

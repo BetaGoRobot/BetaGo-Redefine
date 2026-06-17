@@ -32,6 +32,19 @@ type ProductOption struct {
 	Tags        []string
 }
 
+var defaultShopSearchRegions = []larkmsg.SelectStaticOption{
+	{Text: "北京 朝阳区", Value: "北京 朝阳区"},
+	{Text: "北京 海淀区", Value: "北京 海淀区"},
+	{Text: "上海 浦东新区", Value: "上海 浦东新区"},
+	{Text: "上海 黄浦区", Value: "上海 黄浦区"},
+	{Text: "广州 天河区", Value: "广州 天河区"},
+	{Text: "深圳 南山区", Value: "深圳 南山区"},
+	{Text: "杭州 西湖区", Value: "杭州 西湖区"},
+	{Text: "南京 鼓楼区", Value: "南京 鼓楼区"},
+	{Text: "成都 锦江区", Value: "成都 锦江区"},
+	{Text: "武汉 江汉区", Value: "武汉 江汉区"},
+}
+
 func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 	elements := []any{
 		larkmsg.Markdown("**选择瑞幸门店**"),
@@ -60,11 +73,12 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 		elements = append(elements, larkmsg.ButtonRow("none", larkmsg.Button("选这家", larkmsg.ButtonOptions{
 			Type: "primary",
 			Payload: map[string]any{
-				cardactionproto.ActionField:          cardactionproto.ActionLuckinShopSelect,
-				cardactionproto.LuckinDeptIDField:    strconv.FormatInt(shop.DeptID, 10),
-				cardactionproto.LuckinDeptNameField:  shop.DeptName,
-				cardactionproto.LuckinLongitudeField: strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
-				cardactionproto.LuckinLatitudeField:  strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
+				cardactionproto.ActionField:             cardactionproto.ActionLuckinShopSelect,
+				cardactionproto.LuckinDeptIDField:       strconv.FormatInt(shop.DeptID, 10),
+				cardactionproto.LuckinDeptNameField:     shop.DeptName,
+				cardactionproto.LuckinLocationFormField: shop.Address,
+				cardactionproto.LuckinLongitudeField:    strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
+				cardactionproto.LuckinLatitudeField:     strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
 			},
 		})))
 	}
@@ -73,23 +87,30 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 	return wrapCard(elements)
 }
 
+// BuildSessionExpiredCard 保留无最近门店的兼容入口。
+func BuildSessionExpiredCard() map[string]any {
+	return BuildSessionExpiredCardWithRecent(nil)
+}
+
 // BuildSessionExpiredCard 会话过期（曾选过门店但已失效）时展示，提供位置输入直接重选门店，
 // 无需用户从头自然语言交互。
-func BuildSessionExpiredCard() map[string]any {
+func BuildSessionExpiredCardWithRecent(recent []ShopSelection) map[string]any {
 	elements := []any{
 		larkmsg.Markdown("**⏰ 点单会话已过期**"),
 		larkmsg.HintMarkdown("之前选择的门店与购物车已失效，输入位置重新选择门店即可继续。"),
 	}
+	elements = append(elements, recentShopElements(recent)...)
 	elements = append(elements, shopSearchForm()...)
 	return wrapCard(elements)
 }
 
 // BuildShopStartCard 尚未选择门店时展示，提供位置输入开始选店。
-func BuildShopStartCard() map[string]any {
+func BuildShopStartCard(recent []ShopSelection) map[string]any {
 	elements := []any{
 		larkmsg.Markdown("**选择瑞幸门店**"),
-		larkmsg.HintMarkdown("输入位置搜索附近门店。"),
+		larkmsg.HintMarkdown("可以直接选最近用过的门店，或选择城市/行政区后补充关键词搜索附近门店。"),
 	}
+	elements = append(elements, recentShopElements(recent)...)
 	elements = append(elements, shopSearchForm()...)
 	return wrapCard(elements)
 }
@@ -119,13 +140,50 @@ func shopSearchForm() []any {
 			"vertical_spacing":   "8px",
 			"horizontal_spacing": "8px",
 			"elements": []any{
+				larkmsg.SelectStatic(cardactionproto.LuckinRegionFormField, larkmsg.SelectStaticOptions{
+					Placeholder: "选择城市/区域",
+					Options:     defaultShopSearchRegions,
+				}),
 				larkmsg.TextInput(cardactionproto.LuckinLocationFormField, larkmsg.TextInputOptions{
-					Placeholder: "输入位置，如：上海人民广场",
+					Placeholder: "补充关键词，如：人民广场、安贞环宇荟",
 				}),
 				larkmsg.ButtonRow("none", submit),
 			},
 		},
 	}
+}
+
+func recentShopElements(recent []ShopSelection) []any {
+	if len(recent) == 0 {
+		return nil
+	}
+	elements := []any{larkmsg.HintMarkdown("最近选择：")}
+	buttons := make([]map[string]any, 0, len(recent))
+	for _, shop := range recent {
+		if shop.DeptID == 0 || strings.TrimSpace(shop.DeptName) == "" {
+			continue
+		}
+		buttons = append(buttons, larkmsg.Button(shop.DeptName, larkmsg.ButtonOptions{
+			Type: "default",
+			Payload: map[string]any{
+				cardactionproto.ActionField:             cardactionproto.ActionLuckinShopSelect,
+				cardactionproto.LuckinDeptIDField:       strconv.FormatInt(shop.DeptID, 10),
+				cardactionproto.LuckinDeptNameField:     shop.DeptName,
+				cardactionproto.LuckinLocationFormField: shop.Address,
+				cardactionproto.LuckinLongitudeField:    strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
+				cardactionproto.LuckinLatitudeField:     strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
+			},
+		}))
+		if len(buttons) >= 3 {
+			break
+		}
+	}
+	if len(buttons) == 0 {
+		return nil
+	}
+	elements = append(elements, larkmsg.ButtonRowsWithLimit(larkmsg.ButtonRowsOptions{MaxColumns: 1}, buttons...)...)
+	elements = append(elements, larkmsg.Divider())
+	return elements
 }
 
 func shopMetaLine(shop ShopOption) string {

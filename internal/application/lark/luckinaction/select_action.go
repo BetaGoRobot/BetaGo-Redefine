@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
-	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	"go.uber.org/zap"
 )
@@ -29,6 +29,7 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 		shop := luckin.ShopSelection{
 			DeptID:    deptID,
 			DeptName:  actionValue(actionCtx, cardactionproto.LuckinDeptNameField),
+			Address:   actionValue(actionCtx, cardactionproto.LuckinLocationFormField),
 			Longitude: parseFloat(actionValue(actionCtx, cardactionproto.LuckinLongitudeField)),
 			Latitude:  parseFloat(actionValue(actionCtx, cardactionproto.LuckinLatitudeField)),
 		}
@@ -91,9 +92,12 @@ func handleShopSearch(session luckin.SessionStore, draft luckin.DraftService, ge
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		location := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinLocationFormField))
+		location := strings.TrimSpace(strings.Join([]string{
+			formValue(actionCtx, cardactionproto.LuckinRegionFormField),
+			formValue(actionCtx, cardactionproto.LuckinLocationFormField),
+		}, " "))
 		if location == "" {
-			return nil, errors.New("请输入位置")
+			return nil, errors.New("请选择城市/区域，或输入位置关键词")
 		}
 		req := credentialRequestFromAction(actionCtx)
 		return func(runCtx context.Context) {
@@ -101,7 +105,7 @@ func handleShopSearch(session luckin.SessionStore, draft luckin.DraftService, ge
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildSessionExpiredCard())
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildSessionExpiredCardWithRecent(recentShops(runCtx, session, req)))
 				return
 			}
 			if geocoder == nil {
@@ -328,6 +332,7 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 			return nil, errors.New("订单号缺失")
 		}
 		msgID := strings.TrimSpace(actionCtx.MessageID())
+		mode := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinStatusModeField))
 		req := credentialRequestFromAction(actionCtx)
 		return func(runCtx context.Context) {
 			cred, err := resolveCredential(runCtx, tokens, req)
@@ -337,6 +342,12 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 			detail, err := draft.OrderDetail(runCtx, cred, orderID)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin query order detail failed", zap.String("order_id", orderID), zap.Error(err))
+				return
+			}
+			if mode == luckin.OrderStatusModeReply && msgID != "" {
+				if err := larkmsg.ReplyCardJSON(runCtx, msgID, luckin.BuildOrderStatusCard(detail), "_luckinOrderStatus", false); err != nil {
+					logs.L().Ctx(runCtx).Warn("luckin reply order detail failed", zap.String("order_id", orderID), zap.Error(err))
+				}
 				return
 			}
 			if msgID != "" {
@@ -500,10 +511,12 @@ func lookupShop(ctx context.Context, session luckin.SessionStore, actionCtx *app
 }
 
 func sessionMissingCard(ctx context.Context, session luckin.SessionStore, actionCtx *appcardaction.Context) map[string]any {
+	req := credentialRequestFromAction(actionCtx)
+	recent := recentShops(ctx, session, req)
 	if session != nil && session.Seen(ctx, sessionKey(actionCtx)) {
-		return luckin.BuildSessionExpiredCard()
+		return luckin.BuildSessionExpiredCardWithRecent(recent)
 	}
-	return luckin.BuildShopStartCard()
+	return luckin.BuildShopStartCard(recent)
 }
 
 // patchSessionMissing 在会话失效或从未开始点单时，把卡片替换为「位置重选」表单，
@@ -515,6 +528,13 @@ func patchSessionMissing(session luckin.SessionStore, actionCtx *appcardaction.C
 	return func(runCtx context.Context) {
 		_ = larkmsg.PatchCardJSON(runCtx, msgID, sessionMissingCard(runCtx, session, actionCtx))
 	}
+}
+
+func recentShops(ctx context.Context, session luckin.SessionStore, req luckin.CredentialRequest) []luckin.ShopSelection {
+	if session == nil {
+		return nil
+	}
+	return session.GetRecentShops(ctx, luckin.NewSessionKey(req), 3)
 }
 
 func actionValue(actionCtx *appcardaction.Context, key string) string {

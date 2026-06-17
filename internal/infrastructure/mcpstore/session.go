@@ -19,9 +19,10 @@ const (
 	// seenTTL 墓碑标记的存活时长，远长于 sessionTTL：用于区分“从未选过门店”和“选过但已过期”。
 	seenTTL = 30 * 24 * time.Hour
 
-	redisShopKeyPfx = "luckin:session:shop:"
-	redisCartKeyPfx = "luckin:session:cart:"
-	redisSeenKeyPfx = "luckin:session:seen:"
+	redisShopKeyPfx        = "luckin:session:shop:"
+	redisRecentShopsKeyPfx = "luckin:session:recent_shops:"
+	redisCartKeyPfx        = "luckin:session:cart:"
+	redisSeenKeyPfx        = "luckin:session:seen:"
 )
 
 var (
@@ -40,15 +41,20 @@ func DefaultSessionStore() *SessionStore {
 // SessionStore 两级存储：进程内 ttlcache（L1）+ Redis 持久化（L2）。
 // Redis 不可用时自动降级为纯内存，保证主流程不被影响。
 type SessionStore struct {
-	shops *ttlcache.Cache[string, luckin.ShopSelection]
-	carts *ttlcache.Cache[string, luckin.Cart]
-	seen  *ttlcache.Cache[string, bool]
+	shops       *ttlcache.Cache[string, luckin.ShopSelection]
+	recentShops *ttlcache.Cache[string, []luckin.ShopSelection]
+	carts       *ttlcache.Cache[string, luckin.Cart]
+	seen        *ttlcache.Cache[string, bool]
 }
 
 func NewSessionStore() *SessionStore {
 	shops := ttlcache.New(
 		ttlcache.WithTTL[string, luckin.ShopSelection](sessionTTL),
 		ttlcache.WithCapacity[string, luckin.ShopSelection](2000),
+	)
+	recentShops := ttlcache.New(
+		ttlcache.WithTTL[string, []luckin.ShopSelection](seenTTL),
+		ttlcache.WithCapacity[string, []luckin.ShopSelection](5000),
 	)
 	carts := ttlcache.New(
 		ttlcache.WithTTL[string, luckin.Cart](sessionTTL),
@@ -59,9 +65,10 @@ func NewSessionStore() *SessionStore {
 		ttlcache.WithCapacity[string, bool](5000),
 	)
 	go shops.Start()
+	go recentShops.Start()
 	go carts.Start()
 	go seen.Start()
-	return &SessionStore{shops: shops, carts: carts, seen: seen}
+	return &SessionStore{shops: shops, recentShops: recentShops, carts: carts, seen: seen}
 }
 
 func (s *SessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -79,12 +86,30 @@ func (s *SessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luck
 func (s *SessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
 	s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
 	setRedisJSON(ctx, redisShopKeyPfx+key.String(), shop, sessionTTL)
+	s.addRecentShop(ctx, key, shop)
 	s.markSeen(ctx, key)
 }
 
 func (s *SessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.shops.Delete(key.String())
 	delRedis(ctx, redisShopKeyPfx+key.String())
+}
+
+func (s *SessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+	if limit <= 0 {
+		return nil
+	}
+	cacheKey := key.String()
+	if item := s.recentShops.Get(cacheKey); item != nil {
+		return limitRecentShops(item.Value(), limit)
+	}
+	var shops []luckin.ShopSelection
+	if getRedisJSON(ctx, redisRecentShopsKeyPfx+cacheKey, &shops) {
+		shops = normalizeRecentShops(shops, 10)
+		s.recentShops.Set(cacheKey, shops, ttlcache.DefaultTTL)
+		return limitRecentShops(shops, limit)
+	}
+	return nil
 }
 
 func (s *SessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
@@ -127,6 +152,49 @@ func (s *SessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
 func (s *SessionStore) markSeen(ctx context.Context, key luckin.SessionKey) {
 	s.seen.Set(key.String(), true, ttlcache.DefaultTTL)
 	setRedisJSON(ctx, redisSeenKeyPfx+key.String(), true, seenTTL)
+}
+
+func (s *SessionStore) addRecentShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
+	if shop.DeptID == 0 {
+		return
+	}
+	shops := s.GetRecentShops(ctx, key, 10)
+	shops = append([]luckin.ShopSelection{shop}, shops...)
+	shops = normalizeRecentShops(shops, 10)
+	cacheKey := key.String()
+	s.recentShops.Set(cacheKey, shops, ttlcache.DefaultTTL)
+	setRedisJSON(ctx, redisRecentShopsKeyPfx+cacheKey, shops, seenTTL)
+}
+
+func normalizeRecentShops(shops []luckin.ShopSelection, limit int) []luckin.ShopSelection {
+	out := make([]luckin.ShopSelection, 0, len(shops))
+	seen := make(map[int64]struct{}, len(shops))
+	for _, shop := range shops {
+		if shop.DeptID == 0 {
+			continue
+		}
+		if _, ok := seen[shop.DeptID]; ok {
+			continue
+		}
+		seen[shop.DeptID] = struct{}{}
+		out = append(out, shop)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func limitRecentShops(shops []luckin.ShopSelection, limit int) []luckin.ShopSelection {
+	if limit <= 0 || len(shops) == 0 {
+		return nil
+	}
+	if len(shops) > limit {
+		shops = shops[:limit]
+	}
+	out := make([]luckin.ShopSelection, len(shops))
+	copy(out, shops)
+	return out
 }
 
 // getRedisJSON 读取并反序列化 Redis 值；Redis/配置未就绪时安全降级。

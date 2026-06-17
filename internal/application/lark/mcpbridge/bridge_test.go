@@ -2,17 +2,19 @@ package mcpbridge
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestRegisterAddsAllowedTools(t *testing.T) {
@@ -141,6 +143,45 @@ func TestHandleShopSearchSendsShopCard(t *testing.T) {
 	got, ok := meta.GetExtra("luckin_shop_search_result")
 	if !ok || got == "" {
 		t.Fatalf("tool result missing")
+	}
+}
+
+func TestHandleShopSearchWithoutLocationSendsStartCard(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	resolver := &fakeResolver{credential: luckin.Credential{
+		Scope: luckin.CredentialScope{Type: luckin.ScopePersonal, ID: "ou_user"},
+		Token: "token-read",
+	}}
+	cards := &fakeCardSender{}
+	policy, _ := luckin.PolicyByRobotTool("luckin_shop_search")
+	h := handler{
+		policy:   policy,
+		resolver: resolver,
+		cards:    cards,
+		session: &fakeSessionStore{recent: []luckin.ShopSelection{{
+			DeptID: 245062453, DeptName: "AI点单专用", Address: "北京安贞", Longitude: 116.39, Latitude: 39.98,
+		}}},
+	}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_user", IsP2P: true}
+	args, err := h.ParseTool(`{}`)
+	if err != nil {
+		t.Fatalf("ParseTool error = %v", err)
+	}
+
+	if err := h.Handle(context.Background(), nil, meta, args); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+
+	if !cards.called {
+		t.Fatalf("shop start card was not sent")
+	}
+	cardText := mustMarshalForBridgeTest(cards.card)
+	if !strings.Contains(cardText, "AI点单专用") || !strings.Contains(cardText, "luckin_location") {
+		t.Fatalf("start card missing recent shop or location input: %s", cardText)
+	}
+	got, _ := meta.GetExtra("luckin_shop_search_result")
+	if got == "" || !strings.Contains(got, "门店搜索入口卡片") {
+		t.Fatalf("unexpected tool result: %q", got)
 	}
 }
 
@@ -330,11 +371,12 @@ func (s *fakeCardSender) SendCard(ctx context.Context, data *larkim.P2MessageRec
 }
 
 type fakeSessionStore struct {
-	shop luckin.ShopSelection
-	ok   bool
-	cart luckin.Cart
-	cok  bool
-	seen bool
+	shop   luckin.ShopSelection
+	ok     bool
+	cart   luckin.Cart
+	cok    bool
+	seen   bool
+	recent []luckin.ShopSelection
 }
 
 func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
@@ -349,6 +391,13 @@ func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, s
 
 func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
 	s.ok = false
+}
+
+func (s *fakeSessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+	if limit > 0 && len(s.recent) > limit {
+		return s.recent[:limit]
+	}
+	return s.recent
 }
 
 func (s *fakeSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
@@ -401,4 +450,12 @@ func (s *fakePendingOrderCardSender) SendPendingOrderCard(ctx context.Context, d
 	s.called = true
 	s.order = order
 	return nil
+}
+
+func mustMarshalForBridgeTest(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
