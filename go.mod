@@ -64,6 +64,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/go-openapi/runtime/server-middleware v0.30.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/larksuite/oapi-sdk-go v1.1.48 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect

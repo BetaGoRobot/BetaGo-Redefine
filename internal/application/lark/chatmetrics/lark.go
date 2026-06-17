@@ -3,6 +3,8 @@ package chatmetrics
 import (
 	"context"
 	"errors"
+	"iter"
+	"slices"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
@@ -21,37 +23,76 @@ func ListBotChats(ctx context.Context) (chats []Chat, err error) {
 	if client == nil {
 		return nil, errors.New("lark client unavailable")
 	}
-	iterator, err := client.Im.V1.Chat.ListByIterator(
-		ctx,
-		larkim.NewListChatReqBuilder().
-			PageSize(20).
-			UserIdType(larkim.ListChatUserIDTypeOpenId).
-			Build(),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		hasNext, item, nextErr := iterator.Next()
-		if nextErr != nil {
-			return chats, nextErr
-		}
-		if !hasNext {
-			break
-		}
-		chatID := strings.TrimSpace(ptrString(item.ChatId))
-		if chatID == "" {
-			continue
-		}
+	for item := range ListChats(ctx) {
 		chats = append(chats, Chat{
-			ID:     chatID,
+			ID:     strings.TrimSpace(ptrString(item.ChatId)),
 			Name:   strings.TrimSpace(ptrString(item.Name)),
 			Status: strings.TrimSpace(ptrString(item.ChatStatus)),
 		})
 	}
 	span.SetAttributes(attribute.Int("chat.count", len(chats)))
 	return chats, nil
+}
+
+// 封装一个list迭代器
+func ListChats(ctx context.Context) iter.Seq[*larkim.ListChat] {
+	return func(yield func(*larkim.ListChat) bool) {
+		ctx, span := otel.Start(ctx)
+		defer span.End()
+
+		var (
+			err  error
+			resp *larkim.ListChatResp
+		)
+		defer func() { otel.RecordError(span, err) }()
+
+		client := lark_dal.Client()
+		if client == nil {
+			return
+		}
+
+		resp, err = client.Im.V1.Chat.List(
+			ctx,
+			larkim.NewListChatReqBuilder().
+				PageSize(20).
+				UserIdType(larkim.ListChatUserIDTypeOpenId).
+				Build(),
+		)
+
+		for {
+			if err != nil {
+				return
+			}
+			if !resp.Success() {
+				err = errors.New(resp.Error())
+				otel.RecordError(span, err)
+				return
+			}
+
+			if resp.Data == nil {
+				return
+			}
+
+			if slices.ContainsFunc(resp.Data.Items, func(item *larkim.ListChat) bool {
+				return !yield(item)
+			}) {
+				return
+			}
+
+			if resp.Data.HasMore == nil || !*resp.Data.HasMore || resp.Data.PageToken == nil {
+				return
+			}
+
+			resp, err = client.Im.V1.Chat.List(
+				ctx,
+				larkim.NewListChatReqBuilder().
+					PageSize(20).
+					PageToken(*resp.Data.PageToken).
+					UserIdType(larkim.ListChatUserIDTypeOpenId).
+					Build(),
+			)
+		}
+	}
 }
 
 func CountChatMembers(ctx context.Context, chatID string) (int, error) {
