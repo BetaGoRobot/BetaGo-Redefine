@@ -36,8 +36,11 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 	}
 	elements = append(elements,
 		larkmsg.Markdown("💰 **价格**\n"+summary.Price),
-		larkmsg.HintMarkdown("⏰ 预计取餐/送达："+summary.AboutTime),
 	)
+	if summary.PriceNote != "" {
+		elements = append(elements, larkmsg.HintMarkdown(summary.PriceNote))
+	}
+	elements = append(elements, larkmsg.HintMarkdown("⏰ 预计取餐/送达："+summary.AboutTime))
 	if len(available) > 0 {
 		elements = append(elements, larkmsg.Divider(), couponSelectForm(order, available, selected))
 	} else if summary.Coupon != "" {
@@ -138,6 +141,7 @@ type previewSummary struct {
 	Shop      string
 	Products  string
 	Price     string
+	PriceNote string
 	Coupon    string
 	AboutTime string
 }
@@ -195,12 +199,21 @@ func previewSummaryFromOrder(order PendingOrder) previewSummary {
 		}
 	}
 
+	selectedCoupons := selectedCouponsFromPayload(order.CreateOrderPayload)
 	priceParts := nonEmptyStrings(
-		moneyValue("实付", preview["discountPrice"]),
-		moneyValue("原价", preview["totalInitialPrice"]),
+		moneyValue("瑞幸预估实付", preview["discountPrice"]),
+		moneyValue("商品原价", preview["totalInitialPrice"]),
 	)
+	if saved := previewDiscountValue(preview); saved != "" {
+		priceParts = append(priceParts, "接口优惠/立减 "+saved)
+	}
 	if len(priceParts) > 0 {
 		summary.Price = strings.Join(priceParts, "；")
+	}
+	if len(selectedCoupons) == 0 {
+		summary.PriceNote = "未选择优惠券；瑞幸接口返回的预估实付仍可能包含平台自动优惠。"
+	} else {
+		summary.PriceNote = fmt.Sprintf("已选择优惠券 %d 张；实付仍以瑞幸创建订单结果为准。", len(selectedCoupons))
 	}
 	if coupon := couponValue(preview["couponCodeList"]); coupon != "" {
 		summary.Coupon = coupon
@@ -251,6 +264,15 @@ func numberValue(v any) string {
 func moneyValue(label string, v any) string {
 	if n := numberValue(v); n != "" {
 		return label + " ¥" + n
+	}
+	return ""
+}
+
+func previewDiscountValue(preview map[string]any) string {
+	for _, key := range []string{"privilegeMoney", "discountMoney", "couponDiscountPrice"} {
+		if n := numberValue(preview[key]); n != "" && n != "0" {
+			return "¥" + n
+		}
 	}
 	return ""
 }

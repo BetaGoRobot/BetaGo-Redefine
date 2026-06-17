@@ -63,7 +63,8 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 }
 
 // previewCart 调用 previewOrder 返回业务 data（含 discountPrice / couponCodeList 等）。
-// 始终显式传 couponCodeList：未选券时传空数组，避免瑞幸自动套用最优券导致预估价被打折。
+// 即使显式传空 couponCodeList，瑞幸接口仍可能返回平台自动优惠后的预估实付；
+// 卡片展示层会把它标注为“瑞幸预估实付”，避免误认为这是未优惠原价。
 func (s DraftService) previewCart(ctx context.Context, cred Credential, shop ShopSelection, items []CartItem, coupons []string) (json.RawMessage, error) {
 	if s.caller == nil {
 		return nil, nil

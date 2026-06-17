@@ -67,14 +67,14 @@ func BuildOrderCreatedCard(content json.RawMessage, qrImgKey string) map[string]
 		elements = append(elements, larkmsg.HintMarkdown("订单号："+created.OrderID))
 	}
 	if created.DiscountPrice > 0 {
-		elements = append(elements, larkmsg.Markdown("实付：<font color='red'>¥"+trimFloat(created.DiscountPrice)+"</font>"))
+		elements = append(elements, larkmsg.Markdown("瑞幸实付：<font color='red'>¥"+trimFloat(created.DiscountPrice)+"</font>"))
 	}
 	if created.NeedPay {
 		elements = append(elements, larkmsg.Markdown("⚠️ 订单待支付，请尽快完成微信支付，否则将自动取消。"))
 		if qrImgKey != "" {
 			elements = append(elements,
 				larkmsg.HintMarkdown("微信扫码支付："),
-				map[string]any{"tag": "img", "img_key": qrImgKey, "alt": map[string]any{"tag": "plain_text", "content": "支付二维码"}, "preview": true, "scale_type": "fit_horizontal", "size": "large"},
+				map[string]any{"tag": "img", "img_key": qrImgKey, "alt": map[string]any{"tag": "plain_text", "content": "支付二维码"}, "preview": true, "scale_type": "fit_horizontal"},
 			)
 		}
 		buttons := []map[string]any{}
