@@ -142,9 +142,6 @@ func (m *Module) loop(ctx context.Context) {
 }
 
 func (m *Module) runOnce(ctx context.Context) {
-	runCtx, cancel := context.WithTimeout(ctx, m.timeout)
-	defer cancel()
-
 	collector := m.collector
 	reported := 0
 	record := collector.Record
@@ -152,7 +149,7 @@ func (m *Module) runOnce(ctx context.Context) {
 		reported++
 		record(snapshot)
 	}
-	err := collector.Collect(runCtx)
+	err := collector.Collect(ctx)
 
 	m.mu.Lock()
 	m.lastRun = time.Now()
