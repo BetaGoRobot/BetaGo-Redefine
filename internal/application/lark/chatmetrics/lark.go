@@ -24,7 +24,7 @@ func ListBotChats(ctx context.Context) (chats []Chat, err error) {
 	iterator, err := client.Im.V1.Chat.ListByIterator(
 		ctx,
 		larkim.NewListChatReqBuilder().
-			PageSize(100).
+			PageSize(20).
 			UserIdType(larkim.ListChatUserIDTypeOpenId).
 			Build(),
 	)
