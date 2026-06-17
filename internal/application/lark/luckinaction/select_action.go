@@ -43,6 +43,18 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 	}
 }
 
+// handleRegionSelect 刷新同一张门店搜索卡：第一步选省份，第二步展示该省份下的城市/区县。
+func handleRegionSelect(session luckin.SessionStore) appcardaction.SyncHandler {
+	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+		province := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinProvinceFormField))
+		if province == "" {
+			return appcardaction.ErrorToast("请选择省份"), nil
+		}
+		req := credentialRequestFromAction(actionCtx)
+		return appcardaction.InfoToastWithRawCardPayload("已选择："+province, luckin.BuildRegionSelectCard(province, recentShops(ctx, session, req))), nil
+	}
+}
+
 func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore, images luckin.ImageUploader) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		msgID := strings.TrimSpace(actionCtx.MessageID())

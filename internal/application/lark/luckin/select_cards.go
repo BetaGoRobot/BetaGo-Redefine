@@ -36,8 +36,10 @@ type ProductOption struct {
 const shopSearchRegionLimit = 100
 
 var (
-	shopSearchRegionOptionsOnce sync.Once
-	shopSearchRegionOptionsData []larkmsg.SelectStaticOption
+	shopSearchProvinceOptionsOnce sync.Once
+	shopSearchProvinceOptionsData []larkmsg.SelectStaticOption
+	shopSearchRegionOptionsMu     sync.Mutex
+	shopSearchRegionOptionsCache  = map[string][]larkmsg.SelectStaticOption{}
 )
 
 func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
@@ -47,7 +49,7 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 	}
 	if len(shops) == 0 {
 		elements = append(elements, larkmsg.Markdown("没有找到附近门店，换个更具体的位置再搜。"))
-		elements = append(elements, shopSearchForm()...)
+		elements = append(elements, shopSearchForm("")...)
 		return wrapCard(elements)
 	}
 	for i, shop := range shops {
@@ -78,7 +80,7 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 		})))
 	}
 	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("不是这些？换个位置重新搜："))
-	elements = append(elements, shopSearchForm()...)
+	elements = append(elements, shopSearchForm("")...)
 	return wrapCard(elements)
 }
 
@@ -95,7 +97,7 @@ func BuildSessionExpiredCardWithRecent(recent []ShopSelection) map[string]any {
 		larkmsg.HintMarkdown("之前选择的门店与购物车已失效，输入位置重新选择门店即可继续。"),
 	}
 	elements = append(elements, recentShopElements(recent)...)
-	elements = append(elements, shopSearchForm()...)
+	elements = append(elements, shopSearchForm("")...)
 	return wrapCard(elements)
 }
 
@@ -106,7 +108,7 @@ func BuildShopStartCard(recent []ShopSelection) map[string]any {
 		larkmsg.HintMarkdown("可以直接选最近用过的门店，或先选城市/区县再补充门店关键词。"),
 	}
 	elements = append(elements, recentShopElements(recent)...)
-	elements = append(elements, shopSearchForm()...)
+	elements = append(elements, shopSearchForm("")...)
 	return wrapCard(elements)
 }
 
@@ -119,7 +121,26 @@ func BuildShopSearchingCard(location string) map[string]any {
 }
 
 // shopSearchForm 位置输入 + 搜索按钮，提交后在卡片内异步刷新门店列表。
-func shopSearchForm() []any {
+func BuildRegionSelectCard(province string, recent []ShopSelection) map[string]any {
+	elements := []any{
+		larkmsg.Markdown("**选择瑞幸门店**"),
+		larkmsg.HintMarkdown("已选省份：" + strings.TrimSpace(province)),
+	}
+	elements = append(elements, recentShopElements(recent)...)
+	elements = append(elements, shopSearchForm(province)...)
+	return wrapCard(elements)
+}
+
+func shopSearchForm(province string) []any {
+	province = strings.TrimSpace(province)
+	provinceSubmit := larkmsg.Button("选择省份", larkmsg.ButtonOptions{
+		Name:           "luckin_region_submit",
+		Type:           "default",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinRegionSelect,
+		},
+	})
 	submit := larkmsg.Button("搜索门店", larkmsg.ButtonOptions{
 		Name:           "luckin_shop_search_submit",
 		Type:           "primary",
@@ -135,10 +156,17 @@ func shopSearchForm() []any {
 			"vertical_spacing":   "8px",
 			"horizontal_spacing": "8px",
 			"elements": []any{
+				larkmsg.SelectStatic(cardactionproto.LuckinProvinceFormField, larkmsg.SelectStaticOptions{
+					Placeholder:   "省份",
+					Width:         "fill",
+					InitialOption: province,
+					Options:       shopSearchProvinceOptions(),
+				}),
+				larkmsg.ButtonRow("none", provinceSubmit),
 				larkmsg.SelectStatic(cardactionproto.LuckinRegionFormField, larkmsg.SelectStaticOptions{
 					Placeholder: "城市/区县",
 					Width:       "fill",
-					Options:     shopSearchRegionOptions(),
+					Options:     shopSearchRegionOptions(province),
 				}),
 				larkmsg.TextInput(cardactionproto.LuckinLocationFormField, larkmsg.TextInputOptions{
 					Placeholder: "门店/商圈关键词，如：安贞环宇荟",
@@ -149,15 +177,34 @@ func shopSearchForm() []any {
 	}
 }
 
-func shopSearchRegionOptions() []larkmsg.SelectStaticOption {
-	shopSearchRegionOptionsOnce.Do(func() {
-		regions := RegionOptions(shopSearchRegionLimit)
-		shopSearchRegionOptionsData = make([]larkmsg.SelectStaticOption, 0, len(regions))
+func shopSearchProvinceOptions() []larkmsg.SelectStaticOption {
+	shopSearchProvinceOptionsOnce.Do(func() {
+		regions := ProvinceOptions(shopSearchRegionLimit)
+		shopSearchProvinceOptionsData = make([]larkmsg.SelectStaticOption, 0, len(regions))
 		for _, region := range regions {
-			shopSearchRegionOptionsData = append(shopSearchRegionOptionsData, larkmsg.SelectStaticOption{Text: region, Value: region})
+			shopSearchProvinceOptionsData = append(shopSearchProvinceOptionsData, larkmsg.SelectStaticOption{Text: region, Value: region})
 		}
 	})
-	return append([]larkmsg.SelectStaticOption(nil), shopSearchRegionOptionsData...)
+	return append([]larkmsg.SelectStaticOption(nil), shopSearchProvinceOptionsData...)
+}
+
+func shopSearchRegionOptions(province string) []larkmsg.SelectStaticOption {
+	province = strings.TrimSpace(province)
+	if province == "" {
+		return nil
+	}
+	shopSearchRegionOptionsMu.Lock()
+	defer shopSearchRegionOptionsMu.Unlock()
+	if cached, ok := shopSearchRegionOptionsCache[province]; ok {
+		return append([]larkmsg.SelectStaticOption(nil), cached...)
+	}
+	regions := CityCountyOptions(province, shopSearchRegionLimit)
+	options := make([]larkmsg.SelectStaticOption, 0, len(regions))
+	for _, region := range regions {
+		options = append(options, larkmsg.SelectStaticOption{Text: region, Value: region})
+	}
+	shopSearchRegionOptionsCache[province] = options
+	return append([]larkmsg.SelectStaticOption(nil), options...)
 }
 
 func recentShopElements(recent []ShopSelection) []any {

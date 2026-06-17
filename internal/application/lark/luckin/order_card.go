@@ -127,7 +127,7 @@ func BuildOrderFailedCard(message string) map[string]any {
 		larkmsg.Divider(),
 		larkmsg.HintMarkdown("重新选择门店："),
 	}
-	elements = append(elements, shopSearchForm()...)
+	elements = append(elements, shopSearchForm("")...)
 	return wrapCard(elements)
 }
 

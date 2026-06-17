@@ -35,6 +35,46 @@ func RegionOptions(limit int) []string {
 	return out
 }
 
+func ProvinceOptions(limit int) []string {
+	regions := loadRegionData()
+	if regions == nil || limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	for _, province := range regions.Provinces() {
+		if appendRegionName(&out, province, limit) {
+			return out
+		}
+	}
+	return out
+}
+
+func CityCountyOptions(provinceName string, limit int) []string {
+	provinceName = strings.TrimSpace(provinceName)
+	regions := loadRegionData()
+	if regions == nil || provinceName == "" || limit <= 0 {
+		return nil
+	}
+	for _, province := range regions.Provinces() {
+		if !regionNameMatches(provinceName, province) {
+			continue
+		}
+		out := make([]string, 0, limit)
+		for _, city := range province.Items() {
+			if appendRegionName(&out, city, limit) {
+				return out
+			}
+			for _, county := range city.Items() {
+				if appendRegionName(&out, county, limit) {
+					return out
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 func appendRegionName(out *[]string, region cnregion.Region, limit int) bool {
 	if region == nil || len(*out) >= limit {
 		return len(*out) >= limit

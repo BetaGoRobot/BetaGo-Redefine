@@ -38,6 +38,7 @@ func Register() {
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
 	geocoder := newGeocoder()
 	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinShopSelect, handleShopSelect(session))
+	appcardaction.RegisterSyncIfAbsent(cardactionproto.ActionLuckinRegionSelect, handleRegionSelect(session))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinShopSearch, handleShopSearch(session, draft, geocoder, credentialStore{}))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductQuery, handleProductQuery(session, draft, credentialStore{}, images))
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinProductSelect, handleProductSelect(session, draft, credentialStore{}, images))
