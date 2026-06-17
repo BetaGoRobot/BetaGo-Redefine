@@ -139,17 +139,14 @@ func shopMetaLine(shop ShopOption) string {
 	return strings.Join(parts, "    ")
 }
 
-// BuildProductSelectCard 渲染商品搜索结果，每个商品左图右文，提供数量输入与“加入购物车”按钮。
-// 每个商品独立成一个 form 以便提交各自的数量；imageKeys 为 productID->img_key。
-func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageKeys map[int64]string) map[string]any {
-	header := []any{
-		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
-	}
+// BuildProductSelectCard 渲染购物车 + 商品搜索结果；购物车常驻在上半部分，搜索结果在下半部分刷新。
+func BuildProductSelectCard(shop ShopSelection, cart Cart, products []ProductOption, imageKeys map[int64]string) map[string]any {
+	header := cartElements(shop, cart)
+	header = append(header, larkmsg.Divider(), larkmsg.HintMarkdown("搜索结果："))
 	if len(products) == 0 {
 		header = append(header, larkmsg.Markdown("没有找到匹配商品，换个关键词再搜。"))
 		return wrapCard(append(header, productQueryForm(shop)...))
 	}
-	header = append(header, larkmsg.HintMarkdown("选择数量后加入购物车，可继续搜索其它商品："))
 
 	body := make([]any, 0, len(products)*2+2)
 	for _, product := range products {
@@ -162,21 +159,26 @@ func BuildProductSelectCard(shop ShopSelection, products []ProductOption, imageK
 
 func productRow(product ProductOption, imgKey string) map[string]any {
 	idValue := strconv.FormatInt(product.ProductID, 10)
-	info := []any{larkmsg.Markdown("**" + product.ProductName + "**")}
+	info := []any{}
+	if imgKey != "" {
+		info = append(info, map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"})
+	}
+	info = append(info, larkmsg.Markdown("**"+product.ProductName+"**"))
 	if priceLine := productPriceLine(product); priceLine != "" {
 		info = append(info, larkmsg.Markdown(priceLine))
 	}
 	if len(product.Tags) > 0 {
 		info = append(info, larkmsg.HintMarkdown(strings.Join(product.Tags, " · ")))
 	}
-	info = append(info, larkmsg.TextInput(QtyFormField(product.ProductID), larkmsg.TextInputOptions{
+	controls := []any{larkmsg.TextInput(QtyFormField(product.ProductID), larkmsg.TextInputOptions{
 		Placeholder:  "数量（默认 1）",
 		DefaultValue: "1",
-	}))
-	info = append(info, larkmsg.ButtonRow("none", larkmsg.Button("加入购物车", larkmsg.ButtonOptions{
+	})}
+	controls = append(controls, larkmsg.ButtonRow("none", larkmsg.Button("加入", larkmsg.ButtonOptions{
 		Type:           "primary",
 		Name:           "luckin_select_" + idValue,
 		FormActionType: "submit",
+		Fill:           true,
 		Payload: map[string]any{
 			cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
 			cardactionproto.LuckinProductIDField: idValue,
@@ -186,23 +188,14 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 		},
 	})))
 
-	var rowBody map[string]any
-	if imgKey == "" {
-		rowBody = map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
-			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
-		}}
-	} else {
-		rowBody = map[string]any{
-			"tag":                "column_set",
-			"flex_mode":          "stretch",
-			"horizontal_spacing": "12px",
-			"columns": []any{
-				map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{
-					map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"},
-				}},
-				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": info},
-			},
-		}
+	rowBody := map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "stretch",
+		"horizontal_spacing": "12px",
+		"columns": []any{
+			map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info},
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": controls},
+		},
 	}
 	// form 必须是卡片根级元素，因此让 form 包住整行 column_set，
 	// 数量输入与提交按钮作为 form 的后代被一并提交。
@@ -220,10 +213,10 @@ func productPriceLine(product ProductOption) string {
 		return ""
 	}
 	if product.Price > 0 && product.InitialPice > product.Price {
-		return "<font color='red'>¥" + trimFloat(product.Price) + "</font>  <font color='grey'>~~¥" + trimFloat(product.InitialPice) + "~~</font>"
+		return "<font color='grey'>原价 ¥" + trimFloat(product.InitialPice) + "</font>  <font color='red'>预估到手 ¥" + trimFloat(product.Price) + "</font>"
 	}
 	price := productUnitPrice(product)
-	return "<font color='red'>¥" + trimFloat(price) + "</font>"
+	return "<font color='red'>预估到手 ¥" + trimFloat(price) + "</font>"
 }
 
 func productUnitPrice(product ProductOption) float64 {
@@ -239,29 +232,24 @@ func QtyFormField(productID int64) string {
 }
 
 // BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。
-func BuildProductQueryCard(shop ShopSelection) map[string]any {
-	elements := []any{
-		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
-		larkmsg.HintMarkdown("想喝点什么？输入商品关键词搜索。"),
-	}
+func BuildProductQueryCard(shop ShopSelection, cart Cart) map[string]any {
+	elements := cartElements(shop, cart)
+	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("想喝点什么？输入商品关键词搜索。"))
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
 }
 
 // BuildProductSearchingCard 在异步搜索商品期间展示的过渡卡片。
-func BuildProductSearchingCard(shop ShopSelection, query string) map[string]any {
-	return wrapCard([]any{
-		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
-		larkmsg.HintMarkdown("正在搜索「" + query + "」，请稍候…"),
-	})
+func BuildProductSearchingCard(shop ShopSelection, cart Cart, query string) map[string]any {
+	elements := cartElements(shop, cart)
+	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("正在搜索「"+query+"」，请稍候…"))
+	return wrapCard(elements)
 }
 
 // BuildProductSearchErrorCard 在异步搜索失败时展示，并保留搜索表单方便重试。
-func BuildProductSearchErrorCard(shop ShopSelection, query string) map[string]any {
-	elements := []any{
-		larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"),
-		larkmsg.Markdown("搜索「" + query + "」失败，请重试或换个关键词。"),
-	}
+func BuildProductSearchErrorCard(shop ShopSelection, cart Cart, query string) map[string]any {
+	elements := cartElements(shop, cart)
+	elements = append(elements, larkmsg.Divider(), larkmsg.Markdown("搜索「"+query+"」失败，请重试或换个关键词。"))
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
 }

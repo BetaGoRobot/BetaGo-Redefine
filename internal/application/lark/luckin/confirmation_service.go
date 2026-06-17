@@ -61,7 +61,7 @@ type OrderPollConfig struct {
 
 func DefaultOrderPollConfig() OrderPollConfig {
 	return OrderPollConfig{
-		PollInterval:   30 * time.Second,
+		PollInterval:   5 * time.Second,
 		PollMax:        2 * time.Hour,
 		UnpaidTimeout:  15 * time.Minute,
 		UnpaidRemindAt: 10 * time.Minute,

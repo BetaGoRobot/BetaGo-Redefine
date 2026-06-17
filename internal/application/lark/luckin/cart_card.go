@@ -9,13 +9,19 @@ import (
 
 // BuildCartCard 渲染会话购物车：已选门店、购物车条目（含数量调整/删除）、继续搜索表单与去结算按钮。
 func BuildCartCard(shop ShopSelection, cart Cart) map[string]any {
+	elements := cartElements(shop, cart)
+	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("继续添加商品："))
+	elements = append(elements, productQueryForm(shop)...)
+	return wrapCard(elements)
+}
+
+func cartElements(shop ShopSelection, cart Cart) []any {
 	elements := []any{
 		larkmsg.Markdown("**🛒 已选门店：" + shop.DeptName + "**"),
 	}
 	if cart.Empty() {
 		elements = append(elements, larkmsg.HintMarkdown("购物车还是空的，搜索商品加入吧。"))
-		elements = append(elements, productQueryForm(shop)...)
-		return wrapCard(elements)
+		return elements
 	}
 
 	elements = append(elements, larkmsg.HintMarkdown("共 "+strconv.Itoa(cart.TotalAmount())+" 件，预估 ¥"+trimFloat(cart.EstimatedTotal())+"（实付以结算为准）"))
@@ -29,11 +35,9 @@ func BuildCartCard(shop ShopSelection, cart Cart) map[string]any {
 			Payload: map[string]any{
 				cardactionproto.ActionField: cardactionproto.ActionLuckinCartCheckout,
 			},
-		}),
-	))
-	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("继续添加商品："))
-	elements = append(elements, productQueryForm(shop)...)
-	return wrapCard(elements)
+			}),
+		))
+	return elements
 }
 
 func cartItemRow(item CartItem) map[string]any {
@@ -72,7 +76,8 @@ func cartItemRow(item CartItem) map[string]any {
 		}),
 	))
 	return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
-		map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
+		map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info[:min(len(info), 2)]},
+		map[string]any{"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center", "elements": info[min(len(info), 2):]},
 	}}
 }
 

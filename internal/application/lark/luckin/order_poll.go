@@ -79,11 +79,27 @@ func EvaluatePoll(record OrderRecord, detail OrderDetail, cfg OrderPollConfig, n
 	// 继续轮询。
 	interval := cfg.PollInterval
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = 5 * time.Second
+	}
+	// 待支付阶段需要更快感知支付完成；后续制作/取餐阶段保持 3-5s 的实时性。
+	if remoteStatus == OrderStatusUnpaid || (remoteStatus == 0 && record.LastRemoteStatus == OrderStatusUnpaid) {
+		interval = minDuration(interval, 1*time.Second)
+	} else {
+		interval = minDuration(interval, 5*time.Second)
 	}
 	next := now.Add(interval)
 	decision.NextPollAt = &next
 	return decision
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 || a < b {
+		return a
+	}
+	return b
 }
 
 func statusTimestampColumn(status int) string {

@@ -40,7 +40,7 @@ func TestBuildShopSelectCardContainsCallbackValues(t *testing.T) {
 }
 
 func TestBuildProductSelectCardContainsCallbackValues(t *testing.T) {
-	card := BuildProductSelectCard(ShopSelection{DeptName: "门店A"}, []ProductOption{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁"}}, nil)
+	card := BuildProductSelectCard(ShopSelection{DeptName: "门店A"}, Cart{}, []ProductOption{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁"}}, nil)
 	text := mustMarshalForTest(card)
 	if !containsAll(text, "luckin_product_select", "luckin_product_id", "SP-9", "拿铁") {
 		t.Fatalf("product card missing fields: %s", text)

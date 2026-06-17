@@ -38,7 +38,7 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 			// 切换门店后清空购物车，避免跨店混单。
 			session.ClearCart(ctx, key)
 		}
-		return appcardaction.InfoToastWithRawCardPayload("已选门店："+shop.DeptName, luckin.BuildProductQueryCard(shop)), nil
+		return appcardaction.InfoToastWithRawCardPayload("已选门店："+shop.DeptName, luckin.BuildProductQueryCard(shop, luckin.Cart{})), nil
 	}
 }
 
@@ -52,6 +52,7 @@ func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, 
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
+		cart, _ := session.GetCart(ctx, sessionKey(actionCtx))
 		query := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinQueryFormField))
 		if query == "" {
 			return nil, errors.New("请输入商品关键词")
@@ -60,22 +61,22 @@ func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, 
 
 		return func(runCtx context.Context) {
 			// 先把卡片更新为“搜索中”，避免用户以为无响应。
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchingCard(shop, query))
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchingCard(shop, cart, query))
 
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductQueryCard(shop))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductQueryCard(shop, cart))
 				return
 			}
 			products, err := draft.SearchProducts(runCtx, cred, shop, query, 5)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin product search failed", zap.String("query", query), zap.Error(err))
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, query))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, cart, query))
 				return
 			}
 			imageKeys := luckin.UploadProductImages(runCtx, images, products)
-			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, products, imageKeys)); err != nil {
+			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, cart, products, imageKeys)); err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin patch product card failed", zap.String("message_id", msgID), zap.Error(err))
 			}
 		}, nil

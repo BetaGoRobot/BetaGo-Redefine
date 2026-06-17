@@ -2,6 +2,7 @@ package luckinaction
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	orderPollTick      = 30 * time.Second
+	orderPollTick      = 3 * time.Second
 	orderPollLease     = 2 * time.Minute
 	orderPollBatch     = 50
 	orderMaxFailCount  = 5
@@ -176,8 +177,21 @@ func (p *OrderPoller) apply(record luckin.OrderRecord, rowID int64, detail lucki
 		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildUnpaidReminderCard(record.OrderID, record.PayURL))
 	case decision.NoticeText != "":
 		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildOrderNoticeCard(decision.NoticeText, detail))
+		if detail.Status == luckin.OrderStatusReady {
+			p.notifyReady(record, detail)
+		}
 	case decision.PatchStatusCard:
 		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildOrderStatusCard(detail))
+	}
+}
+
+func (p *OrderPoller) notifyReady(record luckin.OrderRecord, detail luckin.OrderDetail) {
+	if strings.TrimSpace(record.ChatID) == "" || strings.TrimSpace(record.RequesterOpenID) == "" {
+		return
+	}
+	card := luckin.BuildOrderNoticeCard(larkmsg.AtUserMD(record.RequesterOpenID)+" 可以取餐啦", detail)
+	if err := larkmsg.CreateCardJSON(p.ctx, record.ChatID, card, "luckin-ready-"+record.OrderID, "_luckinReady"); err != nil {
+		logs.L().Ctx(p.ctx).Warn("luckin ready notice card failed", zap.String("order_id", record.OrderID), zap.Error(err))
 	}
 }
 

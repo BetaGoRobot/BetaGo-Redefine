@@ -206,7 +206,8 @@ func (h handler) handleProductSearch(ctx context.Context, data *larkim.P2Message
 	products := luckin.ProductOptionsFromResult(res.Content, 5)
 	imageKeys := luckin.UploadProductImages(ctx, h.images, products)
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, products, imageKeys)); err != nil {
+		cart, _ := h.session.GetCart(ctx, luckin.NewSessionKey(req))
+		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, cart, products, imageKeys)); err != nil {
 			return err
 		}
 	}

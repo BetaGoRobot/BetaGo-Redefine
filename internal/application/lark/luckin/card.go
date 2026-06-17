@@ -10,6 +10,8 @@ import (
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
+var beijingLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
 func ScopeLabel(scope CredentialScope) string {
 	switch scope.Type {
 	case ScopePersonal:
@@ -314,9 +316,9 @@ func formatUnixMillis(v int64) string {
 		return ""
 	}
 	if v > 1_000_000_000_000 {
-		return time.UnixMilli(v).Format("2006-01-02 15:04")
+		return time.UnixMilli(v).In(beijingLocation).Format("2006-01-02 15:04")
 	}
-	return time.Unix(v, 0).Format("2006-01-02 15:04")
+	return time.Unix(v, 0).In(beijingLocation).Format("2006-01-02 15:04")
 }
 
 func trimFloat(v float64) string {
