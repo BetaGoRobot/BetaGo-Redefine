@@ -56,28 +56,7 @@ func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 		if i > 0 {
 			elements = append(elements, larkmsg.Divider())
 		}
-		title := "**" + shop.DeptName + "**"
-		if shop.Distance > 0 {
-			title += "  ·  " + strconv.FormatFloat(shop.Distance, 'f', 1, 64) + "km"
-		}
-		elements = append(elements, larkmsg.Markdown(title))
-		if addr := strings.TrimSpace(shop.Address); addr != "" {
-			elements = append(elements, larkmsg.HintMarkdown("📍 "+addr))
-		}
-		if meta := shopMetaLine(shop); meta != "" {
-			elements = append(elements, larkmsg.HintMarkdown(meta))
-		}
-		elements = append(elements, larkmsg.ButtonRow("none", larkmsg.Button("选这家", larkmsg.ButtonOptions{
-			Type: "primary",
-			Payload: map[string]any{
-				cardactionproto.ActionField:             cardactionproto.ActionLuckinShopSelect,
-				cardactionproto.LuckinDeptIDField:       strconv.FormatInt(shop.DeptID, 10),
-				cardactionproto.LuckinDeptNameField:     shop.DeptName,
-				cardactionproto.LuckinLocationFormField: shop.Address,
-				cardactionproto.LuckinLongitudeField:    strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
-				cardactionproto.LuckinLatitudeField:     strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
-			},
-		})))
+		elements = append(elements, shopOptionRow(shop))
 	}
 	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("不是这些？换个位置重新搜："))
 	elements = append(elements, shopSearchForm("")...)
@@ -205,6 +184,45 @@ func shopSearchRegionOptions(province string) []larkmsg.SelectStaticOption {
 	}
 	shopSearchRegionOptionsCache[province] = options
 	return append([]larkmsg.SelectStaticOption(nil), options...)
+}
+
+func shopOptionRow(shop ShopOption) map[string]any {
+	info := []any{}
+	title := "**" + shop.DeptName + "**"
+	if shop.Distance > 0 {
+		title += "  ·  " + strconv.FormatFloat(shop.Distance, 'f', 1, 64) + "km"
+	}
+	info = append(info, larkmsg.Markdown(title))
+	if addr := strings.TrimSpace(shop.Address); addr != "" {
+		info = append(info, larkmsg.HintMarkdown("📍 "+addr))
+	}
+	if meta := shopMetaLine(shop); meta != "" {
+		info = append(info, larkmsg.HintMarkdown(meta))
+	}
+
+	controls := larkmsg.ButtonRowsWithLimit(larkmsg.ButtonRowsOptions{MaxColumns: 1, ColumnWidth: "weighted"},
+		larkmsg.Button("选这家", larkmsg.ButtonOptions{
+			Type: "primary",
+			Payload: map[string]any{
+				cardactionproto.ActionField:             cardactionproto.ActionLuckinShopSelect,
+				cardactionproto.LuckinDeptIDField:       strconv.FormatInt(shop.DeptID, 10),
+				cardactionproto.LuckinDeptNameField:     shop.DeptName,
+				cardactionproto.LuckinLocationFormField: shop.Address,
+				cardactionproto.LuckinLongitudeField:    strconv.FormatFloat(shop.Longitude, 'f', -1, 64),
+				cardactionproto.LuckinLatitudeField:     strconv.FormatFloat(shop.Latitude, 'f', -1, 64),
+			},
+		}),
+	)
+
+	return map[string]any{
+		"tag":                "column_set",
+		"flex_mode":          "stretch",
+		"horizontal_spacing": "12px",
+		"columns": []any{
+			map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info},
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": controls},
+		},
+	}
 }
 
 func recentShopElements(recent []ShopSelection) []any {

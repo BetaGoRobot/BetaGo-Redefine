@@ -37,6 +37,9 @@ func TestBuildShopSelectCardContainsCallbackValues(t *testing.T) {
 	if !containsAll(text, "luckin_shop_select", "luckin_dept_id", "门店A", "luckin_longitude") {
 		t.Fatalf("shop card missing fields: %s", text)
 	}
+	if !containsAll(text, `"tag":"column_set"`, `"columns"`, "选这家") {
+		t.Fatalf("shop card should render each shop as horizontal row: %s", text)
+	}
 }
 
 func TestNormalizeLocationTextUsesRegionData(t *testing.T) {
