@@ -158,7 +158,10 @@ func BuildSpecSelectCard(shop ShopSelection, detail ProductDetail, imgKey string
 	}
 	header := []any{larkmsg.Markdown("**已选门店：" + shop.DeptName + "**"), larkmsg.HintMarkdown("选择规格：")}
 	if imgKey != "" {
-		header = append(header, map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": detail.ProductName}, "preview": true, "scale_type": "crop_center"})
+		header = append(header, map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
+			map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{productImageElement(imgKey, detail.ProductName)}},
+			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": []any{larkmsg.Markdown("**" + detail.ProductName + "**")}},
+		}})
 	}
 	return wrapCard(append(header, form))
 }

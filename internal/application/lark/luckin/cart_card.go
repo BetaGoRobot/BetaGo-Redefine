@@ -44,10 +44,10 @@ func cartItemRow(item CartItem) map[string]any {
 	title := "**" + item.ProductName + "**  x " + strconv.Itoa(item.Amount)
 	info := []any{larkmsg.Markdown(title)}
 	if item.UnitPrice > 0 {
-		info = append(info, larkmsg.HintMarkdown("¥"+trimFloat(item.UnitPrice)+" / 杯"))
+		info = append(info, larkmsg.HintMarkdown("预估到手 ¥"+trimFloat(item.UnitPrice)+" / 杯"))
 	}
 	idValue := strconv.FormatInt(item.ProductID, 10)
-	info = append(info, larkmsg.ButtonRow("none",
+	controls := []any{larkmsg.ButtonRow("none",
 		larkmsg.Button("－", larkmsg.ButtonOptions{
 			Type: "default",
 			Payload: map[string]any{
@@ -74,11 +74,16 @@ func cartItemRow(item CartItem) map[string]any {
 				cardactionproto.LuckinSkuCodeField:   item.SkuCode,
 			},
 		}),
-	))
-	return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
-		map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info[:min(len(info), 2)]},
-		map[string]any{"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center", "elements": info[min(len(info), 2):]},
-	}}
+	)}
+	columns := []any{}
+	if image := productImageElement(item.ImageKey, item.ProductName); image != nil {
+		columns = append(columns, map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{image}})
+	}
+	columns = append(columns,
+		map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info},
+		map[string]any{"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center", "elements": controls},
+	)
+	return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": columns}
 }
 
 // BuildCartCheckoutProcessingCard 结算预览期间的过渡卡片。

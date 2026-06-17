@@ -39,6 +39,18 @@ func TestBuildShopSelectCardContainsCallbackValues(t *testing.T) {
 	}
 }
 
+func TestNormalizeLocationTextUsesRegionData(t *testing.T) {
+	got := NormalizeLocationText("朝阳区 安贞环宇荟")
+	if got != "北京市 朝阳区 安贞环宇荟" {
+		t.Fatalf("NormalizeLocationText() = %q, want Beijing district completion", got)
+	}
+
+	got = NormalizeLocationText("广东省 深圳市 南山区 科技园")
+	if got != "广东省 深圳市 南山区 科技园" {
+		t.Fatalf("NormalizeLocationText() should keep full region, got %q", got)
+	}
+}
+
 func TestBuildProductSelectCardContainsCallbackValues(t *testing.T) {
 	card := BuildProductSelectCard(ShopSelection{DeptName: "门店A"}, Cart{}, []ProductOption{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁"}}, nil)
 	text := mustMarshalForTest(card)

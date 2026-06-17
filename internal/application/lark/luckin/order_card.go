@@ -147,6 +147,8 @@ type OrderDetailProduct struct {
 	Name     string
 	Amount   int
 	Addition string
+	ImageURL string
+	Price    float64
 }
 
 func OrderDetailFromResult(content json.RawMessage) OrderDetail {
@@ -181,6 +183,8 @@ func OrderDetailFromResult(content json.RawMessage) OrderDetail {
 				Name:     stringValue(pObj["name"]),
 				Amount:   int(numberFloat(pObj["amount"])),
 				Addition: stringValue(pObj["additionDesc"]),
+				ImageURL: stringValue(pObj["pictureUrl"]),
+				Price:    firstPositiveFloat(pObj["estimatePrice"], pObj["discountPrice"], pObj["price"], pObj["initialPrice"]),
 			})
 		}
 	}
@@ -207,14 +211,7 @@ func BuildOrderStatusCard(detail OrderDetail) map[string]any {
 		elements = append(elements, larkmsg.HintMarkdown(line))
 	}
 	for _, p := range detail.Products {
-		text := p.Name
-		if p.Addition != "" {
-			text += "（" + p.Addition + "）"
-		}
-		if p.Amount > 0 {
-			text += " x " + strconv.Itoa(p.Amount)
-		}
-		elements = append(elements, larkmsg.Markdown("• "+text))
+		elements = append(elements, orderDetailProductRow(p))
 	}
 	if detail.TakeMealCode != "" {
 		elements = append(elements, larkmsg.Markdown("🥤 取餐码：**"+detail.TakeMealCode+"**"))
@@ -226,6 +223,32 @@ func BuildOrderStatusCard(detail OrderDetail) map[string]any {
 		elements = append(elements, larkmsg.ButtonRow("none", orderStatusButton(detail.OrderID)))
 	}
 	return wrapCard(elements)
+}
+
+func orderDetailProductRow(p OrderDetailProduct) map[string]any {
+	text := p.Name
+	if p.Addition != "" {
+		text += "（" + p.Addition + "）"
+	}
+	if p.Amount > 0 {
+		text += " x " + strconv.Itoa(p.Amount)
+	}
+	info := []any{larkmsg.Markdown("• " + text)}
+	if p.Price > 0 {
+		info = append(info, larkmsg.HintMarkdown("价格 ¥"+trimFloat(p.Price)))
+	}
+	return map[string]any{"tag": "column_set", "flex_mode": "stretch", "horizontal_spacing": "12px", "columns": []any{
+		map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": info},
+	}}
+}
+
+func firstPositiveFloat(values ...any) float64 {
+	for _, value := range values {
+		if n := numberFloat(value); n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // BuildOrderNoticeCard 用于轮询节点主动通知（如制作中/等待取餐/已完成/已取消）。

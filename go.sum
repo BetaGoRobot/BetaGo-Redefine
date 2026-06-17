@@ -242,6 +242,10 @@ github.com/huandu/xstrings v1.3.3 h1:/Gcsuc1x8JVbJ9/rlye4xZnVAbEkGauT8lbebqcQws4
 github.com/huandu/xstrings v1.3.3/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
 github.com/imdario/mergo v0.3.13 h1:lFzP57bqS/wsqKssCGmtLAb8A0wKjLGrve2q3PPVcBk=
 github.com/imdario/mergo v0.3.13/go.mod h1:4lJ1jqUDcsbIECGy0RUJAXNIhg+6ocWgb1ALK2O4oXg=
+github.com/issue9/cnregion v1.2023.2 h1:HYAvFGhRTOiVVxjMBpqY31z91FyWY+hr9YMspX+eQZk=
+github.com/issue9/cnregion v1.2023.2/go.mod h1:l+lt8B7kE9h/yZQmB1lsGRYxWrpbN5PAGn2hZUxmv4U=
+github.com/issue9/errwrap v0.3.2 h1:7KEme9Pfe75M+sIMcPCn/DV90wjnOcRbO4DXVAHj3Fw=
+github.com/issue9/errwrap v0.3.2/go.mod h1:KcCLuUGiffjooLCUjL89r1cyO8/HT/VRcQrneO53N3A=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

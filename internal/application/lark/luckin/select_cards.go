@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -32,18 +33,12 @@ type ProductOption struct {
 	Tags        []string
 }
 
-var defaultShopSearchRegions = []larkmsg.SelectStaticOption{
-	{Text: "北京 朝阳区", Value: "北京 朝阳区"},
-	{Text: "北京 海淀区", Value: "北京 海淀区"},
-	{Text: "上海 浦东新区", Value: "上海 浦东新区"},
-	{Text: "上海 黄浦区", Value: "上海 黄浦区"},
-	{Text: "广州 天河区", Value: "广州 天河区"},
-	{Text: "深圳 南山区", Value: "深圳 南山区"},
-	{Text: "杭州 西湖区", Value: "杭州 西湖区"},
-	{Text: "南京 鼓楼区", Value: "南京 鼓楼区"},
-	{Text: "成都 锦江区", Value: "成都 锦江区"},
-	{Text: "武汉 江汉区", Value: "武汉 江汉区"},
-}
+const shopSearchRegionLimit = 100
+
+var (
+	shopSearchRegionOptionsOnce sync.Once
+	shopSearchRegionOptionsData []larkmsg.SelectStaticOption
+)
 
 func BuildShopSelectCard(keyword string, shops []ShopOption) map[string]any {
 	elements := []any{
@@ -108,7 +103,7 @@ func BuildSessionExpiredCardWithRecent(recent []ShopSelection) map[string]any {
 func BuildShopStartCard(recent []ShopSelection) map[string]any {
 	elements := []any{
 		larkmsg.Markdown("**选择瑞幸门店**"),
-		larkmsg.HintMarkdown("可以直接选最近用过的门店，或选择城市/行政区后补充关键词搜索附近门店。"),
+		larkmsg.HintMarkdown("可以直接选最近用过的门店，或先选城市/区县再补充门店关键词。"),
 	}
 	elements = append(elements, recentShopElements(recent)...)
 	elements = append(elements, shopSearchForm()...)
@@ -141,16 +136,28 @@ func shopSearchForm() []any {
 			"horizontal_spacing": "8px",
 			"elements": []any{
 				larkmsg.SelectStatic(cardactionproto.LuckinRegionFormField, larkmsg.SelectStaticOptions{
-					Placeholder: "选择城市/区域",
-					Options:     defaultShopSearchRegions,
+					Placeholder: "城市/区县",
+					Width:       "fill",
+					Options:     shopSearchRegionOptions(),
 				}),
 				larkmsg.TextInput(cardactionproto.LuckinLocationFormField, larkmsg.TextInputOptions{
-					Placeholder: "补充关键词，如：人民广场、安贞环宇荟",
+					Placeholder: "门店/商圈关键词，如：安贞环宇荟",
 				}),
 				larkmsg.ButtonRow("none", submit),
 			},
 		},
 	}
+}
+
+func shopSearchRegionOptions() []larkmsg.SelectStaticOption {
+	shopSearchRegionOptionsOnce.Do(func() {
+		regions := RegionOptions(shopSearchRegionLimit)
+		shopSearchRegionOptionsData = make([]larkmsg.SelectStaticOption, 0, len(regions))
+		for _, region := range regions {
+			shopSearchRegionOptionsData = append(shopSearchRegionOptionsData, larkmsg.SelectStaticOption{Text: region, Value: region})
+		}
+	})
+	return append([]larkmsg.SelectStaticOption(nil), shopSearchRegionOptionsData...)
 }
 
 func recentShopElements(recent []ShopSelection) []any {
@@ -217,10 +224,8 @@ func BuildProductSelectCard(shop ShopSelection, cart Cart, products []ProductOpt
 
 func productRow(product ProductOption, imgKey string) map[string]any {
 	idValue := strconv.FormatInt(product.ProductID, 10)
+	image := productImageElement(imgKey, product.ProductName)
 	info := []any{}
-	if imgKey != "" {
-		info = append(info, map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": product.ProductName}, "preview": true, "scale_type": "crop_center", "size": "medium"})
-	}
 	info = append(info, larkmsg.Markdown("**"+product.ProductName+"**"))
 	if priceLine := productPriceLine(product); priceLine != "" {
 		info = append(info, larkmsg.Markdown(priceLine))
@@ -232,28 +237,51 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 		Placeholder:  "数量（默认 1）",
 		DefaultValue: "1",
 	})}
-	controls = append(controls, larkmsg.ButtonRow("none", larkmsg.Button("加入", larkmsg.ButtonOptions{
-		Type:           "primary",
-		Name:           "luckin_select_" + idValue,
-		FormActionType: "submit",
-		Fill:           true,
-		Payload: map[string]any{
-			cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
-			cardactionproto.LuckinProductIDField: idValue,
-			cardactionproto.LuckinSkuCodeField:   product.SkuCode,
-			cardactionproto.LuckinProductName:    product.ProductName,
-			cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(productUnitPrice(product), 'f', -1, 64),
-		},
-	})))
+	controls = append(controls, larkmsg.ButtonRowsWithLimit(larkmsg.ButtonRowsOptions{MaxColumns: 1, ColumnWidth: "weighted", HorizontalSpacing: "6px"},
+		larkmsg.Button("加入默认", larkmsg.ButtonOptions{
+			Type:           "primary",
+			Name:           "luckin_select_" + idValue,
+			FormActionType: "submit",
+			Fill:           true,
+			Payload: map[string]any{
+				cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
+				cardactionproto.LuckinProductIDField: idValue,
+				cardactionproto.LuckinSkuCodeField:   product.SkuCode,
+				cardactionproto.LuckinProductName:    product.ProductName,
+				cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(productUnitPrice(product), 'f', -1, 64),
+				cardactionproto.LuckinImageKeyField:  imgKey,
+			},
+		}),
+		larkmsg.Button("定制", larkmsg.ButtonOptions{
+			Type:           "default",
+			Name:           "luckin_customize_" + idValue,
+			FormActionType: "submit",
+			Fill:           true,
+			Payload: map[string]any{
+				cardactionproto.ActionField:          cardactionproto.ActionLuckinProductSelect,
+				cardactionproto.LuckinProductIDField: idValue,
+				cardactionproto.LuckinSkuCodeField:   product.SkuCode,
+				cardactionproto.LuckinProductName:    product.ProductName,
+				cardactionproto.LuckinUnitPriceField: strconv.FormatFloat(productUnitPrice(product), 'f', -1, 64),
+				cardactionproto.LuckinImageKeyField:  imgKey,
+				cardactionproto.LuckinCustomizeField: "1",
+			},
+		}),
+	)...)
 
+	columns := []any{}
+	if image != nil {
+		columns = append(columns, map[string]any{"tag": "column", "width": "auto", "vertical_align": "center", "elements": []any{image}})
+	}
+	columns = append(columns,
+		map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info},
+		map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": controls},
+	)
 	rowBody := map[string]any{
 		"tag":                "column_set",
 		"flex_mode":          "stretch",
 		"horizontal_spacing": "12px",
-		"columns": []any{
-			map[string]any{"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center", "elements": info},
-			map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": controls},
-		},
+		"columns":            columns,
 	}
 	// form 必须是卡片根级元素，因此让 form 包住整行 column_set，
 	// 数量输入与提交按钮作为 form 的后代被一并提交。
@@ -264,6 +292,13 @@ func productRow(product ProductOption, imgKey string) map[string]any {
 		"horizontal_spacing": "8px",
 		"elements":           []any{rowBody},
 	}
+}
+
+func productImageElement(imgKey, alt string) map[string]any {
+	if strings.TrimSpace(imgKey) == "" {
+		return nil
+	}
+	return map[string]any{"tag": "img", "img_key": imgKey, "alt": map[string]any{"tag": "plain_text", "content": alt}, "preview": true, "scale_type": "crop_center", "size": "medium"}
 }
 
 func productPriceLine(product ProductOption) string {

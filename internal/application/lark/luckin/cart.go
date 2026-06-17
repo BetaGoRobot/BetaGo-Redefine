@@ -7,6 +7,7 @@ type CartItem struct {
 	ProductName string
 	Amount      int
 	UnitPrice   float64
+	ImageKey    string
 }
 
 const (
@@ -39,11 +40,14 @@ func (c *Cart) Add(item CartItem) {
 			if item.UnitPrice > 0 {
 				c.Items[i].UnitPrice = item.UnitPrice
 			}
-			if item.ProductName != "" {
-				c.Items[i].ProductName = item.ProductName
+				if item.ProductName != "" {
+					c.Items[i].ProductName = item.ProductName
+				}
+				if item.ImageKey != "" {
+					c.Items[i].ImageKey = item.ImageKey
+				}
+				return
 			}
-			return
-		}
 	}
 	c.Items = append(c.Items, item)
 }

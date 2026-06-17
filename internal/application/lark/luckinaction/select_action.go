@@ -96,8 +96,9 @@ func handleShopSearch(session luckin.SessionStore, draft luckin.DraftService, ge
 			formValue(actionCtx, cardactionproto.LuckinRegionFormField),
 			formValue(actionCtx, cardactionproto.LuckinLocationFormField),
 		}, " "))
+		location = luckin.NormalizeLocationText(location)
 		if location == "" {
-			return nil, errors.New("请选择城市/区域，或输入位置关键词")
+			return nil, errors.New("请选择城市/区县，或输入位置关键词")
 		}
 		req := credentialRequestFromAction(actionCtx)
 		return func(runCtx context.Context) {
@@ -151,6 +152,8 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 		skuCode := actionValue(actionCtx, cardactionproto.LuckinSkuCodeField)
 		productName := actionValue(actionCtx, cardactionproto.LuckinProductName)
 		unitPrice := parseFloat(actionValue(actionCtx, cardactionproto.LuckinUnitPriceField))
+		imageKey := actionValue(actionCtx, cardactionproto.LuckinImageKeyField)
+		customize := actionValue(actionCtx, cardactionproto.LuckinCustomizeField) == "1"
 		// 商品卡每行 qty 字段名带 productID 后缀以避免同卡重名；规格卡用无后缀字段。
 		qtyRaw := formValue(actionCtx, luckin.QtyFormField(productID))
 		if qtyRaw == "" {
@@ -171,7 +174,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 			}
 
 			// 第一次点选商品且未走过规格表单时，若商品有规格，先弹规格选择卡。
-			if !fromSpecForm {
+			if !fromSpecForm && customize {
 				detail, derr := draft.ProductDetail(runCtx, cred, shop, productID)
 				if derr == nil && detail.HasSpecs() {
 					imgKey := ""
@@ -191,6 +194,11 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 					if detail.ProductName != "" {
 						productName = detail.ProductName
 					}
+					if images != nil && detail.PictureURL != "" {
+						if key := images.UploadByURL(runCtx, detail.PictureURL); key != "" {
+							imageKey = key
+						}
+					}
 				}
 			}
 
@@ -201,6 +209,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 				ProductName: productName,
 				Amount:      amount,
 				UnitPrice:   unitPrice,
+				ImageKey:    imageKey,
 			})
 			session.SetCart(runCtx, key, cart)
 			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, cart))

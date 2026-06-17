@@ -101,6 +101,8 @@ const (
 	LuckinSkuCodeField      = "luckin_sku_code"
 	LuckinProductName       = "luckin_product_name"
 	LuckinUnitPriceField    = "luckin_unit_price"
+	LuckinImageKeyField     = "luckin_image_key"
+	LuckinCustomizeField    = "luckin_customize"
 	LuckinQueryFormField    = "luckin_query"
 	LuckinLocationFormField = "luckin_location"
 	LuckinRegionFormField   = "luckin_region"
