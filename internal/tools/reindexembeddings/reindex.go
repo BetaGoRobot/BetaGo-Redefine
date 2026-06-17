@@ -27,6 +27,8 @@ var atMentionPattern = regexp.MustCompile(`<at[^>]*>([^<]+)</at>`)
 type SourceDoc struct {
 	RawMessage string    `json:"raw_message"`
 	MessageV2  []float32 `json:"message_v2,omitempty"`
+	ChatID     string    `json:"chat_id,omitempty"`
+	ChatName   string    `json:"chat_name,omitempty"`
 }
 
 type BulkUpdate struct {
@@ -41,9 +43,11 @@ type ScanDocument struct {
 }
 
 type PendingDocument struct {
-	ID    string
-	Index string
-	Text  string
+	ID       string
+	Index    string
+	Text     string
+	ChatID   string
+	ChatName string
 }
 
 type AnalyzeStats struct {
@@ -383,9 +387,11 @@ func Run(ctx context.Context, osClient *opensearchapi.Client, arkClient *arkrunt
 		}
 		summary.Processed++
 		pendingByIndex[item.Index] = append(pendingByIndex[item.Index], PendingDocument{
-			ID:    item.ID,
-			Index: item.Index,
-			Text:  text,
+			ID:       item.ID,
+			Index:    item.Index,
+			Text:     text,
+			ChatID:   strings.TrimSpace(item.Doc.ChatID),
+			ChatName: strings.TrimSpace(item.Doc.ChatName),
 		})
 
 		totalPending := 0
@@ -498,7 +504,7 @@ func scanDocuments(ctx context.Context, client *opensearchapi.Client, opts RunOp
 	if err := sonic.Unmarshal(BuildScanQuery(opts.Days), &body); err != nil {
 		return fmt.Errorf("build scan query: %w", err)
 	}
-	body["_source"] = []string{"raw_message", "message_v2"}
+	body["_source"] = []string{"raw_message", "message_v2", "chat_id", "chat_name"}
 
 	data, err := sonic.Marshal(body)
 	if err != nil {
@@ -576,7 +582,16 @@ func processPendingBatch(ctx context.Context, osClient *opensearchapi.Client, ar
 	for _, item := range pending {
 		texts = append(texts, item.Text)
 	}
-	vectors, errs, promptTokens, totalTokens := batchEmbed(ctx, arkClient, opts, texts)
+	scopes := make([]llmusage.Scope, 0, len(pending))
+	for _, item := range pending {
+		scopes = append(scopes, llmusage.Scope{
+			ChatID:     item.ChatID,
+			ChatName:   item.ChatName,
+			SourceType: llmusage.SourceTypeBackground,
+			Source:     "reindex_embeddings",
+		})
+	}
+	vectors, errs, promptTokens, totalTokens := batchEmbed(ctx, arkClient, opts, texts, scopes)
 
 	updates := make([]BulkUpdate, 0, len(pending))
 	errorCount := errs
@@ -617,7 +632,7 @@ func processPendingBatch(ctx context.Context, osClient *opensearchapi.Client, ar
 	return len(updates) - bulkErrors, errorCount + bulkErrors, promptTokens, totalTokens
 }
 
-func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions, texts []string) ([][]float32, int, int, int) {
+func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions, texts []string, scopes []llmusage.Scope) ([][]float32, int, int, int) {
 	if len(texts) == 0 {
 		return nil, 0, 0, 0
 	}
@@ -657,12 +672,12 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 					if recordErr == nil {
 						recordErr = fmt.Errorf("empty embedding response")
 					}
-					recordReindexUsage(ctx, opts.Model, model.Usage{}, recordErr)
+					recordReindexUsage(ctx, opts.Model, scopeAt(scopes, item.index), model.Usage{}, recordErr)
 				} else {
 					results[item.index] = resp.Data.Embedding
 					promptTokens += resp.Usage.PromptTokens
 					totalTokens += resp.Usage.TotalTokens
-					recordReindexUsage(ctx, opts.Model, model.Usage{
+					recordReindexUsage(ctx, opts.Model, scopeAt(scopes, item.index), model.Usage{
 						PromptTokens: resp.Usage.PromptTokens,
 						TotalTokens:  resp.Usage.TotalTokens,
 					}, nil)
@@ -681,12 +696,18 @@ func batchEmbed(ctx context.Context, client *arkruntime.Client, opts RunOptions,
 	return results, errors, promptTokens, totalTokens
 }
 
-func recordReindexUsage(ctx context.Context, modelID string, usage model.Usage, err error) {
+func scopeAt(scopes []llmusage.Scope, idx int) llmusage.Scope {
+	if idx >= 0 && idx < len(scopes) {
+		return scopes[idx]
+	}
+	return llmusage.Scope{SourceType: llmusage.SourceTypeBackground, Source: "reindex_embeddings"}
+}
+
+func recordReindexUsage(ctx context.Context, modelID string, scope llmusage.Scope, usage model.Usage, err error) {
+	scope.SourceType = llmusage.SourceTypeBackground
+	scope.Source = "reindex_embeddings"
 	record := llmusage.Record{
-		Scope: llmusage.Scope{
-			SourceType: llmusage.SourceTypeBackground,
-			Source:     "reindex_embeddings",
-		},
+		Scope:            scope,
 		Provider:         "ark",
 		Model:            modelID,
 		Kind:             llmusage.KindEmbedding,

@@ -14,6 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkimg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
@@ -702,6 +703,9 @@ func buildUserLLMUsageScope(ctx context.Context, chatID, chatName, openID, userN
 		if resolved, err := larkuser.GetUserNameCache(ctx, chatID, openID); err == nil {
 			userName = resolved
 		}
+	}
+	if strings.TrimSpace(chatName) == "" && strings.TrimSpace(chatID) != "" {
+		chatName = larkchat.GetChatName(ctx, chatID)
 	}
 	return llmusage.Scope{
 		ChatID:     chatID,

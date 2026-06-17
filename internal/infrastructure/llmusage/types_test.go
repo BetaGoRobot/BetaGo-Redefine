@@ -51,6 +51,20 @@ func TestNormalizeScopeAllowsBackgroundWithoutUser(t *testing.T) {
 	if scope.SourceType != SourceTypeBackground {
 		t.Fatalf("SourceType = %q, want %q", scope.SourceType, SourceTypeBackground)
 	}
+	if scope.ChatName != "oc_background" {
+		t.Fatalf("ChatName = %q, want chat id fallback", scope.ChatName)
+	}
+}
+
+func TestNormalizeScopeFillsChatNameWithoutChatID(t *testing.T) {
+	scope := NormalizeScope(Scope{
+		SourceType: SourceTypeBackground,
+		Source:     "reindex_embeddings",
+	})
+
+	if scope.ChatName != "background:reindex_embeddings" {
+		t.Fatalf("ChatName = %q, want source fallback", scope.ChatName)
+	}
 }
 
 func TestBucketTimes(t *testing.T) {

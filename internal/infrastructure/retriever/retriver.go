@@ -12,6 +12,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
@@ -32,6 +33,8 @@ var (
 	retrieverWarnOnce sync.Once
 	defaultClient     Client = noopClient{reason: "retriever not initialized"}
 )
+
+type embeddingUsageScopeKey struct{}
 
 const (
 	IndexNamePrefix = "langchaingo_v2"
@@ -141,12 +144,15 @@ func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts 
 	eg := errgroup.Group{}
 	result := make([][]float32, len(texts))
 	mu := sync.Mutex{}
+	scope := embeddingUsageScopeFromContext(ctx)
 	for idx, text := range texts {
 		eg.Go(
 			func() error {
 				embedding, _, err := ark_dal.EmbeddingText(ctx, text, llmusage.Scope{
-					SourceType: llmusage.SourceTypeSystem,
-					Source:     "retriever_embedding",
+					ChatID:     scope.ChatID,
+					ChatName:   scope.ChatName,
+					SourceType: scope.SourceType,
+					Source:     scope.Source,
 				})
 				if err != nil {
 					return err
@@ -170,6 +176,16 @@ func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts 
 		}
 	}
 	return result, nil
+}
+
+func embeddingUsageScopeFromContext(ctx context.Context) llmusage.Scope {
+	if scope, ok := ctx.Value(embeddingUsageScopeKey{}).(llmusage.Scope); ok {
+		return scope
+	}
+	return llmusage.Scope{
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "retriever_embedding",
+	}
 }
 
 // NewRAGSystem 是 RAGSystem 的构造函数，负责初始化所有客户端和组件
@@ -238,6 +254,13 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 		return nil
 	}
 	indexName := indexNameForSuffix(suffix)
+	chatName := larkchat.GetChatName(ctx, suffix)
+	ctx = context.WithValue(ctx, embeddingUsageScopeKey{}, llmusage.Scope{
+		ChatID:     suffix,
+		ChatName:   chatName,
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "retriever_embedding",
+	})
 	logs.L().Ctx(ctx).Info("正在为索引准备...", zap.String("indexName", indexName))
 	// 确保索引存在且维度正确
 	// CreateIndex 是幂等的，如果索引已存在，会返回错误，我们可以检查并忽略特定错误，或者简单地尝试添加
@@ -262,11 +285,13 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 		return nil, nil
 	}
 	indexName := indexNameForSuffix(suffix)
+	chatName := larkchat.GetChatName(ctx, suffix)
 	logs.L().Ctx(ctx).Info("正在从索引中检索相关文档...", zap.String("indexName", indexName), zap.String("query", query), zap.String("startTime", startTime), zap.String("endTime", endTime))
 
 	// 1. 生成查询向量
 	vec, _, err := ark_dal.EmbeddingText(ctx, query, llmusage.Scope{
 		ChatID:     suffix,
+		ChatName:   chatName,
 		SourceType: llmusage.SourceTypeSystem,
 		Source:     "retriever_recall",
 	})

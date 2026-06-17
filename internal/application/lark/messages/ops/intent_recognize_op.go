@@ -8,6 +8,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/pkg/errors"
@@ -155,6 +156,9 @@ func buildIntentLLMUsageScope(ctx context.Context, event *larkim.P2MessageReceiv
 	chatName := ""
 	if meta != nil {
 		chatName = meta.ChatName
+	}
+	if strings.TrimSpace(chatName) == "" && chatID != "" {
+		chatName = larkchat.GetChatName(ctx, chatID)
 	}
 	return llmusage.Scope{
 		ChatID:     chatID,

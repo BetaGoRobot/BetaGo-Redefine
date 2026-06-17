@@ -1,7 +1,10 @@
 package retriever
 
 import (
+	"context"
 	"testing"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 )
 
 func TestIndexNameUsesV2Prefix(t *testing.T) {
@@ -31,3 +34,25 @@ func TestMutateIndexMapUsesV2VectorDimension(t *testing.T) {
 	}
 }
 
+func TestEmbeddingUsageScopeFromContextFallback(t *testing.T) {
+	scope := embeddingUsageScopeFromContext(context.Background())
+	normalized := llmusage.NormalizeScope(scope)
+	if normalized.ChatName != "system:retriever_embedding" {
+		t.Fatalf("ChatName = %q, want source fallback", normalized.ChatName)
+	}
+}
+
+func TestEmbeddingUsageScopeFromContextUsesContext(t *testing.T) {
+	want := llmusage.Scope{
+		ChatID:     "oc_chat",
+		ChatName:   "Test Chat",
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "retriever_embedding",
+	}
+	ctx := context.WithValue(context.Background(), embeddingUsageScopeKey{}, want)
+
+	got := embeddingUsageScopeFromContext(ctx)
+	if got != want {
+		t.Fatalf("scope = %+v, want %+v", got, want)
+	}
+}

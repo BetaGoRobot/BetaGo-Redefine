@@ -13,6 +13,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -431,8 +432,10 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	arkCtx, arkSpan := otel.StartNamed(ctx, "chunk.ark.response",
 		trace.WithAttributes(attribute.String("model.id", config.Get().ArkConfig.ChunkModel)),
 	)
+	chatName := larkchat.GetChatName(ctx, chunk.GroupID)
 	res, err := ark_dal.ResponseWithCache(arkCtx, sysPrompt.String(), chunkStr, config.Get().ArkConfig.ChunkModel, llmusage.Scope{
 		ChatID:     chunk.GroupID,
+		ChatName:   chatName,
 		SourceType: llmusage.SourceTypeBackground,
 		Source:     "chunking",
 	})
@@ -472,6 +475,7 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	embeddingCtx, embeddingSpan := otel.StartNamed(ctx, "chunk.embedding")
 	embedding, _, err := ark_dal.EmbeddingText(embeddingCtx, BuildEmbeddingInput(chunkLog), llmusage.Scope{
 		ChatID:     chunk.GroupID,
+		ChatName:   chatName,
 		SourceType: llmusage.SourceTypeBackground,
 		Source:     "chunking_embedding",
 	})

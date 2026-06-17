@@ -78,7 +78,23 @@ func NormalizeScope(scope Scope) Scope {
 	default:
 		scope.SourceType = SourceTypeSystem
 	}
+	if scope.ChatName == "" {
+		scope.ChatName = fallbackChatName(scope)
+	}
 	return scope
+}
+
+func fallbackChatName(scope Scope) string {
+	if scope.ChatID != "" {
+		return scope.ChatID
+	}
+	if scope.Source != "" && scope.SourceType != "" {
+		return string(scope.SourceType) + ":" + scope.Source
+	}
+	if scope.Source != "" {
+		return scope.Source
+	}
+	return "unknown"
 }
 
 func BucketTimes(createdAt time.Time) Buckets {

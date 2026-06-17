@@ -3,6 +3,8 @@ package reindexembeddings
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 )
 
 func TestExtractText(t *testing.T) {
@@ -175,6 +177,20 @@ func TestBuildBulkUpdatePayload(t *testing.T) {
 		"{\"doc\":{\"message_v2\":[3,4]}}\n"
 	if string(got) != want {
 		t.Fatalf("payload = %q, want %q", string(got), want)
+	}
+}
+
+func TestScopeAtFallback(t *testing.T) {
+	t.Parallel()
+
+	scope := scopeAt(nil, 0)
+	if scope.ChatName != "" {
+		t.Fatalf("raw fallback ChatName = %q, want empty before normalization", scope.ChatName)
+	}
+
+	normalized := llmusage.NormalizeScope(scope)
+	if normalized.ChatName != "background:reindex_embeddings" {
+		t.Fatalf("normalized ChatName = %q, want source fallback", normalized.ChatName)
 	}
 }
 
