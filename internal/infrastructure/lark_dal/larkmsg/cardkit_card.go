@@ -8,10 +8,12 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/bytedance/sonic"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.uber.org/zap"
 )
 
 const (
@@ -53,6 +55,7 @@ func PatchCardJSON(ctx context.Context, msgID string, cardData any) error {
 		return err
 	}
 	if !resp.Success() {
+		logs.L().Error("patch card json failed", zap.String("err", resp.Error()), zap.Stack("trace"))
 		return errors.New(resp.Error())
 	}
 	return nil
