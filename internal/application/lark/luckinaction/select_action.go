@@ -367,7 +367,7 @@ func handleBindToken(store luckin.CredentialWriter, dismiss ephemeralDeleter) ap
 		}
 		// 绑定卡为用户私密临时卡，提交成功后撤回，避免其他成员看到。
 		if dismiss != nil {
-			if msgID := strings.TrimSpace(actionCtx.MessageID()); msgID != "" {
+			for _, msgID := range bindDismissMessageIDs(actionCtx) {
 				if err := dismiss(ctx, msgID); err != nil {
 					logs.L().Ctx(ctx).Warn("luckin delete bind ephemeral failed", zap.String("message_id", msgID), zap.Error(err))
 				}
@@ -380,6 +380,26 @@ func handleBindToken(store luckin.CredentialWriter, dismiss ephemeralDeleter) ap
 		)
 		return appcardaction.InfoToast("已绑定瑞幸账号（" + luckin.ScopeLabel(scope) + "，" + luckin.MaskToken(token) + "）"), nil
 	}
+}
+
+func bindDismissMessageIDs(actionCtx *appcardaction.Context) []string {
+	seen := make(map[string]struct{}, 2)
+	out := make([]string, 0, 2)
+	for _, id := range []string{
+		actionValue(actionCtx, cardactionproto.IDField),
+		actionCtx.MessageID(),
+	} {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func handleUnbindToken(store luckin.CredentialWriter) appcardaction.SyncHandler {

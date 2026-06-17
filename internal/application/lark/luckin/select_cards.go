@@ -292,7 +292,11 @@ func productQueryForm(shop ShopSelection) []any {
 	}
 }
 
-func BuildBindTokenCard(chatType ChatType) map[string]any {
+func BuildBindTokenCard(chatType ChatType, ephemeralMessageID ...string) map[string]any {
+	messageID := ""
+	if len(ephemeralMessageID) > 0 {
+		messageID = strings.TrimSpace(ephemeralMessageID[0])
+	}
 	formElements := []any{
 		larkmsg.Markdown("**绑定瑞幸账号**"),
 		larkmsg.Markdown("请到 [瑞幸开放平台](https://open.lkcoffee.com) 登录后复制 Token，粘贴到下方完成绑定。Token 仅加密保存，机器人不会展示完整内容。"),
@@ -307,6 +311,7 @@ func BuildBindTokenCard(chatType ChatType) map[string]any {
 		FormActionType: "submit",
 		Payload: map[string]any{
 			cardactionproto.ActionField: cardactionproto.ActionLuckinBindToken,
+			cardactionproto.IDField:     messageID,
 		},
 	})
 	formElements = append(formElements, larkmsg.ButtonRow("none", submit))

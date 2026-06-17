@@ -109,7 +109,20 @@ func BuildOrderProcessingCard(message string) map[string]any {
 
 // BuildOrderFailedCard 操作失败提示卡片。
 func BuildOrderFailedCard(message string) map[string]any {
-	return wrapCard([]any{larkmsg.Markdown("⚠️ " + message)})
+	elements := []any{
+		larkmsg.Markdown("⚠️ " + message),
+		larkmsg.HintMarkdown("可以重新结算当前购物车；如果会话已失效，也可以直接重选门店。"),
+		larkmsg.ButtonRow("none", larkmsg.Button("重新结算", larkmsg.ButtonOptions{
+			Type: "primary",
+			Payload: map[string]any{
+				cardactionproto.ActionField: cardactionproto.ActionLuckinCartCheckout,
+			},
+		})),
+		larkmsg.Divider(),
+		larkmsg.HintMarkdown("重新选择门店："),
+	}
+	elements = append(elements, shopSearchForm()...)
+	return wrapCard(elements)
 }
 
 // OrderDetail 解析 queryOrderDetailInfo 结果，用于状态卡与轮询。

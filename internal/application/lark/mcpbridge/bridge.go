@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
+	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -275,20 +277,72 @@ func (h handler) callRemote(ctx context.Context, cred luckin.Credential, payload
 
 func (h handler) guideBindToken(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, req luckin.CredentialRequest) error {
 	// 绑定卡含个人 token 输入，使用临时卡仅发起人可见，避免群内泄露。
+	bindCard := luckin.BuildBindTokenCard(req.ChatType)
 	if h.ephemeral != nil {
-		if _, err := h.ephemeral(ctx, req.ChatID, req.OpenID, luckin.BuildBindTokenCard(req.ChatType)); err == nil {
+		msgID, err := h.ephemeral(ctx, req.ChatID, req.OpenID, bindCard)
+		if err == nil {
+			setBindTokenCardDismissID(bindCard, msgID)
 			metaData.SetExtra(h.policy.RobotToolName+"_result", "用户尚未绑定瑞幸账号，已发送绑定引导卡片，绑定后请重试")
 			return nil
 		}
 	}
 	// 临时卡不可用或失败时降级为普通卡片，保证引导可达。
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildBindTokenCard(req.ChatType)); err != nil {
+		if err := h.cards.SendCard(ctx, data, metaData, bindCard); err != nil {
 			return err
 		}
 	}
 	metaData.SetExtra(h.policy.RobotToolName+"_result", "用户尚未绑定瑞幸账号，已发送绑定引导卡片，绑定后请重试")
 	return nil
+}
+
+func setBindTokenCardDismissID(card map[string]any, messageID string) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return
+	}
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+	for _, element := range elements {
+		form, ok := element.(map[string]any)
+		if !ok || form["tag"] != "form" {
+			continue
+		}
+		formElements, _ := form["elements"].([]any)
+		for _, formElement := range formElements {
+			row, ok := formElement.(map[string]any)
+			if !ok || row["tag"] != "column_set" {
+				continue
+			}
+			columns, _ := row["columns"].([]any)
+			for _, col := range columns {
+				column, _ := col.(map[string]any)
+				colElements, _ := column["elements"].([]any)
+				for _, colElement := range colElements {
+					button, ok := colElement.(map[string]any)
+					if !ok || button["tag"] != "button" {
+						continue
+					}
+					setButtonCallbackValue(button, cardactionproto.IDField, messageID)
+				}
+			}
+		}
+	}
+}
+
+func setButtonCallbackValue(button map[string]any, key, value string) {
+	behaviors, _ := button["behaviors"].([]any)
+	for _, behavior := range behaviors {
+		b, ok := behavior.(map[string]any)
+		if !ok || b["type"] != "callback" {
+			continue
+		}
+		callbackValue, ok := b["value"].(map[string]any)
+		if !ok {
+			continue
+		}
+		callbackValue[key] = value
+	}
 }
 
 func (h handler) lookupShop(ctx context.Context, req luckin.CredentialRequest) (luckin.ShopSelection, bool) {
