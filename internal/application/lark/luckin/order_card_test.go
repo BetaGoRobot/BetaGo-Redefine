@@ -37,6 +37,20 @@ func TestOrderDetailFromResultParsesStatusAndTakeMeal(t *testing.T) {
 	}
 }
 
+func TestOrderDetailFromResultParsesAlternateStatusFields(t *testing.T) {
+	content := json.RawMessage(`[{"type":"text","text":"{\"data\":{\"orderIdStr\":\"123\",\"statusName\":\"等待取餐\",\"takeMealCode\":\"B08\"}}"}]`)
+	detail := OrderDetailFromResult(content)
+	if detail.OrderID != "123" || detail.Status != OrderStatusReady || detail.TakeMealCode != "B08" {
+		t.Fatalf("detail mismatch from alternate fields: %+v", detail)
+	}
+
+	content = json.RawMessage(`[{"type":"text","text":"{\"data\":{\"orderId\":\"124\",\"payStatusName\":\"支付成功\"}}"}]`)
+	detail = OrderDetailFromResult(content)
+	if detail.Status != OrderStatusPlaced {
+		t.Fatalf("payment status inference mismatch: %+v", detail)
+	}
+}
+
 func TestEvaluatePollTransitionsAndStops(t *testing.T) {
 	cfg := DefaultOrderPollConfig()
 	now := time.Unix(1000, 0)
@@ -65,6 +79,24 @@ func TestEvaluatePollTransitionsAndStops(t *testing.T) {
 	d = EvaluatePoll(base, OrderDetail{Status: OrderStatusCancelled}, cfg, now)
 	if d.Status != OrderRecordCancelled {
 		t.Fatalf("cancelled decision = %+v", d)
+	}
+}
+
+func TestEvaluatePollInfersStatusNameTransitions(t *testing.T) {
+	cfg := DefaultOrderPollConfig()
+	now := time.Unix(1000, 0)
+	base := OrderRecord{
+		CreatedAt:        now.Add(-time.Minute),
+		PollDeadline:     now.Add(time.Hour),
+		LastRemoteStatus: OrderStatusUnpaid,
+	}
+
+	d := EvaluatePoll(base, OrderDetail{StatusName: "等待取餐"}, cfg, now)
+	if d.Status != "" || d.NextPollAt == nil || d.NoticeText == "" {
+		t.Fatalf("ready decision from status name = %+v", d)
+	}
+	if d.LastRemoteStatus == nil || *d.LastRemoteStatus != OrderStatusReady {
+		t.Fatalf("ready status not recorded: %+v", d)
 	}
 }
 

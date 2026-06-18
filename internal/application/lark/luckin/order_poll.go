@@ -36,6 +36,9 @@ func EvaluatePoll(record OrderRecord, detail OrderDetail, cfg OrderPollConfig, n
 	}
 
 	remoteStatus := detail.Status
+	if remoteStatus == 0 {
+		remoteStatus = inferOrderStatus(detail.StatusName)
+	}
 	statusChanged := remoteStatus != 0 && remoteStatus != record.LastRemoteStatus
 	if statusChanged {
 		s := remoteStatus

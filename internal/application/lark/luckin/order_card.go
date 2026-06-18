@@ -3,6 +3,7 @@ package luckin
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -166,8 +167,36 @@ func OrderDetailFromResult(content json.RawMessage) OrderDetail {
 		StatusName: stringValue(obj["orderStatusName"]),
 		AboutTime:  int64(numberFloat(obj["aboutTime"])),
 	}
+	if detail.OrderID == "" {
+		detail.OrderID = stringValue(obj["orderIdStr"])
+	}
+	if detail.Status == 0 {
+		detail.Status = firstPositiveInt(obj["status"], obj["orderState"], obj["state"], obj["orderStatusCode"], obj["tradeStatus"], obj["payStatus"])
+	}
+	if detail.StatusName == "" {
+		detail.StatusName = firstNonEmptyStatusName(
+			stringValue(obj["statusName"]),
+			stringValue(obj["orderStateName"]),
+			stringValue(obj["stateName"]),
+			stringValue(obj["tradeStatusName"]),
+			stringValue(obj["payStatusName"]),
+			stringValue(obj["statusDesc"]),
+			stringValue(obj["orderStatusDesc"]),
+		)
+	}
+	if detail.Status == 0 {
+		detail.Status = inferOrderStatus(detail.StatusName)
+	}
 	if codeInfo, ok := obj["takeMealCodeInfo"].(map[string]any); ok {
 		detail.TakeMealCode = stringValue(codeInfo["code"])
+	}
+	if detail.TakeMealCode == "" {
+		detail.TakeMealCode = firstNonEmptyStatusName(
+			stringValue(obj["takeMealCode"]),
+			stringValue(obj["mealCode"]),
+			stringValue(obj["pickupCode"]),
+			stringValue(obj["takeCode"]),
+		)
 	}
 	if shop, ok := obj["shopInfo"].(map[string]any); ok {
 		detail.ShopName = stringValue(shop["deptName"])
@@ -249,6 +278,52 @@ func firstPositiveFloat(values ...any) float64 {
 		}
 	}
 	return 0
+}
+
+func firstPositiveInt(values ...any) int {
+	for _, value := range values {
+		if n := int(numberFloat(value)); n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+func firstNonEmptyStatusName(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func inferOrderStatus(statusName string) int {
+	switch {
+	case containsAny(statusName, "待付款", "待支付", "未支付", "支付中"):
+		return OrderStatusUnpaid
+	case containsAny(statusName, "等待取餐", "待取餐", "可取餐", "取餐", "待领取"):
+		return OrderStatusReady
+	case containsAny(statusName, "制作", "备餐", "准备中"):
+		return OrderStatusMaking
+	case containsAny(statusName, "已完成", "完成"):
+		return OrderStatusCompleted
+	case containsAny(statusName, "已取消", "取消", "已关闭", "关闭"):
+		return OrderStatusCancelled
+	case containsAny(statusName, "下单成功", "已下单", "已支付", "支付成功", "已接单"):
+		return OrderStatusPlaced
+	default:
+		return 0
+	}
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if needle != "" && strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildOrderNoticeCard 用于轮询节点主动通知（如制作中/等待取餐/已完成/已取消）。

@@ -2,6 +2,7 @@ package luckinaction
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -17,10 +18,10 @@ import (
 )
 
 const (
-	orderPollTick      = 3 * time.Second
-	orderPollLease     = 2 * time.Minute
-	orderPollBatch     = 50
-	orderMaxFailCount  = 5
+	orderPollTick     = 3 * time.Second
+	orderPollLease    = 2 * time.Minute
+	orderPollBatch    = 50
+	orderMaxFailCount = 5
 )
 
 // OrderPoller 后台轮询瑞幸订单生命周期，按状态机推进并通知/更新卡片。
@@ -135,7 +136,11 @@ func (p *OrderPoller) process(record luckin.OrderRecord, now time.Time) {
 
 	detail, err := p.draft.OrderDetail(p.ctx, cred, record.OrderID)
 	if err != nil {
-		p.handleFailure(record, rowID, now)
+		p.handleFailure(record, rowID, "query order detail failed: "+err.Error(), now)
+		return
+	}
+	if detail.Status == 0 && strings.TrimSpace(detail.StatusName) == "" {
+		p.handleFailure(record, rowID, "empty order detail response", now)
 		return
 	}
 
@@ -143,10 +148,15 @@ func (p *OrderPoller) process(record luckin.OrderRecord, now time.Time) {
 	p.apply(record, rowID, detail, decision, now)
 }
 
-func (p *OrderPoller) handleFailure(record luckin.OrderRecord, rowID int64, now time.Time) {
+func (p *OrderPoller) handleFailure(record luckin.OrderRecord, rowID int64, reason string, now time.Time) {
 	failCount := record.FailCount + 1
+	logs.L().Ctx(p.ctx).Warn("luckin order poll failed",
+		zap.String("order_id", record.OrderID),
+		zap.Int("fail_count", failCount),
+		zap.String("reason", reason),
+	)
 	if failCount >= orderMaxFailCount {
-		p.stop(rowID, luckin.OrderRecordFailed, "exceeded max poll failures", now)
+		p.stop(rowID, luckin.OrderRecordFailed, fmt.Sprintf("exceeded max poll failures: %s", reason), now)
 		return
 	}
 	next := now.Add(p.cfg.PollInterval)
@@ -170,18 +180,30 @@ func (p *OrderPoller) apply(record luckin.OrderRecord, rowID int64, detail lucki
 	}
 
 	if record.MessageID == "" {
+		logs.L().Ctx(p.ctx).Warn("luckin order poll skipped card patch: message id empty", zap.String("order_id", record.OrderID))
 		return
 	}
 	switch {
 	case decision.SendUnpaidReminder:
-		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildUnpaidReminderCard(record.OrderID, record.PayURL))
+		p.patchOrderCard(record, luckin.BuildUnpaidReminderCard(record.OrderID, record.PayURL), "unpaid_reminder")
 	case decision.NoticeText != "":
-		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildOrderNoticeCard(decision.NoticeText, detail))
+		p.patchOrderCard(record, luckin.BuildOrderNoticeCard(decision.NoticeText, detail), "notice")
 		if detail.Status == luckin.OrderStatusReady {
 			p.notifyReady(record, detail)
 		}
 	case decision.PatchStatusCard:
-		_ = larkmsg.PatchCardJSON(p.ctx, record.MessageID, luckin.BuildOrderStatusCard(detail))
+		p.patchOrderCard(record, luckin.BuildOrderStatusCard(detail), "status")
+	}
+}
+
+func (p *OrderPoller) patchOrderCard(record luckin.OrderRecord, card map[string]any, scene string) {
+	if err := larkmsg.PatchCardJSON(p.ctx, record.MessageID, card); err != nil {
+		logs.L().Ctx(p.ctx).Warn("luckin order poll patch card failed",
+			zap.String("order_id", record.OrderID),
+			zap.String("message_id", record.MessageID),
+			zap.String("scene", scene),
+			zap.Error(err),
+		)
 	}
 }
 
