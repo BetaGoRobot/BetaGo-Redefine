@@ -1,9 +1,11 @@
 package ark_dal
 
 import (
+	"context"
 	"testing"
 
 	arktools "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
@@ -21,6 +23,24 @@ func TestBuildTurnRequestUsesExplicitReasoningEffort(t *testing.T) {
 	}
 	if req.GetReasoning() == nil || req.GetReasoning().GetEffort() != responses.ReasoningEffort_high {
 		t.Fatalf("reasoning effort = %+v, want %v", req.GetReasoning(), responses.ReasoningEffort_high)
+	}
+}
+
+func TestRecordStreamUsageSkipsEmptyStreamCreationFailure(t *testing.T) {
+	store := &arkUsageStore{}
+	llmusage.SetDefaultRecorder(llmusage.NewRecorderWithStore(store))
+	t.Cleanup(func() {
+		llmusage.SetDefaultRecorder(nil)
+	})
+
+	New[struct{}]("oc_chat", "ou_actor", nil).recordStreamUsage(context.Background(), llmusage.Scope{
+		ChatID:     "oc_chat",
+		SourceType: llmusage.SourceTypeUser,
+		Source:     "chat",
+	}, "model")
+
+	if len(store.rows) != 0 {
+		t.Fatalf("usage rows = %d, want 0 for stream creation failure before response id", len(store.rows))
 	}
 }
 

@@ -126,14 +126,10 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 	runtime, _, err := runtimeClient()
 	if err != nil {
 		otel.RecordError(span, err)
-		recordResponseUsage(ctx, scope, bodyModel(body), llmusage.KindResponsesStream, nil, err)
 		return nil, err
 	}
 	resp, err := runtime.CreateResponsesStream(ctx, body)
 	otel.RecordError(span, err)
-	if err != nil {
-		recordResponseUsage(ctx, scope, bodyModel(body), llmusage.KindResponsesStream, nil, err)
-	}
 	return resp, err
 }
 

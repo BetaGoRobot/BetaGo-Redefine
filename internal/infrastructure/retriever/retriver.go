@@ -20,6 +20,7 @@ import (
 	"github.com/bytedance/sonic"
 	opensearchgo "github.com/opensearch-project/opensearch-go"
 	"github.com/tmc/langchaingo/embeddings"
+	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/vectorstores"
@@ -117,7 +118,7 @@ func Status() (bool, string) {
 
 // RAGSystem 结构体封装了 RAG 应用所需的所有核心组件
 type RAGSystem struct {
-	llm      *openai.LLM
+	llm      textGenerator
 	embedder *embeddings.EmbedderImpl
 	store    *vectoropensearch.Store
 	osClient *opensearchgo.Client
@@ -138,6 +139,11 @@ type Config struct {
 	OpenSearchUsername   string
 	OpenSearchPassword   string
 }
+
+type textGenerator interface {
+	GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error)
+}
+
 type arkMultiModalEmbeddingClient struct{}
 
 func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts []string) ([][]float32, error) {
@@ -426,12 +432,70 @@ func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query strin
 
 	// 4. 调用 LLM 生成最终答案
 	logs.L().Ctx(ctx).Info("正在调用 LLM 基于上下文生成回答...", zap.String("indexName", indexName))
-	answer, err := rs.llm.Call(ctx, prompt)
+	resp, err := rs.llm.GenerateContent(ctx, []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeHuman, prompt),
+	})
+	recordLangchainUsage(ctx, llmusage.Scope{
+		ChatID:     chatID,
+		ChatName:   larkchat.GetChatName(ctx, chatID),
+		SourceType: llmusage.SourceTypeSystem,
+		Source:     "retriever_answer",
+	}, config.Get().ArkConfig.NormalModel, resp, err)
 	if err != nil {
 		return "", contextDocs, fmt.Errorf("RAG - LLM 调用失败: %w", err)
 	}
+	if resp == nil || len(resp.Choices) == 0 {
+		return "", contextDocs, fmt.Errorf("RAG - LLM 调用失败: empty response")
+	}
 
-	return answer, contextDocs, nil
+	return resp.Choices[0].Content, contextDocs, nil
+}
+
+func recordLangchainUsage(ctx context.Context, scope llmusage.Scope, modelID string, resp *llms.ContentResponse, callErr error) {
+	record := llmusage.Record{
+		Scope:     scope,
+		Provider:  "ark",
+		Model:     modelID,
+		Kind:      llmusage.KindResponses,
+		Status:    llmusage.StatusUsageMissing,
+		CreatedAt: time.Now(),
+	}
+	if callErr != nil {
+		record.Status = llmusage.StatusError
+		record.Error = callErr.Error()
+		_ = llmusage.RecordUsage(ctx, record)
+		return
+	}
+	if resp != nil && len(resp.Choices) > 0 {
+		info := resp.Choices[0].GenerationInfo
+		record.PromptTokens = generationInfoInt64(info, "PromptTokens")
+		record.CompletionTokens = generationInfoInt64(info, "CompletionTokens")
+		record.TotalTokens = generationInfoInt64(info, "TotalTokens")
+		if record.PromptTokens > 0 || record.CompletionTokens > 0 || record.TotalTokens > 0 {
+			record.Status = llmusage.StatusSuccess
+		}
+	}
+	_ = llmusage.RecordUsage(ctx, record)
+}
+
+func generationInfoInt64(info map[string]any, key string) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	switch v := info[key].(type) {
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case int32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case float32:
+		return int64(v)
+	default:
+		return 0
+	}
 }
 
 func indexNameForSuffix(suffix string) string {

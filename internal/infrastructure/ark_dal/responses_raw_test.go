@@ -46,22 +46,25 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	createResponsesFn = func(ctx context.Context, req *responses.ResponsesRequest, scope llmusage.Scope) (*responses.ResponseObject, error) {
 		captured = append(captured, req)
 		capturedScopes = append(capturedScopes, scope)
+		var resp *responses.ResponseObject
 		switch len(captured) {
 		case 1:
-			return &responses.ResponseObject{
+			resp = &responses.ResponseObject{
 				Id: "resp_seed",
 				Usage: &responses.Usage{
 					InputTokens:  10,
 					OutputTokens: 0,
 					TotalTokens:  10,
 				},
-			}, nil
+			}
 		case 2, 3:
-			return responseTextFixture(`{"intent_type":"question","need_reply":true,"reply_confidence":88,"reason":"ask","suggest_action":"chat","interaction_mode":"standard"}`), nil
+			resp = responseTextFixture(`{"intent_type":"question","need_reply":true,"reply_confidence":88,"reason":"ask","suggest_action":"chat","interaction_mode":"standard"}`)
 		default:
 			t.Fatalf("unexpected createResponses call count %d", len(captured))
 			return nil, nil
 		}
+		recordResponseUsage(ctx, scope, bodyModel(req), llmusage.KindResponses, resp, nil)
+		return resp, nil
 	}
 	t.Cleanup(func() {
 		createResponsesFn = oldCreateResponsesFn

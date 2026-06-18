@@ -643,6 +643,9 @@ func (r *ResponsesImpl[T]) recordStreamUsage(ctx context.Context, scope llmusage
 		return
 	}
 	r.streamUsageRecorded = true
+	if r.streamUsage == nil && strings.TrimSpace(r.streamResponseID) == "" && strings.TrimSpace(r.lastRespID) == "" {
+		return
+	}
 	status := llmusage.StatusUsageMissing
 	record := llmusage.Record{
 		Scope:      scope,
