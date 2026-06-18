@@ -139,7 +139,9 @@ func (p *OrderPoller) process(record luckin.OrderRecord, now time.Time) {
 		p.handleFailure(record, rowID, "query order detail failed: "+err.Error(), now)
 		return
 	}
-	if detail.Status == 0 && strings.TrimSpace(detail.StatusName) == "" {
+	// 真正的空响应（连订单号都没有）按失败处理；若仅状态码未知但接口返回了订单号或状态名，
+	// 视为合法但陌生的状态，继续轮询而非计入失败，避免新状态文案被误判为接口故障。
+	if detail.OrderID == "" && detail.Status == 0 && strings.TrimSpace(detail.StatusName) == "" {
 		p.handleFailure(record, rowID, "empty order detail response", now)
 		return
 	}

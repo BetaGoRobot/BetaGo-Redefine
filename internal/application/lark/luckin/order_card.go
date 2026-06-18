@@ -21,6 +21,40 @@ const (
 	OrderStatusModeReply = "reply"
 )
 
+// orderStatusDef 统一描述状态码、展示文案与推断关键词，orderStatusLabel 与
+// inferOrderStatus 共用同一份数据，避免双向映射不一致。
+type orderStatusDef struct {
+	code     int
+	label    string
+	keywords []string
+}
+
+var orderStatusDefinitions = []orderStatusDef{
+	{code: OrderStatusUnpaid, label: "待付款", keywords: []string{"待付款", "待支付", "未支付", "支付中"}},
+	{code: OrderStatusPlaced, label: "下单成功", keywords: []string{"下单成功", "已下单", "支付成功", "已支付", "已接单"}},
+	{code: OrderStatusMaking, label: "制作中", keywords: []string{"制作中", "制作", "备餐中", "备餐", "准备中"}},
+	{code: OrderStatusReady, label: "等待取餐", keywords: []string{"等待取餐", "待取餐", "可取餐", "待领取"}},
+	{code: OrderStatusCompleted, label: "已完成", keywords: []string{"已完成", "取餐完成", "已取餐", "完成"}},
+	{code: OrderStatusCancelled, label: "已取消", keywords: []string{"已取消", "已关闭", "已作废", "已退单"}},
+}
+
+// queryOrderDetailInfo 返回的字段名在不同状态下不稳定，这里集中维护候选别名，
+// 新增变体时只需追加一处，避免解析逻辑散落在多个 if 分支里。
+var (
+	orderStatusCodeFieldAliases = []string{
+		"orderStatus", "status", "orderState", "state",
+		"orderStatusCode", "tradeStatus", "payStatus",
+	}
+	orderStatusNameFieldAliases = []string{
+		"orderStatusName", "statusName", "orderStateName", "stateName",
+		"tradeStatusName", "payStatusName", "statusDesc", "orderStatusDesc",
+	}
+	// 优先取字符串形态的订单号字段：瑞幸 orderId 常为大整数，JSON 解析成 float64 会丢精度，
+	// 必须优先用 orderIdStr/orderNo 等字符串字段，仅在没有字符串字段时才回退到数字 orderId。
+	orderIDFieldAliases      = []string{"orderIdStr", "orderNo", "orderId"}
+	takeMealCodeFieldAliases = []string{"takeMealCode", "mealCode", "pickupCode", "takeCode"}
+)
+
 // IsTerminalOrderStatus 判断是否为终止状态（已完成/已取消），轮询命中即停止。
 func IsTerminalOrderStatus(status int) bool {
 	return status == OrderStatusCompleted || status == OrderStatusCancelled
@@ -45,13 +79,10 @@ func OrderCreatedFromResult(content json.RawMessage) OrderCreated {
 		return OrderCreated{}
 	}
 	created := OrderCreated{
-		OrderID:       stringValue(obj["orderIdStr"]),
+		OrderID:       firstNonEmptyString(obj, orderIDFieldAliases...),
 		PayURL:        stringValue(obj["payOrderUrl"]),
 		QRCodeURL:     stringValue(obj["payOrderQrCodeUrl"]),
 		DiscountPrice: numberFloat(obj["discountPrice"]),
-	}
-	if created.OrderID == "" {
-		created.OrderID = stringValue(obj["orderId"])
 	}
 	if needPay, ok := obj["needPay"].(bool); ok {
 		created.NeedPay = needPay
@@ -161,42 +192,25 @@ func OrderDetailFromResult(content json.RawMessage) OrderDetail {
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return OrderDetail{}
 	}
+	statusCode := firstPositiveIntValue(obj, orderStatusCodeFieldAliases...)
+	statusName := firstNonEmptyString(obj, orderStatusNameFieldAliases...)
+	if statusCode == 0 {
+		statusCode = inferOrderStatus(statusName)
+	}
+	if statusName == "" {
+		statusName = orderStatusLabel(statusCode)
+	}
 	detail := OrderDetail{
-		OrderID:    stringValue(obj["orderId"]),
-		Status:     int(numberFloat(obj["orderStatus"])),
-		StatusName: stringValue(obj["orderStatusName"]),
+		OrderID:    firstNonEmptyString(obj, orderIDFieldAliases...),
+		Status:     statusCode,
+		StatusName: statusName,
 		AboutTime:  int64(numberFloat(obj["aboutTime"])),
-	}
-	if detail.OrderID == "" {
-		detail.OrderID = stringValue(obj["orderIdStr"])
-	}
-	if detail.Status == 0 {
-		detail.Status = firstPositiveInt(obj["status"], obj["orderState"], obj["state"], obj["orderStatusCode"], obj["tradeStatus"], obj["payStatus"])
-	}
-	if detail.StatusName == "" {
-		detail.StatusName = firstNonEmptyStatusName(
-			stringValue(obj["statusName"]),
-			stringValue(obj["orderStateName"]),
-			stringValue(obj["stateName"]),
-			stringValue(obj["tradeStatusName"]),
-			stringValue(obj["payStatusName"]),
-			stringValue(obj["statusDesc"]),
-			stringValue(obj["orderStatusDesc"]),
-		)
-	}
-	if detail.Status == 0 {
-		detail.Status = inferOrderStatus(detail.StatusName)
 	}
 	if codeInfo, ok := obj["takeMealCodeInfo"].(map[string]any); ok {
 		detail.TakeMealCode = stringValue(codeInfo["code"])
 	}
 	if detail.TakeMealCode == "" {
-		detail.TakeMealCode = firstNonEmptyStatusName(
-			stringValue(obj["takeMealCode"]),
-			stringValue(obj["mealCode"]),
-			stringValue(obj["pickupCode"]),
-			stringValue(obj["takeCode"]),
-		)
+		detail.TakeMealCode = firstNonEmptyString(obj, takeMealCodeFieldAliases...)
 	}
 	if shop, ok := obj["shopInfo"].(map[string]any); ok {
 		detail.ShopName = stringValue(shop["deptName"])
@@ -280,50 +294,39 @@ func firstPositiveFloat(values ...any) float64 {
 	return 0
 }
 
-func firstPositiveInt(values ...any) int {
-	for _, value := range values {
-		if n := int(numberFloat(value)); n > 0 {
+// firstNonEmptyString 按候选字段名依次取值，返回第一个非空字符串。
+func firstNonEmptyString(obj map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v := stringValue(obj[key]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// firstPositiveIntValue 按候选字段名依次取值，返回第一个正整数。
+func firstPositiveIntValue(obj map[string]any, keys ...string) int {
+	for _, key := range keys {
+		if n := int(numberFloat(obj[key])); n > 0 {
 			return n
 		}
 	}
 	return 0
 }
 
-func firstNonEmptyStatusName(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func inferOrderStatus(statusName string) int {
-	switch {
-	case containsAny(statusName, "待付款", "待支付", "未支付", "支付中"):
-		return OrderStatusUnpaid
-	case containsAny(statusName, "等待取餐", "待取餐", "可取餐", "取餐", "待领取"):
-		return OrderStatusReady
-	case containsAny(statusName, "制作", "备餐", "准备中"):
-		return OrderStatusMaking
-	case containsAny(statusName, "已完成", "完成"):
-		return OrderStatusCompleted
-	case containsAny(statusName, "已取消", "取消", "已关闭", "关闭"):
-		return OrderStatusCancelled
-	case containsAny(statusName, "下单成功", "已下单", "已支付", "支付成功", "已接单"):
-		return OrderStatusPlaced
-	default:
+	name := strings.TrimSpace(statusName)
+	if name == "" {
 		return 0
 	}
-}
-
-func containsAny(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if needle != "" && strings.Contains(text, needle) {
-			return true
+	for _, def := range orderStatusDefinitions {
+		for _, kw := range def.keywords {
+			if strings.Contains(name, kw) {
+				return def.code
+			}
 		}
 	}
-	return false
+	return 0
 }
 
 // BuildOrderNoticeCard 用于轮询节点主动通知（如制作中/等待取餐/已完成/已取消）。
@@ -354,22 +357,12 @@ func BuildUnpaidReminderCard(orderID string, payURL string) map[string]any {
 }
 
 func orderStatusLabel(status int) string {
-	switch status {
-	case OrderStatusUnpaid:
-		return "待付款"
-	case OrderStatusPlaced:
-		return "下单成功"
-	case OrderStatusMaking:
-		return "制作中"
-	case OrderStatusReady:
-		return "等待取餐"
-	case OrderStatusCompleted:
-		return "已完成"
-	case OrderStatusCancelled:
-		return "已取消"
-	default:
-		return "未知状态"
+	for _, def := range orderStatusDefinitions {
+		if def.code == status {
+			return def.label
+		}
 	}
+	return "未知状态"
 }
 
 // OrderStatusNotice 返回某状态对应的节点通知文案；返回空表示该状态不单独通知。
