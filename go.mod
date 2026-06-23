@@ -20,7 +20,7 @@ require (
 	github.com/gotify/go-api-client/v2 v2.0.4
 	github.com/h2non/bimg v1.1.9
 	github.com/issue9/cnregion v1.2023.2
-	github.com/jellydator/ttlcache/v3 v3.4.0
+	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/jinzhu/copier v0.4.0
 	github.com/kevinmatthe/kinetic v0.0.0-20260508084110-85d655c5082e
 	github.com/kevinmatthe/zaplog v0.1.6
@@ -32,7 +32,7 @@ require (
 	github.com/opensearch-project/opensearch-go v1.1.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
-	github.com/pelletier/go-toml/v2 v2.4.0
+	github.com/pelletier/go-toml/v2 v2.4.1
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rivo/uniseg v0.4.7
