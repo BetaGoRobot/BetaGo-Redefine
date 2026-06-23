@@ -319,7 +319,7 @@ func streamingChunkText(data *ark_dal.ModelStreamRespReasoning) string {
 	if text := strings.TrimSpace(data.ContentStruct.Reply); text != "" {
 		return text
 	}
-	return strings.TrimSpace(data.Content)
+	return ""
 }
 
 func buildStreamingReplyCard(content string) (RawCard, error) {
