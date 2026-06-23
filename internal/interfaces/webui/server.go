@@ -22,6 +22,9 @@ type Server struct {
 	authToken   string
 	corsOrigins []string
 	store       *tokenStatsStore
+
+	robotName string
+	instance  string
 }
 
 // NewServer 根据注入的依赖构造 Server。db 由模块在 Init 阶段惰性解析后传入。
@@ -46,6 +49,8 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		authToken:    authToken,
 		corsOrigins:  corsOrigins,
 		store:        newTokenStatsStore(db),
+		robotName:    strings.TrimSpace(opts.RobotName),
+		instance:     strings.TrimSpace(opts.Instance),
 	}
 }
 
@@ -130,10 +135,16 @@ func (s *Server) resolveAllowedOrigin(origin string) string {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	robot := s.robotName
+	if robot == "" {
+		robot = "unknown"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"auth":      s.authToken != "",
-		"timestamp": s.now().Unix(),
+		"ok":         true,
+		"auth":       s.authToken != "",
+		"timestamp":  s.now().Unix(),
+		"robot_name": robot,
+		"instance":   s.instance,
 	})
 }
 

@@ -1,5 +1,13 @@
 // API 返回类型定义，与后端 internal/interfaces/webui/types.go 一一对应。
 
+export interface HealthResponse {
+  ok: boolean
+  auth: boolean
+  timestamp: number
+  robot_name: string
+  instance?: string
+}
+
 export interface ChatMetrics {
   window_days: number
   recent_messages: number

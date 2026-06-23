@@ -166,7 +166,13 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// mergeMissingChats 把仅出现在 token 记录中的 chat（通常是单聊）补进列表。
+// mergeMissingChats 把仅出现在 token 记录中的 chat 补进列表。
+//
+// 注意：这里"token 里有但 Lark 群列表里没有"并不等价于单聊（p2p），也可能
+// 是机器人没有权限获取该群信息。真实判定用 chat_id 前缀：
+//   - oc_* → 群聊（Feishu Open Chat ID）
+//   - 其它 → "unknown"，交给前端按"未知/缺失权限"展示，
+//     避免把没权限的群错误标记为"单聊"。
 func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal) []ChatSummary {
 	seen := make(map[string]struct{}, len(chats))
 	for _, c := range chats {
@@ -181,11 +187,28 @@ func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal) []
 		if name == "" {
 			name = id
 		}
-		extra = append(extra, ChatSummary{ChatID: id, Name: name, ChatStatus: "p2p"})
+		extra = append(extra, ChatSummary{ChatID: id, Name: name, ChatStatus: guessChatStatus(id)})
 	}
 	// 让补充项顺序稳定，避免每次刷新顺序抖动。
 	sort.Slice(extra, func(i, j int) bool { return extra[i].ChatID < extra[j].ChatID })
 	return append(chats, extra...)
+}
+
+// guessChatStatus 用 chat_id 前缀推断会话类型。
+//
+// 约定（飞书 Open Platform）：
+//   - oc_ 前缀 → 群聊 chat
+//   - ou_ 前缀 → 用户（对机器人来说表示 p2p 会话）
+//   - 其它前缀 → unknown，交给前端处理，避免误判。
+func guessChatStatus(chatID string) string {
+	switch {
+	case strings.HasPrefix(chatID, "oc_"):
+		return "group"
+	case strings.HasPrefix(chatID, "ou_"):
+		return "p2p"
+	default:
+		return "unknown"
+	}
 }
 
 // larkChatService 是基于 Lark OpenAPI 的默认 ChatService 实现。
@@ -203,12 +226,17 @@ func (l *larkChatService) ListChats(ctx context.Context) ([]ChatSummary, error) 
 		if item == nil {
 			continue
 		}
+		chatID := strings.TrimSpace(ptr(item.ChatId))
+		status := strings.TrimSpace(ptr(item.ChatStatus))
+		if status == "" {
+			status = guessChatStatus(chatID)
+		}
 		summaries = append(summaries, ChatSummary{
-			ChatID:      strings.TrimSpace(ptr(item.ChatId)),
+			ChatID:      chatID,
 			Name:        strings.TrimSpace(ptr(item.Name)),
 			Avatar:      strings.TrimSpace(ptr(item.Avatar)),
 			Description: strings.TrimSpace(ptr(item.Description)),
-			ChatStatus:  strings.TrimSpace(ptr(item.ChatStatus)),
+			ChatStatus:  status,
 			External:    item.External != nil && *item.External,
 			Tenant:      strings.TrimSpace(ptr(item.TenantKey)),
 		})
@@ -224,13 +252,17 @@ func (l *larkChatService) GetChat(ctx context.Context, chatID string) (*ChatDeta
 	if data == nil {
 		return nil, errors.New("chat not found")
 	}
+	status := strings.TrimSpace(ptr(data.ChatStatus))
+	if status == "" {
+		status = guessChatStatus(chatID)
+	}
 	detail := &ChatDetail{
 		ChatSummary: ChatSummary{
 			ChatID:      chatID,
 			Name:        strings.TrimSpace(ptr(data.Name)),
 			Avatar:      strings.TrimSpace(ptr(data.Avatar)),
 			Description: strings.TrimSpace(ptr(data.Description)),
-			ChatStatus:  strings.TrimSpace(ptr(data.ChatStatus)),
+			ChatStatus:  status,
 			External:    data.External != nil && *data.External,
 		},
 		OwnerID:  strings.TrimSpace(ptr(data.OwnerId)),

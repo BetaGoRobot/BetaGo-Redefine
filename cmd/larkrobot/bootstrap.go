@@ -287,6 +287,13 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		MemberCount:   webui.LarkMemberCount,
 		MemberList:    webui.LarkMemberList,
 		MessageStats:  countRecentChatMessages,
+		RobotName: func() string {
+			if cfg.BaseInfo != nil {
+				return cfg.BaseInfo.RobotName
+			}
+			return ""
+		}(),
+		Instance: cfg.LarkConfig.AppID,
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",

@@ -37,6 +37,10 @@ type Options struct {
 	MemberList    MemberListFunc
 	MessageStats  MessageStatsFunc
 	Now           func() time.Time
+	// RobotName 用于在多 bot 场景下前端区分不同实例；空串时回退为 "unknown"。
+	RobotName string
+	// Instance 是部署实例名或 Lark AppID，便于运维定位。
+	Instance string
 }
 
 // Module 承载 WebUI 的 HTTP 服务生命周期，实现 runtime.Module 契约。
