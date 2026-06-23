@@ -1,0 +1,5 @@
+# 保持前端镜像构建上下文干净：依赖与产物在镜像内重新生成。
+webui/node_modules
+webui/dist
+webui/.env.local
+**/.git

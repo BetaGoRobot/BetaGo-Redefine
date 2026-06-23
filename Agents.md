@@ -135,6 +135,41 @@ BetaGo-Redefine/
 - 自定义配置
 - 性能监控
 
+### 7. WebUI 管理后台（前后端分离）
+
+新增独立的可视化管理后台，前后端分离部署：
+
+- **后端**：`internal/interfaces/webui`，以独立 `runtime.Module`（名 `webui_http`）运行在独立端口，
+  崩溃不影响消息主流程。只提供 JSON REST API，沿用 `health_http.go` 的 `net/http + sonic` 风格，不引新框架。
+  - `GET /api/chats`：列出机器人加入的所有群（含头像、chat_id、状态、外部群标记），复用 `chatmetrics.ListChats`。
+  - `GET /api/chats/{chatID}`：群详情 + 成员数，复用 `larkchat.GetChatInfoCache` + `chatmetrics.CountChatMembers`。
+  - `GET /api/chats/{chatID}/stats?window=7d`：token 消耗多维聚合（按 model/kind/source_type/status/按天），
+    数据源为 `llm_token_usage_records` 表；消息量依赖 OpenSearch，缺失时优雅降级返回 `available=false`。
+  - `GET|PUT /api/chats/{chatID}/features[/{name}]`：功能开关查看/切换，底层走 `config.Manager` 的
+    `IsFeatureEnabled` / `BlockFeatureChat` / `UnblockFeatureChat`。
+  - `GET|PUT|DELETE /api/chats/{chatID}/configs[/{key}]`：配置查看/修改/重置，复用 `configDefinitions` 做类型与范围校验。
+  - chatID 传特殊值 `global` 时映射到全局作用域（`ScopeGlobal`）。
+- **鉴权**：配置 `webui_config.auth_token` 后，所有写操作（PUT/DELETE）需携带 `Authorization: Bearer <token>`；
+  GET 只读放行。未配置 token 时不鉴权（仅建议受信任内网）。
+- **前端**：仓库根目录 `webui/`（Vite + Vue3 + TS + Element Plus + ECharts），独立工程独立构建，
+  通过 `VITE_API_BASE` 或 dev proxy 连接后端，跨域由后端 `webui_config.cors_allow_origins` 控制。
+- **镜像与 CI**：前端镜像由 `script/webui/Dockerfile`（node 构建 + Caddy 托管，`/api` 反代到
+  `BACKEND_URL`）产出，CI 工作流 `.github/workflows/docker-image-webui.yaml` 推送到
+  `kevinmatt/betago_webui`；后端镜像仍由 `script/larkrobot/Dockerfile` + `docker-image-lark.yaml` 产出。
+- **一键部署**：`deploy/docker-compose.yaml` 编排 larkrobot + webui + postgres + redis，
+  webui 带 Traefik docker-provider labels（websecure/443 + TLS）对外反代，
+  `cp config.example.toml config.toml && cp .env.example .env && docker compose up -d`，详见 `deploy/README.md`。
+
+配置示例（`.dev/config.toml`，`.dev` 已 gitignore）：
+
+```toml
+[webui_config]
+    addr = ":8090"                 # 留空则禁用 WebUI 模块（标记为 disabled，不影响启动）
+    auth_token = "change-me"        # 留空则写操作不鉴权
+    shutdown_timeout_seconds = 10
+    cors_allow_origins = ["http://localhost:5173"]  # 留空回退为允许任意来源 "*"
+```
+
 ## 配置说明
 
 配置文件位置: `.dev/config.toml`

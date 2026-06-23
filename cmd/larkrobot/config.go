@@ -28,3 +28,12 @@ func managementAddr(cfg *infraConfig.BaseConfig) string {
 	}
 	return cfg.ManagementHTTPConfig.Addr
 }
+
+// webuiConfig 返回管理后台 WebUI 的配置。返回 nil 表示未配置该模块，
+// 运行时会把 WebUI 标记为 disabled 而不是启动失败。
+func webuiConfig(cfg *infraConfig.BaseConfig) *infraConfig.WebUIConfig {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.WebUIConfig
+}

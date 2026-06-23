@@ -32,6 +32,7 @@ import (
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	larkiface "github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/webui"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -278,6 +279,13 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		app.Registry(),
 		appruntime.PrometheusProvider{},
 	))
+	app.AddModule(webui.NewModule(webui.Options{
+		Config:        webuiConfig(cfg),
+		ConfigManager: appconfig.GetManager(),
+		DBProvider:    db.DB,
+		ChatService:   webui.NewLarkChatService(),
+		MessageStats:  countRecentChatMessages,
+	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",
 		Critical: false,

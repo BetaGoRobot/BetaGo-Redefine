@@ -1,0 +1,88 @@
+# BetaGo 一键部署编排。
+#
+# 包含：后端机器人(larkrobot) + WebUI 前端(webui) + 核心基础设施(postgres / redis)。
+# OpenSearch / Minio / 网易云 API 等可选依赖未内置，按需在 config.toml 中指向外部实例。
+#
+# 用法：
+#   cd deploy
+#   cp config.example.toml config.toml   # 填入 lark / ark 等真实配置
+#   cp .env.example .env                 # 按需修改端口 / 密码 / 镜像 tag
+#   docker compose up -d
+#
+# 访问 WebUI：http://localhost:${WEBUI_PORT}
+# 后端管理 API：http://localhost:${WEBUI_BACKEND_PORT}/api/...
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: betago-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-betago}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次启动时自动执行迁移 SQL（按文件名顺序）。
+      - ../script/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-betago}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: betago-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  larkrobot:
+    image: ${LARKBOT_IMAGE:-kevinmatt/larkbot_v2:latest}
+    container_name: betago-larkrobot
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      BETAGO_CONFIG_PATH: /app/config.toml
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+    ports:
+      # 把后端 WebUI API 端口暴露到宿主，方便直接调试（与 config.toml 的 webui_config.addr 对应）。
+      - "${WEBUI_BACKEND_PORT:-8090}:8090"
+
+  webui:
+    image: ${WEBUI_IMAGE:-kevinmatt/betago_webui:latest}
+    container_name: betago-webui
+    restart: unless-stopped
+    depends_on:
+      - larkrobot
+    environment:
+      # 同一 compose 网络内用服务名直连后端。
+      BACKEND_URL: "http://larkrobot:8090"
+    # 前面已有 Traefik(docker provider, labels 方式)做反代。
+    # 方案 1：整个域名交给本容器，Caddy 内部再分静态 / /api，Traefik 只一条路由规则。
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.betago-webui.rule=Host(`${WEBUI_HOST:-webui.example.com}`)"
+      - "traefik.http.routers.betago-webui.entrypoints=websecure"
+      - "traefik.http.routers.betago-webui.tls=true"
+      - "traefik.http.routers.betago-webui.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le}"
+      - "traefik.http.services.betago-webui.loadbalancer.server.port=80"
+    # 经 Traefik 访问时无需再把端口暴露到宿主；如需本地直连可取消下面注释。
+    # ports:
+    #   - "${WEBUI_PORT:-8080}:80"
+
+volumes:
+  pgdata:
+  redisdata:

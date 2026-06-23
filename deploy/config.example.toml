@@ -1,0 +1,61 @@
+# BetaGo docker compose 部署用配置示例。
+# 复制为 deploy/config.toml 并填入真实凭据（该文件不应提交，已在 .gitignore 忽略）。
+#
+# 注意：host 使用 compose 服务名（postgres / redis），而非 localhost。
+
+[base_info]
+    robot_name = "LarkBotV2"
+
+[db_config]
+    host = "postgres"
+    port = 5432
+    user = "postgres"
+    password = "postgres"
+    dbname = "betago"
+    sslmode = "disable"
+    timezone = "Asia/Shanghai"
+
+[redis_config]
+    addr = "redis:6379"
+    password = ""
+    db = 0
+
+[lark_config]
+    app_id = "cli_xxx"
+    app_secret = "xxx"
+    encryption_key = "xxx"
+    verification_token = "xxx"
+    bot_open_id = "ou_xxx"
+
+[ark_config]
+    api_key = "xxx"
+    normal_model = "doubao-seed-1-8-251228"
+    reasoning_model = "doubao-seed-1-8-251228"
+    vision_model = "doubao-seed-1-8-251228"
+    lite_model = "doubao-seed-1-8-251228"
+    embedding_model = "ep-xxx"
+    chunk_model = "ep-xxx"
+
+# 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
+# WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。
+[webui_config]
+    addr = ":8090"
+    auth_token = ""
+    shutdown_timeout_seconds = 10
+    cors_allow_origins = []
+
+# 以下为可选依赖，按需启用并指向外部实例（compose 未内置）。
+# [opensearch_config]
+#     domain = "https://your-opensearch:9200"
+#     user = "admin"
+#     password = "xxx"
+#     lark_msg_index = "lark_msg_index_jieba"
+
+# [minio_config]
+#     ak = "xxx"
+#     sk = "xxx"
+#     [minio_config.internal]
+#         endpoint = "minio:9000"
+
+# [netease_music_config]
+#     base_url = "http://neteaseapi:3000"

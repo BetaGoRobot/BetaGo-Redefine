@@ -1,0 +1,16 @@
+# BetaGo WebUI Caddy 配置。
+# 监听 80，托管 SPA 静态文件，把 /api/* 反代到后端（BACKEND_URL 运行时注入）。
+:80 {
+	root * /usr/share/caddy
+
+	# /api 反向代理到后端 WebUI 服务，避免浏览器跨域。
+	handle /api/* {
+		reverse_proxy {$BACKEND_URL}
+	}
+
+	# 其余请求走静态文件，未命中回退到 index.html（SPA 路由）。
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

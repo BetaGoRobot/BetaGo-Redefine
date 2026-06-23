@@ -30,6 +30,7 @@ type BaseConfig struct {
 	KuttConfig           *KuttConfig           `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
 	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
 	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
+	WebUIConfig          *WebUIConfig          `json:"webui_config" yaml:"webui_config" toml:"webui_config"`
 	VMConfig             *VMConfig             `json:"vm_config" yaml:"vm_config" toml:"vm_config"`
 	LuckinMCPConfig      *LuckinMCPConfig      `json:"luckin_mcp" yaml:"luckin_mcp" toml:"luckin_mcp"`
 }
@@ -68,6 +69,19 @@ type RuntimeConfig struct {
 type ManagementHTTPConfig struct {
 	Addr                   string `json:"addr" yaml:"addr" toml:"addr"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
+}
+
+// WebUIConfig 管理后台 WebUI 的 HTTP 服务配置。
+//
+// Addr 为空时整个 WebUI 模块被显式关闭（运行时标记为 disabled，而非启动失败）。
+// AuthToken 为空时不做鉴权（仅建议在受信任内网环境使用）；非空时所有写操作
+// 必须携带 `Authorization: Bearer <token>`。CORSAllowOrigins 用于前后端分离场景，
+// 控制允许跨域访问的前端来源，为空时回退为允许任意来源（"*"）。
+type WebUIConfig struct {
+	Addr                   string   `json:"addr" yaml:"addr" toml:"addr"`
+	AuthToken              string   `json:"auth_token" yaml:"auth_token" toml:"auth_token"`
+	ShutdownTimeoutSeconds int      `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
+	CORSAllowOrigins       []string `json:"cors_allow_origins" yaml:"cors_allow_origins" toml:"cors_allow_origins"`
 }
 
 type KuttConfig struct {
