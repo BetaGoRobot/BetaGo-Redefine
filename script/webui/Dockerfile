@@ -9,11 +9,9 @@ FROM node:22-alpine AS builder
 WORKDIR /app/webui
 
 # 先拷贝依赖描述并安装，最大化利用构建缓存。
-# 升级 npm 规避 node:22-alpine 自带 npm 10.x 在容器里 `npm ci` 偶发
-# "Exit handler never called!" 的已知崩溃；同时关掉 audit/fund 提速减噪。
-COPY webui/package.json webui/package-lock.json ./
-RUN npm install -g npm@11 && \
-    npm ci --no-audit --no-fund
+# 依赖源固定为公网 registry（见 webui/.npmrc），不依赖任何内网源。
+COPY webui/package.json webui/package-lock.json webui/.npmrc ./
+RUN npm ci --no-audit --no-fund
 
 # 再拷贝源码并构建。前端走相对路径 /api，跨域/转发交给 caddy。
 COPY webui/ ./
