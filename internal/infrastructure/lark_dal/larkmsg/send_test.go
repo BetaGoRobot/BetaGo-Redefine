@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -33,7 +34,7 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 		settings    []streamingSettingsUpdate
 		mu          sync.Mutex
 	)
-	updateStarted := make(chan struct{}, 2)
+	updateStarted := make(chan struct{}, 8)
 	releaseUpdate := make(chan struct{})
 
 	streamingCreateCardEntity = func(ctx context.Context, cardData any) (string, error) {
@@ -89,12 +90,11 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	}()
 
 	<-updateStarted
-	<-updateStarted
 
 	select {
 	case err := <-errCh:
 		t.Fatalf("stream returned before in-flight updates were released: %v", err)
-	default:
+	case <-time.After(50 * time.Millisecond):
 	}
 
 	close(releaseUpdate)
@@ -125,25 +125,25 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	}
 	config, ok := createdCard["config"].(map[string]any)
 	if !ok || config["streaming_mode"] != true {
-		t.Fatalf("expected initial card streaming mode enabled: %#v", createdCard["config"])
+		t.Fatalf("expected initial card streaming mode enabled: %#v", createdCard)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(updates) != 2 {
-		t.Fatalf("expected two content updates after initial card, got %#v", updates)
+	if len(updates) < 1 {
+		t.Fatalf("expected at least one content update after initial card, got %#v", updates)
 	}
 	sort.Slice(updates, func(i, j int) bool {
 		return updates[i].Sequence < updates[j].Sequence
 	})
-	if updates[0].Sequence >= updates[1].Sequence {
-		t.Fatalf("expected increasing update sequences: %#v", updates)
+	for i := 1; i < len(updates); i++ {
+		if updates[i-1].Sequence >= updates[i].Sequence {
+			t.Fatalf("expected increasing update sequences: %#v", updates)
+		}
 	}
-	if updates[0].CardID != "card_123" || updates[0].ElementID != streamingReplyElementID || updates[0].Content != "second" {
-		t.Fatalf("unexpected first update: %#v", updates[0])
-	}
-	if updates[1].Content != "third" {
-		t.Fatalf("unexpected second update: %#v", updates[1])
+	last := updates[len(updates)-1]
+	if last.CardID != "card_123" || last.ElementID != streamingReplyElementID || last.Content != "third" {
+		t.Fatalf("expected last update to carry latest element (third), got %#v", last)
 	}
 	if len(settings) != 1 {
 		t.Fatalf("expected final streaming settings update, got %#v", settings)
@@ -151,7 +151,7 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	if settings[0].StreamingMode {
 		t.Fatalf("expected final streaming mode disabled")
 	}
-	if settings[0].Sequence <= updates[1].Sequence {
+	if settings[0].Sequence <= last.Sequence {
 		t.Fatalf("expected final settings sequence after content updates: settings=%#v updates=%#v", settings, updates)
 	}
 }

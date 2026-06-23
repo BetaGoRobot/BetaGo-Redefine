@@ -27,6 +27,7 @@ import (
 const (
 	streamingReplyElementID = "streaming_reply_md"
 	streamingReplyTitle     = "正在回复"
+	streamingTickInterval   = 200 * time.Millisecond
 )
 
 type streamingContentUpdate struct {
@@ -124,7 +125,26 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 		errMu      sync.Mutex
 		asyncErr   error
 	)
+	var (
+		stateMu sync.Mutex
+		dirty   bool
+	)
 	nextSeq := newStreamingSequence()
+	setLatest := func(text string) {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		latestText = text
+		dirty = true
+	}
+	snapshotLatest := func() (string, bool) {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		if !dirty {
+			return "", false
+		}
+		dirty = false
+		return latestText, true
+	}
 	recordAsyncErr := func(updateErr error) {
 		if updateErr == nil {
 			return
@@ -141,9 +161,28 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 		defer errMu.Unlock()
 		return asyncErr
 	}
-	dispatchContentUpdate := func(update streamingContentUpdate) {
+	hasAsyncErr := func() bool {
+		errMu.Lock()
+		defer errMu.Unlock()
+		return asyncErr != nil
+	}
+	dispatchContentUpdate := func() {
+		if hasAsyncErr() {
+			return
+		}
+		text, ok := snapshotLatest()
+		if !ok {
+			return
+		}
+		sequence := nextSeq()
 		wg.Go(func() {
-			recordAsyncErr(streamingUpdateCardContent(ctx, update))
+			recordAsyncErr(streamingUpdateCardContent(ctx, streamingContentUpdate{
+				CardID:    cardID,
+				ElementID: streamingReplyElementID,
+				Content:   text,
+				UUID:      streamingUUID("content", cardID, sequence),
+				Sequence:  sequence,
+			}))
 		})
 	}
 	dispatchSettingsUpdate := func(update streamingSettingsUpdate) {
@@ -152,42 +191,65 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 		})
 	}
 
+	ticker := time.NewTicker(streamingTickInterval)
+	defer ticker.Stop()
+	tickerDone := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				dispatchContentUpdate()
+			case <-tickerDone:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	for data := range msgSeq {
+		if hasAsyncErr() {
+			break
+		}
 		chunk := streamingChunkText(data)
 		if strings.TrimSpace(chunk) == "" {
 			continue
 		}
-		latestText = chunk
 		if cardID == "" {
+			latestText = chunk
 			card, cardErr := buildStreamingReplyCard(latestText)
 			if cardErr != nil {
+				close(tickerDone)
 				return cardErr
 			}
 			cardID, cardErr = streamingCreateCardEntity(ctx, card)
 			if cardErr != nil {
+				close(tickerDone)
 				return cardErr
 			}
 			resp, replyErr := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, "_streaming_reply", inThread)
 			if replyErr != nil {
+				close(tickerDone)
 				return replyErr
 			}
 			if !resp.Success() {
+				close(tickerDone)
 				return errors.New(resp.Error())
 			}
 			if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
+				close(tickerDone)
 				return errors.New("empty reply message id")
 			}
 			continue
 		}
-		sequence := nextSeq()
-		dispatchContentUpdate(streamingContentUpdate{
-			CardID:    cardID,
-			ElementID: streamingReplyElementID,
-			Content:   latestText,
-			UUID:      streamingUUID("content", cardID, sequence),
-			Sequence:  sequence,
-		})
+		setLatest(chunk)
 	}
+	close(tickerDone)
+	if hasAsyncErr() {
+		_ = waitAsync()
+		return asyncErr
+	}
+
 	if cardID == "" {
 		if strings.TrimSpace(latestText) == "" {
 			return nil
@@ -208,6 +270,8 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 			return errors.New(resp.Error())
 		}
 	}
+
+	dispatchContentUpdate()
 	sequence := nextSeq()
 	dispatchSettingsUpdate(streamingSettingsUpdate{
 		CardID:        cardID,
