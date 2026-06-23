@@ -145,17 +145,18 @@ func NewCardV2(title string, elements []any, opts CardV2Options) RawCard {
 		body["padding"] = opts.Padding
 	}
 
-	return RawCard{
+	cardData := RawCard{
 		"schema": "2.0",
-		"config": map[string]any{
-			"update_multi": updateMulti,
-		},
-		"header": map[string]any{
+		"config": map[string]any{"update_multi": updateMulti},
+		"body":   body,
+	}
+	if title != "" {
+		cardData["header"] = map[string]any{
 			"template": headerTemplate,
 			"title":    PlainText(title),
-		},
-		"body": body,
+		}
 	}
+	return cardData
 }
 
 func PlainText(content string) map[string]any {

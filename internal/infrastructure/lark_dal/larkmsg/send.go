@@ -323,7 +323,7 @@ func streamingChunkText(data *ark_dal.ModelStreamRespReasoning) string {
 }
 
 func buildStreamingReplyCard(content string) (RawCard, error) {
-	card := NewCardV2(streamingReplyTitle, []any{map[string]any{
+	card := NewCardV2("", []any{map[string]any{
 		"tag":        "markdown",
 		"element_id": streamingReplyElementID,
 		"content":    content,
