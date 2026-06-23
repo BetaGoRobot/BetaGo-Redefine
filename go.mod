@@ -20,7 +20,7 @@ require (
 	github.com/gotify/go-api-client/v2 v2.0.4
 	github.com/h2non/bimg v1.1.9
 	github.com/issue9/cnregion v1.2023.2
-	github.com/jellydator/ttlcache/v3 v3.4.0
+	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/jinzhu/copier v0.4.0
 	github.com/kevinmatthe/kinetic v0.0.0-20260508084110-85d655c5082e
 	github.com/kevinmatthe/zaplog v0.1.6
