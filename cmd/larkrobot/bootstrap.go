@@ -284,6 +284,8 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		ConfigManager: appconfig.GetManager(),
 		DBProvider:    db.DB,
 		ChatService:   webui.NewLarkChatService(),
+		MemberCount:   webui.LarkMemberCount,
+		MemberList:    webui.LarkMemberList,
 		MessageStats:  countRecentChatMessages,
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{

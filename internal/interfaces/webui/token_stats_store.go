@@ -146,3 +146,42 @@ func (s *tokenStatsStore) collect(ctx context.Context, chatID string, since time
 	}
 	return stats, nil
 }
+
+// chatTokenTotal 是某个 chat 在窗口内的 token 总量与名称（用于发现单聊 chat）。
+type chatTokenTotal struct {
+	ChatID      string
+	ChatName    string
+	TotalTokens int64
+}
+
+// totalsByChat 一次性按 chat_id 聚合窗口内全部群/单聊的 token 总量。
+//
+// 这是给列表页指标排序用的批量查询：用单条 GROUP BY chat_id 取代逐群查询，
+// 顺带返回 chat_name，便于补全 Lark 群列表里取不到的单聊（p2p）。
+func (s *tokenStatsStore) totalsByChat(ctx context.Context, since time.Time) (map[string]chatTokenTotal, error) {
+	type row struct {
+		ChatID      string
+		ChatName    string
+		TotalTokens int64
+	}
+	var rows []row
+	err := s.db.WithContext(ctx).
+		Model(&model.LlmTokenUsageRecord{}).
+		Where("created_at >= ?", since).
+		Where("chat_id <> ''").
+		Select("chat_id, MAX(chat_name) AS chat_name, COALESCE(SUM(total_tokens),0) AS total_tokens").
+		Group("chat_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]chatTokenTotal, len(rows))
+	for _, r := range rows {
+		id := strings.TrimSpace(r.ChatID)
+		if id == "" {
+			continue
+		}
+		out[id] = chatTokenTotal{ChatID: id, ChatName: strings.TrimSpace(r.ChatName), TotalTokens: r.TotalTokens}
+	}
+	return out, nil
+}

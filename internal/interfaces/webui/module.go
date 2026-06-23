@@ -33,6 +33,8 @@ type Options struct {
 	ConfigManager ConfigManager
 	DBProvider    func() *gorm.DB
 	ChatService   ChatService
+	MemberCount   MemberCountFunc
+	MemberList    MemberListFunc
 	MessageStats  MessageStatsFunc
 	Now           func() time.Time
 }

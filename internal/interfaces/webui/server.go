@@ -1,7 +1,9 @@
 package webui
 
 import (
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,12 +14,14 @@ import (
 type Server struct {
 	cfg          ConfigManager
 	chats        ChatService
+	memberCount  MemberCountFunc
+	memberList   MemberListFunc
 	messageStats MessageStatsFunc
 	now          func() time.Time
 
-	authToken    string
-	corsOrigins  []string
-	store        *tokenStatsStore
+	authToken   string
+	corsOrigins []string
+	store       *tokenStatsStore
 }
 
 // NewServer 根据注入的依赖构造 Server。db 由模块在 Init 阶段惰性解析后传入。
@@ -35,6 +39,8 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 	return &Server{
 		cfg:          opts.ConfigManager,
 		chats:        opts.ChatService,
+		memberCount:  opts.MemberCount,
+		memberList:   opts.MemberList,
 		messageStats: opts.MessageStats,
 		now:          now,
 		authToken:    authToken,
@@ -50,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/chats", s.handleListChats)
 	mux.HandleFunc("GET /api/chats/{chatID}", s.handleGetChat)
+	mux.HandleFunc("GET /api/chats/{chatID}/members", s.handleListMembers)
 	mux.HandleFunc("GET /api/chats/{chatID}/stats", s.handleStats)
 	mux.HandleFunc("GET /api/chats/{chatID}/features", s.handleListFeatures)
 	mux.HandleFunc("PUT /api/chats/{chatID}/features/{name}", s.handleSetFeature)
@@ -139,4 +146,24 @@ func normalizeOrigins(origins []string) []string {
 		}
 	}
 	return out
+}
+
+// isTruthy 解析常见的“开启”取值（1/true/yes/on），用于可选 query 开关。
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// webuiCacheKey 生成带窗口维度的服务端缓存键。
+func webuiCacheKey(name string, windowDays int) string {
+	return "webui:" + name + ":w" + strconv.Itoa(windowDays)
+}
+
+// round2 保留两位小数，用于派生均值。
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }

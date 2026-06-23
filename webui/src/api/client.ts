@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type {
   ChatDetail,
+  ChatMember,
   ChatSummary,
   ConfigView,
   FeatureView,
@@ -38,11 +39,19 @@ http.interceptors.request.use((config) => {
 })
 
 export const api = {
-  listChats() {
-    return http.get<ListResponse<ChatSummary>>('/api/chats').then((r) => r.data)
+  listChats(opts?: { metrics?: boolean; window?: string }) {
+    const params: Record<string, string> = {}
+    if (opts?.metrics) params.metrics = '1'
+    if (opts?.window) params.window = opts.window
+    return http.get<ListResponse<ChatSummary>>('/api/chats', { params }).then((r) => r.data)
   },
   getChat(chatID: string) {
     return http.get<ChatDetail>(`/api/chats/${encodeURIComponent(chatID)}`).then((r) => r.data)
+  },
+  listMembers(chatID: string) {
+    return http
+      .get<ListResponse<ChatMember>>(`/api/chats/${encodeURIComponent(chatID)}/members`)
+      .then((r) => r.data)
   },
   getStats(chatID: string, window = '7d') {
     return http

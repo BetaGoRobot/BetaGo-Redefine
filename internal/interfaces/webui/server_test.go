@@ -113,6 +113,12 @@ func newTestServer(t *testing.T, token string) (*Server, *fakeConfigManager, *fa
 		Config:        &infraConfig.WebUIConfig{AuthToken: token},
 		ConfigManager: cfg,
 		ChatService:   chats,
+		MemberCount: func(_ context.Context, chatID string) (int, error) {
+			return 3, nil
+		},
+		MemberList: func(_ context.Context, chatID string) ([]ChatMember, error) {
+			return []ChatMember{{OpenID: "ou_a", Name: "Alice"}, {OpenID: "ou_b", Name: "Bob"}}, nil
+		},
 		MessageStats: func(context.Context, string, time.Time) (int, error) {
 			return 42, nil
 		},
@@ -139,6 +145,52 @@ func TestListChats(t *testing.T) {
 	}
 	if resp.Total != 2 || resp.Items[0].Avatar != "https://avatar/1" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestListChatsWithMetrics(t *testing.T) {
+	srv, _, _ := newTestServer(t, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chats?metrics=1&window=7d", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Items []ChatSummary `json:"items"`
+	}
+	if err := sonic.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	m := resp.Items[0].Metrics
+	if m == nil {
+		t.Fatalf("expected metrics populated")
+	}
+	// DB 为 nil，token 总量为 0；成员/发言量来自注入的 fake。
+	if m.MemberCount != 3 || m.RecentMessages != 42 || m.WindowDays != 7 {
+		t.Fatalf("unexpected metrics: %+v", m)
+	}
+}
+
+func TestListMembers(t *testing.T) {
+	srv, _, _ := newTestServer(t, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/oc_1/members", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Items []ChatMember `json:"items"`
+		Total int          `json:"total"`
+	}
+	if err := sonic.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Total != 2 || resp.Items[0].Name != "Alice" {
+		t.Fatalf("unexpected members: %+v", resp)
 	}
 }
 

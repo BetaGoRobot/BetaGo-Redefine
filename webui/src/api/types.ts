@@ -1,5 +1,14 @@
 // API 返回类型定义，与后端 internal/interfaces/webui/types.go 一一对应。
 
+export interface ChatMetrics {
+  window_days: number
+  recent_messages: number
+  member_count: number
+  total_tokens: number
+  tokens_per_member: number
+  tokens_per_message: number
+}
+
 export interface ChatSummary {
   chat_id: string
   name: string
@@ -7,6 +16,13 @@ export interface ChatSummary {
   description: string
   chat_status: string
   external: boolean
+  tenant_key?: string
+  metrics?: ChatMetrics
+}
+
+export interface ChatMember {
+  open_id: string
+  name: string
   tenant_key?: string
 }
 

@@ -32,6 +32,23 @@ type ChatSummary struct {
 	ChatStatus  string `json:"chat_status"`
 	External    bool   `json:"external"`
 	Tenant      string `json:"tenant_key,omitempty"`
+
+	// Metrics 仅在列表接口带 ?metrics=1 时填充，承载排序所需的派生指标。
+	Metrics *ChatMetrics `json:"metrics,omitempty"`
+}
+
+// ChatMetrics 是群列表的可排序聚合指标。
+//
+// WindowDays 表示统计窗口；RecentMessages 为近 N 天发言量（依赖 OpenSearch，
+// 不可用时为 0）；MemberCount 为群成员量；TotalTokens 为近 N 天 token 消耗总量；
+// TokensPerMember / TokensPerMessage 为派生人均与单条均值（除数为 0 时取 0）。
+type ChatMetrics struct {
+	WindowDays       int     `json:"window_days"`
+	RecentMessages   int     `json:"recent_messages"`
+	MemberCount      int     `json:"member_count"`
+	TotalTokens      int64   `json:"total_tokens"`
+	TokensPerMember  float64 `json:"tokens_per_member"`
+	TokensPerMessage float64 `json:"tokens_per_message"`
 }
 
 // ChatDetail 是单个群的详细信息。
@@ -47,6 +64,21 @@ type ChatService interface {
 	ListChats(ctx context.Context) ([]ChatSummary, error)
 	GetChat(ctx context.Context, chatID string) (*ChatDetail, error)
 }
+
+// ChatMember 是群成员在 WebUI 中的展示项。
+type ChatMember struct {
+	OpenID string `json:"open_id"`
+	Name   string `json:"name"`
+	Tenant string `json:"tenant_key,omitempty"`
+}
+
+// MemberCountFunc 返回某群成员数；默认实现走 Lark OpenAPI（带缓存）。
+// 为空表示该能力不可用，列表指标里的成员数会保持为 0。
+type MemberCountFunc func(ctx context.Context, chatID string) (int, error)
+
+// MemberListFunc 返回某群成员列表；默认实现复用 larkuser 的成员缓存。
+// 为空表示该能力不可用，详情接口的成员列表会为空。
+type MemberListFunc func(ctx context.Context, chatID string) ([]ChatMember, error)
 
 // MessageStatsFunc 返回某群在 since 之后的消息数量；默认实现走 OpenSearch。
 // 为空表示该能力不可用，统计接口会返回降级标记而非报错。

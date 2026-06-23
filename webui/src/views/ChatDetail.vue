@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import { api } from '../api/client'
-import type { ChatDetail, ConfigView, FeatureView, StatsResponse } from '../api/types'
+import type { ChatDetail, ChatMember, ConfigView, FeatureView, StatsResponse } from '../api/types'
 import EChart from '../components/EChart.vue'
 
 const props = defineProps<{ chatID: string }>()
@@ -62,7 +62,6 @@ const dailyBar = computed<EChartsOption>(() => {
 // ---------- 功能开关 ----------
 const features = ref<FeatureView[]>([])
 const featLoading = ref(false)
-
 async function loadFeatures() {
   featLoading.value = true
   try {
@@ -129,13 +128,37 @@ async function resetConfig(c: ConfigView) {
   }
 }
 
+// ---------- 群成员 ----------
+const members = ref<ChatMember[]>([])
+const memberLoading = ref(false)
+const memberKeyword = ref('')
+
+async function loadMembers() {
+  memberLoading.value = true
+  try {
+    members.value = (await api.listMembers(props.chatID)).items || []
+  } catch (e: any) {
+    ElMessage.error('加载群成员失败：' + (e?.response?.data?.error || e.message))
+  } finally {
+    memberLoading.value = false
+  }
+}
+
+function filteredMembers() {
+  const kw = memberKeyword.value.trim().toLowerCase()
+  if (!kw) return members.value
+  return members.value.filter(
+    (m) => m.name.toLowerCase().includes(kw) || m.open_id.toLowerCase().includes(kw),
+  )
+}
+
 onMounted(async () => {
   try {
     detail.value = await api.getChat(props.chatID)
   } catch {
     // 详情失败不阻断其它 tab
   }
-  await Promise.all([loadStats(), loadFeatures(), loadConfigs()])
+  await Promise.all([loadStats(), loadFeatures(), loadConfigs(), loadMembers()])
 })
 </script>
 
@@ -181,6 +204,21 @@ onMounted(async () => {
           <el-col :span="12"><EChart :option="kindPie" /></el-col>
         </el-row>
         <EChart :option="dailyBar" height="360px" />
+      </el-tab-pane>
+
+      <!-- 群成员 -->
+      <el-tab-pane :label="`群成员${members.length ? ' (' + members.length + ')' : ''}`" name="members">
+        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center">
+          <el-input v-model="memberKeyword" placeholder="按名字或 open_id 搜索" clearable style="max-width: 280px" />
+          <el-button :loading="memberLoading" @click="loadMembers">刷新</el-button>
+          <span style="color: #909399">共 {{ members.length }} 名成员</span>
+        </div>
+        <el-table v-loading="memberLoading" :data="filteredMembers()" stripe>
+          <el-table-column type="index" label="#" width="60" />
+          <el-table-column prop="name" label="名字" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="open_id" label="Open ID" min-width="240" show-overflow-tooltip />
+          <el-table-column prop="tenant_key" label="租户" min-width="160" show-overflow-tooltip />
+        </el-table>
       </el-tab-pane>
 
       <!-- 功能开关 -->
