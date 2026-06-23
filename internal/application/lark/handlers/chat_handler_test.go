@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -123,3 +125,38 @@ func TestBuildStandardChatUserPromptIncludesSelfIdentity(t *testing.T) {
 
 //go:fix inline
 func chatHandlerStrPtr(v string) *string { return new(v) }
+
+func TestShouldUseStreamingCardByIntent(t *testing.T) {
+	if shouldUseStreamingCard(nil) {
+		t.Fatalf("nil meta should not stream")
+	}
+
+	meta := &xhandler.BaseMetaData{}
+	if shouldUseStreamingCard(meta) {
+		t.Fatalf("meta without intent should not stream")
+	}
+
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType: intentmeta.IntentTypeQuestion,
+		NeedReply:  true,
+	})
+	if !shouldUseStreamingCard(meta) {
+		t.Fatalf("question intent should stream")
+	}
+
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType: intentmeta.IntentTypeChat,
+		NeedReply:  true,
+	})
+	if shouldUseStreamingCard(meta) {
+		t.Fatalf("chat intent should not stream")
+	}
+
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType: intentmeta.IntentTypeQuestion,
+		NeedReply:  false,
+	})
+	if shouldUseStreamingCard(meta) {
+		t.Fatalf("question with need_reply=false should not stream")
+	}
+}

@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
@@ -268,6 +269,23 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	return runStandardChat(ctx, event, metaData, chatType, &size, arg.Input)
 }
 
+// shouldUseStreamingCard 判断是否升级到「卡片+流式」展示。
+// 资讯问答类（intent=question 且需要回复）走卡片以承载推理过程与引用；
+// 其它日常对话默认走纯文本，避免视觉过重。
+func shouldUseStreamingCard(metaData *xhandler.BaseMetaData) bool {
+	if metaData == nil {
+		return false
+	}
+	intent, ok := metaData.GetIntentAnalysis()
+	if !ok || intent == nil {
+		return false
+	}
+	if !intent.NeedReply {
+		return false
+	}
+	return intent.IntentType == intentmeta.IntentTypeQuestion
+}
+
 func resolveStandardPromptMode(event *larkim.P2MessageReceiveV1) standardPromptMode {
 	if event == nil || event.Event == nil || event.Event.Message == nil {
 		return standardPromptModeAmbient
@@ -485,8 +503,12 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		files = append(files, url)
 	}
 
-	if chatType == MODEL_TYPE_REASON {
-		msgSeq, seqErr := GenerateChatSeq(ctx, event, metaData, accessor.ChatReasoningModel(), size, files, args...)
+	if chatType == MODEL_TYPE_REASON || shouldUseStreamingCard(metaData) {
+		modelID := accessor.ChatNormalModel()
+		if chatType == MODEL_TYPE_REASON {
+			modelID = accessor.ChatReasoningModel()
+		}
+		msgSeq, seqErr := GenerateChatSeq(ctx, event, metaData, modelID, size, files, args...)
 		if seqErr != nil {
 			return seqErr
 		}
