@@ -36,6 +36,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/defensestation/osquery"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
@@ -270,8 +271,8 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 }
 
 // shouldUseStreamingCard 判断是否升级到「卡片+流式」展示。
-// 资讯问答类（intent=question 且需要回复）走卡片以承载推理过程与引用；
-// 其它日常对话默认走纯文本，避免视觉过重。
+// 仅在「专业/客观/事实性问答」时用卡片承载推理过程与引用；
+// 日常闲聊/社交/主观讨论默认走纯文本，避免视觉过重破坏群聊气氛。
 func shouldUseStreamingCard(metaData *xhandler.BaseMetaData) bool {
 	if metaData == nil {
 		return false
@@ -283,7 +284,13 @@ func shouldUseStreamingCard(metaData *xhandler.BaseMetaData) bool {
 	if !intent.NeedReply {
 		return false
 	}
-	return intent.IntentType == intentmeta.IntentTypeQuestion
+	if intent.IntentType != intentmeta.IntentTypeQuestion {
+		return false
+	}
+	if intent.Domain != intentmeta.DomainProfessional {
+		return false
+	}
+	return intent.ReasoningEffort >= responses.ReasoningEffort_low
 }
 
 func resolveStandardPromptMode(event *larkim.P2MessageReceiveV1) standardPromptMode {

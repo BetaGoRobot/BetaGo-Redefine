@@ -19,6 +19,14 @@ const (
 	IntentTypeIgnore   IntentType = "ignore"
 )
 
+// Domain 定义消息内容领域，用于区分专业/严肃问答 vs 日常闲聊。
+type Domain string
+
+const (
+	DomainProfessional Domain = "professional"
+	DomainCasual       Domain = "casual"
+)
+
 // SuggestAction 建议动作
 type SuggestAction string
 
@@ -47,6 +55,7 @@ const (
 // IntentAnalysis 意图分析结果
 type IntentAnalysis struct {
 	IntentType      IntentType                     `json:"intent_type"`
+	Domain          Domain                         `json:"domain"`
 	NeedReply       bool                           `json:"need_reply"`
 	ReplyConfidence int                            `json:"reply_confidence"`
 	Reason          string                         `json:"reason"`
@@ -62,6 +71,7 @@ type IntentAnalysis struct {
 func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		IntentType      IntentType      `json:"intent_type"`
+		Domain          Domain          `json:"domain"`
 		NeedReply       bool            `json:"need_reply"`
 		ReplyConfidence int             `json:"reply_confidence"`
 		Reason          string          `json:"reason"`
@@ -78,6 +88,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 
 	*a = IntentAnalysis{
 		IntentType:      raw.IntentType,
+		Domain:          raw.Domain,
 		NeedReply:       raw.NeedReply,
 		ReplyConfidence: raw.ReplyConfidence,
 		Reason:          raw.Reason,
@@ -123,6 +134,12 @@ func (a *IntentAnalysis) Sanitize() {
 	case SuggestActionChat, SuggestActionReact, SuggestActionRepeat, SuggestActionIgnore:
 	default:
 		a.SuggestAction = SuggestActionIgnore
+	}
+
+	switch a.Domain {
+	case DomainProfessional, DomainCasual:
+	default:
+		a.Domain = defaultDomain(a.IntentType)
 	}
 
 	// Chat pipeline is standard-only; keep the field for older prompt/test payloads.
@@ -179,6 +196,15 @@ func defaultReplyMode(needReply bool) ReplyMode {
 		return ReplyModePassiveReply
 	}
 	return ReplyModeIgnore
+}
+
+func defaultDomain(intent IntentType) Domain {
+	switch intent {
+	case IntentTypeQuestion:
+		return DomainProfessional
+	default:
+		return DomainCasual
+	}
 }
 
 func parseReasoningEffort(raw json.RawMessage) responses.ReasoningEffort_Enum {

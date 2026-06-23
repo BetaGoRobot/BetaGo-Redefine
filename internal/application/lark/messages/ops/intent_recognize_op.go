@@ -125,6 +125,7 @@ func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2Messa
 	}
 	logs.L().Ctx(ctx).Info("intent recognition completed",
 		zap.String("intent_type", string(analysis.IntentType)),
+		zap.String("domain", string(analysis.Domain)),
 		zap.Bool("need_reply", analysis.NeedReply),
 		zap.Int("confidence", analysis.ReplyConfidence),
 	)

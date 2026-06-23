@@ -10,6 +10,7 @@ import (
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
 func TestResolveStandardPromptMode(t *testing.T) {
@@ -136,25 +137,67 @@ func TestShouldUseStreamingCardByIntent(t *testing.T) {
 		t.Fatalf("meta without intent should not stream")
 	}
 
+	// baseline: question + professional + effort>=low -> stream
 	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
-		IntentType: intentmeta.IntentTypeQuestion,
-		NeedReply:  true,
+		IntentType:      intentmeta.IntentTypeQuestion,
+		Domain:          intentmeta.DomainProfessional,
+		NeedReply:       true,
+		ReasoningEffort: responses.ReasoningEffort_low,
 	})
 	if !shouldUseStreamingCard(meta) {
-		t.Fatalf("question intent should stream")
+		t.Fatalf("professional question+low effort should stream")
 	}
 
+	// higher effort should also stream
 	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
-		IntentType: intentmeta.IntentTypeChat,
-		NeedReply:  true,
+		IntentType:      intentmeta.IntentTypeQuestion,
+		Domain:          intentmeta.DomainProfessional,
+		NeedReply:       true,
+		ReasoningEffort: responses.ReasoningEffort_high,
+	})
+	if !shouldUseStreamingCard(meta) {
+		t.Fatalf("professional question+high effort should stream")
+	}
+
+	// casual question ("今天吃啥") -> no card even if effort low
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType:      intentmeta.IntentTypeQuestion,
+		Domain:          intentmeta.DomainCasual,
+		NeedReply:       true,
+		ReasoningEffort: responses.ReasoningEffort_low,
+	})
+	if shouldUseStreamingCard(meta) {
+		t.Fatalf("casual question should not stream")
+	}
+
+	// professional but minimal effort (simple fact that doesn't need reasoning) -> no card
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType:      intentmeta.IntentTypeQuestion,
+		Domain:          intentmeta.DomainProfessional,
+		NeedReply:       true,
+		ReasoningEffort: responses.ReasoningEffort_minimal,
+	})
+	if shouldUseStreamingCard(meta) {
+		t.Fatalf("professional question with minimal effort should not stream")
+	}
+
+	// chat intent should never stream
+	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
+		IntentType:      intentmeta.IntentTypeChat,
+		Domain:          intentmeta.DomainProfessional,
+		NeedReply:       true,
+		ReasoningEffort: responses.ReasoningEffort_medium,
 	})
 	if shouldUseStreamingCard(meta) {
 		t.Fatalf("chat intent should not stream")
 	}
 
+	// need_reply=false -> no stream
 	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{
-		IntentType: intentmeta.IntentTypeQuestion,
-		NeedReply:  false,
+		IntentType:      intentmeta.IntentTypeQuestion,
+		Domain:          intentmeta.DomainProfessional,
+		NeedReply:       false,
+		ReasoningEffort: responses.ReasoningEffort_low,
 	})
 	if shouldUseStreamingCard(meta) {
 		t.Fatalf("question with need_reply=false should not stream")
