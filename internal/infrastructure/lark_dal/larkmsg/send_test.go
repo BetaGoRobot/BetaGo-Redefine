@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,13 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	updateStarted := make(chan struct{}, 8)
 	releaseUpdate := make(chan struct{})
 
+	// 用于断言 settings 调用发生在所有 content update 全部返回之后。
+	var (
+		updateDispatched atomic.Int64
+		updateCompleted  atomic.Int64
+		settingSawInFlight int64
+	)
+
 	streamingCreateCardEntity = func(ctx context.Context, cardData any) (string, error) {
 		raw, err := json.Marshal(cardData)
 		if err != nil {
@@ -65,14 +73,22 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 		}, nil
 	}
 	streamingUpdateCardContent = func(ctx context.Context, update streamingContentUpdate) error {
+		updateDispatched.Add(1)
 		updateStarted <- struct{}{}
 		<-releaseUpdate
 		mu.Lock()
 		updates = append(updates, update)
 		mu.Unlock()
+		updateCompleted.Add(1)
 		return nil
 	}
 	streamingSetCardStreaming = func(ctx context.Context, update streamingSettingsUpdate) error {
+		// 关键断言：settings 被调用时，所有已 dispatch 的 content update 必须已经完成。
+		dispatched := updateDispatched.Load()
+		completed := updateCompleted.Load()
+		if dispatched != completed {
+			settingSawInFlight = dispatched - completed
+		}
 		mu.Lock()
 		settings = append(settings, update)
 		mu.Unlock()
@@ -102,6 +118,9 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 		t.Fatalf("SendAndReplyStreamingCard() error = %v", err)
 	}
 
+	if settingSawInFlight != 0 {
+		t.Fatalf("settings called while %d content update(s) still in flight; streaming=false may race ahead of final content", settingSawInFlight)
+	}
 	if replyCalls != 1 {
 		t.Fatalf("expected one reply call, got %d", replyCalls)
 	}

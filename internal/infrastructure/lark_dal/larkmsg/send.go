@@ -19,6 +19,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/sourcegraph/conc/pool"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -51,6 +52,208 @@ var (
 	streamingUpdateCardContent = updateStreamingCardContent
 	streamingSetCardStreaming  = setStreamingCardMode
 )
+
+// streamingCardPusher 封装流式卡片的节流更新逻辑。职责：
+//   - 用 ticker 合并多个 chunk 为固定频率的 update 调用
+//   - 每次 tick 只 snapshot 最新文本，丢弃中间值，天然节流
+//   - content update 异步 dispatch，避免单次 HTTP 延迟阻塞下一次 tick
+//   - finalize 先等待所有 content update 完成，再关 streaming，
+//     保证 settings 一定晚于最后一条 content 被 Lark 端 apply
+type streamingCardPusher struct {
+	ctx      context.Context
+	cardID   string
+	nextSeq  func() int
+	errPool  *pool.ContextPool
+	stopOnce sync.Once
+	ticker   *time.Ticker
+	done     chan struct{}
+
+	stateMu    sync.Mutex
+	latestText string
+	dirty      bool
+}
+
+func newStreamingCardPusher(ctx context.Context) *streamingCardPusher {
+	p := &streamingCardPusher{
+		ctx:     ctx,
+		nextSeq: newStreamingSequence(),
+		errPool: pool.New().WithContext(ctx).WithFirstError(),
+		ticker:  time.NewTicker(streamingTickInterval),
+		done:    make(chan struct{}),
+	}
+	go p.loop()
+	return p
+}
+
+// loop 是节流 goroutine 的主循环。tick 到点时做一次 snapshot 并异步 dispatch。
+func (p *streamingCardPusher) loop() {
+	for {
+		select {
+		case <-p.ticker.C:
+			p.dispatchContent()
+		case <-p.done:
+			return
+		case <-p.ctx.Done():
+			return
+		}
+	}
+}
+
+// Stop 停止节流器。幂等。
+func (p *streamingCardPusher) Stop() {
+	p.stopOnce.Do(func() {
+		p.ticker.Stop()
+		close(p.done)
+	})
+}
+
+// setLatest 写入最新 chunk 文本并标记 dirty。
+func (p *streamingCardPusher) setLatest(text string) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.latestText = text
+	p.dirty = true
+}
+
+// snapshotLatest 原子地取出 dirty 时的最新文本并清 dirty。
+func (p *streamingCardPusher) snapshotLatest() (string, bool) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	if !p.dirty {
+		return "", false
+	}
+	p.dirty = false
+	return p.latestText, true
+}
+
+// dispatchContent 做一次 snapshot+异步调用 update；没脏数据或 cardID 未就绪时什么都不做。
+func (p *streamingCardPusher) dispatchContent() {
+	if p.cardID == "" {
+		return
+	}
+	text, ok := p.snapshotLatest()
+	if !ok {
+		return
+	}
+	sequence := p.nextSeq()
+	update := streamingContentUpdate{
+		CardID:    p.cardID,
+		ElementID: streamingReplyElementID,
+		Content:   text,
+		UUID:      streamingUUID("content", p.cardID, sequence),
+		Sequence:  sequence,
+	}
+	p.errPool.Go(func(context.Context) error {
+		return streamingUpdateCardContent(p.ctx, update)
+	})
+}
+
+// Flush 把当前 dirty 的文本立刻推一次（不走 ticker），用于流结束时保底。
+func (p *streamingCardPusher) Flush() {
+	p.dispatchContent()
+}
+
+// WaitContents 等所有已 dispatch 的 content update 全部返回。首个错误会被返回。
+func (p *streamingCardPusher) WaitContents() error {
+	return p.errPool.Wait()
+}
+
+// CloseStreaming 先 WaitContents 确保所有内容落地，再发送 streaming=false 设置。
+// 这样保证 Lark 端永远先收完最后一次 content，再看到 streaming_mode 关闭，
+// 避免 settings 先到被 apply 后最后一条 content 被丢弃。
+func (p *streamingCardPusher) CloseStreaming() error {
+	if p.cardID == "" {
+		return p.WaitContents()
+	}
+	if err := p.WaitContents(); err != nil {
+		return err
+	}
+	sequence := p.nextSeq()
+	update := streamingSettingsUpdate{
+		CardID:        p.cardID,
+		UUID:          streamingUUID("settings", p.cardID, sequence),
+		Sequence:      sequence,
+		StreamingMode: false,
+	}
+	setPool := pool.New().WithContext(p.ctx).WithFirstError()
+	setPool.Go(func(context.Context) error {
+		return streamingSetCardStreaming(p.ctx, update)
+	})
+	return setPool.Wait()
+}
+
+func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	if msg == nil || msg.MessageId == nil {
+		return errors.New("nil message")
+	}
+
+	pusher := newStreamingCardPusher(ctx)
+	defer pusher.Stop()
+
+	var initialText string
+	for data := range msgSeq {
+		chunk := streamingChunkText(data)
+		if strings.TrimSpace(chunk) == "" {
+			continue
+		}
+		if pusher.cardID == "" {
+			initialText = chunk
+			if err = createAndReplyCard(ctx, msg, pusher, initialText, inThread, false); err != nil {
+				return err
+			}
+			continue
+		}
+		pusher.setLatest(chunk)
+	}
+	pusher.Stop()
+
+	if pusher.cardID == "" {
+		if strings.TrimSpace(initialText) == "" {
+			return nil
+		}
+		return createAndReplyCard(ctx, msg, pusher, initialText, inThread, true)
+	}
+
+	pusher.Flush()
+	return pusher.CloseStreaming()
+}
+
+// createAndReplyCard 构造卡片 entity 并回复到原消息。isFinal 用来区分 "_streaming_reply"
+// 与 "_streaming_reply_final" 两种 suffix（后者只在流结束时才发、没有后续 update）。
+func createAndReplyCard(ctx context.Context, msg *larkim.EventMessage, pusher *streamingCardPusher, content string, inThread, isFinal bool) error {
+	card, err := buildStreamingReplyCard(content)
+	if err != nil {
+		return err
+	}
+	cardID, err := streamingCreateCardEntity(ctx, card)
+	if err != nil {
+		return err
+	}
+	suffix := "_streaming_reply"
+	if isFinal {
+		suffix = "_streaming_reply_final"
+	}
+	resp, err := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, suffix, inThread)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
+		return errors.New("empty reply message id")
+	}
+	pusher.cardID = cardID
+	return nil
+}
+
+func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
+	return SendAndReplyStreamingCard(ctx, msg, msgSeq, false)
+}
 
 // CreateMsgTextRaw 需要自行BuildText
 func CreateMsgTextRaw(ctx context.Context, content, msgID, chatID string) (err error) {
@@ -107,183 +310,6 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 		Build()
 
 	return sendCreateMessage(ctx, req, recordContents...)
-}
-
-func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-
-	if msg == nil || msg.MessageId == nil {
-		return errors.New("nil message")
-	}
-
-	var (
-		latestText string
-		cardID     string
-		wg         sync.WaitGroup
-		errMu      sync.Mutex
-		asyncErr   error
-	)
-	var (
-		stateMu sync.Mutex
-		dirty   bool
-	)
-	nextSeq := newStreamingSequence()
-	setLatest := func(text string) {
-		stateMu.Lock()
-		defer stateMu.Unlock()
-		latestText = text
-		dirty = true
-	}
-	snapshotLatest := func() (string, bool) {
-		stateMu.Lock()
-		defer stateMu.Unlock()
-		if !dirty {
-			return "", false
-		}
-		dirty = false
-		return latestText, true
-	}
-	recordAsyncErr := func(updateErr error) {
-		if updateErr == nil {
-			return
-		}
-		errMu.Lock()
-		defer errMu.Unlock()
-		if asyncErr == nil {
-			asyncErr = updateErr
-		}
-	}
-	waitAsync := func() error {
-		wg.Wait()
-		errMu.Lock()
-		defer errMu.Unlock()
-		return asyncErr
-	}
-	hasAsyncErr := func() bool {
-		errMu.Lock()
-		defer errMu.Unlock()
-		return asyncErr != nil
-	}
-	dispatchContentUpdate := func() {
-		if hasAsyncErr() {
-			return
-		}
-		text, ok := snapshotLatest()
-		if !ok {
-			return
-		}
-		sequence := nextSeq()
-		wg.Go(func() {
-			recordAsyncErr(streamingUpdateCardContent(ctx, streamingContentUpdate{
-				CardID:    cardID,
-				ElementID: streamingReplyElementID,
-				Content:   text,
-				UUID:      streamingUUID("content", cardID, sequence),
-				Sequence:  sequence,
-			}))
-		})
-	}
-	dispatchSettingsUpdate := func(update streamingSettingsUpdate) {
-		wg.Go(func() {
-			recordAsyncErr(streamingSetCardStreaming(ctx, update))
-		})
-	}
-
-	ticker := time.NewTicker(streamingTickInterval)
-	defer ticker.Stop()
-	tickerDone := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				dispatchContentUpdate()
-			case <-tickerDone:
-				return
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	for data := range msgSeq {
-		if hasAsyncErr() {
-			break
-		}
-		chunk := streamingChunkText(data)
-		if strings.TrimSpace(chunk) == "" {
-			continue
-		}
-		if cardID == "" {
-			latestText = chunk
-			card, cardErr := buildStreamingReplyCard(latestText)
-			if cardErr != nil {
-				close(tickerDone)
-				return cardErr
-			}
-			cardID, cardErr = streamingCreateCardEntity(ctx, card)
-			if cardErr != nil {
-				close(tickerDone)
-				return cardErr
-			}
-			resp, replyErr := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, "_streaming_reply", inThread)
-			if replyErr != nil {
-				close(tickerDone)
-				return replyErr
-			}
-			if !resp.Success() {
-				close(tickerDone)
-				return errors.New(resp.Error())
-			}
-			if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
-				close(tickerDone)
-				return errors.New("empty reply message id")
-			}
-			continue
-		}
-		setLatest(chunk)
-	}
-	close(tickerDone)
-	if hasAsyncErr() {
-		_ = waitAsync()
-		return asyncErr
-	}
-
-	if cardID == "" {
-		if strings.TrimSpace(latestText) == "" {
-			return nil
-		}
-		card, cardErr := buildStreamingReplyCard(latestText)
-		if cardErr != nil {
-			return cardErr
-		}
-		cardID, cardErr = streamingCreateCardEntity(ctx, card)
-		if cardErr != nil {
-			return cardErr
-		}
-		resp, replyErr := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, "_streaming_reply_final", inThread)
-		if replyErr != nil {
-			return replyErr
-		}
-		if !resp.Success() {
-			return errors.New(resp.Error())
-		}
-	}
-
-	dispatchContentUpdate()
-	sequence := nextSeq()
-	dispatchSettingsUpdate(streamingSettingsUpdate{
-		CardID:        cardID,
-		UUID:          streamingUUID("settings", cardID, sequence),
-		Sequence:      sequence,
-		StreamingMode: false,
-	})
-	return waitAsync()
-}
-
-func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
-	return SendAndReplyStreamingCard(ctx, msg, msgSeq, false)
 }
 
 func streamingChunkText(data *ark_dal.ModelStreamRespReasoning) string {
