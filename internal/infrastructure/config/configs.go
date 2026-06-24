@@ -127,6 +127,8 @@ type RateConfig struct {
 	IntentRecognitionEnabled  bool `json:"intent_recognition_enabled" yaml:"intent_recognition_enabled" toml:"intent_recognition_enabled"`
 	IntentReplyThreshold      int  `json:"intent_reply_threshold" yaml:"intent_reply_threshold" toml:"intent_reply_threshold"`
 	IntentFallbackRate        int  `json:"intent_fallback_rate" yaml:"intent_fallback_rate" toml:"intent_fallback_rate"`
+
+	TwoPhaseChat bool `json:"two_phase_chat" yaml:"two_phase_chat" toml:"two_phase_chat"`
 }
 
 // RateLimitConfig 智能频控配置

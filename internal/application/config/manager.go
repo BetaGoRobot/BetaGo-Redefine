@@ -487,6 +487,11 @@ func (m *Manager) getBoolFromToml(key ConfigKey) bool {
 			return m.getDefaultBool(key)
 		}
 		return cfg.LarkConfig.WithDrawReplace
+	case KeyTwoPhaseChat:
+		if cfg.RateConfig == nil {
+			return m.getDefaultBool(key)
+		}
+		return cfg.RateConfig.TwoPhaseChat
 	default:
 		return m.getDefaultBool(key)
 	}
