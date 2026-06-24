@@ -7,43 +7,49 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 )
 
-func TestSessionStoreSetGetClear(t *testing.T) {
+func TestSessionStoreSetGetDelete(t *testing.T) {
 	store := NewSessionStore()
-	key := luckin.SessionKey{Provider: "luckin", AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user"}
+	key := luckin.SessionKey{Provider: "luckin", AppID: "app", BotOpenID: "bot", MessageID: "msg-1"}
 
-	if _, ok := store.GetShop(context.Background(), key); ok {
+	if _, ok := store.GetSession(context.Background(), key); ok {
 		t.Fatalf("expected empty session")
 	}
 
-	shop := luckin.ShopSelection{DeptID: 100, DeptName: "门店A", Longitude: 1.1, Latitude: 2.2}
-	store.SetShop(context.Background(), key, shop)
+	sess := luckin.OrderSession{
+		InitiatorOpenID: "ou_a",
+		ChatID:          "chat",
+		Shop:            luckin.ShopSelection{DeptID: 100, DeptName: "门店A"},
+		Cart:            luckin.Cart{Items: []luckin.CartItem{{LineID: "L1", AddedByOpenID: "ou_a", ProductID: 1, SkuCode: "S", Amount: 2, UnitPrice: 16}}},
+	}
+	store.SetSession(context.Background(), key, sess)
 
-	got, ok := store.GetShop(context.Background(), key)
-	if !ok || got != shop {
+	got, ok := store.GetSession(context.Background(), key)
+	if !ok || got.InitiatorOpenID != "ou_a" || got.Shop.DeptID != 100 || len(got.Cart.Items) != 1 {
 		t.Fatalf("session mismatch: ok=%v got=%+v", ok, got)
 	}
-	recent := store.GetRecentShops(context.Background(), key, 3)
-	if len(recent) != 1 || recent[0] != shop {
-		t.Fatalf("recent shops mismatch: %+v", recent)
-	}
 
-	store.ClearShop(context.Background(), key)
-	if _, ok := store.GetShop(context.Background(), key); ok {
+	store.DeleteSession(context.Background(), key)
+	if _, ok := store.GetSession(context.Background(), key); ok {
 		t.Fatalf("expected cleared session")
 	}
-	recent = store.GetRecentShops(context.Background(), key, 3)
-	if len(recent) != 1 || recent[0] != shop {
-		t.Fatalf("recent shops should survive current session clear: %+v", recent)
+}
+
+func TestSessionStoreRejectsKeyWithoutMessageID(t *testing.T) {
+	store := NewSessionStore()
+	key := luckin.SessionKey{Provider: "luckin", AppID: "app", BotOpenID: "bot"}
+	store.SetSession(context.Background(), key, luckin.OrderSession{InitiatorOpenID: "ou_a"})
+	if _, ok := store.GetSession(context.Background(), key); ok {
+		t.Fatalf("session without message id must not persist")
 	}
 }
 
 func TestSessionStoreRecentShopsDedupesAndLimits(t *testing.T) {
 	store := NewSessionStore()
-	key := luckin.SessionKey{Provider: "luckin", AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user"}
+	key := luckin.UserHistoryKey{Provider: "luckin", AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user"}
 
-	store.SetShop(context.Background(), key, luckin.ShopSelection{DeptID: 1, DeptName: "门店A"})
-	store.SetShop(context.Background(), key, luckin.ShopSelection{DeptID: 2, DeptName: "门店B"})
-	store.SetShop(context.Background(), key, luckin.ShopSelection{DeptID: 1, DeptName: "门店A-新"})
+	store.AddRecentShop(context.Background(), key, luckin.ShopSelection{DeptID: 1, DeptName: "门店A"})
+	store.AddRecentShop(context.Background(), key, luckin.ShopSelection{DeptID: 2, DeptName: "门店B"})
+	store.AddRecentShop(context.Background(), key, luckin.ShopSelection{DeptID: 1, DeptName: "门店A-新"})
 
 	recent := store.GetRecentShops(context.Background(), key, 2)
 	if len(recent) != 2 {
@@ -54,6 +60,18 @@ func TestSessionStoreRecentShopsDedupesAndLimits(t *testing.T) {
 	}
 	if recent[1].DeptID != 2 {
 		t.Fatalf("second shop mismatch: %+v", recent)
+	}
+}
+
+func TestSessionStoreSeen(t *testing.T) {
+	store := NewSessionStore()
+	key := luckin.UserHistoryKey{Provider: "luckin", AppID: "app", BotOpenID: "bot", ChatID: "chat", OpenID: "user"}
+	if store.Seen(context.Background(), key) {
+		t.Fatalf("seen should be false initially")
+	}
+	store.MarkSeen(context.Background(), key)
+	if !store.Seen(context.Background(), key) {
+		t.Fatalf("seen should be true after MarkSeen")
 	}
 }
 

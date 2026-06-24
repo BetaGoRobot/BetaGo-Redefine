@@ -20,8 +20,21 @@ import (
 	"go.uber.org/zap"
 )
 
+// errOnlyInitiator 临界操作（选店/搜索/结算等）只能由发起人触发；其他用户得到 toast。
+const onlyInitiatorMsg = "只有发起人可以执行此操作"
+
+// errCartLineForbidden 非加入者也非发起人想改某条购物车行；提示并 no-op。
+const cartLineForbiddenMsg = "只有该商品的加入者或发起人可以调整"
+
 func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+		key, sess, ok := requireSession(ctx, session, actionCtx)
+		if !ok {
+			return appcardaction.InfoToastWithRawCardPayload("会话已失效，请重新发起点单", luckin.AppendInitiatorFooter(sessionMissingCard(ctx, session, actionCtx), sess.InitiatorOpenID)), nil
+		}
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return appcardaction.ErrorToast(onlyInitiatorMsg), nil
+		}
 		deptID, err := strconv.ParseInt(actionValue(actionCtx, cardactionproto.LuckinDeptIDField), 10, 64)
 		if err != nil {
 			return appcardaction.ErrorToast("门店信息无效"), nil
@@ -33,25 +46,41 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 			Longitude: parseFloat(actionValue(actionCtx, cardactionproto.LuckinLongitudeField)),
 			Latitude:  parseFloat(actionValue(actionCtx, cardactionproto.LuckinLatitudeField)),
 		}
-		if session != nil {
-			key := sessionKey(actionCtx)
-			session.SetShop(ctx, key, shop)
-			// 切换门店后清空购物车，避免跨店混单。
-			session.ClearCart(ctx, key)
+		// 切换门店要清掉旧购物车（避免跨店混单），整体写回。
+		newSess := luckin.OrderSession{
+			InitiatorOpenID: sess.InitiatorOpenID,
+			ChatID:          sess.ChatID,
+			Shop:            shop,
 		}
-		return appcardaction.InfoToastWithRawCardPayload("已选门店："+shop.DeptName, luckin.BuildProductQueryCard(shop, luckin.Cart{})), nil
+		if err := mcpstore.WithSessionLock(ctx, key.MessageID, func() error {
+			session.SetSession(ctx, key, newSess)
+			session.AddRecentShop(ctx, luckin.NewUserHistoryKey(credentialRequestFromAction(actionCtx)), shop)
+			return nil
+		}); err != nil {
+			return appcardaction.ErrorToast("操作太频繁，请重试"), nil
+		}
+		card := luckin.AppendInitiatorFooter(luckin.BuildProductQueryCard(shop, luckin.Cart{}), sess.InitiatorOpenID)
+		return appcardaction.InfoToastWithRawCardPayload("已选门店："+shop.DeptName, card), nil
 	}
 }
 
 // handleRegionSelect 刷新同一张门店搜索卡：第一步选省份，第二步展示该省份下的城市/区县。
 func handleRegionSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
+		_, sess, ok := requireSession(ctx, session, actionCtx)
+		if !ok {
+			return appcardaction.InfoToastWithRawCardPayload("会话已失效，请重新发起点单", sessionMissingCard(ctx, session, actionCtx)), nil
+		}
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return appcardaction.ErrorToast(onlyInitiatorMsg), nil
+		}
 		province := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinProvinceFormField))
 		if province == "" {
 			return appcardaction.ErrorToast("请选择省份"), nil
 		}
 		req := credentialRequestFromAction(actionCtx)
-		return appcardaction.InfoToastWithRawCardPayload("已选择："+province, luckin.BuildRegionSelectCard(province, recentShops(ctx, session, req))), nil
+		card := luckin.AppendInitiatorFooter(luckin.BuildRegionSelectCard(province, recentShops(ctx, session, req)), sess.InitiatorOpenID)
+		return appcardaction.InfoToastWithRawCardPayload("已选择："+province, card), nil
 	}
 }
 
@@ -61,48 +90,58 @@ func handleProductQuery(session luckin.SessionStore, draft luckin.DraftService, 
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		shop, ok := lookupShop(ctx, session, actionCtx)
+		key, sess, ok := requireSession(ctx, session, actionCtx)
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		cart, _ := session.GetCart(ctx, sessionKey(actionCtx))
+		shop := sess.Shop
+		if shop.DeptID == 0 {
+			return patchSessionMissing(session, actionCtx, msgID), nil
+		}
 		query := strings.TrimSpace(formValue(actionCtx, cardactionproto.LuckinQueryFormField))
 		if query == "" {
 			return nil, errors.New("请输入商品关键词")
 		}
-		req := credentialRequestFromAction(actionCtx)
+		// 商品搜索用发起人的凭证：所有商品价格、可选规格都和发起人账号绑定（优惠券归属一致）。
+		_ = key
+		req := initiatorCredentialRequest(sess, actionCtx)
+		cart := sess.Cart
 
 		return func(runCtx context.Context) {
-			// 先把卡片更新为“搜索中”，避免用户以为无响应。
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchingCard(shop, cart, query))
-
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildProductSearchingCard(shop, cart, query), sess.InitiatorOpenID))
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductQueryCard(shop, cart))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildProductQueryCard(shop, cart), sess.InitiatorOpenID))
 				return
 			}
 			products, err := draft.SearchProducts(runCtx, cred, shop, query, 5)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin product search failed", zap.String("query", query), zap.Error(err))
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSearchErrorCard(shop, cart, query))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildProductSearchErrorCard(shop, cart, query), sess.InitiatorOpenID))
 				return
 			}
 			imageKeys := luckin.UploadProductImages(runCtx, images, products)
-			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildProductSelectCard(shop, cart, products, imageKeys)); err != nil {
+			if err := larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildProductSelectCard(shop, cart, products, imageKeys), sess.InitiatorOpenID)); err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin patch product card failed", zap.String("message_id", msgID), zap.Error(err))
 			}
 		}, nil
 	}
 }
 
-// handleShopSearch 卡片内按位置文本搜索门店（用于会话过期重选 / 换位置重搜），
-// 经纬度通过 geocode 解析，结果异步刷新到门店选择卡。
+// handleShopSearch 卡片内按位置文本搜索门店；只有发起人可以触发。
 func handleShopSearch(session luckin.SessionStore, draft luckin.DraftService, geocoder luckin.Geocoder, tokens luckin.CredentialStore) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		msgID := strings.TrimSpace(actionCtx.MessageID())
 		if msgID == "" {
 			return nil, errors.New("message id is required")
+		}
+		_, sess, ok := requireSession(ctx, session, actionCtx)
+		if !ok {
+			return patchSessionMissing(session, actionCtx, msgID), nil
+		}
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return func(context.Context) { /* no-op */ }, errInitiatorOnly()
 		}
 		location := strings.TrimSpace(strings.Join([]string{
 			formValue(actionCtx, cardactionproto.LuckinRegionFormField),
@@ -112,32 +151,32 @@ func handleShopSearch(session luckin.SessionStore, draft luckin.DraftService, ge
 		if location == "" {
 			return nil, errors.New("请选择城市/区县，或输入位置关键词")
 		}
-		req := credentialRequestFromAction(actionCtx)
+		req := initiatorCredentialRequest(sess, actionCtx)
 		return func(runCtx context.Context) {
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildShopSearchingCard(location))
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildShopSearchingCard(location), sess.InitiatorOpenID))
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildSessionExpiredCardWithRecent(recentShops(runCtx, session, req)))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildSessionExpiredCardWithRecent(recentShops(runCtx, session, req)), sess.InitiatorOpenID))
 				return
 			}
 			if geocoder == nil {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildShopSelectCard(location, nil))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildShopSelectCard(location, nil), sess.InitiatorOpenID))
 				return
 			}
 			point, err := geocoder.Geocode(runCtx, location)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin geocode failed", zap.String("location", location), zap.Error(err))
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildShopSelectCard(location, nil))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildShopSelectCard(location, nil), sess.InitiatorOpenID))
 				return
 			}
 			shops, err := draft.SearchShops(runCtx, cred, luckin.GeoPoint{Longitude: point.Longitude, Latitude: point.Latitude}, "", 5)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin shop search failed", zap.String("location", location), zap.Error(err))
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildShopSelectCard(location, nil))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildShopSelectCard(location, nil), sess.InitiatorOpenID))
 				return
 			}
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildShopSelectCard(location, shops))
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildShopSelectCard(location, shops), sess.InitiatorOpenID))
 		}, nil
 	}
 }
@@ -147,14 +186,19 @@ type pendingOrderCreator interface {
 }
 
 // handleProductSelect 异步处理：有规格则先弹规格卡，否则把商品加入购物车并刷新购物车卡。
+// 任何群成员都可以加购，加购的商品行带 AddedByOpenID = 该用户。
 func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService, tokens luckin.CredentialStore, images luckin.ImageUploader) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		msgID := strings.TrimSpace(actionCtx.MessageID())
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		shop, ok := lookupShop(ctx, session, actionCtx)
+		key, sess, ok := requireSession(ctx, session, actionCtx)
 		if !ok {
+			return patchSessionMissing(session, actionCtx, msgID), nil
+		}
+		shop := sess.Shop
+		if shop.DeptID == 0 {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
 		productID, err := strconv.ParseInt(actionValue(actionCtx, cardactionproto.LuckinProductIDField), 10, 64)
@@ -174,14 +218,15 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 		amount := luckin.ClampAmount(parseAmount(qtyRaw))
 		specSelections := luckin.ParseSpecSelection(formValuesWithPrefix(actionCtx, cardactionproto.LuckinSpecFormFieldPrefix))
 		fromSpecForm := len(specSelections) > 0
-		key := sessionKey(actionCtx)
-		req := credentialRequestFromAction(actionCtx)
+		// 商品价格/规格切换走发起人凭证；加购"行归属"是当前点击者。
+		credReq := initiatorCredentialRequest(sess, actionCtx)
+		adderOpenID := actionCtx.OpenID()
 
 		return func(runCtx context.Context) {
-			cred, err := resolveCredential(runCtx, tokens, req)
+			cred, err := resolveCredential(runCtx, tokens, credReq)
 			if err != nil {
-				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, mustCart(session, runCtx, key)))
+				sendBindGuide(runCtx, credReq)
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, sess.Cart), sess.InitiatorOpenID))
 				return
 			}
 
@@ -193,7 +238,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 					if images != nil && detail.PictureURL != "" {
 						imgKey = images.UploadByURL(runCtx, detail.PictureURL)
 					}
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildSpecSelectCard(shop, detail, imgKey, amount))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildSpecSelectCard(shop, detail, imgKey, amount), sess.InitiatorOpenID))
 					return
 				}
 			} else {
@@ -207,51 +252,71 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 						productName = detail.ProductName
 					}
 					if images != nil && detail.PictureURL != "" {
-						if key := images.UploadByURL(runCtx, detail.PictureURL); key != "" {
-							imageKey = key
+						if k := images.UploadByURL(runCtx, detail.PictureURL); k != "" {
+							imageKey = k
 						}
 					}
 				}
 			}
 
-			cart, _ := session.GetCart(runCtx, key)
-			cart.Add(luckin.CartItem{
-				ProductID:   productID,
-				SkuCode:     skuCode,
-				ProductName: productName,
-				Amount:      amount,
-				UnitPrice:   unitPrice,
-				ImageKey:    imageKey,
+			// 进入临界区：读 session → 加购 → 写回 session，全程持锁。
+			lockErr := mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				curSess, ok := session.GetSession(runCtx, key)
+				if !ok {
+					curSess = sess
+				}
+				curSess.Cart.Add(luckin.CartItem{
+					ProductID:     productID,
+					SkuCode:       skuCode,
+					ProductName:   productName,
+					Amount:        amount,
+					UnitPrice:     unitPrice,
+					ImageKey:      imageKey,
+					AddedByOpenID: adderOpenID,
+				})
+				session.SetSession(runCtx, key, curSess)
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				return nil
 			})
-			session.SetCart(runCtx, key, cart)
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, cart))
+			if lockErr != nil {
+				logs.L().Ctx(runCtx).Warn("luckin cart add failed", zap.Error(lockErr))
+			}
 		}, nil
 	}
 }
 
 // handleCartUpdate 调整购物车某条目数量（含删除）。
+// 只允许该行的加入者或发起人；其他人只 toast 并不动 session。
 func handleCartUpdate(session luckin.SessionStore) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		msgID := strings.TrimSpace(actionCtx.MessageID())
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		shop, ok := lookupShop(ctx, session, actionCtx)
+		key, sess, ok := requireSession(ctx, session, actionCtx)
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		productID, err := strconv.ParseInt(actionValue(actionCtx, cardactionproto.LuckinProductIDField), 10, 64)
-		if err != nil {
-			return nil, errors.New("商品信息无效")
+		lineID := actionValue(actionCtx, cardactionproto.LuckinLineIDField)
+		item, found := sess.Cart.FindLine(lineID)
+		if !found {
+			return nil, errors.New("条目已不存在")
 		}
-		skuCode := actionValue(actionCtx, cardactionproto.LuckinSkuCodeField)
+		if !luckin.CanModifyLine(sess, item, actionCtx.OpenID()) {
+			return nil, errCartLineForbidden()
+		}
 		qty := parseAmount(actionValue(actionCtx, cardactionproto.LuckinQtyFormField))
-		key := sessionKey(actionCtx)
 		return func(runCtx context.Context) {
-			cart, _ := session.GetCart(runCtx, key)
-			cart.SetAmount(productID, skuCode, qty)
-			session.SetCart(runCtx, key, cart)
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, cart))
+			_ = mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				curSess, ok := session.GetSession(runCtx, key)
+				if !ok {
+					curSess = sess
+				}
+				curSess.Cart.SetAmountByLine(lineID, qty)
+				session.SetSession(runCtx, key, curSess)
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				return nil
+			})
 		}, nil
 	}
 }
@@ -263,21 +328,29 @@ func handleCartRemove(session luckin.SessionStore) appcardaction.AsyncHandler {
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		shop, ok := lookupShop(ctx, session, actionCtx)
+		key, sess, ok := requireSession(ctx, session, actionCtx)
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		productID, err := strconv.ParseInt(actionValue(actionCtx, cardactionproto.LuckinProductIDField), 10, 64)
-		if err != nil {
-			return nil, errors.New("商品信息无效")
+		lineID := actionValue(actionCtx, cardactionproto.LuckinLineIDField)
+		item, found := sess.Cart.FindLine(lineID)
+		if !found {
+			return nil, errors.New("条目已不存在")
 		}
-		skuCode := actionValue(actionCtx, cardactionproto.LuckinSkuCodeField)
-		key := sessionKey(actionCtx)
+		if !luckin.CanModifyLine(sess, item, actionCtx.OpenID()) {
+			return nil, errCartLineForbidden()
+		}
 		return func(runCtx context.Context) {
-			cart, _ := session.GetCart(runCtx, key)
-			cart.Remove(productID, skuCode)
-			session.SetCart(runCtx, key, cart)
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, cart))
+			_ = mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				curSess, ok := session.GetSession(runCtx, key)
+				if !ok {
+					curSess = sess
+				}
+				curSess.Cart.RemoveByLine(lineID)
+				session.SetSession(runCtx, key, curSess)
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				return nil
+			})
 		}, nil
 	}
 }
@@ -301,51 +374,58 @@ func checkoutTask(session luckin.SessionStore, draft luckin.DraftService, pendin
 		if msgID == "" {
 			return nil, errors.New("message id is required")
 		}
-		shop, ok := lookupShop(ctx, session, actionCtx)
+		_, sess, ok := requireSession(ctx, session, actionCtx)
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		cart, ok := session.GetCart(ctx, sessionKey(actionCtx))
-		if !ok || cart.Empty() {
+		// 结算/优惠券都是临界点，只有发起人可以推进流程。
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return func(context.Context) { /* no-op */ }, errInitiatorOnly()
+		}
+		shop := sess.Shop
+		if shop.DeptID == 0 || sess.Cart.Empty() {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		req := credentialRequestFromAction(actionCtx)
+		req := initiatorCredentialRequest(sess, actionCtx)
+		items := append([]luckin.CartItem(nil), sess.Cart.Items...)
+		initiator := sess.InitiatorOpenID
+
 		return func(runCtx context.Context) {
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCheckoutProcessingCard(shop))
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCheckoutProcessingCard(shop), initiator))
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildCartCard(shop, cart))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, luckin.Cart{Items: items}), initiator))
 				return
 			}
 			order, card, err := draft.Draft(runCtx, luckin.DraftRequest{
 				AppID:           req.AppID,
 				BotOpenID:       req.BotOpenID,
 				ChatID:          req.ChatID,
-				RequesterOpenID: req.OpenID,
+				InitiatorOpenID: initiator,
 				Credential:      cred,
 				Shop:            shop,
-				Items:           cart.Items,
+				Items:           items,
 				CouponCodeList:  coupons,
 				Now:             time.Now(),
 			})
 			if err != nil {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("预览订单失败："+err.Error()))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("预览订单失败："+err.Error()), initiator))
 				return
 			}
 			if pending != nil {
 				if err := pending.CreatePendingOrder(runCtx, order); err != nil {
 					logs.L().Ctx(runCtx).Warn("luckin create pending order failed", zap.Error(err))
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("创建待确认订单失败："+err.Error()))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建待确认订单失败："+err.Error()), initiator))
 					return
 				}
 			}
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, card)
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiator))
 		}, nil
 	}
 }
 
-// handleOrderStatus 实时查询订单状态并刷新卡片。
+// handleOrderStatus 实时查询订单状态并刷新卡片。任何人都可点（公共信息）。
 func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		orderID := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinOrderIDField))
@@ -354,7 +434,11 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 		}
 		msgID := strings.TrimSpace(actionCtx.MessageID())
 		mode := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinStatusModeField))
+		// 用发起人凭证查；若 session 已不存在（取餐通知卡场景），退回点击者本人凭证。
 		req := credentialRequestFromAction(actionCtx)
+		if _, sess, ok := requireSession(ctx, tokensSessionStore(tokens), actionCtx); ok && sess.InitiatorOpenID != "" {
+			req = initiatorCredentialRequest(sess, actionCtx)
+		}
 		return func(runCtx context.Context) {
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
@@ -377,6 +461,10 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 		}, nil
 	}
 }
+
+// tokensSessionStore 是个 stub：handleOrderStatus 不真正访问 SessionStore，
+// 只想复用 requireSession 的解析逻辑。这里用 nil 触发其"无 session"分支即可。
+func tokensSessionStore(_ luckin.CredentialStore) luckin.SessionStore { return nil }
 
 func handleBindToken(store luckin.CredentialWriter, dismiss ephemeralDeleter) appcardaction.SyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {
@@ -501,9 +589,40 @@ func isP2PChatID(chatID string) bool {
 	return false
 }
 
-func sessionKey(actionCtx *appcardaction.Context) luckin.SessionKey {
-	return luckin.NewSessionKey(credentialRequestFromAction(actionCtx))
+// initiatorCredentialRequest 把"凭证请求"切到发起人。
+// chat_id / chat_type 仍使用当前点击者的会话上下文（同群里都一致），但 OpenID 强制为发起人。
+func initiatorCredentialRequest(sess luckin.OrderSession, actionCtx *appcardaction.Context) luckin.CredentialRequest {
+	req := credentialRequestFromAction(actionCtx)
+	if openID := strings.TrimSpace(sess.InitiatorOpenID); openID != "" {
+		req.OpenID = openID
+	}
+	return req
 }
+
+// requireSession 解析当前 actionCtx 对应的 SessionKey 并加载 OrderSession；
+// session 不存在或缺 InitiatorOpenID 时返回 ok=false（卡片可能已过期）。
+func requireSession(ctx context.Context, session luckin.SessionStore, actionCtx *appcardaction.Context) (luckin.SessionKey, luckin.OrderSession, bool) {
+	if session == nil {
+		return luckin.SessionKey{}, luckin.OrderSession{}, false
+	}
+	msgID := strings.TrimSpace(actionCtx.MessageID())
+	if msgID == "" {
+		return luckin.SessionKey{}, luckin.OrderSession{}, false
+	}
+	req := credentialRequestFromAction(actionCtx)
+	key := luckin.NewSessionKey(req, msgID)
+	sess, ok := session.GetSession(ctx, key)
+	if !ok || strings.TrimSpace(sess.InitiatorOpenID) == "" {
+		return key, sess, false
+	}
+	return key, sess, true
+}
+
+// errInitiatorOnly 异步路径下用 error 返回，让 cardaction 框架把错误透出给前端
+// （前端目前只能看到 toast）。
+func errInitiatorOnly() error { return errors.New(onlyInitiatorMsg) }
+
+func errCartLineForbidden() error { return errors.New(cartLineForbiddenMsg) }
 
 // ephemeralDeleter 撤回临时卡。
 type ephemeralDeleter func(ctx context.Context, messageID string) error
@@ -518,30 +637,16 @@ func sendBindGuide(ctx context.Context, req luckin.CredentialRequest) {
 	}
 }
 
-func mustCart(session luckin.SessionStore, ctx context.Context, key luckin.SessionKey) luckin.Cart {
-	cart, _ := session.GetCart(ctx, key)
-	return cart
-}
-
-// lookupShop 取当前会话门店；是否曾开始过会话交给 SessionStore.Seen 判断。
-func lookupShop(ctx context.Context, session luckin.SessionStore, actionCtx *appcardaction.Context) (luckin.ShopSelection, bool) {
-	if session == nil {
-		return luckin.ShopSelection{}, false
-	}
-	return session.GetShop(ctx, sessionKey(actionCtx))
-}
-
 func sessionMissingCard(ctx context.Context, session luckin.SessionStore, actionCtx *appcardaction.Context) map[string]any {
 	req := credentialRequestFromAction(actionCtx)
 	recent := recentShops(ctx, session, req)
-	if session != nil && session.Seen(ctx, sessionKey(actionCtx)) {
+	if session != nil && session.Seen(ctx, luckin.NewUserHistoryKey(req)) {
 		return luckin.BuildSessionExpiredCardWithRecent(recent)
 	}
 	return luckin.BuildShopStartCard(recent)
 }
 
-// patchSessionMissing 在会话失效或从未开始点单时，把卡片替换为「位置重选」表单，
-// 同时用 Seen 墓碑区分过期与未选择，避免用户从头自然语言交互。
+// patchSessionMissing 在会话失效或从未开始点单时，把卡片替换为「位置重选」表单。
 func patchSessionMissing(session luckin.SessionStore, actionCtx *appcardaction.Context, msgID string) appcardaction.AsyncTask {
 	if msgID == "" {
 		return nil
@@ -555,7 +660,7 @@ func recentShops(ctx context.Context, session luckin.SessionStore, req luckin.Cr
 	if session == nil {
 		return nil
 	}
-	return session.GetRecentShops(ctx, luckin.NewSessionKey(req), 3)
+	return session.GetRecentShops(ctx, luckin.NewUserHistoryKey(req), 3)
 }
 
 func actionValue(actionCtx *appcardaction.Context, key string) string {

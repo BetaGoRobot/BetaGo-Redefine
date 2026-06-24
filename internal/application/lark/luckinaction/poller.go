@@ -210,10 +210,17 @@ func (p *OrderPoller) patchOrderCard(record luckin.OrderRecord, card map[string]
 }
 
 func (p *OrderPoller) notifyReady(record luckin.OrderRecord, detail luckin.OrderDetail) {
-	if strings.TrimSpace(record.ChatID) == "" || strings.TrimSpace(record.RequesterOpenID) == "" {
+	if strings.TrimSpace(record.ChatID) == "" {
 		return
 	}
-	card := luckin.BuildOrderNoticeCard(larkmsg.AtUserMD(record.RequesterOpenID)+" 可以取餐啦", detail)
+	initiator := strings.TrimSpace(record.InitiatorOpenID)
+	if initiator == "" {
+		initiator = strings.TrimSpace(record.RequesterOpenID)
+	}
+	notice := larkmsg.AtUserMD(initiator) + " 可以取餐啦"
+	// 用快照 + DiscountPrice 渲染按人分账。空快照时 BuildOrderReadyCard 退化为普通通知卡。
+	card := luckin.BuildOrderReadyCard(notice, detail, record.CartSnapshot, record.DiscountPrice)
+	card = luckin.AppendInitiatorFooter(card, initiator)
 	if err := larkmsg.CreateCardJSON(p.ctx, record.ChatID, card, "luckin-ready-"+record.OrderID, "_luckinReady"); err != nil {
 		logs.L().Ctx(p.ctx).Warn("luckin ready notice card failed", zap.String("order_id", record.OrderID), zap.Error(err))
 	}

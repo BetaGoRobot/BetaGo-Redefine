@@ -33,7 +33,7 @@ func Register() {
 		luckinOrderPollConfig(),
 	)
 	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderConfirm, handleConfirm(service, session))
-	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service))
+	appcardaction.RegisterAsyncIfAbsent(cardactionproto.ActionLuckinOrderCancel, handleCancel(service, session))
 
 	draft := luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL())
 	geocoder := newGeocoder()
@@ -66,40 +66,57 @@ func handleConfirm(service luckin.ConfirmationService, session luckin.SessionSto
 		if err != nil {
 			return nil, err
 		}
-		msgID := actionCtx.MessageID()
-		key := sessionKey(actionCtx)
+		msgID := strings.TrimSpace(actionCtx.MessageID())
+		key, sess, ok := requireSession(ctx, session, actionCtx)
+		if !ok {
+			return patchSessionMissing(session, actionCtx, msgID), nil
+		}
+		// 「确认下单」临界点：只有发起人可推进，避免别人抢点。
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return func(context.Context) {}, errInitiatorOnly()
+		}
+		// pending order 已经把 RequesterOpenID 锁定为发起人；这里把 OperatorOpenID
+		// 也强制使用发起人，避免后端校验 (order.RequesterOpenID == OperatorOpenID) 失败。
 		req := luckin.ConfirmRequest{
 			PendingOrderID: id,
 			PayloadHash:    hash,
-			OperatorOpenID: actionCtx.OpenID(),
+			OperatorOpenID: sess.InitiatorOpenID,
 			ChatID:         actionCtx.ChatID(),
 			MessageID:      msgID,
 			Now:            time.Now(),
 		}
 		return func(runCtx context.Context) {
 			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderProcessingCard("正在为你创建瑞幸订单…"))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderProcessingCard("正在为你创建瑞幸订单…"), sess.InitiatorOpenID))
 			}
-			card, err := service.Confirm(runCtx, req)
-			if err != nil {
-				logs.L().Ctx(runCtx).Warn("luckin confirm order failed", zap.String("pending_id", id), zap.Error(err))
+			var card map[string]any
+			lockErr := mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				c, err := service.Confirm(runCtx, req)
+				if err != nil {
+					return err
+				}
+				card = c
+				// 下单成功后清空当前点单流程，避免重复下单（同一张卡再点会拿不到 cart）。
+				if session != nil {
+					session.DeleteSession(runCtx, key)
+				}
+				return nil
+			})
+			if lockErr != nil {
+				logs.L().Ctx(runCtx).Warn("luckin confirm order failed", zap.String("pending_id", id), zap.Error(lockErr))
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("创建订单失败："+err.Error()))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建订单失败："+lockErr.Error()), sess.InitiatorOpenID))
 				}
 				return
 			}
-			// 下单成功后清空购物车，避免重复下单。
-			if session != nil {
-				session.ClearCart(runCtx, key)
-			}
 			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, card)
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, sess.InitiatorOpenID))
 			}
 		}, nil
 	}
 }
 
-func handleCancel(service luckin.ConfirmationService) appcardaction.AsyncHandler {
+func handleCancel(service luckin.ConfirmationService, session luckin.SessionStore) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		id, err := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		if err != nil {
@@ -109,24 +126,34 @@ func handleCancel(service luckin.ConfirmationService) appcardaction.AsyncHandler
 		if err != nil {
 			return nil, err
 		}
-		msgID := actionCtx.MessageID()
+		msgID := strings.TrimSpace(actionCtx.MessageID())
+		_, sess, ok := requireSession(ctx, session, actionCtx)
+		if !ok {
+			return patchSessionMissing(session, actionCtx, msgID), nil
+		}
+		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+			return func(context.Context) {}, errInitiatorOnly()
+		}
 		req := luckin.CancelRequest{
 			PendingOrderID: id,
 			PayloadHash:    hash,
-			OperatorOpenID: actionCtx.OpenID(),
+			OperatorOpenID: sess.InitiatorOpenID,
 			ChatID:         actionCtx.ChatID(),
 			Now:            time.Now(),
 		}
 		return func(runCtx context.Context) {
-			if err := service.Cancel(runCtx, req); err != nil {
-				logs.L().Ctx(runCtx).Warn("luckin cancel order failed", zap.String("pending_id", id), zap.Error(err))
+			lockErr := mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				return service.Cancel(runCtx, req)
+			})
+			if lockErr != nil {
+				logs.L().Ctx(runCtx).Warn("luckin cancel order failed", zap.String("pending_id", id), zap.Error(lockErr))
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("取消失败："+err.Error()))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("取消失败："+lockErr.Error()), sess.InitiatorOpenID))
 				}
 				return
 			}
 			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderProcessingCard("瑞幸订单已取消"))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderProcessingCard("瑞幸订单已取消"), sess.InitiatorOpenID))
 			}
 		}, nil
 	}

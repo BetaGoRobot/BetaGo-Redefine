@@ -21,25 +21,64 @@ const (
 )
 
 func ReplyCardJSON(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) error {
+	_, err := ReplyCardJSONReturning(ctx, msgID, cardData, suffix, replyInThread)
+	return err
+}
+
+// ReplyCardJSONReturning 同 ReplyCardJSON，但返回新发卡片的 message_id。
+// 用于发卡瞬间需要锁定一次点单流程的场景。
+func ReplyCardJSONReturning(ctx context.Context, msgID string, cardData any, suffix string, replyInThread bool) (string, error) {
 	content, err := buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = ReplyMsgRawContentType(ctx, msgID, larkim.MsgTypeInteractive, content, suffix, replyInThread)
-	return err
+	resp, err := ReplyMsgRawContentType(ctx, msgID, larkim.MsgTypeInteractive, content, suffix, replyInThread)
+	if err != nil {
+		return "", err
+	}
+	return messageIDFromReplyResp(resp), nil
 }
 
 func CreateCardJSON(ctx context.Context, chatID string, cardData any, msgID, suffix string) error {
-	return CreateCardJSONByReceiveID(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, cardData, msgID, suffix)
+	_, err := CreateCardJSONReturning(ctx, chatID, cardData, msgID, suffix)
+	return err
+}
+
+// CreateCardJSONReturning 同 CreateCardJSON，但返回新发卡片的 message_id。
+func CreateCardJSONReturning(ctx context.Context, chatID string, cardData any, msgID, suffix string) (string, error) {
+	return CreateCardJSONByReceiveIDReturning(ctx, larkim.CreateMessageV1ReceiveIDTypeChatId, chatID, cardData, msgID, suffix)
 }
 
 func CreateCardJSONByReceiveID(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) error {
+	_, err := CreateCardJSONByReceiveIDReturning(ctx, receiveIDType, receiveID, cardData, msgID, suffix)
+	return err
+}
+
+// CreateCardJSONByReceiveIDReturning 同 CreateCardJSONByReceiveID，但返回新发卡片的 message_id。
+func CreateCardJSONByReceiveIDReturning(ctx context.Context, receiveIDType, receiveID string, cardData any, msgID, suffix string) (string, error) {
 	content, err := buildCardEntityContent(ctx, cardKitTypeCardJSON, cardData)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = CreateMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, content, msgID, suffix)
-	return err
+	resp, err := CreateMsgRawContentTypeByReceiveID(ctx, receiveIDType, receiveID, larkim.MsgTypeInteractive, content, msgID, suffix)
+	if err != nil {
+		return "", err
+	}
+	return messageIDFromCreateResp(resp), nil
+}
+
+func messageIDFromCreateResp(resp *larkim.CreateMessageResp) string {
+	if resp == nil || resp.Data == nil || resp.Data.MessageId == nil {
+		return ""
+	}
+	return strings.TrimSpace(*resp.Data.MessageId)
+}
+
+func messageIDFromReplyResp(resp *larkim.ReplyMessageResp) string {
+	if resp == nil || resp.Data == nil || resp.Data.MessageId == nil {
+		return ""
+	}
+	return strings.TrimSpace(*resp.Data.MessageId)
 }
 
 func PatchCardJSON(ctx context.Context, msgID string, cardData any) error {

@@ -3,6 +3,7 @@ package mcpstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -13,16 +14,18 @@ import (
 )
 
 const (
-	// sessionTTL 进程内缓存与 Redis 持久化共用的过期时长。会话态（已选门店 + 购物车）
-	// 需要跨副本/重启可恢复，因此放长到 7 天，超期按“会话过期”处理。
+	// sessionTTL 进程内缓存与 Redis 持久化共用的过期时长。一次点单流程绑定到卡片消息 ID，
+	// 卡片在飞书侧约 7 天内可 patch，因此放长到 7 天。
 	sessionTTL = 7 * 24 * time.Hour
-	// seenTTL 墓碑标记的存活时长，远长于 sessionTTL：用于区分“从未选过门店”和“选过但已过期”。
-	seenTTL = 30 * 24 * time.Hour
+	// historyTTL 用户级历史（最近门店、是否曾点过单）远长于一次点单流程。
+	historyTTL = 30 * 24 * time.Hour
 
-	redisShopKeyPfx        = "luckin:session:shop:"
+	// luckin:session:order:<msg_id> -> OrderSession（卡片维度）
+	redisOrderSessionKeyPfx = "luckin:session:order:"
+	// luckin:session:recent_shops:<chat>:<user> -> []ShopSelection（用户维度）
 	redisRecentShopsKeyPfx = "luckin:session:recent_shops:"
-	redisCartKeyPfx        = "luckin:session:cart:"
-	redisSeenKeyPfx        = "luckin:session:seen:"
+	// luckin:session:seen:<chat>:<user> -> bool（用户维度）
+	redisSeenKeyPfx = "luckin:session:seen:"
 )
 
 var (
@@ -30,7 +33,7 @@ var (
 	defaultSessionOnce  sync.Once
 )
 
-// DefaultSessionStore 返回进程级共享的门店会话缓存，供工具层与卡片回调共用。
+// DefaultSessionStore 返回进程级共享的会话存储，供工具层与卡片回调共用。
 func DefaultSessionStore() *SessionStore {
 	defaultSessionOnce.Do(func() {
 		defaultSessionStore = NewSessionStore()
@@ -38,64 +41,75 @@ func DefaultSessionStore() *SessionStore {
 	return defaultSessionStore
 }
 
-// SessionStore 两级存储：进程内 ttlcache（L1）+ Redis 持久化（L2）。
-// Redis 不可用时自动降级为纯内存，保证主流程不被影响。
+// SessionStore 两级存储：
+//   - L1 进程内 ttlcache，加速热路径；
+//   - L2 Redis，跨副本/跨进程共享，是真实状态。
+//
+// 写操作必须先写 L2 再写 L1，避免并发副本读到自己 L1 的旧值。
 type SessionStore struct {
-	shops       *ttlcache.Cache[string, luckin.ShopSelection]
+	sessions    *ttlcache.Cache[string, luckin.OrderSession]
 	recentShops *ttlcache.Cache[string, []luckin.ShopSelection]
-	carts       *ttlcache.Cache[string, luckin.Cart]
 	seen        *ttlcache.Cache[string, bool]
 }
 
 func NewSessionStore() *SessionStore {
-	shops := ttlcache.New(
-		ttlcache.WithTTL[string, luckin.ShopSelection](sessionTTL),
-		ttlcache.WithCapacity[string, luckin.ShopSelection](2000),
+	sessions := ttlcache.New(
+		ttlcache.WithTTL[string, luckin.OrderSession](sessionTTL),
+		ttlcache.WithCapacity[string, luckin.OrderSession](2000),
 	)
 	recentShops := ttlcache.New(
-		ttlcache.WithTTL[string, []luckin.ShopSelection](seenTTL),
+		ttlcache.WithTTL[string, []luckin.ShopSelection](historyTTL),
 		ttlcache.WithCapacity[string, []luckin.ShopSelection](5000),
 	)
-	carts := ttlcache.New(
-		ttlcache.WithTTL[string, luckin.Cart](sessionTTL),
-		ttlcache.WithCapacity[string, luckin.Cart](2000),
-	)
 	seen := ttlcache.New(
-		ttlcache.WithTTL[string, bool](seenTTL),
+		ttlcache.WithTTL[string, bool](historyTTL),
 		ttlcache.WithCapacity[string, bool](5000),
 	)
-	go shops.Start()
+	go sessions.Start()
 	go recentShops.Start()
-	go carts.Start()
 	go seen.Start()
-	return &SessionStore{shops: shops, recentShops: recentShops, carts: carts, seen: seen}
+	return &SessionStore{sessions: sessions, recentShops: recentShops, seen: seen}
 }
 
-func (s *SessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
-	if item := s.shops.Get(key.String()); item != nil {
+// GetSession 获取一次点单流程的状态（发起人 + 门店 + 购物车）。
+func (s *SessionStore) GetSession(ctx context.Context, key luckin.SessionKey) (luckin.OrderSession, bool) {
+	if !key.Valid() {
+		return luckin.OrderSession{}, false
+	}
+	cacheKey := key.String()
+	if item := s.sessions.Get(cacheKey); item != nil {
 		return item.Value(), true
 	}
-	var shop luckin.ShopSelection
-	if getRedisJSON(ctx, redisShopKeyPfx+key.String(), &shop) {
-		s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
-		return shop, true
+	var sess luckin.OrderSession
+	if getRedisJSON(ctx, redisOrderSessionKeyPfx+cacheKey, &sess) {
+		s.sessions.Set(cacheKey, sess, ttlcache.DefaultTTL)
+		return sess, true
 	}
-	return luckin.ShopSelection{}, false
+	return luckin.OrderSession{}, false
 }
 
-func (s *SessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
-	s.shops.Set(key.String(), shop, ttlcache.DefaultTTL)
-	setRedisJSON(ctx, redisShopKeyPfx+key.String(), shop, sessionTTL)
-	s.addRecentShop(ctx, key, shop)
-	s.markSeen(ctx, key)
+// SetSession 写入完整 OrderSession。调用方负责持有锁，避免 read-modify-write 撕裂。
+func (s *SessionStore) SetSession(ctx context.Context, key luckin.SessionKey, sess luckin.OrderSession) {
+	if !key.Valid() {
+		return
+	}
+	cacheKey := key.String()
+	setRedisJSON(ctx, redisOrderSessionKeyPfx+cacheKey, sess, sessionTTL)
+	s.sessions.Set(cacheKey, sess, ttlcache.DefaultTTL)
 }
 
-func (s *SessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
-	s.shops.Delete(key.String())
-	delRedis(ctx, redisShopKeyPfx+key.String())
+// DeleteSession 清空一次点单流程（用于结算后清空购物车场景，调用方决定是否调用）。
+func (s *SessionStore) DeleteSession(ctx context.Context, key luckin.SessionKey) {
+	if !key.Valid() {
+		return
+	}
+	cacheKey := key.String()
+	s.sessions.Delete(cacheKey)
+	delRedis(ctx, redisOrderSessionKeyPfx+cacheKey)
 }
 
-func (s *SessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+// GetRecentShops 用户级"最近选过的门店"。
+func (s *SessionStore) GetRecentShops(ctx context.Context, key luckin.UserHistoryKey, limit int) []luckin.ShopSelection {
 	if limit <= 0 {
 		return nil
 	}
@@ -112,49 +126,8 @@ func (s *SessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey
 	return nil
 }
 
-func (s *SessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
-	if item := s.carts.Get(key.String()); item != nil {
-		return item.Value(), true
-	}
-	var cart luckin.Cart
-	if getRedisJSON(ctx, redisCartKeyPfx+key.String(), &cart) {
-		s.carts.Set(key.String(), cart, ttlcache.DefaultTTL)
-		return cart, true
-	}
-	return luckin.Cart{}, false
-}
-
-func (s *SessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
-	s.carts.Set(key.String(), cart, ttlcache.DefaultTTL)
-	setRedisJSON(ctx, redisCartKeyPfx+key.String(), cart, sessionTTL)
-	s.markSeen(ctx, key)
-}
-
-func (s *SessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
-	s.carts.Delete(key.String())
-	delRedis(ctx, redisCartKeyPfx+key.String())
-}
-
-// Seen 报告该会话此前是否选过门店/加过购物车（墓碑标记）。
-// 用于区分“会话已过期”（true）与“从未开始点单”（false）。
-func (s *SessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
-	if item := s.seen.Get(key.String()); item != nil {
-		return item.Value()
-	}
-	var flag bool
-	if getRedisJSON(ctx, redisSeenKeyPfx+key.String(), &flag) && flag {
-		s.seen.Set(key.String(), true, ttlcache.DefaultTTL)
-		return true
-	}
-	return false
-}
-
-func (s *SessionStore) markSeen(ctx context.Context, key luckin.SessionKey) {
-	s.seen.Set(key.String(), true, ttlcache.DefaultTTL)
-	setRedisJSON(ctx, redisSeenKeyPfx+key.String(), true, seenTTL)
-}
-
-func (s *SessionStore) addRecentShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
+// AddRecentShop 把一次成功选店记录到用户偏好。
+func (s *SessionStore) AddRecentShop(ctx context.Context, key luckin.UserHistoryKey, shop luckin.ShopSelection) {
 	if shop.DeptID == 0 {
 		return
 	}
@@ -163,7 +136,28 @@ func (s *SessionStore) addRecentShop(ctx context.Context, key luckin.SessionKey,
 	shops = normalizeRecentShops(shops, 10)
 	cacheKey := key.String()
 	s.recentShops.Set(cacheKey, shops, ttlcache.DefaultTTL)
-	setRedisJSON(ctx, redisRecentShopsKeyPfx+cacheKey, shops, seenTTL)
+	setRedisJSON(ctx, redisRecentShopsKeyPfx+cacheKey, shops, historyTTL)
+}
+
+// Seen 该用户此前是否在该机器人下点过单。
+func (s *SessionStore) Seen(ctx context.Context, key luckin.UserHistoryKey) bool {
+	cacheKey := key.String()
+	if item := s.seen.Get(cacheKey); item != nil {
+		return item.Value()
+	}
+	var flag bool
+	if getRedisJSON(ctx, redisSeenKeyPfx+cacheKey, &flag) && flag {
+		s.seen.Set(cacheKey, true, ttlcache.DefaultTTL)
+		return true
+	}
+	return false
+}
+
+// MarkSeen 墓碑标记，决定后续的会话过期 vs 从未开始文案。
+func (s *SessionStore) MarkSeen(ctx context.Context, key luckin.UserHistoryKey) {
+	cacheKey := key.String()
+	s.seen.Set(cacheKey, true, ttlcache.DefaultTTL)
+	setRedisJSON(ctx, redisSeenKeyPfx+cacheKey, true, historyTTL)
 }
 
 func normalizeRecentShops(shops []luckin.ShopSelection, limit int) []luckin.ShopSelection {
@@ -225,7 +219,7 @@ func setRedisJSON(ctx context.Context, key string, value any, ttl time.Duration)
 	if err != nil {
 		return
 	}
-	if err := client.Set(ctx, key, data, ttl).Err(); err != nil && err != redis.Nil {
+	if err := client.Set(ctx, key, data, ttl).Err(); err != nil && !errors.Is(err, redis.Nil) {
 		_ = err
 	}
 }

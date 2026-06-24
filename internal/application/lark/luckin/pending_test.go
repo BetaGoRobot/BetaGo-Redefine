@@ -14,7 +14,7 @@ func TestNewPendingOrderComputesHashAndExpiry(t *testing.T) {
 		AppID:              "app",
 		BotOpenID:          "bot",
 		ChatID:             "chat",
-		RequesterOpenID:    "user",
+		InitiatorOpenID:    "user",
 		Credential:         Credential{Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		CreateOrderPayload: payload,
 		PreviewResult:      json.RawMessage(`{"discountPrice":9.9}`),

@@ -23,6 +23,8 @@ type OrderRecord struct {
 	BotOpenID        string
 	ChatID           string
 	RequesterOpenID  string
+	InitiatorOpenID  string
+	CartSnapshot     []CartItem
 	CredentialScope  CredentialScope
 	MessageID        string
 	Status           OrderRecordStatus

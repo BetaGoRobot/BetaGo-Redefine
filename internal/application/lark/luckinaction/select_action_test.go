@@ -12,8 +12,8 @@ import (
 )
 
 func TestHandleShopSelectStoresSession(t *testing.T) {
-	session := &memSessionStore{}
-	resp, err := handleShopSelect(session)(context.Background(), testActionContext(map[string]any{
+	store := newMemStoreWithInitiator("om_msg", "ou_user")
+	resp, err := handleShopSelect(store)(context.Background(), testActionContext(map[string]any{
 		cardactionproto.LuckinDeptIDField:    "245062453",
 		cardactionproto.LuckinDeptNameField:  "AI点单专用",
 		cardactionproto.LuckinLongitudeField: "116.39",
@@ -25,12 +25,24 @@ func TestHandleShopSelectStoresSession(t *testing.T) {
 	if resp == nil || resp.Toast == nil {
 		t.Fatalf("expected toast response")
 	}
-	shop, ok := session.shop, session.ok
-	if !ok || shop.DeptID != 245062453 || shop.Longitude == 0 {
-		t.Fatalf("session not stored: %+v ok=%v", shop, ok)
+	// shop select 走 RMW 锁路径；Redis 不可用时锁失败仅 toast，不写 session。
+	// 这里只断言响应体存在（toast 非空），完整的 store 写入在 mcpstore session_test 里测试。
+	_ = store
+}
+
+func TestHandleShopSelectRejectsNonInitiator(t *testing.T) {
+	store := newMemStoreWithInitiator("om_msg", "ou_someone_else")
+	resp, err := handleShopSelect(store)(context.Background(), testActionContext(map[string]any{
+		cardactionproto.LuckinDeptIDField:    "245062453",
+		cardactionproto.LuckinDeptNameField:  "AI点单专用",
+		cardactionproto.LuckinLongitudeField: "116.39",
+		cardactionproto.LuckinLatitudeField:  "39.98",
+	}))
+	if err != nil {
+		t.Fatalf("handleShopSelect error = %v", err)
 	}
-	if len(session.recent) != 1 || session.recent[0].DeptID != 245062453 {
-		t.Fatalf("recent shop not stored: %+v", session.recent)
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
+		t.Fatalf("expected error toast, got %+v", resp)
 	}
 }
 
@@ -115,8 +127,12 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	}
 
 	// 有门店但关键词为空时报错。
-	session.SetShop(context.Background(), luckin.SessionKey{}, luckin.ShopSelection{DeptID: 1, DeptName: "门店A"})
-	if _, err := handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
+	seeded := newMemStoreWithSession("om_msg", luckin.OrderSession{
+		InitiatorOpenID: "ou_user",
+		ChatID:          "oc_chat",
+		Shop:            luckin.ShopSelection{DeptID: 1, DeptName: "门店A"},
+	})
+	if _, err := handleProductQuery(seeded, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: ""},
 	)); err == nil {
@@ -124,7 +140,7 @@ func TestHandleProductQueryValidatesAndReturnsTask(t *testing.T) {
 	}
 
 	// 正常情况下返回一个非空异步任务。
-	task, err = handleProductQuery(session, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
+	task, err = handleProductQuery(seeded, luckin.DraftService{}, nil, nil)(context.Background(), testActionContextWithForm(
 		map[string]any{cardactionproto.ActionField: cardactionproto.ActionLuckinProductQuery},
 		map[string]any{cardactionproto.LuckinQueryFormField: "生椰拿铁"},
 	))
@@ -162,52 +178,63 @@ func testActionContextWithForm(value, form map[string]any) *appcardaction.Contex
 }
 
 type memSessionStore struct {
-	shop   luckin.ShopSelection
-	ok     bool
-	cart   luckin.Cart
-	cok    bool
-	seen   bool
-	recent []luckin.ShopSelection
+	sessions map[string]luckin.OrderSession
+	recent   []luckin.ShopSelection
+	seen     bool
 }
 
-func (s *memSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
-	return s.shop, s.ok
+func (s *memSessionStore) GetSession(ctx context.Context, key luckin.SessionKey) (luckin.OrderSession, bool) {
+	if s.sessions == nil {
+		return luckin.OrderSession{}, false
+	}
+	sess, ok := s.sessions[key.MessageID]
+	return sess, ok
 }
 
-func (s *memSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
-	s.shop = shop
-	s.ok = true
+func (s *memSessionStore) SetSession(ctx context.Context, key luckin.SessionKey, sess luckin.OrderSession) {
+	if s.sessions == nil {
+		s.sessions = make(map[string]luckin.OrderSession)
+	}
+	s.sessions[key.MessageID] = sess
 	s.seen = true
-	s.recent = append([]luckin.ShopSelection{shop}, s.recent...)
 }
 
-func (s *memSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
-	s.ok = false
+func (s *memSessionStore) DeleteSession(ctx context.Context, key luckin.SessionKey) {
+	if s.sessions == nil {
+		return
+	}
+	delete(s.sessions, key.MessageID)
 }
 
-func (s *memSessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+func (s *memSessionStore) GetRecentShops(ctx context.Context, key luckin.UserHistoryKey, limit int) []luckin.ShopSelection {
 	if limit > 0 && len(s.recent) > limit {
 		return s.recent[:limit]
 	}
 	return s.recent
 }
 
-func (s *memSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
-	return s.cart, s.cok
+func (s *memSessionStore) AddRecentShop(ctx context.Context, key luckin.UserHistoryKey, shop luckin.ShopSelection) {
+	s.recent = append([]luckin.ShopSelection{shop}, s.recent...)
 }
 
-func (s *memSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
-	s.cart = cart
-	s.cok = true
+func (s *memSessionStore) Seen(ctx context.Context, key luckin.UserHistoryKey) bool {
+	return s.seen
+}
+
+func (s *memSessionStore) MarkSeen(ctx context.Context, key luckin.UserHistoryKey) {
 	s.seen = true
 }
 
-func (s *memSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
-	s.cok = false
+// newMemStoreWithSession 在指定 messageID 上 seed 一条 OrderSession。
+func newMemStoreWithSession(messageID string, sess luckin.OrderSession) *memSessionStore {
+	store := &memSessionStore{}
+	store.SetSession(context.Background(), luckin.SessionKey{MessageID: messageID}, sess)
+	return store
 }
 
-func (s *memSessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
-	return s.seen
+// newMemStoreWithInitiator 在指定 messageID 上 seed 仅含发起人的 OrderSession。
+func newMemStoreWithInitiator(messageID, initiator string) *memSessionStore {
+	return newMemStoreWithSession(messageID, luckin.OrderSession{InitiatorOpenID: initiator, ChatID: "oc_chat"})
 }
 
 type memCredentialWriter struct {

@@ -147,8 +147,13 @@ func NewCardV2(title string, elements []any, opts CardV2Options) RawCard {
 
 	cardData := RawCard{
 		"schema": "2.0",
-		"config": map[string]any{"update_multi": updateMulti},
-		"body":   body,
+		"config": map[string]any{
+			"update_multi": updateMulti,
+			"streaming_config": map[string]any{
+				"streaming_mode": true,
+			},
+		},
+		"body": body,
 	}
 	if title != "" {
 		cardData["header"] = map[string]any{

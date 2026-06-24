@@ -102,12 +102,14 @@ func buildPendingOrderRow(order luckin.PendingOrder) *model.LuckinPendingOrder {
 		BotOpenID:           order.BotOpenID,
 		ChatID:              order.ChatID,
 		RequesterOpenID:     order.RequesterOpenID,
+		InitiatorOpenID:     order.InitiatorOpenID,
 		CredentialScopeType: string(order.CredentialScope.Type),
 		CredentialScopeID:   order.CredentialScope.ID,
 		McpServerName:       order.MCPServerName,
 		CreateOrderPayload:  datatypes.JSON(defaultJSON(order.CreateOrderPayload)),
 		PayloadHash:         order.PayloadHash,
 		PreviewResult:       datatypes.JSON(defaultJSON(order.PreviewResult)),
+		CartSnapshot:        marshalCartSnapshot(order.CartSnapshot),
 		Status:              string(order.Status),
 		ResultJSON:          datatypes.JSON(defaultJSON(order.ResultJSON)),
 		ErrorText:           order.ErrorText,
@@ -132,11 +134,13 @@ func pendingOrderFromRow(row *model.LuckinPendingOrder) luckin.PendingOrder {
 		BotOpenID:          row.BotOpenID,
 		ChatID:             row.ChatID,
 		RequesterOpenID:    row.RequesterOpenID,
+		InitiatorOpenID:    row.InitiatorOpenID,
 		CredentialScope:    luckin.CredentialScope{Type: luckin.ScopeType(row.CredentialScopeType), ID: row.CredentialScopeID},
 		MCPServerName:      row.McpServerName,
 		CreateOrderPayload: json.RawMessage(row.CreateOrderPayload),
 		PayloadHash:        row.PayloadHash,
 		PreviewResult:      json.RawMessage(row.PreviewResult),
+		CartSnapshot:       unmarshalCartSnapshot(row.CartSnapshot),
 		Status:             luckin.PendingStatus(row.Status),
 		ResultJSON:         json.RawMessage(row.ResultJSON),
 		ErrorText:          row.ErrorText,
@@ -144,6 +148,29 @@ func pendingOrderFromRow(row *model.LuckinPendingOrder) luckin.PendingOrder {
 		ConfirmedByOpenID:  row.ConfirmedByOpenID,
 		ConfirmedAt:        confirmedAtPtr,
 	}
+}
+
+// marshalCartSnapshot 把 []CartItem 落库成 jsonb 列内容；空 cart 用 "[]" 以匹配 NOT NULL DEFAULT '[]'。
+func marshalCartSnapshot(items []luckin.CartItem) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+func unmarshalCartSnapshot(raw string) []luckin.CartItem {
+	if raw == "" {
+		return nil
+	}
+	var items []luckin.CartItem
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	return items
 }
 
 func defaultJSON(raw json.RawMessage) json.RawMessage {

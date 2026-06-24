@@ -30,8 +30,9 @@ type PendingOrderCardSender interface {
 }
 
 // CardSender 发送任意瑞幸交互卡片（门店选择、商品选择、绑定引导）。
+// 返回值：新发卡片的 message_id，调用方据此把卡片维度的会话状态写入 SessionStore。
 type CardSender interface {
-	SendCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, map[string]any) error
+	SendCard(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData, map[string]any) (string, error)
 }
 
 // EphemeralCardSender 发送仅指定用户可见的临时卡（用于绑定 token 引导）。
@@ -156,10 +157,11 @@ func (h handler) Handle(ctx context.Context, data *larkim.P2MessageReceiveV1, me
 
 func (h handler) handleShopSearch(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, cred luckin.Credential, arg rawArgs) error {
 	locationText := stringArg(arg.JSON, "locationText")
+	req := credentialRequestFromMessage(data, metaData)
 	if locationText == "" {
 		if h.cards != nil {
-			req := credentialRequestFromMessage(data, metaData)
-			if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopStartCard(h.recentShops(ctx, req, 3))); err != nil {
+			card := luckin.AppendInitiatorFooter(luckin.BuildShopStartCard(h.recentShops(ctx, req, 3)), req.OpenID)
+			if err := h.sendAndInitSession(ctx, data, metaData, card, req, luckin.ShopSelection{}); err != nil {
 				return err
 			}
 		}
@@ -186,7 +188,8 @@ func (h handler) handleShopSearch(ctx context.Context, data *larkim.P2MessageRec
 	}
 	shops := luckin.ShopOptionsFromResult(res.Content, 5)
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildShopSelectCard(locationText, shops)); err != nil {
+		card := luckin.AppendInitiatorFooter(luckin.BuildShopSelectCard(locationText, shops), req.OpenID)
+		if err := h.sendAndInitSession(ctx, data, metaData, card, req, luckin.ShopSelection{}); err != nil {
 			return err
 		}
 	}
@@ -212,8 +215,8 @@ func (h handler) handleProductSearch(ctx context.Context, data *larkim.P2Message
 	products := luckin.ProductOptionsFromResult(res.Content, 5)
 	imageKeys := luckin.UploadProductImages(ctx, h.images, products)
 	if h.cards != nil {
-		cart, _ := h.session.GetCart(ctx, luckin.NewSessionKey(req))
-		if err := h.cards.SendCard(ctx, data, metaData, luckin.BuildProductSelectCard(shop, cart, products, imageKeys)); err != nil {
+		card := luckin.AppendInitiatorFooter(luckin.BuildProductSelectCard(shop, luckin.Cart{}, products, imageKeys), req.OpenID)
+		if err := h.sendAndInitSession(ctx, data, metaData, card, req, shop); err != nil {
 			return err
 		}
 	}
@@ -240,7 +243,7 @@ func (h handler) handlePrepareCreate(ctx context.Context, data *larkim.P2Message
 		AppID:              identity.AppID,
 		BotOpenID:          identity.BotOpenID,
 		ChatID:             metaData.ChatID,
-		RequesterOpenID:    metaData.OpenID,
+		InitiatorOpenID:    metaData.OpenID,
 		Credential:         cred,
 		CreateOrderPayload: payload,
 		PreviewResult:      json.RawMessage(`{}`),
@@ -295,11 +298,34 @@ func (h handler) guideBindToken(ctx context.Context, data *larkim.P2MessageRecei
 	}
 	// 临时卡不可用或失败时降级为普通卡片，保证引导可达。
 	if h.cards != nil {
-		if err := h.cards.SendCard(ctx, data, metaData, bindCard); err != nil {
+		if _, err := h.cards.SendCard(ctx, data, metaData, bindCard); err != nil {
 			return err
 		}
 	}
 	metaData.SetExtra(h.policy.RobotToolName+"_result", "用户尚未绑定瑞幸账号，已发送绑定引导卡片，绑定后请重试")
+	return nil
+}
+
+// sendAndInitSession 发送一张点单流程卡片，并把 (messageID, initiator, shop) 锁定到 SessionStore。
+// 关键不变量：每次新卡发出后立即写一条 OrderSession，发起人就此锁定，贯穿到结算/确认。
+func (h handler) sendAndInitSession(ctx context.Context, data *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, card map[string]any, req luckin.CredentialRequest, shop luckin.ShopSelection) error {
+	if h.cards == nil {
+		return nil
+	}
+	msgID, err := h.cards.SendCard(ctx, data, metaData, card)
+	if err != nil {
+		return err
+	}
+	if h.session == nil || strings.TrimSpace(msgID) == "" {
+		return nil
+	}
+	key := luckin.NewSessionKey(req, msgID)
+	h.session.SetSession(ctx, key, luckin.OrderSession{
+		InitiatorOpenID: req.OpenID,
+		ChatID:          req.ChatID,
+		Shop:            shop,
+	})
+	h.session.MarkSeen(ctx, luckin.NewUserHistoryKey(req))
 	return nil
 }
 
@@ -352,18 +378,25 @@ func setButtonCallbackValue(button map[string]any, key, value string) {
 	}
 }
 
+// lookupShop 用最近一次选过的门店作为"产品搜索/下单时缺省门店"。
+// 注意：bridge 入口处没有卡片 messageID，无法定位到一次具体点单流程；
+// 这里的语义是"用户偏好"，不是"当前会话"。一次点单流程内的真实门店由卡片回调维护。
 func (h handler) lookupShop(ctx context.Context, req luckin.CredentialRequest) (luckin.ShopSelection, bool) {
 	if h.session == nil {
 		return luckin.ShopSelection{}, false
 	}
-	return h.session.GetShop(ctx, luckin.NewSessionKey(req))
+	recent := h.session.GetRecentShops(ctx, luckin.NewUserHistoryKey(req), 1)
+	if len(recent) == 0 {
+		return luckin.ShopSelection{}, false
+	}
+	return recent[0], true
 }
 
 func (h handler) recentShops(ctx context.Context, req luckin.CredentialRequest, limit int) []luckin.ShopSelection {
 	if h.session == nil {
 		return nil
 	}
-	return h.session.GetRecentShops(ctx, luckin.NewSessionKey(req), limit)
+	return h.session.GetRecentShops(ctx, luckin.NewUserHistoryKey(req), limit)
 }
 
 func (h handler) remoteURL() string {

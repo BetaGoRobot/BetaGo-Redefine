@@ -30,12 +30,20 @@ type PendingOrder struct {
 	AppID              string
 	BotOpenID          string
 	ChatID             string
+	// RequesterOpenID 始终是发起人 OpenID。即便结算按钮被发起人之外的人点到（虽然会被
+	// 越权拦截），凭证、订单归属仍以发起人为准。
 	RequesterOpenID    string
+	// InitiatorOpenID 与 RequesterOpenID 在 luckin 场景下相同，单独保留是为了
+	// 在落库时显式表达"这单的发起人"，方便后续按发起人查询/分账。
+	InitiatorOpenID    string
 	CredentialScope    CredentialScope
 	MCPServerName      string
 	CreateOrderPayload json.RawMessage
 	PayloadHash        string
 	PreviewResult      json.RawMessage
+	// CartSnapshot 是 Draft 时的购物车原貌（含 LineID/AddedByOpenID/UnitPrice），
+	// 取餐通知卡按这份快照分账，避免后续 cart 被清空导致拿不到分账依据。
+	CartSnapshot       []CartItem
 	Status             PendingStatus
 	ResultJSON         json.RawMessage
 	ErrorText          string
@@ -48,10 +56,11 @@ type NewPendingOrderRequest struct {
 	AppID              string
 	BotOpenID          string
 	ChatID             string
-	RequesterOpenID    string
+	InitiatorOpenID    string
 	Credential         Credential
 	CreateOrderPayload json.RawMessage
 	PreviewResult      json.RawMessage
+	CartSnapshot       []CartItem
 	Now                time.Time
 }
 
@@ -66,12 +75,14 @@ func NewPendingOrder(req NewPendingOrderRequest) PendingOrder {
 		AppID:              req.AppID,
 		BotOpenID:          req.BotOpenID,
 		ChatID:             req.ChatID,
-		RequesterOpenID:    req.RequesterOpenID,
+		RequesterOpenID:    req.InitiatorOpenID,
+		InitiatorOpenID:    req.InitiatorOpenID,
 		CredentialScope:    req.Credential.Scope,
 		MCPServerName:      ServerName,
 		CreateOrderPayload: req.CreateOrderPayload,
 		PayloadHash:        hex.EncodeToString(hash[:]),
 		PreviewResult:      req.PreviewResult,
+		CartSnapshot:       req.CartSnapshot,
 		Status:             PendingStatusPending,
 		ResultJSON:         json.RawMessage(`{}`),
 		ExpiresAt:          now.Add(10 * time.Minute),

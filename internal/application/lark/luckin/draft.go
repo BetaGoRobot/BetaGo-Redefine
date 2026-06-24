@@ -13,7 +13,7 @@ type DraftRequest struct {
 	AppID           string
 	BotOpenID       string
 	ChatID          string
-	RequesterOpenID string
+	InitiatorOpenID string
 	Credential      Credential
 	Shop            ShopSelection
 	Items           []CartItem
@@ -53,10 +53,11 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 		AppID:              req.AppID,
 		BotOpenID:          req.BotOpenID,
 		ChatID:             req.ChatID,
-		RequesterOpenID:    req.RequesterOpenID,
+		InitiatorOpenID:    req.InitiatorOpenID,
 		Credential:         req.Credential,
 		CreateOrderPayload: payload,
 		PreviewResult:      preview,
+		CartSnapshot:       items,
 		Now:                req.Now,
 	})
 	return order, BuildPendingOrderCard(order), nil

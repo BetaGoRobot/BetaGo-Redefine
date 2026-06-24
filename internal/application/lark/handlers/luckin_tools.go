@@ -148,17 +148,24 @@ func (luckinPendingOrderCardSender) SendPendingOrderCard(ctx context.Context, da
 
 type luckinCardSender struct{}
 
-func (luckinCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
-	return sendLuckinCard(ctx, data, meta, card)
+func (luckinCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) (string, error) {
+	return sendLuckinCardReturning(ctx, data, meta, card)
 }
 
 func sendLuckinCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
+	_, err := sendLuckinCardReturning(ctx, data, meta, card)
+	return err
+}
+
+// sendLuckinCardReturning 与 sendLuckinCard 相同，但返回新发卡片的 message_id。
+// 优先用引用回复方式（携带触发该流程的用户消息上下文），缺失时退回直接 create。
+func sendLuckinCardReturning(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) (string, error) {
 	msgID := ""
 	if data != nil && data.Event != nil && data.Event.Message != nil && data.Event.Message.MessageId != nil {
 		msgID = strings.TrimSpace(*data.Event.Message.MessageId)
 	}
 	if msgID != "" {
-		return larkmsg.ReplyCardJSON(ctx, msgID, card, "_luckinCard", false)
+		return larkmsg.ReplyCardJSONReturning(ctx, msgID, card, "_luckinCard", false)
 	}
 	chatID := ""
 	if meta != nil {
@@ -168,7 +175,7 @@ func sendLuckinCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *
 		chatID = strings.TrimSpace(*data.Event.Message.ChatId)
 	}
 	if chatID == "" {
-		return errors.New("chat_id is required")
+		return "", errors.New("chat_id is required")
 	}
-	return larkmsg.CreateCardJSON(ctx, chatID, card, fmt.Sprintf("luckin-card-%d", time.Now().UnixNano()), "_luckinCard")
+	return larkmsg.CreateCardJSONReturning(ctx, chatID, card, fmt.Sprintf("luckin-card-%d", time.Now().UnixNano()), "_luckinCard")
 }

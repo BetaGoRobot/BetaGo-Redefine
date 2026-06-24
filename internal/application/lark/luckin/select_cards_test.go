@@ -80,7 +80,7 @@ func TestDraftServiceBuildsPendingOrderWithPreview(t *testing.T) {
 		AppID:           "app",
 		BotOpenID:       "bot",
 		ChatID:          "chat",
-		RequesterOpenID: "user",
+		InitiatorOpenID: "user",
 		Credential:      Credential{Token: "token-1", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		Shop:            ShopSelection{DeptID: 100, DeptName: "门店A", Longitude: 1.1, Latitude: 2.2},
 		Items:           []CartItem{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁", Amount: 1}},

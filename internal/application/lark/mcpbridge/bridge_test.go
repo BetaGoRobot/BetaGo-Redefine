@@ -232,7 +232,7 @@ func TestHandleProductSearchInjectsDeptIDFromSession(t *testing.T) {
 
 	resolver := &fakeResolver{credential: luckin.Credential{Token: "token-read"}}
 	cards := &fakeCardSender{}
-	session := &fakeSessionStore{shop: luckin.ShopSelection{DeptID: 245062453, DeptName: "AI点单专用"}, ok: true}
+	session := &fakeSessionStore{recent: []luckin.ShopSelection{{DeptID: 245062453, DeptName: "AI点单专用"}}}
 	policy, _ := luckin.PolicyByRobotTool("luckin_product_search")
 	h := handler{
 		policy:    policy,
@@ -364,58 +364,59 @@ type fakeCardSender struct {
 	card   map[string]any
 }
 
-func (s *fakeCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) error {
+func (s *fakeCardSender) SendCard(ctx context.Context, data *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, card map[string]any) (string, error) {
 	s.called = true
 	s.card = card
-	return nil
+	// 测试不依赖真实 message_id；下游 sendAndInitSession 见空 msgID 会跳过 session 写入。
+	return "", nil
 }
 
 type fakeSessionStore struct {
-	shop   luckin.ShopSelection
-	ok     bool
-	cart   luckin.Cart
-	cok    bool
-	seen   bool
-	recent []luckin.ShopSelection
+	sessions map[string]luckin.OrderSession
+	recent   []luckin.ShopSelection
+	seen     bool
 }
 
-func (s *fakeSessionStore) GetShop(ctx context.Context, key luckin.SessionKey) (luckin.ShopSelection, bool) {
-	return s.shop, s.ok
+func (s *fakeSessionStore) GetSession(ctx context.Context, key luckin.SessionKey) (luckin.OrderSession, bool) {
+	if s.sessions == nil {
+		return luckin.OrderSession{}, false
+	}
+	sess, ok := s.sessions[key.MessageID]
+	return sess, ok
 }
 
-func (s *fakeSessionStore) SetShop(ctx context.Context, key luckin.SessionKey, shop luckin.ShopSelection) {
-	s.shop = shop
-	s.ok = true
+func (s *fakeSessionStore) SetSession(ctx context.Context, key luckin.SessionKey, sess luckin.OrderSession) {
+	if s.sessions == nil {
+		s.sessions = make(map[string]luckin.OrderSession)
+	}
+	s.sessions[key.MessageID] = sess
 	s.seen = true
 }
 
-func (s *fakeSessionStore) ClearShop(ctx context.Context, key luckin.SessionKey) {
-	s.ok = false
+func (s *fakeSessionStore) DeleteSession(ctx context.Context, key luckin.SessionKey) {
+	if s.sessions == nil {
+		return
+	}
+	delete(s.sessions, key.MessageID)
 }
 
-func (s *fakeSessionStore) GetRecentShops(ctx context.Context, key luckin.SessionKey, limit int) []luckin.ShopSelection {
+func (s *fakeSessionStore) GetRecentShops(ctx context.Context, key luckin.UserHistoryKey, limit int) []luckin.ShopSelection {
 	if limit > 0 && len(s.recent) > limit {
 		return s.recent[:limit]
 	}
 	return s.recent
 }
 
-func (s *fakeSessionStore) GetCart(ctx context.Context, key luckin.SessionKey) (luckin.Cart, bool) {
-	return s.cart, s.cok
+func (s *fakeSessionStore) AddRecentShop(ctx context.Context, key luckin.UserHistoryKey, shop luckin.ShopSelection) {
+	s.recent = append([]luckin.ShopSelection{shop}, s.recent...)
 }
 
-func (s *fakeSessionStore) SetCart(ctx context.Context, key luckin.SessionKey, cart luckin.Cart) {
-	s.cart = cart
-	s.cok = true
-	s.seen = true
-}
-
-func (s *fakeSessionStore) ClearCart(ctx context.Context, key luckin.SessionKey) {
-	s.cok = false
-}
-
-func (s *fakeSessionStore) Seen(ctx context.Context, key luckin.SessionKey) bool {
+func (s *fakeSessionStore) Seen(ctx context.Context, key luckin.UserHistoryKey) bool {
 	return s.seen
+}
+
+func (s *fakeSessionStore) MarkSeen(ctx context.Context, key luckin.UserHistoryKey) {
+	s.seen = true
 }
 
 type fakeGeocoder struct {

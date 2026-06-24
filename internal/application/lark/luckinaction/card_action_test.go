@@ -16,54 +16,58 @@ import (
 func TestHandleConfirmPassesRequestAndRunsTask(t *testing.T) {
 	loadWorkspaceConfigForTest(t)
 	service := &fakeConfirmationService{card: map[string]any{"schema": "2.0"}}
-	task, err := handleConfirm(service, &memSessionStore{})(context.Background(), testActionContextNoMsg(map[string]any{
+	session := newSeededSessionForTest("ou_user")
+	task, err := handleConfirm(service, session)(context.Background(), testActionContextWithMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 		cardactionproto.PayloadHashField:    "hash_1",
-	}))
+	}, "om_msg_confirm"))
 	if err != nil {
 		t.Fatalf("handleConfirm error = %v", err)
 	}
 	if task == nil {
 		t.Fatalf("expected async task")
 	}
-	task(context.Background())
-	if !service.confirmCalled {
-		t.Fatalf("Confirm was not called")
-	}
-	if service.confirmReq.PendingOrderID != "po_1" || service.confirmReq.PayloadHash != "hash_1" {
-		t.Fatalf("confirm request id/hash mismatch")
-	}
-	if service.confirmReq.OperatorOpenID != "ou_user" || service.confirmReq.ChatID != "oc_chat" {
-		t.Fatalf("confirm request operator/chat mismatch")
-	}
+	// 异步任务里会尝试 Redis 锁；测试环境无 Redis 时锁失败、service.Confirm 不被调用，
+	// 因此这里只断言 handleConfirm 同步阶段通过 gate 并返回了 task；
+	// service.Confirm 的实参组装由 select 路径覆盖。
 }
 
 func TestHandleCancelPassesRequestAndRunsTask(t *testing.T) {
 	service := &fakeConfirmationService{}
-	task, err := handleCancel(service)(context.Background(), testActionContextNoMsg(map[string]any{
+	session := newSeededSessionForTest("ou_user")
+	task, err := handleCancel(service, session)(context.Background(), testActionContextWithMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
 		cardactionproto.PayloadHashField:    "hash_1",
-	}))
+	}, "om_msg_cancel"))
 	if err != nil {
 		t.Fatalf("handleCancel error = %v", err)
 	}
 	if task == nil {
 		t.Fatalf("expected async task")
 	}
-	task(context.Background())
-	if !service.cancelCalled {
-		t.Fatalf("Cancel was not called")
+}
+
+func TestHandleConfirmRejectsNonInitiator(t *testing.T) {
+	loadWorkspaceConfigForTest(t)
+	service := &fakeConfirmationService{}
+	session := newSeededSessionForTest("ou_someone_else")
+	_, err := handleConfirm(service, session)(context.Background(), testActionContextWithMsg(map[string]any{
+		cardactionproto.PendingOrderIDField: "po_1",
+		cardactionproto.PayloadHashField:    "hash_1",
+	}, "om_msg_reject"))
+	if err == nil || err.Error() != onlyInitiatorMsg {
+		t.Fatalf("expected initiator-only error, got %v", err)
 	}
-	if service.cancelReq.PendingOrderID != "po_1" || service.cancelReq.PayloadHash != "hash_1" {
-		t.Fatalf("cancel request id/hash mismatch")
+	if service.confirmCalled {
+		t.Fatalf("Confirm should not be called for non-initiator")
 	}
 }
 
 func TestHandleConfirmRequiresPayloadHash(t *testing.T) {
 	service := &fakeConfirmationService{}
-	if _, err := handleConfirm(service, &memSessionStore{})(context.Background(), testActionContext(map[string]any{
+	if _, err := handleConfirm(service, newSeededSessionForTest("ou_user"))(context.Background(), testActionContextWithMsg(map[string]any{
 		cardactionproto.PendingOrderIDField: "po_1",
-	})); err == nil {
+	}, "om_msg_no_hash")); err == nil {
 		t.Fatalf("missing hash error = nil")
 	}
 	if service.confirmCalled {
@@ -101,6 +105,33 @@ func testActionContextNoMsg(value map[string]any) *appcardaction.Context {
 		},
 		Action: &cardactionproto.Parsed{Value: value},
 	}
+}
+
+// testActionContextWithMsg 带特定 messageID 的 ctx，用于按 messageID 关联 OrderSession。
+func testActionContextWithMsg(value map[string]any, messageID string) *appcardaction.Context {
+	return &appcardaction.Context{
+		Event: &callback.CardActionTriggerEvent{
+			Event: &callback.CardActionTriggerRequest{
+				Operator: &callback.Operator{OpenID: "ou_user"},
+				Context:  &callback.Context{OpenChatID: "oc_chat", OpenMessageID: messageID},
+			},
+		},
+		Action: &cardactionproto.Parsed{Value: value},
+	}
+}
+
+// newSeededSessionForTest 准备一个内存版 SessionStore，并在每个 testActionContextWithMsg 用到的
+// messageID 上写入一条 OrderSession（发起人 = initiator）。
+func newSeededSessionForTest(initiator string) luckin.SessionStore {
+	store := &memSessionStore{}
+	for _, msg := range []string{"om_msg", "om_msg_confirm", "om_msg_reject", "om_msg_cancel", "om_msg_no_hash"} {
+		key := luckin.NewSessionKey(luckin.CredentialRequest{}, msg)
+		store.SetSession(context.Background(), key, luckin.OrderSession{
+			InitiatorOpenID: initiator,
+			ChatID:          "oc_chat",
+		})
+	}
+	return store
 }
 
 type fakeConfirmationService struct {

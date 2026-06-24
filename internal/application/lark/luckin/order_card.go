@@ -340,6 +340,95 @@ func BuildOrderNoticeCard(notice string, detail OrderDetail) map[string]any {
 	return card
 }
 
+// BuildOrderReadyCard 取餐通知卡。除了基础订单信息外，按购物车快照渲染按人分账：
+//
+//	@张三   ¥18.50
+//	@李四   ¥21.00
+//
+// paidTotal 通常用瑞幸接口返回的 discountPrice（用户实付）；上层调用方可用 OrderRecord.DiscountPrice。
+func BuildOrderReadyCard(notice string, detail OrderDetail, snapshot []CartItem, paidTotal float64) map[string]any {
+	card := BuildOrderNoticeCard(notice, detail)
+	splits := SplitBillByUser(snapshot, paidTotal)
+	if len(splits) == 0 {
+		return card
+	}
+	body, ok := card["body"].(map[string]any)
+	if !ok {
+		return card
+	}
+	elements, _ := body["elements"].([]any)
+	elements = append(elements, larkmsg.Divider(), larkmsg.Markdown("**🧮 按人分账（实付按预估比例摊销）**"))
+	for _, s := range splits {
+		line := larkmsg.AtUserMD(s.OpenID) + "  ¥" + trimFloat(s.Paid)
+		if s.Estimated > 0 && s.Estimated != s.Paid {
+			line += "  <font color='grey'>（预估 ¥" + trimFloat(s.Estimated) + "）</font>"
+		}
+		elements = append(elements, larkmsg.Markdown(line))
+	}
+	body["elements"] = elements
+	return card
+}
+
+// UserBillSplit 单个用户的账单切片。
+type UserBillSplit struct {
+	OpenID    string
+	Estimated float64 // 预估小计（cart_snapshot 内的 unit_price * amount）
+	Paid      float64 // 摊销后的实付
+}
+
+// SplitBillByUser 按 cart_snapshot 聚合每个加入者的预估小计，并按比例把 paidTotal 摊销给每人。
+//
+// 退化策略：
+//   - paidTotal <= 0：直接退回预估小计（界面提示"实付以瑞幸为准"）；
+//   - 任何用户预估都为 0：按数量平分 paidTotal，避免 0/0；
+//   - 加入者 OpenID 为空：聚合到 "" 桶，渲染时由调用方决定是否展示。
+func SplitBillByUser(items []CartItem, paidTotal float64) []UserBillSplit {
+	if len(items) == 0 {
+		return nil
+	}
+	type agg struct {
+		openID    string
+		estimated float64
+		amount    int
+	}
+	order := make([]string, 0)
+	bucket := make(map[string]*agg)
+	totalEst := 0.0
+	totalAmt := 0
+	for _, item := range items {
+		if item.Amount <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(item.AddedByOpenID)
+		if _, ok := bucket[key]; !ok {
+			bucket[key] = &agg{openID: key}
+			order = append(order, key)
+		}
+		sub := item.UnitPrice * float64(item.Amount)
+		bucket[key].estimated += sub
+		bucket[key].amount += item.Amount
+		totalEst += sub
+		totalAmt += item.Amount
+	}
+	out := make([]UserBillSplit, 0, len(order))
+	for _, key := range order {
+		a := bucket[key]
+		split := UserBillSplit{OpenID: a.openID, Estimated: a.estimated}
+		switch {
+		case paidTotal <= 0:
+			split.Paid = a.estimated
+		case totalEst > 0:
+			split.Paid = paidTotal * a.estimated / totalEst
+		case totalAmt > 0:
+			split.Paid = paidTotal * float64(a.amount) / float64(totalAmt)
+		default:
+			split.Paid = 0
+		}
+		out = append(out, split)
+	}
+	return out
+}
+
 // BuildUnpaidReminderCard 未支付阈值提醒卡。
 func BuildUnpaidReminderCard(orderID string, payURL string) map[string]any {
 	elements := []any{

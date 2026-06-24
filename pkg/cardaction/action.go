@@ -114,6 +114,9 @@ const (
 	LuckinCouponFormField   = "luckin_coupon"
 	LuckinOrderIDField      = "luckin_order_id"
 	LuckinStatusModeField   = "luckin_status_mode"
+	// LuckinLineIDField 购物车每行的稳定唯一 ID（uuid）。+/-/删除按钮 payload 使用它定位条目，
+	// 避免不同发起人加入同 SKU 时按 productID+skuCode 互相覆盖。
+	LuckinLineIDField = "luckin_line_id"
 	// LuckinSpecFormFieldPrefix + attributeId 组成规格选择表单字段名。
 	LuckinSpecFormFieldPrefix = "luckin_spec_"
 	// LuckinCouponFieldPrefix + 序号 组成确认卡上每个可用优惠券的勾选字段名。
