@@ -287,6 +287,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		MemberCount:   webui.LarkMemberCount,
 		MemberList:    webui.LarkMemberList,
 		MessageStats:  countRecentChatMessages,
+		RecentChatIDs: recentChatIDs,
 		RobotName: func() string {
 			if cfg.BaseInfo != nil {
 				return cfg.BaseInfo.RobotName

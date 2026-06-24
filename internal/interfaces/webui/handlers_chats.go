@@ -48,6 +48,11 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 // 数据来源尽量走缓存：token 总量用一次 GROUP BY chat_id 批量查询并按窗口缓存；
 // 成员数与发言量逐群获取，但底层分别命中 larkuser 成员缓存与 OpenSearch。
 // 同时把仅出现在 token 记录里的单聊（p2p）补进列表，使其也能被统计与排序。
+//
+// 多 bot 注意：llm_token_usage_records 表全 bot 共享、无 bot 维度列，直接 merge
+// 会把另一个 bot 的会话也吐进当前列表。这里用当前 bot 进程独占的 lark_msg_index
+// 在 OpenSearch 上做一次 chat_id 聚合，得到「当前 bot 真正参与过的会话集合」，
+// 作为白名单约束 mergeMissingChats，从而按 bot 去重。
 func (s *Server) enrichChatMetrics(ctx context.Context, chats []ChatSummary, windowDays int) []ChatSummary {
 	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
 
@@ -55,7 +60,9 @@ func (s *Server) enrichChatMetrics(ctx context.Context, chats []ChatSummary, win
 	totals := s.cachedTokenTotalsByChat(ctx, since, windowDays)
 
 	// 2) 用 token 记录里的 chat 补全单聊：Lark 群列表只含群，不含 p2p。
-	chats = mergeMissingChats(chats, totals)
+	//    用当前 bot 的 OpenSearch 白名单过滤，避免 merge 进其他 bot 的会话。
+	allow := s.cachedRecentChatIDs(ctx, since, windowDays)
+	chats = mergeMissingChats(chats, totals, allow)
 
 	// 3) 逐群补成员数 / 发言量 / 派生均值，并发受限。
 	sem := make(chan struct{}, listEnrichConcurrency)
@@ -126,6 +133,23 @@ func (s *Server) cachedRecentMessages(ctx context.Context, chatID string, since 
 	})
 }
 
+// cachedRecentChatIDs 把"当前 bot 在窗口内出现过的 chat_id 集合"按窗口缓存，
+// 用于 mergeMissingChats 的 bot 维度白名单。注入函数为空或查询失败时返回 nil，
+// 调用方需把"白名单为 nil"解释为"能力不可用、不做白名单过滤"。
+func (s *Server) cachedRecentChatIDs(ctx context.Context, since time.Time, windowDays int) map[string]struct{} {
+	if s.recentChatIDs == nil {
+		return nil
+	}
+	key := webuiCacheKey("recent_chat_ids", windowDays)
+	ids, err := cache.GetOrExecute(ctx, key, func() (map[string]struct{}, error) {
+		return s.recentChatIDs(ctx, since)
+	})
+	if err != nil {
+		return nil
+	}
+	return ids
+}
+
 func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
 	chatID := strings.TrimSpace(r.PathValue("chatID"))
 	if chatID == "" {
@@ -173,7 +197,11 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 //   - oc_* → 群聊（Feishu Open Chat ID）
 //   - 其它 → "unknown"，交给前端按"未知/缺失权限"展示，
 //     避免把没权限的群错误标记为"单聊"。
-func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal) []ChatSummary {
+//
+// allow 是当前 bot 维度的白名单（来自 OpenSearch 聚合）。非空时仅补进白名单中
+// 的 chat_id，避免把另一个 bot 写入的同表记录误并入当前 bot 的列表；为 nil
+// 表示白名单能力不可用，退化为旧的"全部补进"行为。
+func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal, allow map[string]struct{}) []ChatSummary {
 	seen := make(map[string]struct{}, len(chats))
 	for _, c := range chats {
 		seen[c.ChatID] = struct{}{}
@@ -182,6 +210,11 @@ func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal) []
 	for id, t := range totals {
 		if _, ok := seen[id]; ok {
 			continue
+		}
+		if allow != nil {
+			if _, ok := allow[id]; !ok {
+				continue
+			}
 		}
 		name := t.ChatName
 		if name == "" {

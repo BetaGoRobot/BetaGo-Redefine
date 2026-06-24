@@ -84,6 +84,12 @@ type MemberListFunc func(ctx context.Context, chatID string) ([]ChatMember, erro
 // 为空表示该能力不可用，统计接口会返回降级标记而非报错。
 type MessageStatsFunc func(ctx context.Context, chatID string, since time.Time) (int, error)
 
+// RecentChatIDsFunc 返回当前 bot 在 since 之后实际产生过消息的 chat_id 集合，
+// 用作列表页对 token 表里浮现的额外 chat 做 bot 维度过滤的白名单。
+// 默认实现走 OpenSearch（按当前 bot 进程独占的 lark_msg_index 聚合 chat_id），
+// 因此天然按 bot 隔离。返回 nil 表示能力不可用，调用方退回到不过滤的旧行为。
+type RecentChatIDsFunc func(ctx context.Context, since time.Time) (map[string]struct{}, error)
+
 // FeatureView 是功能开关在 WebUI 中的展示与状态。
 type FeatureView struct {
 	Name           string `json:"name"`

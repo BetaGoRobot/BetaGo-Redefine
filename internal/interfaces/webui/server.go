@@ -12,12 +12,13 @@ import (
 
 // Server 持有 WebUI 的依赖并构建 HTTP 路由。
 type Server struct {
-	cfg          ConfigManager
-	chats        ChatService
-	memberCount  MemberCountFunc
-	memberList   MemberListFunc
-	messageStats MessageStatsFunc
-	now          func() time.Time
+	cfg           ConfigManager
+	chats         ChatService
+	memberCount   MemberCountFunc
+	memberList    MemberListFunc
+	messageStats  MessageStatsFunc
+	recentChatIDs RecentChatIDsFunc
+	now           func() time.Time
 
 	authToken   string
 	corsOrigins []string
@@ -40,17 +41,18 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		corsOrigins = normalizeOrigins(opts.Config.CORSAllowOrigins)
 	}
 	return &Server{
-		cfg:          opts.ConfigManager,
-		chats:        opts.ChatService,
-		memberCount:  opts.MemberCount,
-		memberList:   opts.MemberList,
-		messageStats: opts.MessageStats,
-		now:          now,
-		authToken:    authToken,
-		corsOrigins:  corsOrigins,
-		store:        newTokenStatsStore(db),
-		robotName:    strings.TrimSpace(opts.RobotName),
-		instance:     strings.TrimSpace(opts.Instance),
+		cfg:           opts.ConfigManager,
+		chats:         opts.ChatService,
+		memberCount:   opts.MemberCount,
+		memberList:    opts.MemberList,
+		messageStats:  opts.MessageStats,
+		recentChatIDs: opts.RecentChatIDs,
+		now:           now,
+		authToken:     authToken,
+		corsOrigins:   corsOrigins,
+		store:         newTokenStatsStore(db),
+		robotName:     strings.TrimSpace(opts.RobotName),
+		instance:      strings.TrimSpace(opts.Instance),
 	}
 }
 
