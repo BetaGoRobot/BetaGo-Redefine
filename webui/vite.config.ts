@@ -1,12 +1,64 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
+/**
+ * 解析环境变量中的 VITE_BOTS（JSON 数组）为预设列表。
+ * 返回结构：{ id, name, baseURL, token?, remark? }[]
+ */
+interface BotPreset {
+  id: string
+  name: string
+  baseURL?: string
+  token?: string
+  remark?: string
+}
+
+function parseBotPresets(raw: string | undefined): BotPreset[] {
+  if (!raw || !raw.trim()) return []
+  try {
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter((b) => b && typeof b === 'object' && typeof b.id === 'string')
+      .map((b) => ({
+        id: String(b.id),
+        name: String(b.name || b.id),
+        baseURL: b.baseURL == null ? undefined : String(b.baseURL),
+        token: b.token == null ? undefined : String(b.token),
+        remark: b.remark == null ? undefined : String(b.remark),
+      }))
+  } catch {
+    return []
+  }
+}
+
 // 前后端分离：dev 模式下把 /api 代理到后端 WebUI 端口，
-// 生产部署时通过 VITE_API_BASE 直连后端（跨域由后端 CORS 控制）。
+// 多 bot 场景下把 /bot/<id>/api 代理到对应后端地址，
+// 生产部署时通过 VITE_API_BASE 或每个 bot 自带 baseURL 直连后端（跨域由后端 CORS 控制）。
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backend = env.VITE_DEV_BACKEND || 'http://localhost:8090'
+  const defaultBackend = env.VITE_DEV_BACKEND || 'http://localhost:8090'
+  const presets = parseBotPresets(env.VITE_BOTS)
+
+  // 构建多源代理表
+  const proxy: Record<string, string | ProxyOptions> = {
+    '/api': {
+      target: defaultBackend,
+      changeOrigin: true,
+    },
+  }
+
+  for (const p of presets) {
+    const target = (p.baseURL && p.baseURL.trim()) || defaultBackend
+    const key = `/bot/${encodeURIComponent(p.id)}/api`
+    proxy[key] = {
+      target,
+      changeOrigin: true,
+      rewrite: (path) => path.replace(key, '/api'),
+    }
+  }
+
   return {
     plugins: [vue()],
     resolve: {
@@ -16,12 +68,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
-      proxy: {
-        '/api': {
-          target: backend,
-          changeOrigin: true,
-        },
-      },
+      proxy,
     },
   }
 })

@@ -22,6 +22,12 @@ export interface BotInstance {
   instance?: string
   /** 颜色标签，用于图表区分不同 bot。 */
   color?: string
+  /** dev 模式下的代理前缀（例如 "/bot/betago-main/api"）。
+   *  非空时 BotApi 会用本地址代替 baseURL 发起请求，走 vite dev proxy 避免跨域；
+   *  生产构建（MODE=production）此字段会被 BotApi 忽略，直连 baseURL。 */
+  proxyPath?: string
+  /** 来源：'localstorage'（用户自建）/ 'env'（来自 VITE_BOTS 预设，不可手动编辑删除） */
+  source?: 'localstorage' | 'env'
 }
 
 const BOT_STORAGE_KEY = 'betago_webui_bots_v1'
@@ -32,10 +38,10 @@ const DEFAULT_PALETTE = [
   '#945FB9', '#FF9845', '#1E9493', '#FF99C3', '#5D7092',
 ]
 
-function loadBots(): BotInstance[] {
+function loadUserBotsFromStorage(): BotInstance[] {
   try {
     const raw = localStorage.getItem(BOT_STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
+    if (raw) return (JSON.parse(raw) as BotInstance[]).map((b) => ({ ...b, source: b.source || ('localstorage' as const) }))
   } catch { /* ignore */ }
   // 首次访问：提供一个"默认本地"bot
   return [
@@ -45,8 +51,32 @@ function loadBots(): BotInstance[] {
       baseURL: '',
       remark: '走同源 /api（dev proxy 或同域部署）',
       color: DEFAULT_PALETTE[0],
+      source: 'localstorage',
     },
   ]
+}
+
+function loadInitialBots(): BotInstance[] {
+  const envBots = parseEnvBotPresets()
+  const userBots = loadUserBotsFromStorage()
+  // localStorage 为空 + 有 env 预设：默认全选 env 预设
+  return mergeBots(envBots, userBots)
+}
+
+function loadInitialSelected(merged: BotInstance[]): string[] {
+  try {
+    const raw = localStorage.getItem(SELECTED_BOTS_KEY)
+    if (raw) {
+      const prev = JSON.parse(raw) as string[]
+      if (Array.isArray(prev) && prev.length) {
+        const valid = prev.filter((id) => merged.some((b) => b.id === id))
+        if (valid.length) return valid
+      }
+    }
+  } catch { /* ignore */ }
+  const envIds = merged.filter((b) => b.source === 'env').map((b) => b.id)
+  if (envIds.length) return envIds
+  return merged.slice(0, 1).map((b) => b.id)
 }
 
 function loadSelected(): string[] {
@@ -55,6 +85,53 @@ function loadSelected(): string[] {
     if (raw) return JSON.parse(raw)
   } catch { /* ignore */ }
   return []
+}
+
+/** 解析 VITE_BOTS 环境变量（JSON 数组）为 BotInstance 预设。 */
+interface EnvBotPreset {
+  id: string
+  name: string
+  baseURL?: string
+  token?: string
+  remark?: string
+}
+function parseEnvBotPresets(): BotInstance[] {
+  const raw = (import.meta.env.VITE_BOTS as string) || ''
+  if (!raw.trim()) return []
+  try {
+    const arr = JSON.parse(raw) as EnvBotPreset[]
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter((b) => b && typeof b === 'object' && typeof b.id === 'string')
+      .map((b, i) => {
+        const baseURL = typeof b.baseURL === 'string' ? b.baseURL : ''
+        const id = String(b.id)
+        // dev 模式：走 /bot/<id>/api 代理前缀，避免跨域
+        // （生产模式下 proxyPath 仍会被 BotApi 忽略，不影响）
+        const proxyPath = `/bot/${encodeURIComponent(id)}/api`
+        return {
+          id,
+          name: String(b.name || b.id),
+          baseURL,
+          token: typeof b.token === 'string' ? b.token : undefined,
+          remark: typeof b.remark === 'string' ? b.remark : undefined,
+          color: DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
+          proxyPath,
+          source: 'env' as const,
+        }
+      })
+  } catch (e) {
+    console.warn('[store/filter] 解析 VITE_BOTS 失败，已忽略预设：', e)
+    return []
+  }
+}
+
+/** 合并来源：env 预设 + localStorage 用户 bot。重名 id 以用户本地为准。 */
+function mergeBots(envBots: BotInstance[], userBots: BotInstance[]): BotInstance[] {
+  const map = new Map<string, BotInstance>()
+  for (const b of envBots) map.set(b.id, b)
+  for (const b of userBots) map.set(b.id, { ...map.get(b.id), ...b })
+  return [...map.values()]
 }
 
 /** 可选的时间窗口 */
@@ -101,13 +178,9 @@ export const WINDOW_LABEL: Record<TimeWindow, string> = {
 
 export const useFilterStore = defineStore('filter', () => {
   // ---------- Bot registry ----------
-  const bots = ref<BotInstance[]>(loadBots())
-  const initialSelected = (() => {
-    const prev = loadSelected()
-    const defaults = loadBots()
-    return prev.length ? prev : defaults.map((b) => b.id)
-  })()
-  const selectedBotIDs = ref<string[]>(initialSelected)
+  const initialBots = loadInitialBots()
+  const bots = ref<BotInstance[]>(initialBots)
+  const selectedBotIDs = ref<string[]>(loadInitialSelected(initialBots))
 
   const selectedBots = computed(() =>
     bots.value.filter((b) => selectedBotIDs.value.includes(b.id)),
@@ -116,7 +189,9 @@ export const useFilterStore = defineStore('filter', () => {
   watch(
     bots,
     (v) => {
-      localStorage.setItem(BOT_STORAGE_KEY, JSON.stringify(v))
+      // 只持久化用户自建的 bot，env 预设由环境变量注入
+      const persist = v.filter((b) => b.source !== 'env')
+      localStorage.setItem(BOT_STORAGE_KEY, JSON.stringify(persist))
       // 删掉不存在于列表中的 selectedBotIDs
       selectedBotIDs.value = selectedBotIDs.value.filter((id) =>
         v.some((b) => b.id === id),
@@ -173,6 +248,32 @@ export const useFilterStore = defineStore('filter', () => {
   function setSelectedBots(ids: string[]) {
     const valid = ids.filter((id) => bots.value.some((b) => b.id === id))
     selectedBotIDs.value = valid.length ? valid : [bots.value[0]?.id].filter(Boolean) as string[]
+  }
+
+  /** 重新从 VITE_BOTS 环境变量导入缺失的预设（保持现有用户 bot 不变）。
+   *  返回导入数量。 */
+  function importEnvPresets(): { added: number; total: number } {
+    const envBots = parseEnvBotPresets()
+    if (!envBots.length) return { added: 0, total: 0 }
+    let added = 0
+    const merged = new Map(bots.value.map((b) => [b.id, b]))
+    for (const preset of envBots) {
+      if (!merged.has(preset.id)) {
+        merged.set(preset.id, preset)
+        added++
+      } else {
+        // 已存在：只刷新 env 预设字段（proxyPath / 颜色），保留用户已改的 token/name
+        const cur = merged.get(preset.id)!
+        merged.set(preset.id, {
+          ...preset,
+          ...cur,
+          proxyPath: preset.proxyPath || cur.proxyPath,
+          source: preset.source,
+        })
+      }
+    }
+    bots.value = [...merged.values()]
+    return { added, total: envBots.length }
   }
 
   function getBot(id: string): BotInstance | undefined {
@@ -259,6 +360,7 @@ export const useFilterStore = defineStore('filter', () => {
     updateBot,
     toggleBot,
     setSelectedBots,
+    importEnvPresets,
     getBot,
     // filter metrics
     window,
