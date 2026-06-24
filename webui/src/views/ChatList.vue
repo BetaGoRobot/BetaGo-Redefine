@@ -342,6 +342,11 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
                 <el-option value="internal" label="内部" />
                 <el-option value="external" label="外部" />
               </el-select>
+              <el-select v-model="membershipFilter" placeholder="是否在群" style="width: 140px">
+                <el-option value="all" label="全部" />
+                <el-option value="active" label="仅看在群" />
+                <el-option value="left" label="仅看已离开" />
+              </el-select>
               <el-input-number
                 v-model="minTokens"
                 placeholder="最小 Token"
@@ -357,7 +362,7 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
                 style="width: 160px"
               />
               <el-button
-                @click="() => { keyword = ''; typeFilter = 'all'; extFilter = 'all'; botFilter = 'all'; minTokens = undefined; maxTokens = undefined }"
+                @click="() => { keyword = ''; typeFilter = 'all'; extFilter = 'all'; membershipFilter = 'all'; botFilter = 'all'; minTokens = undefined; maxTokens = undefined }"
               >清除过滤</el-button>
               <el-button :loading="loading" type="primary" @click="load">刷新</el-button>
             </div>
@@ -452,6 +457,13 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
             <template #default="{ row }">
               <el-tag v-if="row.external" size="small" type="warning" effect="plain">外</el-tag>
               <span v-else style="color:#c0c4cc">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag v-if="row.membership === 'left'" size="small" type="danger" effect="plain">已离开</el-tag>
+              <el-tag v-else-if="row.membership === 'unknown'" size="small" type="info" effect="plain">未知</el-tag>
+              <el-tag v-else size="small" type="success" effect="plain">在群</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="近趋势" width="130" align="center">

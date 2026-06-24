@@ -938,7 +938,22 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
             群聊 · {{ detail?.member_count }}人
           </el-tag>
           <el-tag v-else size="small" type="warning" effect="dark">元信息不可用</el-tag>
+          <el-tag v-if="detail?.membership === 'left'" type="danger" size="small" effect="plain">已离开</el-tag>
+          <el-tag v-else-if="detail?.membership === 'unknown'" type="info" size="small" effect="plain">归属未知</el-tag>
           <el-text type="info" size="small">{{ chatID }}</el-text>
+          <span
+            v-if="detail?.owner_id"
+            style="display: flex; align-items: center; gap: 4px; color: #909399; font-size: 12px; margin-left: 8px"
+          >
+            群主：
+            <el-avatar
+              v-if="detail.owner_avatar"
+              :src="detail.owner_avatar"
+              :size="20"
+              shape="circle"
+            />
+            <span>{{ detail.owner_name || detail.owner_id }}</span>
+          </span>
         </div>
       </template>
     </el-page-header>
@@ -1173,6 +1188,11 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
         </div>
         <el-table v-loading="memberLoading" :data="filteredMembers()" stripe>
           <el-table-column type="index" label="#" width="60" />
+          <el-table-column label="头像" width="64" align="center">
+            <template #default="{ row }">
+              <el-avatar :src="row.avatar" :size="32" shape="circle">{{ row.name?.[0] }}</el-avatar>
+            </template>
+          </el-table-column>
           <el-table-column prop="name" label="名字" min-width="180" show-overflow-tooltip />
           <el-table-column prop="open_id" label="Open ID" min-width="240" show-overflow-tooltip />
           <el-table-column prop="tenant_key" label="租户" min-width="160" show-overflow-tooltip />

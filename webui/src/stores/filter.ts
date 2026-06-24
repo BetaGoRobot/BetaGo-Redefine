@@ -269,12 +269,12 @@ export const useFilterStore = defineStore('filter', () => {
         merged.set(preset.id, preset)
         added++
       } else {
-        // 已存在：只刷新 env 预设字段（proxyPath / 颜色），保留用户已改的 token/name
+        // 已存在：只刷新 env 预设字段（baseURL / 颜色），保留用户已改的 token/name。
         const cur = merged.get(preset.id)!
         merged.set(preset.id, {
           ...preset,
           ...cur,
-          proxyPath: preset.proxyPath || cur.proxyPath,
+          baseURL: preset.baseURL || cur.baseURL,
           source: preset.source,
         })
       }
