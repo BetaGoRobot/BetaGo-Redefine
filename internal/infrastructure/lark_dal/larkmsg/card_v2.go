@@ -149,8 +149,10 @@ func NewCardV2(title string, elements []any, opts CardV2Options) RawCard {
 		"schema": "2.0",
 		"config": map[string]any{
 			"update_multi": updateMulti,
-			"streaming_config": map[string]any{
-				"streaming_mode": true,
+			"streaming_config": streamingConfig{
+				PrintStep:        configUnit{Default: 3},
+				PrintFrequencyMS: configUnit{Default: 50},
+				PrintStrategy:    "delay",
 			},
 		},
 		"body": body,
