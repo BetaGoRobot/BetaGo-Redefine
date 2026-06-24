@@ -75,7 +75,6 @@ type IntentAnalysis struct {
 	InterruptRisk   int                            `json:"interrupt_risk"`
 	InteractionMode InteractionMode                `json:"interaction_mode"`
 	ReasoningEffort responses.ReasoningEffort_Enum `json:"reasoning_effort"`
-	ToolHints       []ToolHint                     `json:"tool_hints"`
 }
 
 // UnmarshalJSON accepts both enum strings and enum numbers for reasoning effort.
@@ -92,7 +91,6 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		InterruptRisk   int             `json:"interrupt_risk"`
 		InteractionMode InteractionMode `json:"interaction_mode"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
-		ToolHints       []ToolHint      `json:"tool_hints"`
 	}
 	if err := sonic.Unmarshal(data, &raw); err != nil {
 		return err
@@ -110,7 +108,6 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		InterruptRisk:   raw.InterruptRisk,
 		InteractionMode: raw.InteractionMode,
 		ReasoningEffort: parseReasoningEffort(raw.ReasoningEffort),
-		ToolHints:       raw.ToolHints,
 	}
 	return nil
 }
@@ -202,14 +199,11 @@ func (a *IntentAnalysis) Sanitize() {
 	case ReplyModeIgnore:
 		a.NeedReply = false
 	}
-
-	a.ToolHints = sanitizeToolHints(a.ToolHints)
-	if !a.NeedReply {
-		a.ToolHints = nil
-	}
 }
 
-func sanitizeToolHints(hints []ToolHint) []ToolHint {
+// SanitizeToolHints validates a tool hint slice, dedupes and drops unknown values.
+// Exposed so the dedicated tool planner can reuse the same normalization.
+func SanitizeToolHints(hints []ToolHint) []ToolHint {
 	if len(hints) == 0 {
 		return nil
 	}

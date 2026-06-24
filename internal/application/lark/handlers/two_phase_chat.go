@@ -118,21 +118,42 @@ func GenerateChatSeqTwoPhase(
 
 	baseScope := buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(event, metaData), userName, "chat", llmusage.SourceTypeUser)
 
-	var toolHints []intentmeta.ToolHint
-	var intentReason string
+	var (
+		toolHints    []intentmeta.ToolHint
+		intentReason string
+	)
 	if hasIntent {
-		toolHints = intent.ToolHints
 		intentReason = intent.Reason
+	}
+
+	// 工具计划阶段：仅在 intent 表明需要时调用，避免随便闲聊也付一次 LLM token。
+	if twophase.ShouldRunToolPlanner(intent) {
+		hints, planErr := twophase.PlanTools(
+			ctx,
+			chatID,
+			currentOpenID(event, metaData),
+			accessor.IntentLiteModel(),
+			currentInput,
+			historyLines,
+			baseScope,
+		)
+		if planErr != nil {
+			logs.L().Ctx(ctx).Warn("tool planner failed, fallback to no hints", zap.Error(planErr))
+		} else {
+			toolHints = hints
+		}
 	}
 
 	span.SetAttributes(
 		attribute.Bool("intent.has_analysis", hasIntent),
-		attribute.Int("intent.tool_hint_count", len(toolHints)),
+		attribute.Bool("tool_planner.invoked", twophase.ShouldRunToolPlanner(intent)),
+		attribute.Int("tool_planner.hint_count", len(toolHints)),
 		attribute.String("intent.reason", intentReason),
 	)
 
-	logs.L().Ctx(ctx).Info("two_phase using intent decision",
+	logs.L().Ctx(ctx).Info("two_phase planning summary",
 		zap.Bool("has_intent", hasIntent),
+		zap.Bool("tool_planner_invoked", twophase.ShouldRunToolPlanner(intent)),
 		zap.Any("tool_hints", toolHints),
 		zap.String("reason", intentReason),
 	)
