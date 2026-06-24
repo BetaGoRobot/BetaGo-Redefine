@@ -33,6 +33,8 @@ type LuckinPendingOrder struct {
 	ConfirmedAt         time.Time      `gorm:"column:confirmed_at" json:"confirmed_at"`
 	CreatedAt           time.Time      `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt           time.Time      `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	InitiatorOpenID     string         `gorm:"column:initiator_open_id;not null" json:"initiator_open_id"`
+	CartSnapshot        string         `gorm:"column:cart_snapshot;not null;default:[]" json:"cart_snapshot"`
 }
 
 // TableName LuckinPendingOrder's table name
