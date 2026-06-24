@@ -162,7 +162,7 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
 		ignoredEventCounts:     make(map[string]int),
 		reasoningEffort: &responses.ResponsesReasoning{
-			Effort: responses.ReasoningEffort_high, // 默认最大
+			Effort: responses.ReasoningEffort_medium, // 默认中等
 		},
 	}
 }
