@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers/twophase"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -31,8 +32,8 @@ import (
 )
 
 // GenerateChatSeqTwoPhase 两阶段聊天回复生成入口。
-// 阶段一：Decision Planner（非流式 JSON，reply/skip + 工具决策）
-// 阶段二：Reply Generator（流式纯文本回复）
+// 当前实现：reply/skip 与工具线索完全复用 intent 阶段的产出（intentmeta.IntentAnalysis），
+// 不再额外起 Planner 模型；本函数只负责拼装上下文 + 调用 Reply Generator 流式生成。
 //
 // 签名与 GenerateChatSeq 保持一致，便于通过 feature flag 切换。
 func GenerateChatSeqTwoPhase(
@@ -56,7 +57,13 @@ func GenerateChatSeqTwoPhase(
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, metaData))
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 
-	// 获取历史消息（与单阶段相同的逻辑）
+	// 复用 intent 阶段产出的决策与工具线索
+	intent, hasIntent := metaData.GetIntentAnalysis()
+	if hasIntent && !intent.NeedReply {
+		return singleSkipSeq("intent: need_reply=false"), nil
+	}
+
+	// 历史消息（与单阶段相同的逻辑）
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
@@ -111,67 +118,33 @@ func GenerateChatSeqTwoPhase(
 
 	baseScope := buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(event, metaData), userName, "chat", llmusage.SourceTypeUser)
 
-	// ============= 阶段一：Decision Planner（非流式） =============
-	plannerSysPrompt := twophase.BuildDecisionPlannerPrompt(modeStr, persona)
-	plannerUserPrompt := twophase.BuildPlannerUserPrompt(
-		standardChatBotProfileLoader(ctx),
-		historyLines,
-		topicLines,
-		currentInput,
-		extraCtx,
-	)
-
-	planner := twophase.NewPlanner()
-	decision, plannerErr := planner.Run(ctx, twophase.PlannerInput{
-		SystemPrompt: plannerSysPrompt,
-		UserPrompt:   plannerUserPrompt,
-		Files:        files,
-		Scope:        twophase.BuildPlannerScope(baseScope),
-	})
-	if plannerErr != nil {
-		logs.L().Ctx(ctx).Error("two_phase planner failed, fallback to single phase", zap.Error(plannerErr))
-		// 决策器彻底失败，fallback 到单阶段
-		return GenerateChatSeq(ctx, event, metaData, modelID, size, files, input...)
+	var toolHints []intentmeta.ToolHint
+	var intentReason string
+	if hasIntent {
+		toolHints = intent.ToolHints
+		intentReason = intent.Reason
 	}
 
 	span.SetAttributes(
-		attribute.String("planner.decision", decision.Decision),
-		attribute.String("planner.reason_summary", decision.ReasonSummary),
-		attribute.Int("planner.tool_plan_count", len(decision.ToolPlan)),
+		attribute.Bool("intent.has_analysis", hasIntent),
+		attribute.Int("intent.tool_hint_count", len(toolHints)),
+		attribute.String("intent.reason", intentReason),
 	)
 
-	logs.L().Ctx(ctx).Info("two_phase planner result",
-		zap.String("decision", decision.Decision),
-		zap.String("reason_summary", decision.ReasonSummary),
-		zap.Int("tool_plan_count", len(decision.ToolPlan)),
+	logs.L().Ctx(ctx).Info("two_phase using intent decision",
+		zap.Bool("has_intent", hasIntent),
+		zap.Any("tool_hints", toolHints),
+		zap.String("reason", intentReason),
 	)
 
-	// skip 直接返回
-	if decision.Decision == "skip" {
-		return singleSkipSeq(decision.ReasonSummary), nil
-	}
-
-	// ============= 工具执行（Phase 1 暂不执行，工具仍由第二阶段 LLM 调用） =============
-	toolRunner := twophase.NewToolRunner()
-	toolResults, toolErr := toolRunner.Run(ctx, decision.ToolPlan, metaData)
-	if toolErr != nil {
-		logs.L().Ctx(ctx).Warn("two_phase tool runner failed", zap.Error(toolErr))
-		toolResults = nil
-	}
-
-	// 若有工具直接发了卡片（如瑞幸入口卡），则直接返回 skip
-	if twophase.HasDirectCardSent(toolResults) {
-		return singleSkipSeq("工具已直接发送卡片，无需生成回复"), nil
-	}
-
-	// ============= 阶段二：Reply Generator（流式纯文本） =============
-	genSysPrompt := twophase.BuildReplyGeneratorPrompt(modeStr, persona)
+	// ============= Reply Generator（流式纯文本） =============
+	genSysPrompt := twophase.BuildReplyGeneratorPrompt(modeStr, persona, toolHints)
 	genUserPrompt := twophase.BuildGeneratorUserPrompt(
 		historyLines,
 		topicLines,
 		currentInput,
-		toolResults,
-		decision.ReasonSummary,
+		intentReason,
+		toolHints,
 		extraCtx,
 		correctionsCtx,
 	)
@@ -180,7 +153,7 @@ func GenerateChatSeqTwoPhase(
 	dal := ark_dal.
 		New(chatID, currentOpenID(event, metaData), event).
 		WithTools(BuildRuntimeCapabilityTools())
-	if intent, ok := metaData.GetIntentAnalysis(); ok {
+	if hasIntent {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
 
@@ -190,16 +163,14 @@ func GenerateChatSeqTwoPhase(
 		return nil, err
 	}
 
-	// 包装流：在流结束时组装 FinalResult
-	return wrapTwoPhaseStream(ctx, genStream, decision, toolResults, messageList, chatID), nil
+	return wrapTwoPhaseStream(ctx, genStream, intentReason, messageList, chatID), nil
 }
 
-// wrapTwoPhaseStream 包装第二阶段流式输出，在流结束时组装完整 FinalResult
+// wrapTwoPhaseStream 包装 Reply Generator 流式输出，在流结束时组装完整 FinalResult
 func wrapTwoPhaseStream(
 	ctx context.Context,
 	stream iter.Seq[*ark_dal.ModelStreamRespReasoning],
-	decision *twophase.DecisionResult,
-	toolResults []*twophase.ToolExecutionResult,
+	intentReason string,
 	messageList history.OpensearchMsgLogList,
 	chatID string,
 ) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
@@ -211,7 +182,6 @@ func wrapTwoPhaseStream(
 			replyBuilder.WriteString(data.Content)
 			reasoningBuilder.WriteString(data.ReasoningContent)
 
-			// 同步填充 ContentStruct.Reply，保证下游发送逻辑兼容
 			data.ContentStruct.Reply = replyBuilder.String()
 
 			if !yield(data) {
@@ -225,29 +195,26 @@ func wrapTwoPhaseStream(
 			finalReply = normalizedReply
 		}
 
-		// 构建 final 数据包
+		decision := "reply"
+		thought := intentReason
+		if finalReply == "" {
+			decision = "skip"
+			thought = intentReason + "；回复生成为空，转为跳过"
+		}
+
 		finalData := &ark_dal.ModelStreamRespReasoning{
 			Content:          "",
 			ReasoningContent: reasoningBuilder.String(),
 			ContentStruct: ark_dal.ContentStruct{
-				Decision:             decision.Decision,
-				Thought:              decision.ReasonSummary,
-				ReferenceFromWeb:     twophase.ExtractReferenceFromWeb(toolResults),
-				ReferenceFromHistory: twophase.ExtractReferenceFromHistory(toolResults),
-				Reply:                finalReply,
+				Decision: decision,
+				Thought:  thought,
+				Reply:    finalReply,
 			},
-		}
-
-		// 回复为空 → 转为 skip
-		if finalReply == "" {
-			finalData.ContentStruct.Decision = "skip"
-			finalData.ContentStruct.Thought = decision.ReasonSummary + "；回复生成为空，转为跳过"
 		}
 
 		logs.L().Ctx(ctx).Info("two_phase final result",
 			zap.String("decision", finalData.ContentStruct.Decision),
 			zap.Int("reply_len", len([]rune(finalReply))),
-			zap.Int("tool_results_count", len(toolResults)),
 		)
 
 		_ = yield(finalData)

@@ -52,6 +52,16 @@ const (
 	InteractionModeStandard InteractionMode = "standard"
 )
 
+// ToolHint 提示后续生成阶段优先调用的工具。
+// 由 intent 阶段一次性给出，避免再起一次决策模型。
+type ToolHint string
+
+const (
+	ToolHintSearchHistory ToolHint = "search_history"
+	ToolHintFinance       ToolHint = "finance"
+	ToolHintLuckin        ToolHint = "luckin"
+)
+
 // IntentAnalysis 意图分析结果
 type IntentAnalysis struct {
 	IntentType      IntentType                     `json:"intent_type"`
@@ -65,6 +75,7 @@ type IntentAnalysis struct {
 	InterruptRisk   int                            `json:"interrupt_risk"`
 	InteractionMode InteractionMode                `json:"interaction_mode"`
 	ReasoningEffort responses.ReasoningEffort_Enum `json:"reasoning_effort"`
+	ToolHints       []ToolHint                     `json:"tool_hints"`
 }
 
 // UnmarshalJSON accepts both enum strings and enum numbers for reasoning effort.
@@ -81,6 +92,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		InterruptRisk   int             `json:"interrupt_risk"`
 		InteractionMode InteractionMode `json:"interaction_mode"`
 		ReasoningEffort json.RawMessage `json:"reasoning_effort"`
+		ToolHints       []ToolHint      `json:"tool_hints"`
 	}
 	if err := sonic.Unmarshal(data, &raw); err != nil {
 		return err
@@ -98,6 +110,7 @@ func (a *IntentAnalysis) UnmarshalJSON(data []byte) error {
 		InterruptRisk:   raw.InterruptRisk,
 		InteractionMode: raw.InteractionMode,
 		ReasoningEffort: parseReasoningEffort(raw.ReasoningEffort),
+		ToolHints:       raw.ToolHints,
 	}
 	return nil
 }
@@ -189,6 +202,35 @@ func (a *IntentAnalysis) Sanitize() {
 	case ReplyModeIgnore:
 		a.NeedReply = false
 	}
+
+	a.ToolHints = sanitizeToolHints(a.ToolHints)
+	if !a.NeedReply {
+		a.ToolHints = nil
+	}
+}
+
+func sanitizeToolHints(hints []ToolHint) []ToolHint {
+	if len(hints) == 0 {
+		return nil
+	}
+	seen := make(map[ToolHint]struct{}, len(hints))
+	out := make([]ToolHint, 0, len(hints))
+	for _, h := range hints {
+		switch h {
+		case ToolHintSearchHistory, ToolHintFinance, ToolHintLuckin:
+		default:
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func defaultReplyMode(needReply bool) ReplyMode {
