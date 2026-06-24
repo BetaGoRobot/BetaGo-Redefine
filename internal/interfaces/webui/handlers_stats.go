@@ -57,6 +57,116 @@ func (s *Server) collectMessageStats(r *http.Request, chatID string, since time.
 	return stats
 }
 
+// handleInsightsActivity 返回某群在窗口内按"周内小时"维度的发言量分布，
+// 用于前端画 7×24 活跃度热力图。能力依赖 OpenSearch；未注入或查询失败时
+// 返回 503 并附原因，前端按降级处理。
+func (s *Server) handleInsightsActivity(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatActivity == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat activity source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	activity, err := s.chatActivity(r.Context(), chatID, since)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat activity query failed: "+err.Error())
+		return
+	}
+	if activity == nil {
+		activity = &ChatActivity{}
+	}
+	activity.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, activity)
+}
+
+const (
+	defaultKeywordsTopN = 80
+	maxKeywordsTopN     = 200
+	defaultCommandsTopN = 20
+	maxCommandsTopN     = 100
+)
+
+// handleInsightsKeywords 返回某群在窗口内按词频排序的 Top 关键词，供前端画词云。
+// top 参数允许调优，缺省 80，硬上限 200，避免一口气把整张词表拉过来。
+func (s *Server) handleInsightsKeywords(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatKeywords == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat keywords source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	topN := defaultKeywordsTopN
+	if raw := strings.TrimSpace(r.URL.Query().Get("top")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > maxKeywordsTopN {
+				n = maxKeywordsTopN
+			}
+			topN = n
+		}
+	}
+	kw, err := s.chatKeywords(r.Context(), chatID, since, topN)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat keywords query failed: "+err.Error())
+		return
+	}
+	if kw == nil {
+		kw = &ChatKeywords{Items: []KeywordCount{}}
+	}
+	kw.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, kw)
+}
+
+// handleInsightsCommands 返回某群在窗口内被调用的 Top 命令分布。
+// 数据来自 OpenSearch 索引中 is_command + main_command 字段。
+func (s *Server) handleInsightsCommands(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatCommands == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat commands source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	topN := defaultCommandsTopN
+	if raw := strings.TrimSpace(r.URL.Query().Get("top")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > maxCommandsTopN {
+				n = maxCommandsTopN
+			}
+			topN = n
+		}
+	}
+	cmds, err := s.chatCommands(r.Context(), chatID, since, topN)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat commands query failed: "+err.Error())
+		return
+	}
+	if cmds == nil {
+		cmds = &ChatCommands{Items: []CommandCount{}}
+	}
+	cmds.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, cmds)
+}
+
 // parseWindowDays 解析 window 参数，支持 "7d"/"30d"/"24h" 或纯数字（天）。
 func parseWindowDays(raw string) int {
 	raw = strings.TrimSpace(strings.ToLower(raw))

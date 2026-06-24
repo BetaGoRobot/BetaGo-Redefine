@@ -288,6 +288,9 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		MemberList:    webui.LarkMemberList,
 		MessageStats:  countRecentChatMessages,
 		RecentChatIDs: recentChatIDs,
+		ChatActivity:  chatActivityHourOfWeek,
+		ChatKeywords:  chatKeywordsToken,
+		ChatCommands:  chatCommandsTop,
 		RobotName: func() string {
 			if cfg.BaseInfo != nil {
 				return cfg.BaseInfo.RobotName

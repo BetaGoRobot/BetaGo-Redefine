@@ -113,3 +113,36 @@ export interface ListResponse<T> {
   items: T[]
   total: number
 }
+
+export interface HourOfWeekBucket {
+  dow: number
+  hour: number
+  count: number
+}
+
+export interface ChatActivity {
+  window_days: number
+  total: number
+  hour_of_week: HourOfWeekBucket[]
+}
+
+export interface KeywordCount {
+  word: string
+  count: number
+}
+
+export interface ChatKeywords {
+  window_days: number
+  items: KeywordCount[]
+}
+
+export interface CommandCount {
+  command: string
+  count: number
+}
+
+export interface ChatCommands {
+  window_days: number
+  total: number
+  items: CommandCount[]
+}

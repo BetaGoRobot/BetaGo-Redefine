@@ -1,6 +1,9 @@
 import axios, { AxiosInstance } from 'axios'
 import type {
+  ChatActivity,
+  ChatCommands,
   ChatDetail,
+  ChatKeywords,
   ChatMember,
   ChatSummary,
   ConfigView,
@@ -101,6 +104,25 @@ export class BotApi {
   async getStats(chatID: string, window = '7d') {
     return this.http
       .get<StatsResponse>(`/api/chats/${encodeURIComponent(chatID)}/stats`, { params: { window } })
+      .then((r) => r.data)
+  }
+  async getActivity(chatID: string, window = '7d') {
+    return this.http
+      .get<ChatActivity>(`/api/chats/${encodeURIComponent(chatID)}/insights/activity`, { params: { window } })
+      .then((r) => r.data)
+  }
+  async getKeywords(chatID: string, window = '7d', top = 80) {
+    return this.http
+      .get<ChatKeywords>(`/api/chats/${encodeURIComponent(chatID)}/insights/keywords`, {
+        params: { window, top },
+      })
+      .then((r) => r.data)
+  }
+  async getCommands(chatID: string, window = '7d', top = 20) {
+    return this.http
+      .get<ChatCommands>(`/api/chats/${encodeURIComponent(chatID)}/insights/commands`, {
+        params: { window, top },
+      })
       .then((r) => r.data)
   }
   async listFeatures(chatID: string) {

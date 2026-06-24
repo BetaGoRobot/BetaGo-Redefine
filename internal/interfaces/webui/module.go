@@ -37,6 +37,9 @@ type Options struct {
 	MemberList    MemberListFunc
 	MessageStats  MessageStatsFunc
 	RecentChatIDs RecentChatIDsFunc
+	ChatActivity  ChatActivityFunc
+	ChatKeywords  ChatKeywordsFunc
+	ChatCommands  ChatCommandsFunc
 	Now           func() time.Time
 	// RobotName 用于在多 bot 场景下前端区分不同实例；空串时回退为 "unknown"。
 	RobotName string

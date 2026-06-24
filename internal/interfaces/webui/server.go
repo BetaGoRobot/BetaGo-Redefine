@@ -18,6 +18,9 @@ type Server struct {
 	memberList    MemberListFunc
 	messageStats  MessageStatsFunc
 	recentChatIDs RecentChatIDsFunc
+	chatActivity  ChatActivityFunc
+	chatKeywords  ChatKeywordsFunc
+	chatCommands  ChatCommandsFunc
 	now           func() time.Time
 
 	authToken   string
@@ -47,6 +50,9 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		memberList:    opts.MemberList,
 		messageStats:  opts.MessageStats,
 		recentChatIDs: opts.RecentChatIDs,
+		chatActivity:  opts.ChatActivity,
+		chatKeywords:  opts.ChatKeywords,
+		chatCommands:  opts.ChatCommands,
 		now:           now,
 		authToken:     authToken,
 		corsOrigins:   corsOrigins,
@@ -65,6 +71,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{chatID}", s.handleGetChat)
 	mux.HandleFunc("GET /api/chats/{chatID}/members", s.handleListMembers)
 	mux.HandleFunc("GET /api/chats/{chatID}/stats", s.handleStats)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/activity", s.handleInsightsActivity)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/keywords", s.handleInsightsKeywords)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/commands", s.handleInsightsCommands)
 	mux.HandleFunc("GET /api/chats/{chatID}/features", s.handleListFeatures)
 	mux.HandleFunc("PUT /api/chats/{chatID}/features/{name}", s.handleSetFeature)
 	mux.HandleFunc("GET /api/chats/{chatID}/configs", s.handleListConfigs)

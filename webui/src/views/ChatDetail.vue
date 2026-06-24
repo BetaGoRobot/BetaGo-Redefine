@@ -4,7 +4,10 @@ import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import { BotApi } from '../api/client'
 import type {
+  ChatActivity,
+  ChatCommands,
   ChatDetail as ChatDetailType,
+  ChatKeywords,
   ChatMember,
   ConfigView,
   FeatureView,
@@ -50,6 +53,15 @@ const detail = ref<ChatDetailType | null>(null)
 const activeTab = ref('stats')
 const stats = ref<StatsResponse | null>(null)
 const statsLoading = ref(false)
+const activity = ref<ChatActivity | null>(null)
+const activityLoading = ref(false)
+const activityError = ref('')
+const keywords = ref<ChatKeywords | null>(null)
+const keywordsLoading = ref(false)
+const keywordsError = ref('')
+const commands = ref<ChatCommands | null>(null)
+const commandsLoading = ref(false)
+const commandsError = ref('')
 const features = ref<FeatureView[]>([])
 const featLoading = ref(false)
 const configs = ref<ConfigView[]>([])
@@ -74,6 +86,42 @@ async function loadStats() {
     ElMessage.error('加载统计失败：' + (e?.response?.data?.error || e.message))
   } finally {
     statsLoading.value = false
+  }
+}
+async function loadActivity() {
+  activityLoading.value = true
+  activityError.value = ''
+  try {
+    activity.value = await new BotApi(resolveBot()).getActivity(props.chatID, store.window)
+  } catch (e: any) {
+    activity.value = null
+    activityError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    activityLoading.value = false
+  }
+}
+async function loadKeywords() {
+  keywordsLoading.value = true
+  keywordsError.value = ''
+  try {
+    keywords.value = await new BotApi(resolveBot()).getKeywords(props.chatID, store.window, 80)
+  } catch (e: any) {
+    keywords.value = null
+    keywordsError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    keywordsLoading.value = false
+  }
+}
+async function loadCommands() {
+  commandsLoading.value = true
+  commandsError.value = ''
+  try {
+    commands.value = await new BotApi(resolveBot()).getCommands(props.chatID, store.window, 20)
+  } catch (e: any) {
+    commands.value = null
+    commandsError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    commandsLoading.value = false
   }
 }
 async function loadFeatures() {
@@ -280,6 +328,146 @@ const heatmapOption = computed<EChartsOption>(() => {
 const topModelBar = computed<EChartsOption>(() =>
   buildTopBar({ title: `Top 模型 · ${METRIC_LABEL[primary.value]}`, data: stats.value?.token.by_model || [], metric: primary.value }),
 )
+
+// 周内小时活跃度热力图：dow=0..6（周一..周日）× hour=0..23。
+// 后端固定返回 168 个桶，缺数据时 count=0。
+const ACTIVITY_DOW_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const ACTIVITY_HOUR_LABELS = Array.from({ length: 24 }, (_, h) => `${h.toString().padStart(2, '0')}时`)
+const activityHeatmap = computed<EChartsOption>(() => {
+  const buckets = activity.value?.hour_of_week || []
+  const data: [number, number, number][] = buckets.map((b) => [b.hour, b.dow, b.count])
+  return buildHeatmap({
+    title: `发言活跃度 · 周内小时 (UTC+8) · 共 ${(activity.value?.total || 0).toLocaleString()} 条`,
+    x: ACTIVITY_HOUR_LABELS,
+    y: ACTIVITY_DOW_LABELS,
+    data,
+    xLabel: '小时',
+    yLabel: '星期',
+  })
+})
+
+// 关键词 Top-N：后端按词性过滤了名词/动词/形容词等实词，count 为命中文档数。
+// 这里渲染成横向条形图，预留 wordcloud 接入空间但不引第三方依赖。
+const keywordsBar = computed<EChartsOption>(() => {
+  const items = (keywords.value?.items || []).slice(0, 30)
+  const sorted = items.slice().sort((a, b) => a.count - b.count)
+  return {
+    title: {
+      text: `Top 关键词 · ${sorted.length} 词（按文档数）`,
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+      valueFormatter: (v: any) => (typeof v === 'number' ? v.toLocaleString() + ' 条' : v),
+    },
+    grid: { left: 110, right: 32, top: 48, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map((k) => k.word),
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 12,
+        itemStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: 'rgba(94,216,166,0.35)' },
+              { offset: 1, color: '#5AD8A6' },
+            ],
+          },
+          borderRadius: [0, 6, 6, 0],
+        },
+        data: sorted.map((k) => k.count),
+      },
+    ],
+  }
+})
+
+// 命令使用 Top-N：横向条形图 + 标题里展示命令调用总次数。
+// 数据维度是命令调用文档数，与关键词共用同一种视觉风格但用不同色。
+const commandsBar = computed<EChartsOption>(() => {
+  const items = (commands.value?.items || []).slice(0, 20)
+  const sorted = items.slice().sort((a, b) => a.count - b.count)
+  const total = commands.value?.total || 0
+  return {
+    title: {
+      text: `命令调用 · ${sorted.length} 项 · 共 ${total.toLocaleString()} 次`,
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+      valueFormatter: (v: any) => {
+        if (typeof v !== 'number') return v
+        const pct = total > 0 ? ` (${((v / total) * 100).toFixed(1)}%)` : ''
+        return `${v.toLocaleString()} 次${pct}`
+      },
+    },
+    grid: { left: 140, right: 48, top: 48, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map((c) => c.command),
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 12,
+        itemStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: 'rgba(255,152,69,0.35)' },
+              { offset: 1, color: '#FF9845' },
+            ],
+          },
+          borderRadius: [0, 6, 6, 0],
+        },
+        data: sorted.map((c) => c.count),
+      },
+    ],
+  }
+})
 const deepCrossDim = computed<DimensionKey>(() => {
   const order: DimensionKey[] = ['kind', 'source_type', 'status', 'model']
   return order.find((d) => d !== focusDimension.value) || 'kind'
@@ -303,11 +491,24 @@ async function initAll() {
     ElMessage.warning('会话元信息不可用：' + (e?.message || e))
     store.enterBot(bot.value.id)
   }
-  await Promise.all([loadStats(), loadFeatures(), loadConfigs(), loadMembers()])
+  await Promise.all([
+    loadStats(),
+    loadFeatures(),
+    loadConfigs(),
+    loadMembers(),
+    loadActivity(),
+    loadKeywords(),
+    loadCommands(),
+  ])
 }
 
 onMounted(initAll)
-watch(() => store.window, loadStats)
+watch(() => store.window, () => {
+  loadStats()
+  loadActivity()
+  loadKeywords()
+  loadCommands()
+})
 watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => {
   if (!props.chatID) return
   detail.value = null
@@ -452,6 +653,44 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 
         <el-card shadow="never" class="panel" style="margin-bottom: 12px">
           <EChart :option="heatmapOption" height="400px" />
+        </el-card>
+
+        <el-card v-loading="activityLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart v-if="activity && activity.total > 0" :option="activityHeatmap" height="320px" />
+          <div v-else-if="activityError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            发言活跃度不可用：{{ activityError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有发言记录
+          </div>
+        </el-card>
+
+        <el-card v-loading="keywordsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="keywords && keywords.items.length > 0"
+            :option="keywordsBar"
+            :height="`${Math.min(Math.max(keywords.items.length, 8), 30) * 22 + 80}px`"
+          />
+          <div v-else-if="keywordsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            关键词不可用：{{ keywordsError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有可分析的实词
+          </div>
+        </el-card>
+
+        <el-card v-loading="commandsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="commands && commands.items.length > 0"
+            :option="commandsBar"
+            :height="`${Math.min(Math.max(commands.items.length, 6), 20) * 24 + 80}px`"
+          />
+          <div v-else-if="commandsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            命令统计不可用：{{ commandsError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有命令调用
+          </div>
         </el-card>
       </el-tab-pane>
 

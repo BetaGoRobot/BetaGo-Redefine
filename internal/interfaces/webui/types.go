@@ -84,6 +84,67 @@ type MemberListFunc func(ctx context.Context, chatID string) ([]ChatMember, erro
 // 为空表示该能力不可用，统计接口会返回降级标记而非报错。
 type MessageStatsFunc func(ctx context.Context, chatID string, since time.Time) (int, error)
 
+// ChatActivityFunc 返回某群在 since 之后按"周内小时"聚合的发言量。
+//
+// 默认实现走 OpenSearch：date_histogram 按小时桶聚合，再在客户端把
+// 每个 UTC+8 时间点映射成 (周几, 小时) 维度，便于前端画热力图。返回
+// nil（或函数为空）表示能力不可用，handler 会返回 503。
+type ChatActivityFunc func(ctx context.Context, chatID string, since time.Time) (*ChatActivity, error)
+
+// ChatKeywordsFunc 返回某群在 since 之后按词频排序的 Top 关键词。
+// 默认实现走 OpenSearch nested + terms 聚合 raw_message_jieba_tag，
+// 仅保留实词 (n* / v* / a* / i / l) 且词长 >1。topN 由调用方决定。
+type ChatKeywordsFunc func(ctx context.Context, chatID string, since time.Time, topN int) (*ChatKeywords, error)
+
+// ChatCommandsFunc 返回某群在 since 之后按命令使用次数排序的 Top 命令。
+// 默认实现走 OpenSearch：bool filter is_command=true，再 terms 聚合 main_command。
+// 同时回传命令调用总次数与首位命令占比，便于前端展示概览。
+type ChatCommandsFunc func(ctx context.Context, chatID string, since time.Time, topN int) (*ChatCommands, error)
+
+// ChatActivity 是发言活跃度热力图的聚合结果。
+type ChatActivity struct {
+	WindowDays  int                  `json:"window_days"`
+	Total       int64                `json:"total"`
+	HourOfWeek  []HourOfWeekBucket   `json:"hour_of_week"`
+}
+
+// HourOfWeekBucket 描述「周 N · 第 H 小时」一格的发言量。
+// DayOfWeek 取值 0..6，0 表示周一（与前端展示顺序一致）。
+type HourOfWeekBucket struct {
+	DayOfWeek int   `json:"dow"`
+	Hour      int   `json:"hour"`
+	Count     int64 `json:"count"`
+}
+
+// ChatKeywords 是关键词云聚合结果。
+type ChatKeywords struct {
+	WindowDays int              `json:"window_days"`
+	Items      []KeywordCount   `json:"items"`
+}
+
+// KeywordCount 描述一个词在窗口内出现的文档数（一条消息只算一次）。
+type KeywordCount struct {
+	Word  string `json:"word"`
+	Count int64  `json:"count"`
+}
+
+// ChatCommands 是命令使用情况聚合结果。
+//
+// Total 是窗口内所有 is_command=true 的消息数；Items 按 main_command 维度
+// 聚合排序后的 Top topN，"unknown" 命令会折叠为空字符串桶并与 main_command
+// 缺失的消息一起合入。
+type ChatCommands struct {
+	WindowDays int            `json:"window_days"`
+	Total      int64          `json:"total"`
+	Items      []CommandCount `json:"items"`
+}
+
+// CommandCount 描述一个命令在窗口内被调用的次数。
+type CommandCount struct {
+	Command string `json:"command"`
+	Count   int64  `json:"count"`
+}
+
 // RecentChatIDsFunc 返回当前 bot 在 since 之后实际产生过消息的 chat_id 集合，
 // 用作列表页对 token 表里浮现的额外 chat 做 bot 维度过滤的白名单。
 // 默认实现走 OpenSearch（按当前 bot 进程独占的 lark_msg_index 聚合 chat_id），
