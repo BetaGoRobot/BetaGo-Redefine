@@ -53,7 +53,7 @@ const filtered = computed<BotChat[]>(() => {
     if (botFilter.value !== 'all' && c.bot_id !== botFilter.value) return false
     if (store.currentBotID && c.bot_id !== store.currentBotID) return false
     if (kw && !(c.name.toLowerCase().includes(kw) || c.chat_id.toLowerCase().includes(kw))) return false
-    if (typeFilter.value !== 'all' && c.chat_status !== typeFilter.value) return false
+    if (typeFilter.value !== 'all' && chatKind(c) !== typeFilter.value) return false
     if (extFilter.value === 'internal' && c.external) return false
     if (extFilter.value === 'external' && !c.external) return false
     const t = Number(c.metrics?.total_tokens || 0)
@@ -106,15 +106,15 @@ const topModelDistribution = computed<EChartsOption>(() => {
 })
 
 const statusDistribution = computed<EChartsOption>(() => {
-  const p2p = filtered.value.filter((c) => c.chat_status === 'p2p').length
-  const group = filtered.value.filter((c) => c.chat_status === 'group').length
-  const unknown = filtered.value.filter((c) => !c.chat_status || c.chat_status === 'unknown').length
+  const p2p = filtered.value.filter((c) => chatKind(c) === 'p2p').length
+  const group = filtered.value.filter((c) => chatKind(c) === 'group').length
+  const unknown = filtered.value.filter((c) => chatKind(c) === 'unknown').length
   return buildDonut({
     title: '会话类型分布',
     data: [
       { group: '单聊', total_tokens: p2p, requests: 0, prompt_tokens: 0, completion_tokens: 0 },
       { group: '群聊', total_tokens: group, requests: 0, prompt_tokens: 0, completion_tokens: 0 },
-      { group: '未知/无权限', total_tokens: unknown, requests: 0, prompt_tokens: 0, completion_tokens: 0 },
+      { group: '未知', total_tokens: unknown, requests: 0, prompt_tokens: 0, completion_tokens: 0 },
     ],
     metric: 'total_tokens',
   })
@@ -143,6 +143,20 @@ function sparkOption(c: BotChat): EChartsOption {
   const s = sparkMap.value[`${c.bot_id}::${c.chat_id}`]
   if (!s) return buildSparkline({ values: [0] })
   return buildSparkline({ values: s.tokenSeries, positive: true })
+}
+
+// chatKind 用 chat_id 前缀判断会话类型：
+//   - oc_ 群聊
+//   - ou_ 单聊（机器人对人）
+//   - 其它前缀 / 缺失 → unknown（极少出现，通常是后端补充项里没拿到 ID 类型）
+// 注意：后端 chat_status 字段来自 Lark ListChat.chat_status（normal/dissolved
+// 等生命周期状态），与"是否群聊"无关；详情接口的 chat_mode 才是真正的类型字段，
+// 但列表接口（larkim ListChat）没该字段。
+function chatKind(c: { chat_id?: string }): 'p2p' | 'group' | 'unknown' {
+  const id = (c.chat_id || '').trim()
+  if (id.startsWith('oc_')) return 'group'
+  if (id.startsWith('ou_')) return 'p2p'
+  return 'unknown'
 }
 
 function open(c: BotChat) {
@@ -291,7 +305,7 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
                 <el-option value="all" label="全部类型" />
                 <el-option value="group" label="群聊" />
                 <el-option value="p2p" label="单聊" />
-                <el-option value="unknown" label="未知/无权限" />
+                <el-option value="unknown" label="未知" />
               </el-select>
               <el-select v-model="extFilter" placeholder="内外群" style="width: 140px">
                 <el-option value="all" label="全部" />
@@ -399,14 +413,9 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
           <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
           <el-table-column label="类型" width="110">
             <template #default="{ row }">
-              <el-tag v-if="row.chat_status === 'p2p'" size="small" type="info" effect="plain">单聊</el-tag>
-              <el-tag v-else-if="row.chat_status === 'group'" size="small" type="success" effect="plain">群聊</el-tag>
-              <el-tooltip
-                v-else
-                content="机器人无此群权限，请确认机器人是否已加入该群或授权范围。"
-              >
-                <el-tag size="small" type="warning" effect="dark">无权限</el-tag>
-              </el-tooltip>
+              <el-tag v-if="chatKind(row) === 'p2p'" size="small" type="info" effect="plain">单聊</el-tag>
+              <el-tag v-else-if="chatKind(row) === 'group'" size="small" type="success" effect="plain">群聊</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">未知</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="外部" width="70">

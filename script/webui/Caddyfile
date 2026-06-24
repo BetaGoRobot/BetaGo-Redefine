@@ -1,15 +1,23 @@
 # BetaGo WebUI Caddy 配置。
-# 监听 80，托管 SPA 静态文件，把 /api/* 反代到后端（BACKEND_URL 运行时注入）。
+# 监听 80，托管 SPA 静态文件，把 /api/* 反代到默认后端，
+# 把每个 bot 的 /bot/<id>/api/* 反代到该 bot 在 compose 内的服务地址。
+#
+# 反代上游有两层来源：
+#   1. BACKEND_URL：默认主后端的内网地址（容器间直连）；
+#   2. /etc/caddy/bots.caddy：由 entrypoint 根据 VITE_BOTS 中的 internalBaseURL
+#      字段渲染出来的多 bot 反代片段。文件不存在时使用占位空文件。
 :80 {
 	root * /usr/share/caddy
 
-	# /api 反向代理到后端 WebUI 服务，避免浏览器跨域。
+	# 主后端：浏览器走同源 /api。
 	handle /api/* {
 		reverse_proxy {$BACKEND_URL}
 	}
 
-	# /config.js 由 entrypoint 在容器启动时根据环境变量渲染到该路径，
-	# 关掉浏览器缓存以确保改了 env 重启容器即生效。
+	# 多 bot 内网反代：/bot/<id>/api/* -> 对应 bot 的 internalBaseURL。
+	import /etc/caddy/bots.caddy
+
+	# /config.js 由 entrypoint 在容器启动时渲染，关掉缓存确保改 env 重启即生效。
 	@configjs path /config.js
 	handle @configjs {
 		header Cache-Control "no-store, must-revalidate"
