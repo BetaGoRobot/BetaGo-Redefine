@@ -337,6 +337,7 @@ func buildStreamingReplyCard(content string) (RawCard, error) {
 		return nil, errors.New("invalid card config")
 	}
 	config["streaming_mode"] = true
+	config["streaming_config"] = map[string]any{"print_strategy": "delay"} // 延迟上屏
 	return card, nil
 }
 
