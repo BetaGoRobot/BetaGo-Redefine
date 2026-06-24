@@ -52,6 +52,8 @@ func newLuckinOrder(db *gorm.DB, opts ...gen.DOOption) luckinOrder {
 	_luckinOrder.CancelledAt = field.NewTime(tableName, "cancelled_at")
 	_luckinOrder.CreatedAt = field.NewTime(tableName, "created_at")
 	_luckinOrder.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_luckinOrder.InitiatorOpenID = field.NewString(tableName, "initiator_open_id")
+	_luckinOrder.CartSnapshot = field.NewString(tableName, "cart_snapshot")
 
 	_luckinOrder.fillFieldMap()
 
@@ -89,6 +91,8 @@ type luckinOrder struct {
 	CancelledAt         field.Time
 	CreatedAt           field.Time
 	UpdatedAt           field.Time
+	InitiatorOpenID     field.String
+	CartSnapshot        field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -132,6 +136,8 @@ func (l *luckinOrder) updateTableName(table string) *luckinOrder {
 	l.CancelledAt = field.NewTime(table, "cancelled_at")
 	l.CreatedAt = field.NewTime(table, "created_at")
 	l.UpdatedAt = field.NewTime(table, "updated_at")
+	l.InitiatorOpenID = field.NewString(table, "initiator_open_id")
+	l.CartSnapshot = field.NewString(table, "cart_snapshot")
 
 	l.fillFieldMap()
 
@@ -158,7 +164,7 @@ func (l *luckinOrder) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (l *luckinOrder) fillFieldMap() {
-	l.fieldMap = make(map[string]field.Expr, 27)
+	l.fieldMap = make(map[string]field.Expr, 29)
 	l.fieldMap["id"] = l.ID
 	l.fieldMap["order_id"] = l.OrderID
 	l.fieldMap["app_id"] = l.AppID
@@ -186,6 +192,8 @@ func (l *luckinOrder) fillFieldMap() {
 	l.fieldMap["cancelled_at"] = l.CancelledAt
 	l.fieldMap["created_at"] = l.CreatedAt
 	l.fieldMap["updated_at"] = l.UpdatedAt
+	l.fieldMap["initiator_open_id"] = l.InitiatorOpenID
+	l.fieldMap["cart_snapshot"] = l.CartSnapshot
 }
 
 func (l luckinOrder) clone(db *gorm.DB) luckinOrder {

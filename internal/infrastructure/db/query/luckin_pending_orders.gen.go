@@ -44,6 +44,8 @@ func newLuckinPendingOrder(db *gorm.DB, opts ...gen.DOOption) luckinPendingOrder
 	_luckinPendingOrder.ConfirmedAt = field.NewTime(tableName, "confirmed_at")
 	_luckinPendingOrder.CreatedAt = field.NewTime(tableName, "created_at")
 	_luckinPendingOrder.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_luckinPendingOrder.InitiatorOpenID = field.NewString(tableName, "initiator_open_id")
+	_luckinPendingOrder.CartSnapshot = field.NewString(tableName, "cart_snapshot")
 
 	_luckinPendingOrder.fillFieldMap()
 
@@ -73,6 +75,8 @@ type luckinPendingOrder struct {
 	ConfirmedAt         field.Time
 	CreatedAt           field.Time
 	UpdatedAt           field.Time
+	InitiatorOpenID     field.String
+	CartSnapshot        field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -108,6 +112,8 @@ func (l *luckinPendingOrder) updateTableName(table string) *luckinPendingOrder {
 	l.ConfirmedAt = field.NewTime(table, "confirmed_at")
 	l.CreatedAt = field.NewTime(table, "created_at")
 	l.UpdatedAt = field.NewTime(table, "updated_at")
+	l.InitiatorOpenID = field.NewString(table, "initiator_open_id")
+	l.CartSnapshot = field.NewString(table, "cart_snapshot")
 
 	l.fillFieldMap()
 
@@ -136,7 +142,7 @@ func (l *luckinPendingOrder) GetFieldByName(fieldName string) (field.OrderExpr, 
 }
 
 func (l *luckinPendingOrder) fillFieldMap() {
-	l.fieldMap = make(map[string]field.Expr, 19)
+	l.fieldMap = make(map[string]field.Expr, 21)
 	l.fieldMap["id"] = l.ID
 	l.fieldMap["app_id"] = l.AppID
 	l.fieldMap["bot_open_id"] = l.BotOpenID
@@ -156,6 +162,8 @@ func (l *luckinPendingOrder) fillFieldMap() {
 	l.fieldMap["confirmed_at"] = l.ConfirmedAt
 	l.fieldMap["created_at"] = l.CreatedAt
 	l.fieldMap["updated_at"] = l.UpdatedAt
+	l.fieldMap["initiator_open_id"] = l.InitiatorOpenID
+	l.fieldMap["cart_snapshot"] = l.CartSnapshot
 }
 
 func (l luckinPendingOrder) clone(db *gorm.DB) luckinPendingOrder {
