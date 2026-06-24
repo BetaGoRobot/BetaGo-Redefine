@@ -39,12 +39,21 @@ type Options struct {
 	RecentChatIDs RecentChatIDsFunc
 	ChatActivity  ChatActivityFunc
 	ChatKeywords  ChatKeywordsFunc
-	ChatCommands  ChatCommandsFunc
+	ChatCommands   ChatCommandsFunc
+	ChatTopSenders ChatTopSendersFunc
+	ChatMessageKinds ChatMessageKindsFunc
+	ChatCommandTrend ChatCommandTrendFunc
+	ChatTopMentions  ChatTopMentionsFunc
+	ChatTopicTrend   ChatTopicTrendFunc
 	Now           func() time.Time
 	// RobotName 用于在多 bot 场景下前端区分不同实例；空串时回退为 "unknown"。
 	RobotName string
 	// Instance 是部署实例名或 Lark AppID，便于运维定位。
 	Instance string
+	// BotID 是当前进程写入 llm_token_usage_records.bot_id 时使用的标识，
+	// WebUI 用同一个值过滤聚合查询，把当前 bot 的数据与其他 bot 严格隔离。
+	// 留空时 NewServer 会用 Instance 拼出 "lark:<AppID>" 作为兜底。
+	BotID string
 }
 
 // Module 承载 WebUI 的 HTTP 服务生命周期，实现 runtime.Module 契约。

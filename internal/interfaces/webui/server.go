@@ -21,6 +21,11 @@ type Server struct {
 	chatActivity  ChatActivityFunc
 	chatKeywords  ChatKeywordsFunc
 	chatCommands  ChatCommandsFunc
+	chatTopSenders ChatTopSendersFunc
+	chatMessageKinds ChatMessageKindsFunc
+	chatCommandTrend ChatCommandTrendFunc
+	chatTopMentions  ChatTopMentionsFunc
+	chatTopicTrend   ChatTopicTrendFunc
 	now           func() time.Time
 
 	authToken   string
@@ -29,6 +34,7 @@ type Server struct {
 
 	robotName string
 	instance  string
+	botID     string
 }
 
 // NewServer 根据注入的依赖构造 Server。db 由模块在 Init 阶段惰性解析后传入。
@@ -43,6 +49,13 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		authToken = strings.TrimSpace(opts.Config.AuthToken)
 		corsOrigins = normalizeOrigins(opts.Config.CORSAllowOrigins)
 	}
+	botID := strings.TrimSpace(opts.BotID)
+	if botID == "" {
+		// 兜底：用 Instance（Lark AppID）拼出与 llmusage SetDefaultBotIDProvider 一致的 bot 标识。
+		if inst := strings.TrimSpace(opts.Instance); inst != "" {
+			botID = "lark:" + inst
+		}
+	}
 	return &Server{
 		cfg:           opts.ConfigManager,
 		chats:         opts.ChatService,
@@ -53,12 +66,18 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		chatActivity:  opts.ChatActivity,
 		chatKeywords:  opts.ChatKeywords,
 		chatCommands:  opts.ChatCommands,
+		chatTopSenders: opts.ChatTopSenders,
+		chatMessageKinds: opts.ChatMessageKinds,
+		chatCommandTrend: opts.ChatCommandTrend,
+		chatTopMentions: opts.ChatTopMentions,
+		chatTopicTrend: opts.ChatTopicTrend,
 		now:           now,
 		authToken:     authToken,
 		corsOrigins:   corsOrigins,
-		store:         newTokenStatsStore(db),
+		store:         newTokenStatsStore(db, botID),
 		robotName:     strings.TrimSpace(opts.RobotName),
 		instance:      strings.TrimSpace(opts.Instance),
+		botID:         botID,
 	}
 }
 
@@ -74,6 +93,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{chatID}/insights/activity", s.handleInsightsActivity)
 	mux.HandleFunc("GET /api/chats/{chatID}/insights/keywords", s.handleInsightsKeywords)
 	mux.HandleFunc("GET /api/chats/{chatID}/insights/commands", s.handleInsightsCommands)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/top_senders", s.handleInsightsTopSenders)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/message_kinds", s.handleInsightsMessageKinds)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/command_trend", s.handleInsightsCommandTrend)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/top_mentions", s.handleInsightsTopMentions)
+	mux.HandleFunc("GET /api/chats/{chatID}/insights/topic_trend", s.handleInsightsTopicTrend)
 	mux.HandleFunc("GET /api/chats/{chatID}/features", s.handleListFeatures)
 	mux.HandleFunc("PUT /api/chats/{chatID}/features/{name}", s.handleSetFeature)
 	mux.HandleFunc("GET /api/chats/{chatID}/configs", s.handleListConfigs)

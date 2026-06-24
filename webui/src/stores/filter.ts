@@ -3,12 +3,13 @@ import { computed, ref, watch } from 'vue'
 
 /** 单个 Bot 实例定义（一个 bot 对应一个后端 WebUI 地址）。 */
 export interface BotInstance {
-  /** 本地唯一 id，用于区分不同 bot */
+  /** 本地唯一 id，用于区分不同 bot；浏览器请求会走 `/bot/<id>/api/*` 同源前缀。 */
   id: string
   /** 展示名称 */
   name: string
-  /** 后端 WebUI 根地址，例如 https://bot-foo.example.com 或 http://localhost:8090
-   *  留空表示走同源相对路径 `/api`（Vite 开发代理）。 */
+  /** 后端 WebUI 内网地址，仅用于运维登记与 Caddy 容器内反代渲染。
+   *  浏览器**不会**直接使用此字段——所有请求一律走 `/bot/<id>/api/*` 同源前缀，
+   *  由 webui 容器内的 Caddy（见 script/webui/docker-entrypoint.sh）反代到这里。 */
   baseURL: string
   /** 写操作鉴权 token（空表示不鉴权，仅内网环境适用）。 */
   token?: string
@@ -22,10 +23,6 @@ export interface BotInstance {
   instance?: string
   /** 颜色标签，用于图表区分不同 bot。 */
   color?: string
-  /** dev 模式下的代理前缀（例如 "/bot/betago-main/api"）。
-   *  非空时 BotApi 会用本地址代替 baseURL 发起请求，走 vite dev proxy 避免跨域；
-   *  生产构建（MODE=production）此字段会被 BotApi 忽略，直连 baseURL。 */
-  proxyPath?: string
   /** 来源：'localstorage'（用户自建）/ 'env'（来自 VITE_BOTS 预设，不可手动编辑删除） */
   source?: 'localstorage' | 'env'
 }
@@ -43,17 +40,10 @@ function loadUserBotsFromStorage(): BotInstance[] {
     const raw = localStorage.getItem(BOT_STORAGE_KEY)
     if (raw) return (JSON.parse(raw) as BotInstance[]).map((b) => ({ ...b, source: b.source || ('localstorage' as const) }))
   } catch { /* ignore */ }
-  // 首次访问：提供一个"默认本地"bot
-  return [
-    {
-      id: 'default-local',
-      name: '默认本地',
-      baseURL: '',
-      remark: '走同源 /api（dev proxy 或同域部署）',
-      color: DEFAULT_PALETTE[0],
-      source: 'localstorage',
-    },
-  ]
+  // 不再自动塞 default-local：浏览器只跟 webui 同域通信，bot 列表必须由
+  // 容器 entrypoint 通过 VITE_BOTS / window.__BETAGO_CONFIG__.bots 注入，
+  // 或由用户在「机器人源」面板手动添加。
+  return []
 }
 
 function loadInitialBots(): BotInstance[] {
@@ -128,11 +118,9 @@ function parseEnvBotPresets(): BotInstance[] {
   return arr
     .filter((b) => b && typeof b === 'object' && typeof b.id === 'string')
     .map((b, i) => {
+      // baseURL 仅作为运维登记字段；浏览器一律走 /bot/<id>/api/* 同源前缀。
       const baseURL = typeof b.baseURL === 'string' ? b.baseURL : ''
       const id = String(b.id)
-      // dev 模式：走 /bot/<id>/api 代理前缀，避免跨域
-      // （生产模式下 proxyPath 仍会被 BotApi 忽略，不影响）
-      const proxyPath = `/bot/${encodeURIComponent(id)}/api`
       return {
         id,
         name: String(b.name || b.id),
@@ -140,7 +128,6 @@ function parseEnvBotPresets(): BotInstance[] {
         token: typeof b.token === 'string' ? b.token : undefined,
         remark: typeof b.remark === 'string' ? b.remark : undefined,
         color: DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
-        proxyPath,
         source: 'env' as const,
       }
     })

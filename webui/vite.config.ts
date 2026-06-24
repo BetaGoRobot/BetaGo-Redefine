@@ -33,9 +33,11 @@ function parseBotPresets(raw: string | undefined): BotPreset[] {
   }
 }
 
-// 前后端分离：dev 模式下把 /api 代理到后端 WebUI 端口，
-// 多 bot 场景下把 /bot/<id>/api 代理到对应后端地址，
-// 生产部署时通过 VITE_API_BASE 或每个 bot 自带 baseURL 直连后端（跨域由后端 CORS 控制）。
+// 容器内反代版：浏览器永远只跟 webui 同源通信。
+//   - dev 模式下 vite 模拟容器里 Caddy 的两段反代：
+//       /api/*          → 默认后端（VITE_DEV_BACKEND）
+//       /bot/<id>/api/* → 各 bot 内网 baseURL（来自 VITE_BOTS）
+//   - 生产部署下，前端不直接连 baseURL，由容器内 Caddy 接 reverse_proxy。
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const defaultBackend = env.VITE_DEV_BACKEND || 'http://localhost:8090'

@@ -17,6 +17,8 @@ export interface ChatMetrics {
   tokens_per_message: number
 }
 
+export type Membership = 'active' | 'left' | 'unknown'
+
 export interface ChatSummary {
   chat_id: string
   name: string
@@ -25,17 +27,22 @@ export interface ChatSummary {
   chat_status: string
   external: boolean
   tenant_key?: string
+  /** 当前 bot 与该会话的关系：active=在群 / left=已离开 / unknown=无法确认。 */
+  membership?: Membership
   metrics?: ChatMetrics
 }
 
 export interface ChatMember {
   open_id: string
   name: string
+  avatar?: string
   tenant_key?: string
 }
 
 export interface ChatDetail extends ChatSummary {
   owner_id?: string
+  owner_name?: string
+  owner_avatar?: string
   chat_mode?: string
   member_count: number
 }
@@ -145,4 +152,58 @@ export interface ChatCommands {
   window_days: number
   total: number
   items: CommandCount[]
+}
+
+export interface SenderRank {
+  open_id: string
+  user_name: string
+  count: number
+}
+
+export interface ChatTopSenders {
+  window_days: number
+  total: number
+  items: SenderRank[]
+}
+
+export interface MessageKindCount {
+  kind: string
+  count: number
+}
+
+export interface ChatMessageKinds {
+  window_days: number
+  total: number
+  items: MessageKindCount[]
+}
+
+export interface ChatCommandTrend {
+  window_days: number
+  days: string[]
+  total: number[]
+  commands: number[]
+}
+
+export interface MentionRank {
+  open_id: string
+  user_name: string
+  count: number
+}
+
+export interface ChatTopMentions {
+  window_days: number
+  sampled: number
+  truncated: boolean
+  items: MentionRank[]
+}
+
+export interface TopicTrendSeries {
+  tag: string
+  values: number[]
+}
+
+export interface ChatTopicTrend {
+  window_days: number
+  days: string[]
+  series: TopicTrendSeries[]
 }

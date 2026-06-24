@@ -145,7 +145,7 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 				RawMessageJieba:      strings.Join(ws, " "),
 				RawMessageJiebaArray: ws,
 				RawMessageJiebaTag:   wsTags,
-				CreateTime:           utils.Epo2DateZoneMil(utils.MustInt(*event.Event.Message.CreateTime), time.UTC, time.DateTime),
+				CreateTime:           utils.Epo2DateZoneMil(utils.MustInt(*event.Event.Message.CreateTime), utils.UTC8Loc(), time.DateTime),
 				CreateTimeV2:         utils.Epo2DateZoneMil(utils.MustInt(*event.Event.Message.CreateTime), utils.UTC8Loc(), time.RFC3339),
 				MessageV2:            embedded,
 				OpenID:               openID,

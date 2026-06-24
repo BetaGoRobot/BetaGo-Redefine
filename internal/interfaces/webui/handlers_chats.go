@@ -16,6 +16,13 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+// Membership values exposed via ChatSummary.Membership.
+const (
+	membershipActive  = "active"
+	membershipLeft    = "left"
+	membershipUnknown = "unknown"
+)
+
 // listEnrichConcurrency 限制列表指标补全时对 Lark / OpenSearch 的并发，
 // 避免群多时打爆下游。
 const listEnrichConcurrency = 8
@@ -35,6 +42,13 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 	if isTruthy(r.URL.Query().Get("metrics")) {
 		windowDays := parseWindowDays(r.URL.Query().Get("window"))
 		chats = s.enrichChatMetrics(r.Context(), chats, windowDays)
+	} else {
+		// 不带 metrics 也要给 Chat.List 的群打 active 标记，保持字段稳定。
+		for i := range chats {
+			if chats[i].Membership == "" {
+				chats[i].Membership = membershipActive
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -43,28 +57,34 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// enrichChatMetrics 给群列表补全成员量 / 近 N 天发言量 / token 总量及派生均值。
+// enrichChatMetrics 给会话列表补全成员量 / 近 N 天发言量 / token 总量及派生均值。
 //
-// 数据来源尽量走缓存：token 总量用一次 GROUP BY chat_id 批量查询并按窗口缓存；
-// 成员数与发言量逐群获取，但底层分别命中 larkuser 成员缓存与 OpenSearch。
-// 同时把仅出现在 token 记录里的单聊（p2p）补进列表，使其也能被统计与排序。
+// 列表 = Chat.List（当前还在的群）∪ token 表里属于本 bot 的 chat_id（含历史已离开
+// 的群、单聊）。token 表查询已经按 bot_id 过滤，天然是当前 bot 的范围；不再依赖
+// OpenSearch 白名单兜底，直接用 DB 结果。
 //
-// 多 bot 注意：llm_token_usage_records 表全 bot 共享、无 bot 维度列，直接 merge
-// 会把另一个 bot 的会话也吐进当前列表。这里用当前 bot 进程独占的 lark_msg_index
-// 在 OpenSearch 上做一次 chat_id 聚合，得到「当前 bot 真正参与过的会话集合」，
-// 作为白名单约束 mergeMissingChats，从而按 bot 去重。
+// 每条结果带 Membership 字段：
+//   - oc_* 在 Chat.List 里 → active；
+//   - oc_* 不在 Chat.List 里 → left（机器人已被移除/退群/群解散）；
+//   - ou_* → active（单聊无法验证当前是否仍可发，按通常情况视为 active）；
+//   - 其他前缀 → unknown。
 func (s *Server) enrichChatMetrics(ctx context.Context, chats []ChatSummary, windowDays int) []ChatSummary {
 	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
 
-	// 1) 批量取每个 chat 的 token 总量（带 TTL 缓存）。
+	// 1) 批量取每个 chat 的 token 总量（带 TTL 缓存，已按 bot_id 过滤）。
 	totals := s.cachedTokenTotalsByChat(ctx, since, windowDays)
 
-	// 2) 用 token 记录里的 chat 补全单聊：Lark 群列表只含群，不含 p2p。
-	//    用当前 bot 的 OpenSearch 白名单过滤，避免 merge 进其他 bot 的会话。
-	allow := s.cachedRecentChatIDs(ctx, since, windowDays)
-	chats = mergeMissingChats(chats, totals, allow)
+	// 2) 用 Chat.List 中出现过的 chat_id 标记 active；未出现的根据前缀打 left/unknown。
+	chatListSet := make(map[string]struct{}, len(chats))
+	for i := range chats {
+		chatListSet[chats[i].ChatID] = struct{}{}
+		chats[i].Membership = membershipActive
+	}
 
-	// 3) 逐群补成员数 / 发言量 / 派生均值，并发受限。
+	// 3) 用 token 总量补全 Chat.List 拿不到的会话（单聊、被移除的群）。
+	chats = mergeMissingChats(chats, totals, chatListSet)
+
+	// 4) 逐会话补成员数 / 发言量 / 派生均值 / 单聊 avatar，并发受限。
 	sem := make(chan struct{}, listEnrichConcurrency)
 	var wg sync.WaitGroup
 	for i := range chats {
@@ -74,19 +94,39 @@ func (s *Server) enrichChatMetrics(ctx context.Context, chats []ChatSummary, win
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			chats[idx].Metrics = s.buildChatMetric(ctx, chats[idx].ChatID, since, windowDays, totals)
+			s.enrichP2PProfile(ctx, &chats[idx])
 		}(i)
 	}
 	wg.Wait()
 	return chats
 }
 
-// buildChatMetric 组装单个群的指标。各下游调用失败时降级为 0，不阻断整体。
+// enrichP2PProfile 把单聊（ou_*）会话的对方头像和昵称填到 ChatSummary 上，
+// 群聊场景跳过。下游缺失依赖（测试态）时 recover 吞掉。
+func (s *Server) enrichP2PProfile(ctx context.Context, summary *ChatSummary) {
+	defer func() { _ = recover() }()
+	if summary == nil || guessChatStatus(summary.ChatID) != "p2p" {
+		return
+	}
+	brief := larkuser.GetUserBriefCache(ctx, summary.ChatID)
+	if summary.Name == "" || summary.Name == summary.ChatID {
+		if brief.Name != "" {
+			summary.Name = brief.Name
+		}
+	}
+	if summary.Avatar == "" && brief.Avatar != "" {
+		summary.Avatar = brief.Avatar
+	}
+}
+
+// buildChatMetric 组装单个会话的指标。各下游调用失败时降级为 0，不阻断整体。
 func (s *Server) buildChatMetric(ctx context.Context, chatID string, since time.Time, windowDays int, totals map[string]chatTokenTotal) *ChatMetrics {
 	m := &ChatMetrics{WindowDays: windowDays}
 	if t, ok := totals[chatID]; ok {
 		m.TotalTokens = t.TotalTokens
 	}
-	if s.memberCount != nil {
+	if s.memberCount != nil && strings.HasPrefix(chatID, "oc_") {
+		// 单聊没有"成员数"概念（永远是 2 人），跳过 Lark 调用减少噪音。
 		if c, err := s.cachedMemberCount(ctx, chatID); err == nil {
 			m.MemberCount = c
 		}
@@ -110,7 +150,7 @@ func (s *Server) cachedTokenTotalsByChat(ctx context.Context, since time.Time, w
 	if !s.store.available() {
 		return map[string]chatTokenTotal{}
 	}
-	key := webuiCacheKey("token_totals_by_chat", windowDays)
+	key := webuiCacheKey("token_totals_by_chat:"+s.botID, windowDays)
 	totals, err := cache.GetOrExecute(ctx, key, func() (map[string]chatTokenTotal, error) {
 		return s.store.totalsByChat(ctx, since)
 	})
@@ -133,23 +173,6 @@ func (s *Server) cachedRecentMessages(ctx context.Context, chatID string, since 
 	})
 }
 
-// cachedRecentChatIDs 把"当前 bot 在窗口内出现过的 chat_id 集合"按窗口缓存，
-// 用于 mergeMissingChats 的 bot 维度白名单。注入函数为空或查询失败时返回 nil，
-// 调用方需把"白名单为 nil"解释为"能力不可用、不做白名单过滤"。
-func (s *Server) cachedRecentChatIDs(ctx context.Context, since time.Time, windowDays int) map[string]struct{} {
-	if s.recentChatIDs == nil {
-		return nil
-	}
-	key := webuiCacheKey("recent_chat_ids", windowDays)
-	ids, err := cache.GetOrExecute(ctx, key, func() (map[string]struct{}, error) {
-		return s.recentChatIDs(ctx, since)
-	})
-	if err != nil {
-		return nil
-	}
-	return ids
-}
-
 func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
 	chatID := strings.TrimSpace(r.PathValue("chatID"))
 	if chatID == "" {
@@ -164,6 +187,24 @@ func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	// 群主头像/昵称：用 larkuser 缓存补全，便于详情页直接渲染。
+	// 下游缺失依赖时（测试态）recover 兜底，仅保留已填写字段。
+	if detail != nil && detail.OwnerID != "" && (detail.OwnerName == "" || detail.OwnerAvatar == "") {
+		func() {
+			defer func() { _ = recover() }()
+			brief := larkuser.GetUserBriefCache(r.Context(), detail.OwnerID)
+			if detail.OwnerName == "" {
+				detail.OwnerName = brief.Name
+			}
+			if detail.OwnerAvatar == "" {
+				detail.OwnerAvatar = brief.Avatar
+			}
+		}()
+	}
+	// 单聊场景顺带补 name/avatar，与列表一致。
+	if detail != nil && guessChatStatus(detail.ChatID) == "p2p" {
+		s.enrichP2PProfile(r.Context(), &detail.ChatSummary)
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -184,24 +225,59 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	// 用 larkuser 缓存批量补头像；未命中时静默降级为空字符串，前端用首字母占位。
+	enrichMemberAvatars(r.Context(), members)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": members,
 		"total": len(members),
 	})
 }
 
+// enrichMemberAvatars 为成员列表补 avatar 字段。
+//
+// larkuser.GetUserBriefCache 内部已带 Redis + 本地缓存，这里再加一层并发限制避免
+// 一次性发起几十个 contact.User.Get 请求。下游缺失依赖（典型为测试环境，没有
+// lark_dal client、未加载 config）时通过 recover 兜底，确保不污染主请求。
+func enrichMemberAvatars(ctx context.Context, members []ChatMember) {
+	defer func() {
+		if r := recover(); r != nil {
+			// 任何下游兜底失败（例如测试态读不到 .dev/config.toml）都吞掉，
+			// 让成员列表保持无 avatar 字段也能展示。
+			_ = r
+		}
+	}()
+	if len(members) == 0 {
+		return
+	}
+	const memberAvatarConcurrency = 8
+	sem := make(chan struct{}, memberAvatarConcurrency)
+	var wg sync.WaitGroup
+	for i := range members {
+		if members[i].Avatar != "" || members[i].OpenID == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { _ = recover() }()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			brief := larkuser.GetUserBriefCache(ctx, members[idx].OpenID)
+			if members[idx].Name == "" {
+				members[idx].Name = brief.Name
+			}
+			members[idx].Avatar = brief.Avatar
+		}(i)
+	}
+	wg.Wait()
+}
+
 // mergeMissingChats 把仅出现在 token 记录中的 chat 补进列表。
 //
-// 注意：这里"token 里有但 Lark 群列表里没有"并不等价于单聊（p2p），也可能
-// 是机器人没有权限获取该群信息。真实判定用 chat_id 前缀：
-//   - oc_* → 群聊（Feishu Open Chat ID）
-//   - 其它 → "unknown"，交给前端按"未知/缺失权限"展示，
-//     避免把没权限的群错误标记为"单聊"。
-//
-// allow 是当前 bot 维度的白名单（来自 OpenSearch 聚合）。非空时仅补进白名单中
-// 的 chat_id，避免把另一个 bot 写入的同表记录误并入当前 bot 的列表；为 nil
-// 表示白名单能力不可用，退化为旧的"全部补进"行为。
-func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal, allow map[string]struct{}) []ChatSummary {
+// token 表的查询已按 bot_id 过滤，所以 totals 里的 chat_id 都是当前 bot 真正
+// 产生过消耗的会话，无需额外白名单。chatListSet 是 Lark Chat.List 已经覆盖的
+// 群集合，用来给"机器人已离开"的群打 left 标记，不丢历史数据。
+func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal, chatListSet map[string]struct{}) []ChatSummary {
 	seen := make(map[string]struct{}, len(chats))
 	for _, c := range chats {
 		seen[c.ChatID] = struct{}{}
@@ -211,20 +287,36 @@ func mergeMissingChats(chats []ChatSummary, totals map[string]chatTokenTotal, al
 		if _, ok := seen[id]; ok {
 			continue
 		}
-		if allow != nil {
-			if _, ok := allow[id]; !ok {
-				continue
-			}
-		}
 		name := t.ChatName
 		if name == "" {
 			name = id
 		}
-		extra = append(extra, ChatSummary{ChatID: id, Name: name, ChatStatus: guessChatStatus(id)})
+		status := guessChatStatus(id)
+		extra = append(extra, ChatSummary{
+			ChatID:     id,
+			Name:       name,
+			ChatStatus: status,
+			Membership: membershipFor(id, chatListSet),
+		})
 	}
 	// 让补充项顺序稳定，避免每次刷新顺序抖动。
 	sort.Slice(extra, func(i, j int) bool { return extra[i].ChatID < extra[j].ChatID })
 	return append(chats, extra...)
+}
+
+// membershipFor 根据 chat_id 前缀与 Chat.List 集合判定 membership。
+func membershipFor(chatID string, chatListSet map[string]struct{}) string {
+	if _, ok := chatListSet[chatID]; ok {
+		return membershipActive
+	}
+	switch guessChatStatus(chatID) {
+	case "group":
+		return membershipLeft
+	case "p2p":
+		return membershipActive
+	default:
+		return membershipUnknown
+	}
 }
 
 // guessChatStatus 用 chat_id 前缀推断会话类型。
@@ -272,6 +364,7 @@ func (l *larkChatService) ListChats(ctx context.Context) ([]ChatSummary, error) 
 			ChatStatus:  status,
 			External:    item.External != nil && *item.External,
 			Tenant:      strings.TrimSpace(ptr(item.TenantKey)),
+			Membership:  membershipActive,
 		})
 	}
 	return summaries, nil
@@ -297,6 +390,7 @@ func (l *larkChatService) GetChat(ctx context.Context, chatID string) (*ChatDeta
 			Description: strings.TrimSpace(ptr(data.Description)),
 			ChatStatus:  status,
 			External:    data.External != nil && *data.External,
+			Membership:  membershipActive,
 		},
 		OwnerID:  strings.TrimSpace(ptr(data.OwnerId)),
 		ChatMode: strings.TrimSpace(ptr(data.ChatMode)),

@@ -1,13 +1,20 @@
-# BetaGo WebUI Caddy 配置（纯内网部署）。
-# 监听 80，托管 SPA 静态文件，把 /api/* 反代到主后端。
+# BetaGo WebUI Caddy 配置（容器内反代版）。
+# 监听 80，托管 SPA 静态文件，并在容器内承担所有跨域 / 跨网段反代：
 #
-# 多 bot 场景下，浏览器假定与各 bot 在同一内网，直接通过
-# BotInstance.baseURL 连各自的内网地址，webui 这层不再做 /bot/<id>/api/*
-# 同源反代。如果以后需要支持外网浏览器，再单独引入一份反代片段。
+#   - /api/*          → BACKEND_URL 默认后端（运维兜底入口；探活和单后端老路径）
+#   - /bot/<id>/api/* → 各 bot 的内网 baseURL（由 entrypoint 从 VITE_BOTS 渲染）
+#
+# 这样浏览器只跟 webui 容器同域通信，运维只需要在 VITE_BOTS 中填**内网地址**，
+# 多 bot 路由也跟 env 同步刷新，无需手维护 Caddyfile。
+
 :80 {
 	root * /usr/share/caddy
 
-	# 主后端：浏览器走同源 /api。
+	# 各 bot 后端反代：由 docker-entrypoint.sh 从 VITE_BOTS 渲染到 bots.caddy。
+	# 文件不存在时 Caddy 直接跳过（不会启动失败）。
+	import bots.caddy
+
+	# 主后端：浏览器走同源 /api，作为单 bot 部署/调试的兜底入口。
 	handle /api/* {
 		reverse_proxy {$BACKEND_URL}
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	chatmetrics "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chatmetrics"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
@@ -124,6 +125,13 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 		Init: func(context.Context) error {
 			return appruntime.RecoverError("db.Init", func() {
 				db.Init(cfg.DBConfig)
+				llmusage.SetDefaultBotIDProvider(func() string {
+					id := botidentity.Current()
+					if id.AppID != "" {
+						return "lark:" + id.AppID
+					}
+					return ""
+				})
 				llmusage.SetDefaultRecorder(llmusage.NewRecorder(db.DB()))
 			})
 		},
@@ -289,8 +297,13 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		MessageStats:  countRecentChatMessages,
 		RecentChatIDs: recentChatIDs,
 		ChatActivity:  chatActivityHourOfWeek,
-		ChatKeywords:  chatKeywordsToken,
-		ChatCommands:  chatCommandsTop,
+		ChatKeywords:   chatKeywordsToken,
+		ChatCommands:   chatCommandsTop,
+		ChatTopSenders: chatTopSenders,
+		ChatMessageKinds: chatMessageKinds,
+		ChatCommandTrend: chatCommandTrend,
+		ChatTopMentions:  chatTopMentions,
+		ChatTopicTrend:   chatTopicTrend,
 		RobotName: func() string {
 			if cfg.BaseInfo != nil {
 				return cfg.BaseInfo.RobotName
@@ -298,6 +311,13 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			return ""
 		}(),
 		Instance: cfg.LarkConfig.AppID,
+		BotID: func() string {
+			id := botidentity.Current()
+			if id.AppID != "" {
+				return "lark:" + id.AppID
+			}
+			return ""
+		}(),
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",

@@ -31,7 +31,9 @@ RUN apk add --no-cache jq
 # Caddyfile 里用 {$BACKEND_URL} 读取运行时环境变量。
 COPY script/webui/Caddyfile /etc/caddy/Caddyfile
 COPY script/webui/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+	&& touch /etc/caddy/bots.caddy \
+	&& chmod 644 /etc/caddy/bots.caddy
 COPY --from=builder /app/webui/dist /usr/share/caddy
 
 ENV BACKEND_URL="http://larkrobot:8090"

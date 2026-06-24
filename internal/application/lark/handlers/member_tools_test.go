@@ -72,10 +72,10 @@ func TestRecentActiveMembersHandlerUsesCurrentChatScopeAndDedupsByRecency(t *tes
 		capturedChatID = chatID
 		capturedSize = size
 		return history.OpensearchMsgLogList{
-			{CreateTime: "2026-03-26 10:05:00", OpenID: "ou_a", UserName: "Alice", MsgList: []string{"最新一条"}},
-			{CreateTime: "2026-03-26 10:04:00", OpenID: "ou_b", UserName: "Bob", MsgList: []string{"第二条"}},
-			{CreateTime: "2026-03-26 10:03:00", OpenID: "ou_a", UserName: "Alice", MsgList: []string{"更早一条"}},
-			{CreateTime: "2026-03-26 10:02:00", OpenID: "ou_c", UserName: "Carol", MsgList: []string{"第三人"}},
+			{CreateTimeV2: "2026-03-26 10:05:00", OpenID: "ou_a", UserName: "Alice", MsgList: []string{"最新一条"}},
+			{CreateTimeV2: "2026-03-26 10:04:00", OpenID: "ou_b", UserName: "Bob", MsgList: []string{"第二条"}},
+			{CreateTimeV2: "2026-03-26 10:03:00", OpenID: "ou_a", UserName: "Alice", MsgList: []string{"更早一条"}},
+			{CreateTimeV2: "2026-03-26 10:02:00", OpenID: "ou_c", UserName: "Carol", MsgList: []string{"第三人"}},
 		}, nil
 	}
 

@@ -17,19 +17,25 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 )
 
-// 极短 system prompt：只问该不该调三种工具，输出固定 JSON。
-// 单独的工具计划阶段，避免把工具枚举塞进 intent prompt 让每条消息都付 token。
-const toolPlannerSystemPrompt = `你只负责判断后续生成阶段需要调用哪些工具，不输出回复内容。
+// system prompt 走 ARK prefix cache，需要 > 256 input tokens 才能命中前缀缓存，
+// 因此略微补充工具边界与 few-shot，既过阈值也提升判别准确率。
+const toolPlannerSystemPrompt = `你只负责判断后续生成阶段需要调用哪些工具，不输出任何回复正文，不复述用户消息。
 
-可选工具（仅以下三种）：
-- search_history: 用户问到不确定的人物/作品/术语/网络用语/专有名词，或明显需要群内历史上下文。
-- finance: 涉及行情、财经新闻、宏观指标、证券代码、指数、黄金、期货、CPI/GDP/PMI 等金融/经济数据。
-- luckin: 用户表达想点咖啡、买咖啡、瑞幸点单、查门店或要开始点单。
+可选工具（仅以下三种，名称必须完全一致）：
+- search_history: 用户问不确定的人物/作品/节目/术语/网络梗/专有名词，或显式需要群内历史上下文（"之前""上次""群里说过"），或要求"查一下/搜一下"。
+- finance: 行情、K线、估值、财报；股票/基金/ETF/指数/期货/外汇/数字货币；证券代码（如 600519、AAPL）；CPI/PPI/GDP/PMI/利率/汇率；黄金、原油等大宗商品；财经新闻或政策对市场影响。
+- luckin: 明确想点咖啡/奶茶、瑞幸下单、看菜单、查门店、查订单、加购、改规格、用券。
 
 规则：
-- 仅在确实需要时返回；不需要则返回空数组。
-- 多个并存时按上述列表顺序输出。
-- 不输出解释、不输出 Markdown，只输出严格 JSON。
+- 仅在确实需要时返回；多个并存按上述顺序输出，不重复。
+- 闲聊/问候/情绪表达/写作润色/翻译/数学计算/纯主观偏好 → 返回空数组。
+- 不输出解释、思考过程或 Markdown，只输出严格 JSON 对象，字段仅 tool_hints。
+
+示例：
+- "贵州茅台今天怎么走" → {"tool_hints":["finance"]}
+- "来杯生椰拿铁" → {"tool_hints":["luckin"]}
+- "你好呀" → {"tool_hints":[]}
+- "先查下上次提的那只基金最近表现" → {"tool_hints":["search_history","finance"]}
 
 输出格式：
 {"tool_hints": ["search_history"]}`

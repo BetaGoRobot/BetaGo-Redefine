@@ -26,6 +26,7 @@ const keyword = ref('')
 // ---------- 过滤面板 ----------
 const typeFilter = ref<'all' | 'p2p' | 'group' | 'unknown'>('all')
 const extFilter = ref<'all' | 'internal' | 'external'>('all')
+const membershipFilter = ref<'all' | 'active' | 'left'>('all')
 const botFilter = ref<string>('all') // 'all' 或 bot_id
 const minTokens = ref<number>()
 const maxTokens = ref<number>()
@@ -56,6 +57,8 @@ const filtered = computed<BotChat[]>(() => {
     if (typeFilter.value !== 'all' && chatKind(c) !== typeFilter.value) return false
     if (extFilter.value === 'internal' && c.external) return false
     if (extFilter.value === 'external' && !c.external) return false
+    if (membershipFilter.value === 'active' && c.membership === 'left') return false
+    if (membershipFilter.value === 'left' && c.membership !== 'left') return false
     const t = Number(c.metrics?.total_tokens || 0)
     if (minTokens.value != null && t < minTokens.value) return false
     if (maxTokens.value != null && t > maxTokens.value) return false
@@ -191,6 +194,33 @@ async function load() {
     for (const r of listResp) {
       for (const c of r.items) {
         flat.push({ ...c, bot_id: r.bot_id, bot_name: r.bot_name, bot_color: r.bot_color })
+      }
+    }
+    // 跨 bot 元数据合并：被踢出某群的 bot 拿不到该群的当前 name/avatar，
+    // 而别的 active bot 能。这里挑出每个 chat_id 任意一个 membership=active 的
+    // 数据当权威 name/avatar/external/member_count，把 left 行的展示字段覆盖掉，
+    // 但 bot_id / token / 发言量等"属于该 bot 自身"的数据保持不变。
+    const meta = new Map<string, BotChat>()
+    for (const c of flat) {
+      const cur = meta.get(c.chat_id)
+      const isActive = (c.membership ?? 'active') === 'active'
+      if (!cur) {
+        meta.set(c.chat_id, c)
+      } else if (isActive && (cur.membership ?? 'active') !== 'active') {
+        meta.set(c.chat_id, c)
+      }
+    }
+    for (const c of flat) {
+      const authoritative = meta.get(c.chat_id)
+      if (!authoritative || authoritative === c) continue
+      if (!c.name || c.name === c.chat_id) c.name = authoritative.name
+      if (!c.avatar) c.avatar = authoritative.avatar
+      if (!c.description) c.description = authoritative.description
+      // 外部 / tenant / 成员数仅当当前条目缺失时才借用，避免多 bot 数据噪音。
+      if (c.external === undefined) c.external = authoritative.external
+      if (!c.tenant_key) c.tenant_key = authoritative.tenant_key
+      if (c.metrics && !c.metrics.member_count && authoritative.metrics?.member_count) {
+        c.metrics.member_count = authoritative.metrics.member_count
       }
     }
     chats.value = flat

@@ -444,6 +444,9 @@ func buildStandardChatUserPrompt(selfProfile botidentity.Profile, historyLines, 
 		builder.WriteString(standardChatLinesBlock(identityLines))
 		builder.WriteString("\n")
 	}
+	builder.WriteString("当前时间:\n")
+	builder.WriteString(utils.UTC8Time().Format("2006-01-02 15:04:05 Mon (UTC+8)"))
+	builder.WriteString("\n")
 	builder.WriteString("最近对话:\n")
 	builder.WriteString(standardChatLinesBlock(historyLines))
 	builder.WriteString("\n补充上下文:\n")

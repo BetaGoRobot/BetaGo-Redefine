@@ -11,24 +11,33 @@ import (
 
 // tokenStatsStore 封装对 llm_token_usage_records 表的聚合查询。
 //
-// 所有查询都按 chat_id 与时间窗口过滤，使用 gorm 的 Select+Group 直接在数据库
-// 侧完成 SUM/COUNT 聚合，避免把明细行拉到内存。
+// 所有查询都按 bot_id + chat_id + 时间窗口过滤；bot_id 用当前进程的身份做硬隔离，
+// 避免多 bot 共用一张表时把别的 bot 的会话误吐进当前列表/统计。
 type tokenStatsStore struct {
-	db *gorm.DB
+	db    *gorm.DB
+	botID string
 }
 
-func newTokenStatsStore(db *gorm.DB) *tokenStatsStore {
-	return &tokenStatsStore{db: db}
+func newTokenStatsStore(db *gorm.DB, botID string) *tokenStatsStore {
+	return &tokenStatsStore{db: db, botID: strings.TrimSpace(botID)}
 }
 
 func (s *tokenStatsStore) available() bool {
 	return s != nil && s.db != nil
 }
 
-// base 返回带 chat_id 与时间过滤的基础查询。
+// withBot 返回带 bot_id 过滤的基础查询。bot_id 为空时不加过滤（用于回刷脚本场景）。
+func (s *tokenStatsStore) withBot(ctx context.Context) *gorm.DB {
+	q := s.db.WithContext(ctx).Model(&model.LlmTokenUsageRecord{})
+	if s.botID != "" {
+		q = q.Where("bot_id = ?", s.botID)
+	}
+	return q
+}
+
+// base 返回带 bot_id + chat_id + 时间过滤的基础查询。
 func (s *tokenStatsStore) base(ctx context.Context, chatID string, since time.Time) *gorm.DB {
-	return s.db.WithContext(ctx).
-		Model(&model.LlmTokenUsageRecord{}).
+	return s.withBot(ctx).
 		Where("chat_id = ?", chatID).
 		Where("created_at >= ?", since)
 }
@@ -154,10 +163,11 @@ type chatTokenTotal struct {
 	TotalTokens int64
 }
 
-// totalsByChat 一次性按 chat_id 聚合窗口内全部群/单聊的 token 总量。
+// totalsByChat 一次性按 chat_id 聚合窗口内当前 bot 全部群/单聊的 token 总量。
 //
 // 这是给列表页指标排序用的批量查询：用单条 GROUP BY chat_id 取代逐群查询，
 // 顺带返回 chat_name，便于补全 Lark 群列表里取不到的单聊（p2p）。
+// 通过 bot_id 过滤把当前 bot 的数据与其他 bot 隔离。
 func (s *tokenStatsStore) totalsByChat(ctx context.Context, since time.Time) (map[string]chatTokenTotal, error) {
 	type row struct {
 		ChatID      string
@@ -165,8 +175,7 @@ func (s *tokenStatsStore) totalsByChat(ctx context.Context, since time.Time) (ma
 		TotalTokens int64
 	}
 	var rows []row
-	err := s.db.WithContext(ctx).
-		Model(&model.LlmTokenUsageRecord{}).
+	err := s.withBot(ctx).
 		Where("created_at >= ?", since).
 		Where("chat_id <> ''").
 		Select("chat_id, MAX(chat_name) AS chat_name, COALESCE(SUM(total_tokens),0) AS total_tokens").

@@ -20,6 +20,35 @@ type Store interface {
 	CreateUsageRecord(context.Context, *UsageRecordRow) error
 }
 
+// BotIDProvider 返回当前进程的 bot 标识，写入 token 表的 bot_id 列。
+// 留空表示当前实例尚未初始化身份；recorder 会原样写空字符串，由后续回刷脚本兜底。
+type BotIDProvider func() string
+
+// defaultBotIDProvider 由 SetDefaultBotIDProvider 配置；未配置时所有记录的 bot_id
+// 写入空字符串（与回刷前的旧行为一致）。
+var (
+	botIDMu        sync.RWMutex
+	botIDProvider  BotIDProvider
+)
+
+// SetDefaultBotIDProvider 注入一个返回当前 bot 标识的函数；建议在 db 模块初始化
+// 之后、写入开始之前调用一次（典型位置：cmd/larkrobot bootstrap）。
+func SetDefaultBotIDProvider(p BotIDProvider) {
+	botIDMu.Lock()
+	defer botIDMu.Unlock()
+	botIDProvider = p
+}
+
+func currentBotID() string {
+	botIDMu.RLock()
+	p := botIDProvider
+	botIDMu.RUnlock()
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(p())
+}
+
 type GormStore struct {
 	db *gorm.DB
 }
@@ -105,6 +134,7 @@ func (record Record) toRow() UsageRecordRow {
 		BucketMinute:     buckets.Minute,
 		BucketHour:       buckets.Hour,
 		BucketDay:        buckets.Day,
+		BotID:            currentBotID(),
 		Provider:         nonEmpty(record.Provider, "unknown"),
 		Model:            nonEmpty(record.Model, "unknown"),
 		Kind:             nonEmpty(string(record.Kind), "unknown"),

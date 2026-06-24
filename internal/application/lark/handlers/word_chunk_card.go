@@ -956,7 +956,7 @@ func wordChunkDisplayMessageTime(msg *xmodel.MessageIndex) string {
 	if t := wordChunkMessageTime(msg); !t.IsZero() {
 		return t.In(utils.UTC8Loc()).Format("2006-01-02 15:04")
 	}
-	return firstNonEmpty(strings.TrimSpace(msg.CreateTime), strings.TrimSpace(msg.CreateTimeV2))
+	return firstNonEmpty(strings.TrimSpace(msg.CreateTimeV2), strings.TrimSpace(msg.CreateTime))
 }
 
 func wordChunkMessageTime(msg *xmodel.MessageIndex) time.Time {

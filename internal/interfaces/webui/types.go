@@ -33,6 +33,13 @@ type ChatSummary struct {
 	External    bool   `json:"external"`
 	Tenant      string `json:"tenant_key,omitempty"`
 
+	// Membership 标记当前 bot 与该会话的关系：
+	//   - "active":  机器人当前仍在该群 / 单聊默认视为 active；
+	//   - "left":    历史出现过 token 记录但已不在 Chat.List 里（被踢 / 退群 / 群解散）；
+	//   - "unknown": 未能从可信来源（Chat.List / 单聊前缀）确认。
+	// 前端按此标记展示是否仍可发消息、并支持过滤“仅看在群”。
+	Membership string `json:"membership,omitempty"`
+
 	// Metrics 仅在列表接口带 ?metrics=1 时填充，承载排序所需的派生指标。
 	Metrics *ChatMetrics `json:"metrics,omitempty"`
 }
@@ -55,6 +62,8 @@ type ChatMetrics struct {
 type ChatDetail struct {
 	ChatSummary
 	OwnerID     string `json:"owner_id,omitempty"`
+	OwnerName   string `json:"owner_name,omitempty"`
+	OwnerAvatar string `json:"owner_avatar,omitempty"`
 	ChatMode    string `json:"chat_mode,omitempty"`
 	MemberCount int    `json:"member_count"`
 }
@@ -69,6 +78,7 @@ type ChatService interface {
 type ChatMember struct {
 	OpenID string `json:"open_id"`
 	Name   string `json:"name"`
+	Avatar string `json:"avatar,omitempty"`
 	Tenant string `json:"tenant_key,omitempty"`
 }
 
@@ -100,6 +110,34 @@ type ChatKeywordsFunc func(ctx context.Context, chatID string, since time.Time, 
 // 默认实现走 OpenSearch：bool filter is_command=true，再 terms 聚合 main_command。
 // 同时回传命令调用总次数与首位命令占比，便于前端展示概览。
 type ChatCommandsFunc func(ctx context.Context, chatID string, since time.Time, topN int) (*ChatCommands, error)
+
+// ChatTopSendersFunc 返回某群在 since 之后按发言数排序的 Top 用户。
+// 默认实现走 OpenSearch：filter chat_id + range，terms 聚合 user_id，
+// 桶内子聚合 top_hits 取一条 user_name 作展示名。
+type ChatTopSendersFunc func(ctx context.Context, chatID string, since time.Time, topN int) (*ChatTopSenders, error)
+
+// ChatMessageKindsFunc 返回某群在 since 之后按消息类型 (message_type) 聚合
+// 的分布。默认实现走 OpenSearch terms agg；空字符串桶折叠成 unknown。
+type ChatMessageKindsFunc func(ctx context.Context, chatID string, since time.Time) (*ChatMessageKinds, error)
+
+// ChatCommandTrendFunc 返回某群在 since 之后按"日"聚合的总消息数与命令调用数。
+// 同一时间桶内回传 (total, command_count)，便于前端画双线/面积图，同时计算
+// 命令占比趋势。
+type ChatCommandTrendFunc func(ctx context.Context, chatID string, since time.Time) (*ChatCommandTrend, error)
+
+// ChatTopMentionsFunc 返回某群在 since 之后被 @ 频次最高的用户。
+//
+// mentions 字段是 JSON 字符串塞在 text 列里，OpenSearch 无法直接 agg；
+// 默认实现采用 search 取样：拉一批 mentions 非空的消息，客户端解析后
+// 按 open_id 聚合。sampleSize 决定窗口内最多扫多少条样本。
+type ChatTopMentionsFunc func(ctx context.Context, chatID string, since time.Time, sampleSize int, topN int) (*ChatTopMentions, error)
+
+// ChatTopicTrendFunc 返回某群在 since 之后按"日"切片的词性主题趋势。
+//
+// 默认实现走 OpenSearch：date_histogram 按天聚合，nested 进 jieba_tag，
+// 再 terms 按词性 tag 取桶；后端把细分词性折叠为名词/动词/形容词/其它四大类，
+// 前端直接画堆叠面积图。
+type ChatTopicTrendFunc func(ctx context.Context, chatID string, since time.Time) (*ChatTopicTrend, error)
 
 // ChatActivity 是发言活跃度热力图的聚合结果。
 type ChatActivity struct {
@@ -143,6 +181,83 @@ type ChatCommands struct {
 type CommandCount struct {
 	Command string `json:"command"`
 	Count   int64  `json:"count"`
+}
+
+// ChatTopSenders 是发言量排行榜聚合结果。Total 为窗口内总消息数（含未上榜
+// 的尾巴），便于前端展示 Top 用户的占比。
+type ChatTopSenders struct {
+	WindowDays int          `json:"window_days"`
+	Total      int64        `json:"total"`
+	Items      []SenderRank `json:"items"`
+}
+
+// SenderRank 描述一个用户在窗口内的发言数。OpenID 是聚合用的稳定 key；
+// UserName 取桶内任意一条样本，缺失时回退 "你"（机器人自身）或 OpenID。
+type SenderRank struct {
+	OpenID   string `json:"open_id"`
+	UserName string `json:"user_name"`
+	Count    int64  `json:"count"`
+}
+
+// ChatMessageKinds 是消息类型分布聚合结果。Total 是窗口内消息总数，
+// Items 是按类型聚合的 (message_type, count)，count 之和等于 Total。
+type ChatMessageKinds struct {
+	WindowDays int                `json:"window_days"`
+	Total      int64              `json:"total"`
+	Items      []MessageKindCount `json:"items"`
+}
+
+// MessageKindCount 描述一个消息类型 (text / image / file / post / audio / ...)
+// 在窗口内出现的次数。空字符串会被归并为 "unknown"。
+type MessageKindCount struct {
+	Kind  string `json:"kind"`
+	Count int64  `json:"count"`
+}
+
+// ChatCommandTrend 是命令调用与总消息数的每日时序对比。
+//
+// Days 长度等于桶数，按时间升序；与 Total / Commands 数组下标一一对应，
+// 前端无需解析时间字符串重新对齐。
+type ChatCommandTrend struct {
+	WindowDays int      `json:"window_days"`
+	Days       []string `json:"days"`
+	Total      []int64  `json:"total"`
+	Commands   []int64  `json:"commands"`
+}
+
+// ChatTopMentions 是 @ 互动榜聚合结果。Sampled 为本次实际扫描的消息数，
+// Truncated 表示是否还有未覆盖到的样本（窗口内 mentions 非空消息数 > sampleSize）。
+type ChatTopMentions struct {
+	WindowDays int             `json:"window_days"`
+	Sampled    int64           `json:"sampled"`
+	Truncated  bool            `json:"truncated"`
+	Items      []MentionRank   `json:"items"`
+}
+
+// MentionRank 描述一个用户在窗口样本中被 @ 的次数。
+// OpenID 是稳定 key（飞书 mention.id.open_id）；UserName 取样本里第一个非空 name；
+// 缺失时回退 OpenID。同一条消息里多次 @ 同一人按多次计入。
+type MentionRank struct {
+	OpenID   string `json:"open_id"`
+	UserName string `json:"user_name"`
+	Count    int64  `json:"count"`
+}
+
+// ChatTopicTrend 是按"日"切片的词性主题趋势。
+//
+// Days 长度等于桶数（按时间升序）；Series 每条对应一个词性大类，
+// values 数组下标与 Days 对齐。前端直接堆叠面积图渲染。
+type ChatTopicTrend struct {
+	WindowDays int                 `json:"window_days"`
+	Days       []string            `json:"days"`
+	Series     []TopicTrendSeries  `json:"series"`
+}
+
+// TopicTrendSeries 是一个词性大类（名词 / 动词 / 形容词 / 其它）的每日词频。
+// Tag 用前端友好的中文标签；Values 长度与外层 Days 对齐。
+type TopicTrendSeries struct {
+	Tag    string  `json:"tag"`
+	Values []int64 `json:"values"`
 }
 
 // RecentChatIDsFunc 返回当前 bot 在 since 之后实际产生过消息的 chat_id 集合，

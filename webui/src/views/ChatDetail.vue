@@ -6,9 +6,14 @@ import { BotApi } from '../api/client'
 import type {
   ChatActivity,
   ChatCommands,
+  ChatCommandTrend,
   ChatDetail as ChatDetailType,
   ChatKeywords,
   ChatMember,
+  ChatMessageKinds,
+  ChatTopicTrend,
+  ChatTopMentions,
+  ChatTopSenders,
   ConfigView,
   FeatureView,
   StatsResponse,
@@ -62,6 +67,21 @@ const keywordsError = ref('')
 const commands = ref<ChatCommands | null>(null)
 const commandsLoading = ref(false)
 const commandsError = ref('')
+const topSenders = ref<ChatTopSenders | null>(null)
+const topSendersLoading = ref(false)
+const topSendersError = ref('')
+const messageKinds = ref<ChatMessageKinds | null>(null)
+const messageKindsLoading = ref(false)
+const messageKindsError = ref('')
+const commandTrend = ref<ChatCommandTrend | null>(null)
+const commandTrendLoading = ref(false)
+const commandTrendError = ref('')
+const topMentions = ref<ChatTopMentions | null>(null)
+const topMentionsLoading = ref(false)
+const topMentionsError = ref('')
+const topicTrend = ref<ChatTopicTrend | null>(null)
+const topicTrendLoading = ref(false)
+const topicTrendError = ref('')
 const features = ref<FeatureView[]>([])
 const featLoading = ref(false)
 const configs = ref<ConfigView[]>([])
@@ -122,6 +142,66 @@ async function loadCommands() {
     commandsError.value = e?.response?.data?.error || e?.message || '加载失败'
   } finally {
     commandsLoading.value = false
+  }
+}
+async function loadTopSenders() {
+  topSendersLoading.value = true
+  topSendersError.value = ''
+  try {
+    topSenders.value = await new BotApi(resolveBot()).getTopSenders(props.chatID, store.window, 20)
+  } catch (e: any) {
+    topSenders.value = null
+    topSendersError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    topSendersLoading.value = false
+  }
+}
+async function loadMessageKinds() {
+  messageKindsLoading.value = true
+  messageKindsError.value = ''
+  try {
+    messageKinds.value = await new BotApi(resolveBot()).getMessageKinds(props.chatID, store.window)
+  } catch (e: any) {
+    messageKinds.value = null
+    messageKindsError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    messageKindsLoading.value = false
+  }
+}
+async function loadCommandTrend() {
+  commandTrendLoading.value = true
+  commandTrendError.value = ''
+  try {
+    commandTrend.value = await new BotApi(resolveBot()).getCommandTrend(props.chatID, store.window)
+  } catch (e: any) {
+    commandTrend.value = null
+    commandTrendError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    commandTrendLoading.value = false
+  }
+}
+async function loadTopMentions() {
+  topMentionsLoading.value = true
+  topMentionsError.value = ''
+  try {
+    topMentions.value = await new BotApi(resolveBot()).getTopMentions(props.chatID, store.window, 20, 500)
+  } catch (e: any) {
+    topMentions.value = null
+    topMentionsError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    topMentionsLoading.value = false
+  }
+}
+async function loadTopicTrend() {
+  topicTrendLoading.value = true
+  topicTrendError.value = ''
+  try {
+    topicTrend.value = await new BotApi(resolveBot()).getTopicTrend(props.chatID, store.window)
+  } catch (e: any) {
+    topicTrend.value = null
+    topicTrendError.value = e?.response?.data?.error || e?.message || '加载失败'
+  } finally {
+    topicTrendLoading.value = false
   }
 }
 async function loadFeatures() {
@@ -468,6 +548,317 @@ const commandsBar = computed<EChartsOption>(() => {
     ],
   }
 })
+
+// Top 发言用户：横向条形图 + tooltip 展示在群内占比。
+// y 轴为用户名（user_name 缺失时回落 open_id），便于直观识别。
+const sendersBar = computed<EChartsOption>(() => {
+  const items = (topSenders.value?.items || []).slice(0, 20)
+  const sorted = items.slice().sort((a, b) => a.count - b.count)
+  const total = topSenders.value?.total || 0
+  return {
+    title: {
+      text: `Top 发言用户 · ${sorted.length} 人 · 群内共 ${total.toLocaleString()} 条`,
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const p = arr[0]
+        if (!p) return ''
+        const idx = p.dataIndex as number
+        const item = sorted[idx]
+        if (!item) return ''
+        const pct = total > 0 ? ((item.count / total) * 100).toFixed(1) + '%' : '-'
+        return `${item.user_name}<br/><span style="color:#909399;font-size:11px">${item.open_id}</span><br/>${item.count.toLocaleString()} 条 · ${pct}`
+      },
+    },
+    grid: { left: 140, right: 56, top: 48, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map((s) => s.user_name),
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 12,
+        itemStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: 'rgba(148,95,185,0.35)' },
+              { offset: 1, color: '#945FB9' },
+            ],
+          },
+          borderRadius: [0, 6, 6, 0],
+        },
+        data: sorted.map((s) => s.count),
+      },
+    ],
+  }
+})
+
+// 消息类型分布：复用 buildDonut，把 MessageKindCount 适配成 TokenGroupCount。
+// 仅 total_tokens 一列承载 count，其它字段补 0；buildDonut 仅按指定 metric 取值。
+const messageKindsDonut = computed<EChartsOption>(() => {
+  const items = messageKinds.value?.items || []
+  const data = items.map((k) => ({
+    group: k.kind,
+    total_tokens: k.count,
+    requests: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+  }))
+  return buildDonut({
+    title: `消息类型 · 共 ${(messageKinds.value?.total || 0).toLocaleString()} 条`,
+    data,
+    metric: 'total_tokens',
+  })
+})
+
+// 命令使用 vs 总消息每日时序：双线 + 命令占比折线（右侧 y 轴），
+// 用一份后端聚合一次性出"总量、命令量、命令占比" 三条信号。
+const commandTrendOption = computed<EChartsOption>(() => {
+  const days = commandTrend.value?.days || []
+  const total = commandTrend.value?.total || []
+  const commands = commandTrend.value?.commands || []
+  const ratio = days.map((_, i) => {
+    const t = total[i] || 0
+    if (!t) return 0
+    return Math.round((commands[i] / t) * 1000) / 10 // 0.1% 精度
+  })
+  return {
+    title: {
+      text: '命令使用 · 每日总量 vs 命令量',
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+    },
+    legend: {
+      top: 8,
+      right: 16,
+      icon: 'roundRect',
+      textStyle: { color: '#606266' },
+    },
+    grid: { left: 56, right: 64, top: 56, bottom: 36 },
+    xAxis: {
+      type: 'category',
+      data: days,
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: '消息数',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+        axisLabel: { color: '#606266', fontSize: 11 },
+      },
+      {
+        type: 'value',
+        name: '命令占比',
+        position: 'right',
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisLabel: { formatter: '{value}%', color: '#606266', fontSize: 11 },
+      },
+    ],
+    series: [
+      {
+        name: '总消息',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, color: '#5B8FF9' },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(91,143,249,0.25)' },
+              { offset: 1, color: 'rgba(91,143,249,0)' },
+            ],
+          },
+        },
+        data: total,
+      },
+      {
+        name: '命令调用',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, color: '#FF9845' },
+        data: commands,
+      },
+      {
+        name: '命令占比 %',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 1.5, color: '#945FB9', type: 'dashed' },
+        data: ratio,
+      },
+    ],
+  }
+})
+
+// 词性主题趋势：堆叠面积图。后端把细分词性折叠为名词/动词/形容词/其它实词四类。
+const TOPIC_PALETTE = ['#5B8FF9', '#5AD8A6', '#F6BD16', '#945FB9']
+const topicTrendOption = computed<EChartsOption>(() => {
+  const days = topicTrend.value?.days || []
+  const series = topicTrend.value?.series || []
+  return {
+    color: TOPIC_PALETTE,
+    title: {
+      text: `词性主题趋势 · ${days.length} 天 × ${series.length} 类`,
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+    },
+    legend: {
+      top: 8,
+      right: 16,
+      icon: 'roundRect',
+      textStyle: { color: '#606266' },
+    },
+    grid: { left: 56, right: 32, top: 56, bottom: 36 },
+    xAxis: {
+      type: 'category',
+      data: days,
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    series: series.map((s) => ({
+      name: s.tag,
+      type: 'line',
+      stack: 'topic',
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width: 1.2 },
+      areaStyle: { opacity: 0.5 },
+      data: s.values,
+    })),
+  }
+})
+
+// 被 @ 用户排行：与 sendersBar 同一种横向条形结构，色系换洋红用作区分。
+// tooltip 同时显示样本数与是否被截断（窗口内 mentions 非空消息数 > sampleSize）。
+const mentionsBar = computed<EChartsOption>(() => {
+  const items = (topMentions.value?.items || []).slice(0, 20)
+  const sorted = items.slice().sort((a, b) => a.count - b.count)
+  const sampled = topMentions.value?.sampled || 0
+  const truncated = topMentions.value?.truncated || false
+  const titleSuffix = truncated ? `（取样 ${sampled} 条，含截断）` : `（取样 ${sampled} 条）`
+  return {
+    title: {
+      text: `被 @ 用户 · ${sorted.length} 人 ${titleSuffix}`,
+      left: 16,
+      top: 8,
+      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: '#ebeef5',
+      textStyle: { color: '#303133' },
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const p = arr[0]
+        if (!p) return ''
+        const item = sorted[p.dataIndex as number]
+        if (!item) return ''
+        return `${item.user_name}<br/><span style="color:#909399;font-size:11px">${item.open_id}</span><br/>${item.count.toLocaleString()} 次`
+      },
+    },
+    grid: { left: 140, right: 56, top: 48, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map((m) => m.user_name),
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#606266', fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 12,
+        itemStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: 'rgba(255,153,195,0.35)' },
+              { offset: 1, color: '#FF99C3' },
+            ],
+          },
+          borderRadius: [0, 6, 6, 0],
+        },
+        data: sorted.map((m) => m.count),
+      },
+    ],
+  }
+})
 const deepCrossDim = computed<DimensionKey>(() => {
   const order: DimensionKey[] = ['kind', 'source_type', 'status', 'model']
   return order.find((d) => d !== focusDimension.value) || 'kind'
@@ -499,6 +890,11 @@ async function initAll() {
     loadActivity(),
     loadKeywords(),
     loadCommands(),
+    loadTopSenders(),
+    loadMessageKinds(),
+    loadCommandTrend(),
+    loadTopMentions(),
+    loadTopicTrend(),
   ])
 }
 
@@ -508,6 +904,11 @@ watch(() => store.window, () => {
   loadActivity()
   loadKeywords()
   loadCommands()
+  loadTopSenders()
+  loadMessageKinds()
+  loadCommandTrend()
+  loadTopMentions()
+  loadTopicTrend()
 })
 watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => {
   if (!props.chatID) return
@@ -690,6 +1091,76 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           </div>
           <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
             当前窗口内没有命令调用
+          </div>
+        </el-card>
+
+        <el-card v-loading="topSendersLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="topSenders && topSenders.items.length > 0"
+            :option="sendersBar"
+            :height="`${Math.min(Math.max(topSenders.items.length, 6), 20) * 24 + 80}px`"
+          />
+          <div v-else-if="topSendersError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            发言排行不可用：{{ topSendersError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有发言记录
+          </div>
+        </el-card>
+
+        <el-card v-loading="messageKindsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="messageKinds && messageKinds.items.length > 0"
+            :option="messageKindsDonut"
+            height="320px"
+          />
+          <div v-else-if="messageKindsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            消息类型分布不可用：{{ messageKindsError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有消息记录
+          </div>
+        </el-card>
+
+        <el-card v-loading="commandTrendLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="commandTrend && commandTrend.days.length > 0"
+            :option="commandTrendOption"
+            height="320px"
+          />
+          <div v-else-if="commandTrendError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            命令时序不可用：{{ commandTrendError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有可对比的日数据
+          </div>
+        </el-card>
+
+        <el-card v-loading="topMentionsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="topMentions && topMentions.items.length > 0"
+            :option="mentionsBar"
+            :height="`${Math.min(Math.max(topMentions.items.length, 6), 20) * 24 + 80}px`"
+          />
+          <div v-else-if="topMentionsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            被 @ 排行不可用：{{ topMentionsError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有 @ 互动
+          </div>
+        </el-card>
+
+        <el-card v-loading="topicTrendLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+          <EChart
+            v-if="topicTrend && topicTrend.days.length > 0"
+            :option="topicTrendOption"
+            height="320px"
+          />
+          <div v-else-if="topicTrendError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+            主题趋势不可用：{{ topicTrendError }}
+          </div>
+          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+            当前窗口内没有可分析的实词
           </div>
         </el-card>
       </el-tab-pane>

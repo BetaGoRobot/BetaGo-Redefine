@@ -89,6 +89,8 @@ const (
 	maxKeywordsTopN     = 200
 	defaultCommandsTopN = 20
 	maxCommandsTopN     = 100
+	defaultSendersTopN  = 20
+	maxSendersTopN      = 100
 )
 
 // handleInsightsKeywords 返回某群在窗口内按词频排序的 Top 关键词，供前端画词云。
@@ -165,6 +167,179 @@ func (s *Server) handleInsightsCommands(w http.ResponseWriter, r *http.Request) 
 	}
 	cmds.WindowDays = windowDays
 	writeJSON(w, http.StatusOK, cmds)
+}
+
+// handleInsightsTopSenders 返回某群在窗口内按发言数排序的 Top 用户。
+// 数据走 OpenSearch terms agg user_id；Total 是窗口内的命中文档总数（含尾巴）。
+func (s *Server) handleInsightsTopSenders(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatTopSenders == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat top senders source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	topN := defaultSendersTopN
+	if raw := strings.TrimSpace(r.URL.Query().Get("top")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > maxSendersTopN {
+				n = maxSendersTopN
+			}
+			topN = n
+		}
+	}
+	senders, err := s.chatTopSenders(r.Context(), chatID, since, topN)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat top senders query failed: "+err.Error())
+		return
+	}
+	if senders == nil {
+		senders = &ChatTopSenders{Items: []SenderRank{}}
+	}
+	senders.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, senders)
+}
+
+// handleInsightsMessageKinds 返回某群在窗口内按 message_type 维度的消息数分布。
+func (s *Server) handleInsightsMessageKinds(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatMessageKinds == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat message kinds source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	kinds, err := s.chatMessageKinds(r.Context(), chatID, since)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat message kinds query failed: "+err.Error())
+		return
+	}
+	if kinds == nil {
+		kinds = &ChatMessageKinds{Items: []MessageKindCount{}}
+	}
+	kinds.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, kinds)
+}
+
+// handleInsightsCommandTrend 返回某群在窗口内按"日"聚合的总消息数与命令调用数。
+// 用于前端把命令使用量叠加到日趋势图上。
+func (s *Server) handleInsightsCommandTrend(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatCommandTrend == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat command trend source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	trend, err := s.chatCommandTrend(r.Context(), chatID, since)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat command trend query failed: "+err.Error())
+		return
+	}
+	if trend == nil {
+		trend = &ChatCommandTrend{Days: []string{}, Total: []int64{}, Commands: []int64{}}
+	}
+	trend.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, trend)
+}
+
+const (
+	defaultMentionsTopN       = 20
+	maxMentionsTopN           = 100
+	defaultMentionsSampleSize = 500
+	maxMentionsSampleSize     = 5000
+)
+
+// handleInsightsTopMentions 返回某群在窗口内被 @ 频次最高的用户。
+// mentions 在索引里是 JSON 字符串，OpenSearch 无法直接 agg；这里以 search 取样
+// 再客户端解析的方式实现，sample 与 top 都允许调用方调整。
+func (s *Server) handleInsightsTopMentions(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatTopMentions == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat top mentions source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	topN := defaultMentionsTopN
+	if raw := strings.TrimSpace(r.URL.Query().Get("top")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > maxMentionsTopN {
+				n = maxMentionsTopN
+			}
+			topN = n
+		}
+	}
+	sample := defaultMentionsSampleSize
+	if raw := strings.TrimSpace(r.URL.Query().Get("sample")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 1 {
+				n = 1
+			}
+			if n > maxMentionsSampleSize {
+				n = maxMentionsSampleSize
+			}
+			sample = n
+		}
+	}
+	mentions, err := s.chatTopMentions(r.Context(), chatID, since, sample, topN)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat top mentions query failed: "+err.Error())
+		return
+	}
+	if mentions == nil {
+		mentions = &ChatTopMentions{Items: []MentionRank{}}
+	}
+	mentions.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, mentions)
+}
+
+// handleInsightsTopicTrend 返回某群在窗口内按"日"+"词性大类"切片的词频趋势，
+// 给前端画堆叠面积图。
+func (s *Server) handleInsightsTopicTrend(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.PathValue("chatID"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat id is required")
+		return
+	}
+	if s.chatTopicTrend == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat topic trend source not configured")
+		return
+	}
+	windowDays := parseWindowDays(r.URL.Query().Get("window"))
+	since := s.now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	trend, err := s.chatTopicTrend(r.Context(), chatID, since)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "chat topic trend query failed: "+err.Error())
+		return
+	}
+	if trend == nil {
+		trend = &ChatTopicTrend{Days: []string{}, Series: []TopicTrendSeries{}}
+	}
+	trend.WindowDays = windowDays
+	writeJSON(w, http.StatusOK, trend)
 }
 
 // parseWindowDays 解析 window 参数，支持 "7d"/"30d"/"24h" 或纯数字（天）。

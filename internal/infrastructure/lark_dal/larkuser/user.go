@@ -3,6 +3,7 @@ package larkuser
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
@@ -64,6 +65,56 @@ func GetUserInfo(ctx context.Context, openID string) (user *larkcontact.User, er
 		return
 	}
 	return resp.Data.User, nil
+}
+
+// UserBrief 是 WebUI / 单聊补全场景用到的最小用户视图。
+type UserBrief struct {
+	OpenID string
+	Name   string
+	Avatar string
+}
+
+// GetUserBriefCache 返回 openID 对应的 (name, avatar)，命中既有 contact.User 缓存。
+// 任意一项查不到时填空字符串，调用方按需兜底；不返回 error。
+func GetUserBriefCache(ctx context.Context, openID string) UserBrief {
+	openID = strings.TrimSpace(openID)
+	brief := UserBrief{OpenID: openID}
+	if openID == "" {
+		return brief
+	}
+	user, err := GetUserInfoCache(ctx, "", openID)
+	if err != nil || user == nil {
+		return brief
+	}
+	if user.Name != nil {
+		brief.Name = strings.TrimSpace(*user.Name)
+	}
+	if user.Avatar != nil {
+		// 选 avatar_240，等价于飞书头像中等尺寸；缺失时回退原图 / 大图。
+		brief.Avatar = pickAvatar(user.Avatar)
+	}
+	return brief
+}
+
+// pickAvatar 从 contact.AvatarInfo 选一个浏览器可直接用的链接。
+// 优先级：240 > 640 > origin > 72。
+func pickAvatar(a *larkcontact.AvatarInfo) string {
+	if a == nil {
+		return ""
+	}
+	if a.Avatar240 != nil && *a.Avatar240 != "" {
+		return *a.Avatar240
+	}
+	if a.Avatar640 != nil && *a.Avatar640 != "" {
+		return *a.Avatar640
+	}
+	if a.AvatarOrigin != nil && *a.AvatarOrigin != "" {
+		return *a.AvatarOrigin
+	}
+	if a.Avatar72 != nil && *a.Avatar72 != "" {
+		return *a.Avatar72
+	}
+	return ""
 }
 
 func GetUserInfoCache(ctx context.Context, chatID, openID string) (user *larkcontact.User, err error) {

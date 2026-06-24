@@ -440,7 +440,7 @@ func (o OpensearchMsgLogList) ToThreadLines() []string {
 
 		// Format the message line with indentation for replies
 		baseLine := fmt.Sprintf("[%s](%s) <%s>: %s",
-			msg.CreateTime, msg.OpenID, msg.UserName, strings.Join(msg.MsgList, ";"))
+			msg.CreateTimeV2, msg.OpenID, msg.UserName, strings.Join(msg.MsgList, ";"))
 
 		if assign.Depth == 0 && !assign.IsReply {
 			lines = append(lines, baseLine)
@@ -472,20 +472,19 @@ func (o OpensearchMsgLogList) ToThreadLines() []string {
 }
 
 type OpensearchMsgLog struct {
-	CreateTime  string            `json:"create_time"`
-	CreateTimeV2 string           `json:"create_time_v2"`
-	OpenID      string            `json:"user_id"`
-	UserName    string            `json:"user_name"`
-	MsgList     []string          `json:"msg_list"`
-	MentionList []*larkim.Mention `json:"mention_list"`
-	MessageID   string            `json:"message_id"`
-	ParentID    string            `json:"parent_id"`
-	RootID      string            `json:"root_id"`
-	ThreadID    string            `json:"thread_id"`
+	CreateTimeV2 string            `json:"create_time_v2"`
+	OpenID       string            `json:"user_id"`
+	UserName     string            `json:"user_name"`
+	MsgList      []string          `json:"msg_list"`
+	MentionList  []*larkim.Mention `json:"mention_list"`
+	MessageID    string            `json:"message_id"`
+	ParentID     string            `json:"parent_id"`
+	RootID       string            `json:"root_id"`
+	ThreadID     string            `json:"thread_id"`
 }
 
 func (o *OpensearchMsgLog) ToLine() (msgList string) {
-	return fmt.Sprintf("[%s](%s) <%s>: %s", o.CreateTime, o.OpenID, o.UserName, strings.Join(o.MsgList, ";"))
+	return fmt.Sprintf("[%s](%s) <%s>: %s", o.CreateTimeV2, o.OpenID, o.UserName, strings.Join(o.MsgList, ";"))
 }
 
 func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList []*OpensearchMsgLog) {
@@ -545,16 +544,15 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 			}
 		}
 		l := &OpensearchMsgLog{
-			CreateTime:   res.CreateTime,
 			CreateTimeV2: res.CreateTimeV2,
-			OpenID:      res.OpenID,
-			UserName:    res.UserName,
-			MsgList:     tmpList,
-			MentionList: mentions,
-			MessageID:   res.MessageID,
-			ParentID:    res.ParentID,
-			RootID:      res.RootID,
-			ThreadID:    res.ThreadID,
+			OpenID:       res.OpenID,
+			UserName:     res.UserName,
+			MsgList:      tmpList,
+			MentionList:  mentions,
+			MessageID:    res.MessageID,
+			ParentID:     res.ParentID,
+			RootID:       res.RootID,
+			ThreadID:     res.ThreadID,
 		}
 		if r := l.ToLine(); r != "" {
 			msgList = append(msgList, l)

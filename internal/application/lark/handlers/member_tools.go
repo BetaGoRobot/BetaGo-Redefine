@@ -206,7 +206,7 @@ func (recentActiveMembersHandler) Handle(ctx context.Context, data *larkim.P2Mes
 		members = append(members, recentActiveMemberResult{
 			OpenID:               openID,
 			Name:                 strings.TrimSpace(msg.UserName),
-			LatestCreateTime:     strings.TrimSpace(msg.CreateTime),
+			LatestCreateTime:     strings.TrimSpace(msg.CreateTimeV2),
 			LatestMessagePreview: memberToolsPreview(strings.Join(msg.MsgList, ";")),
 			MessageCountInWindow: countByOpenID[openID],
 		})

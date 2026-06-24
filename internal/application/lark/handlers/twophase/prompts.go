@@ -5,6 +5,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 )
 
 // BuildReplyGeneratorPrompt 构建 Reply Generator 的 system prompt。
@@ -102,6 +103,9 @@ func BuildGeneratorUserPrompt(
 ) string {
 	var builder strings.Builder
 	builder.WriteString("请基于下面输入生成回复。\n")
+	builder.WriteString("当前时间:\n")
+	builder.WriteString(utils.UTC8Time().Format("2006-01-02 15:04:05 Mon (UTC+8)"))
+	builder.WriteString("\n")
 	builder.WriteString("最近对话:\n")
 	builder.WriteString(promptLinesBlock(historyLines))
 	builder.WriteString("\n相关话题:\n")
