@@ -144,7 +144,7 @@ func (p *streamingCardPusher) dispatchContent() {
 		Sequence:  sequence,
 	}
 	p.errPool.Go(func(context.Context) error {
-		return streamingUpdateCardContent(p.ctx, update)
+		return updateStreamingCard(p.ctx, update)
 	})
 }
 
@@ -375,6 +375,30 @@ func updateStreamingCardContent(ctx context.Context, update streamingContentUpda
 				larkcardkit.NewContentCardElementReqBodyBuilder().
 					Uuid(update.UUID).
 					Content(content).
+					Sequence(update.Sequence).
+					Build(),
+			).
+			Build(),
+	)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return errors.New(resp.Error())
+	}
+	return nil
+}
+
+func updateStreamingCard(ctx context.Context, update streamingContentUpdate) error {
+	resp, err := lark_dal.Client().Cardkit.V1.CardElement.Content(
+		ctx,
+		larkcardkit.NewContentCardElementReqBuilder().
+			CardId(update.CardID).
+			ElementId(update.ElementID).
+			Body(
+				larkcardkit.NewContentCardElementReqBodyBuilder().
+					Uuid(update.UUID).
+					Content(update.Content).
 					Sequence(update.Sequence).
 					Build(),
 			).
