@@ -79,15 +79,7 @@ function loadInitialSelected(merged: BotInstance[]): string[] {
   return merged.slice(0, 1).map((b) => b.id)
 }
 
-function loadSelected(): string[] {
-  try {
-    const raw = localStorage.getItem(SELECTED_BOTS_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch { /* ignore */ }
-  return []
-}
-
-/** 解析 VITE_BOTS 环境变量（JSON 数组）为 BotInstance 预设。 */
+/** 解析 bot 预设数组的中间结构。 */
 interface EnvBotPreset {
   id: string
   name: string
@@ -95,35 +87,63 @@ interface EnvBotPreset {
   token?: string
   remark?: string
 }
-function parseEnvBotPresets(): BotInstance[] {
-  const raw = (import.meta.env.VITE_BOTS as string) || ''
-  if (!raw.trim()) return []
-  try {
-    const arr = JSON.parse(raw) as EnvBotPreset[]
-    if (!Array.isArray(arr)) return []
-    return arr
-      .filter((b) => b && typeof b === 'object' && typeof b.id === 'string')
-      .map((b, i) => {
-        const baseURL = typeof b.baseURL === 'string' ? b.baseURL : ''
-        const id = String(b.id)
-        // dev 模式：走 /bot/<id>/api 代理前缀，避免跨域
-        // （生产模式下 proxyPath 仍会被 BotApi 忽略，不影响）
-        const proxyPath = `/bot/${encodeURIComponent(id)}/api`
-        return {
-          id,
-          name: String(b.name || b.id),
-          baseURL,
-          token: typeof b.token === 'string' ? b.token : undefined,
-          remark: typeof b.remark === 'string' ? b.remark : undefined,
-          color: DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
-          proxyPath,
-          source: 'env' as const,
-        }
-      })
-  } catch (e) {
-    console.warn('[store/filter] 解析 VITE_BOTS 失败，已忽略预设：', e)
-    return []
+
+/**
+ * 读取 bot 预设来源。优先级：
+ *   1. 运行时配置 window.__BETAGO_CONFIG__.bots（部署容器渲染 /config.js 注入）；
+ *   2. 构建期 import.meta.env.VITE_BOTS（dev 或自定义 build 时使用）。
+ *
+ * 运行时来源允许两种形态：
+ *   - 数组（推荐，避免再做一次 JSON 解析）；
+ *   - JSON 字符串（与 VITE_BOTS 同格式）。
+ */
+function readBotPresetSource(): EnvBotPreset[] | null {
+  const runtime = (typeof window !== 'undefined' ? window.__BETAGO_CONFIG__?.bots : undefined)
+  if (Array.isArray(runtime)) {
+    return runtime as EnvBotPreset[]
   }
+  if (typeof runtime === 'string' && runtime.trim()) {
+    try {
+      const arr = JSON.parse(runtime)
+      if (Array.isArray(arr)) return arr as EnvBotPreset[]
+    } catch (e) {
+      console.warn('[store/filter] 解析 window.__BETAGO_CONFIG__.bots 失败：', e)
+    }
+  }
+  const buildTime = (import.meta.env.VITE_BOTS as string) || ''
+  if (buildTime.trim()) {
+    try {
+      const arr = JSON.parse(buildTime)
+      if (Array.isArray(arr)) return arr as EnvBotPreset[]
+    } catch (e) {
+      console.warn('[store/filter] 解析 VITE_BOTS 失败，已忽略预设：', e)
+    }
+  }
+  return null
+}
+
+function parseEnvBotPresets(): BotInstance[] {
+  const arr = readBotPresetSource()
+  if (!arr) return []
+  return arr
+    .filter((b) => b && typeof b === 'object' && typeof b.id === 'string')
+    .map((b, i) => {
+      const baseURL = typeof b.baseURL === 'string' ? b.baseURL : ''
+      const id = String(b.id)
+      // dev 模式：走 /bot/<id>/api 代理前缀，避免跨域
+      // （生产模式下 proxyPath 仍会被 BotApi 忽略，不影响）
+      const proxyPath = `/bot/${encodeURIComponent(id)}/api`
+      return {
+        id,
+        name: String(b.name || b.id),
+        baseURL,
+        token: typeof b.token === 'string' ? b.token : undefined,
+        remark: typeof b.remark === 'string' ? b.remark : undefined,
+        color: DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
+        proxyPath,
+        source: 'env' as const,
+      }
+    })
 }
 
 /** 合并来源：env 预设 + localStorage 用户 bot。重名 id 以用户本地为准。 */

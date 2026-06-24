@@ -68,8 +68,13 @@ services:
     depends_on:
       - larkrobot
     environment:
-      # 同一 compose 网络内用服务名直连后端。
+      # 同一 compose 网络内用服务名直连后端（Caddy 反代上游）。
       BACKEND_URL: "http://larkrobot:8090"
+      # 多 bot 预设：JSON 数组字符串，运行时由 entrypoint 渲染到 /config.js。
+      # baseURL 必须是浏览器可达的地址（compose 服务名仅 Caddy 反代用，不要写在这里）。
+      # 留空走默认 default-local（同源 /api）。
+      # VITE_BOTS: '[{"id":"main","name":"主机器人","baseURL":"","token":""}]'
+      # VITE_API_BASE: ""
     # 前面已有 Traefik(docker provider, labels 方式)做反代。
     # 方案 1：整个域名交给本容器，Caddy 内部再分静态 / /api，Traefik 只一条路由规则。
     labels:

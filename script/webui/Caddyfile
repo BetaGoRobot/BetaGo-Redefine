@@ -8,6 +8,15 @@
 		reverse_proxy {$BACKEND_URL}
 	}
 
+	# /config.js 由 entrypoint 在容器启动时根据环境变量渲染到该路径，
+	# 关掉浏览器缓存以确保改了 env 重启容器即生效。
+	@configjs path /config.js
+	handle @configjs {
+		header Cache-Control "no-store, must-revalidate"
+		header Pragma "no-cache"
+		file_server
+	}
+
 	# 其余请求走静态文件，未命中回退到 index.html（SPA 路由）。
 	handle {
 		try_files {path} /index.html

@@ -7,6 +7,9 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- 运行时配置：由部署侧的 Caddy 容器 entrypoint 根据环境变量渲染。
+         缺失时（如本地 vite dev 或构建期）静默忽略，回退到 import.meta.env.VITE_*。 -->
+    <script src="/config.js"></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
