@@ -46,6 +46,7 @@ func newLlmTokenUsageRecord(db *gorm.DB, opts ...gen.DOOption) llmTokenUsageReco
 	_llmTokenUsageRecord.ResponseID = field.NewString(tableName, "response_id")
 	_llmTokenUsageRecord.TraceID = field.NewString(tableName, "trace_id")
 	_llmTokenUsageRecord.Error = field.NewString(tableName, "error")
+	_llmTokenUsageRecord.BotID = field.NewString(tableName, "bot_id")
 
 	_llmTokenUsageRecord.fillFieldMap()
 
@@ -77,6 +78,7 @@ type llmTokenUsageRecord struct {
 	ResponseID       field.String
 	TraceID          field.String
 	Error            field.String
+	BotID            field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -114,6 +116,7 @@ func (l *llmTokenUsageRecord) updateTableName(table string) *llmTokenUsageRecord
 	l.ResponseID = field.NewString(table, "response_id")
 	l.TraceID = field.NewString(table, "trace_id")
 	l.Error = field.NewString(table, "error")
+	l.BotID = field.NewString(table, "bot_id")
 
 	l.fillFieldMap()
 
@@ -142,7 +145,7 @@ func (l *llmTokenUsageRecord) GetFieldByName(fieldName string) (field.OrderExpr,
 }
 
 func (l *llmTokenUsageRecord) fillFieldMap() {
-	l.fieldMap = make(map[string]field.Expr, 21)
+	l.fieldMap = make(map[string]field.Expr, 22)
 	l.fieldMap["id"] = l.ID
 	l.fieldMap["created_at"] = l.CreatedAt
 	l.fieldMap["bucket_minute"] = l.BucketMinute
@@ -164,6 +167,7 @@ func (l *llmTokenUsageRecord) fillFieldMap() {
 	l.fieldMap["response_id"] = l.ResponseID
 	l.fieldMap["trace_id"] = l.TraceID
 	l.fieldMap["error"] = l.Error
+	l.fieldMap["bot_id"] = l.BotID
 }
 
 func (l llmTokenUsageRecord) clone(db *gorm.DB) llmTokenUsageRecord {

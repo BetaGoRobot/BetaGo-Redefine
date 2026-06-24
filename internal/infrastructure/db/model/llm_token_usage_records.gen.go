@@ -33,6 +33,7 @@ type LlmTokenUsageRecord struct {
 	ResponseID       string    `gorm:"column:response_id;not null" json:"response_id"`
 	TraceID          string    `gorm:"column:trace_id;not null" json:"trace_id"`
 	Error            string    `gorm:"column:error;not null" json:"error"`
+	BotID            string    `gorm:"column:bot_id;not null" json:"bot_id"`
 }
 
 // TableName LlmTokenUsageRecord's table name
