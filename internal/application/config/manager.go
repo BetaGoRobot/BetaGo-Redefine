@@ -48,6 +48,7 @@ const (
 	// 业务开关
 	KeyMusicCardInThread ConfigKey = "music_card_in_thread"
 	KeyWithDrawReplace   ConfigKey = "with_draw_replace"
+	KeyTwoPhaseChat      ConfigKey = "two_phase_chat"
 
 	// 历史挡板与纠错配置
 	KeyHistoryCutoffTime ConfigKey = "history_cutoff_time"

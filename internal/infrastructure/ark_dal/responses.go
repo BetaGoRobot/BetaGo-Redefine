@@ -543,6 +543,83 @@ func (r *ResponsesImpl[T]) flushPendingStreamItems(ctx context.Context, yield fu
 	return true
 }
 
+// DoSync 非流式调用，等待完整响应后返回纯文本内容。
+// 适用于不需要流式、需要完整 JSON 输出的场景（如决策阶段）。
+// 注意：此方法不注册工具，也不处理工具调用。
+func (r *ResponsesImpl[T]) DoSync(ctx context.Context, scope llmusage.Scope, sysPrompt, userPrompt string, files ...string) (content string, err error) {
+	_, cfg, err := runtimeClient()
+	if err != nil {
+		return "", err
+	}
+	ctx, span := otel.StartNamed(ctx, "ark.responses.run_sync")
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+	defer r.recordStreamUsage(ctx, scope, cfg.NormalModel)
+
+	var (
+		modelID = cfg.NormalModel
+		items   = baseInputItem(sysPrompt, userPrompt)
+	)
+
+	span.SetAttributes(
+		attribute.Key("model_id").String(modelID),
+		attribute.Key("files.count").Int(len(files)),
+	)
+	if len(files) > 0 {
+		items = append(items, buildImageInputMessages(files...)...)
+	}
+	input := &responses.ResponsesInput{
+		Union: &responses.ResponsesInput_ListValue{
+			ListValue: &responses.InputItemList{
+				ListValue: items,
+			},
+		},
+	}
+	req := &responses.ResponsesRequest{
+		Model:     modelID,
+		Input:     input,
+		Store:     new(true),
+		Tools:     r.tools,
+		Reasoning: r.reasoningEffort,
+		Stream:    new(true),
+	}
+
+	resp, err := CreateResponsesStream(ctx, req, scope)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("failed to create responses stream (sync)", zap.Error(err))
+		return "", err
+	}
+	defer r.SyncResult(ctx)
+
+	var builder strings.Builder
+	for {
+		event, recvErr := resp.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			logs.L().Ctx(ctx).Error("stream receive error (sync)", zap.Error(recvErr))
+			return builder.String(), recvErr
+		}
+
+		resp, err = r.Handle(ctx, resp, event, scope, modelID)
+		if err != nil {
+			logs.L().Ctx(ctx).Error("handle event error (sync)", zap.String("last_resp_id", r.lastRespID), zap.Error(err))
+			return builder.String(), err
+		}
+		if resp == nil {
+			continue
+		}
+
+		if r.textOutput.NormalTextDelta != "" {
+			builder.WriteString(r.textOutput.NormalTextDelta)
+			r.textOutput.NormalTextDelta = ""
+		}
+	}
+
+	return strings.TrimSpace(builder.String()), nil
+}
+
 func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysPrompt, userPrompt string, files ...string) (it iter.Seq[*ModelStreamRespReasoning], err error) {
 	_, cfg, err := runtimeClient()
 	if err != nil {

@@ -481,6 +481,9 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	accessor := appconfig.NewAccessor(ctx, currentChatID(event, nil), currentOpenID(event, nil))
 	files := make([]string, 0)
 
+	// 两阶段模式开关
+	useTwoPhase := isTwoPhaseEnabled(ctx, currentChatID(event, nil), currentOpenID(event, nil))
+
 	if !larkmsg.IsMentioned(event.Event.Message.Mentions) {
 		client := redis.GetRedisClient()
 		if client != nil {
@@ -515,14 +518,22 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		if chatType == MODEL_TYPE_REASON {
 			modelID = accessor.ChatReasoningModel()
 		}
-		msgSeq, seqErr := GenerateChatSeq(ctx, event, metaData, modelID, size, files, args...)
+		genFunc := GenerateChatSeq
+		if useTwoPhase {
+			genFunc = GenerateChatSeqTwoPhase
+		}
+		msgSeq, seqErr := genFunc(ctx, event, metaData, modelID, size, files, args...)
 		if seqErr != nil {
 			return seqErr
 		}
 		return larkmsg.SendAndUpdateStreamingCard(ctx, event.Event.Message, msgSeq)
 	}
 
-	msgSeq, err := GenerateChatSeq(ctx, event, metaData, accessor.ChatNormalModel(), size, files, args...)
+	genFunc := GenerateChatSeq
+	if useTwoPhase {
+		genFunc = GenerateChatSeqTwoPhase
+	}
+	msgSeq, err := genFunc(ctx, event, metaData, accessor.ChatNormalModel(), size, files, args...)
 	if err != nil {
 		return err
 	}
