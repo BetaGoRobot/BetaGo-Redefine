@@ -278,14 +278,15 @@ func chatKeywordsToken(ctx context.Context, chatID string, since time.Time, topN
 
 // chatCommandsTop 聚合某群在 since 之后被调用的 Top 命令分布。
 //
-// 索引中 main_command 字段在 is_command=true 时由 messages/recording 写入；
-// 这里硬过滤 is_command=true，再 terms agg main_command（缺省词条转 unknown）。
-// 总数走同一个 query 的 hits.total，避免再发一次 count。
+// 索引中 main_command 字段在 is_command=true 时由 messages/recording 写入。
+// 新索引优先走 main_command.keyword terms agg；老索引若没有 keyword 子字段，
+// 则回退到搜索命令消息样本并在 Go 侧按 _source.main_command 计数，避免要求
+// 在线上索引上开启 text fielddata。
 func chatCommandsTop(ctx context.Context, chatID string, since time.Time, topN int) (*webui.ChatCommands, error) {
 	if topN <= 0 {
 		topN = 20
 	}
-	req := map[string]any{
+	baseQuery := map[string]any{
 		"size":             0,
 		"track_total_hits": true,
 		"query": map[string]any{
@@ -301,20 +302,14 @@ func chatCommandsTop(ctx context.Context, chatID string, since time.Time, topN i
 				},
 			},
 		},
-		"aggs": map[string]any{
-			"commands": map[string]any{
-				"terms": map[string]any{
-					"field":         "main_command",
-					"size":          topN,
-					"missing":       "unknown",
-					"min_doc_count": 1,
-				},
-			},
-		},
 	}
-	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, chatID, ""), req)
+	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, chatID, ""),
+		withCommandTermsAgg(baseQuery, "main_command.keyword", topN))
 	if err != nil {
-		return nil, err
+		if !isCommandAggFieldError(err) {
+			return nil, err
+		}
+		return chatCommandsTopFromSource(ctx, chatID, since, topN)
 	}
 	out := &webui.ChatCommands{Items: []webui.CommandCount{}}
 	if resp == nil {
@@ -343,6 +338,101 @@ func chatCommandsTop(ctx context.Context, chatID string, since time.Time, topN i
 		out.Items = append(out.Items, webui.CommandCount{Command: cmd, Count: b.DocCount})
 	}
 	return out, nil
+}
+
+func withCommandTermsAgg(baseQuery map[string]any, field string, topN int) map[string]any {
+	req := make(map[string]any, len(baseQuery)+1)
+	for k, v := range baseQuery {
+		req[k] = v
+	}
+	req["aggs"] = map[string]any{
+		"commands": map[string]any{
+			"terms": map[string]any{
+				"field":         field,
+				"size":          topN,
+				"missing":       "unknown",
+				"min_doc_count": 1,
+			},
+		},
+	}
+	return req
+}
+
+func chatCommandsTopFromSource(ctx context.Context, chatID string, since time.Time, topN int) (*webui.ChatCommands, error) {
+	req := map[string]any{
+		"size":             1000,
+		"track_total_hits": true,
+		"_source":          []string{"main_command"},
+		"sort": []map[string]any{
+			{"create_time_v2": map[string]any{"order": "desc"}},
+		},
+		"query": map[string]any{
+			"bool": map[string]any{
+				"must": []map[string]any{
+					{"term": map[string]any{"chat_id": chatID}},
+					{"term": map[string]any{"is_command": true}},
+					{"range": map[string]any{
+						"create_time_v2": map[string]any{
+							"gte": since.Format(time.RFC3339),
+						},
+					}},
+				},
+			},
+		},
+	}
+	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, chatID, ""), req)
+	if err != nil {
+		return nil, err
+	}
+	out := &webui.ChatCommands{Items: []webui.CommandCount{}}
+	if resp == nil {
+		return out, nil
+	}
+	out.Total = int64(resp.Hits.Total.Value)
+	if len(resp.Hits.Hits) == 0 {
+		return out, nil
+	}
+	type hitSource struct {
+		MainCommand string `json:"main_command"`
+	}
+	counts := make(map[string]int64)
+	for _, hit := range resp.Hits.Hits {
+		var src hitSource
+		if err := json.Unmarshal(hit.Source, &src); err != nil {
+			continue
+		}
+		cmd := strings.TrimSpace(src.MainCommand)
+		if cmd == "" {
+			cmd = "unknown"
+		}
+		counts[cmd]++
+	}
+	items := make([]webui.CommandCount, 0, len(counts))
+	for cmd, count := range counts {
+		items = append(items, webui.CommandCount{Command: cmd, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Command < items[j].Command
+	})
+	if len(items) > topN {
+		items = items[:topN]
+	}
+	out.Items = items
+	return out, nil
+}
+
+func isCommandAggFieldError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "main_command") &&
+		(strings.Contains(msg, "fielddata") ||
+			strings.Contains(msg, "Text fields are not optimised") ||
+			strings.Contains(msg, "keyword"))
 }
 
 // chatTopSenders 聚合某群在 since 之后按发言数排序的 Top 用户。
