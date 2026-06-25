@@ -36,6 +36,7 @@ type PendingOrder struct {
 	// InitiatorOpenID 与 RequesterOpenID 在 luckin 场景下相同，单独保留是为了
 	// 在落库时显式表达"这单的发起人"，方便后续按发起人查询/分账。
 	InitiatorOpenID    string
+	CheckoutMode       CheckoutMode
 	CredentialScope    CredentialScope
 	MCPServerName      string
 	CreateOrderPayload json.RawMessage
@@ -57,6 +58,8 @@ type NewPendingOrderRequest struct {
 	BotOpenID          string
 	ChatID             string
 	InitiatorOpenID    string
+	RequesterOpenID    string
+	CheckoutMode       CheckoutMode
 	Credential         Credential
 	CreateOrderPayload json.RawMessage
 	PreviewResult      json.RawMessage
@@ -75,8 +78,9 @@ func NewPendingOrder(req NewPendingOrderRequest) PendingOrder {
 		AppID:              req.AppID,
 		BotOpenID:          req.BotOpenID,
 		ChatID:             req.ChatID,
-		RequesterOpenID:    req.InitiatorOpenID,
+		RequesterOpenID:    firstNonEmpty(req.RequesterOpenID, req.InitiatorOpenID),
 		InitiatorOpenID:    req.InitiatorOpenID,
+		CheckoutMode:       NormalizeCheckoutMode(string(req.CheckoutMode)),
 		CredentialScope:    req.Credential.Scope,
 		MCPServerName:      ServerName,
 		CreateOrderPayload: req.CreateOrderPayload,
@@ -87,4 +91,13 @@ func NewPendingOrder(req NewPendingOrderRequest) PendingOrder {
 		ResultJSON:         json.RawMessage(`{}`),
 		ExpiresAt:          now.Add(10 * time.Minute),
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

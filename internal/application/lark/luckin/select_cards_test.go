@@ -81,6 +81,8 @@ func TestDraftServiceBuildsPendingOrderWithPreview(t *testing.T) {
 		BotOpenID:       "bot",
 		ChatID:          "chat",
 		InitiatorOpenID: "user",
+		RequesterOpenID: "user",
+		CheckoutMode:    CheckoutModeInitiatorUnified,
 		Credential:      Credential{Token: "token-1", Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		Shop:            ShopSelection{DeptID: 100, DeptName: "门店A", Longitude: 1.1, Latitude: 2.2},
 		Items:           []CartItem{{ProductID: 9, SkuCode: "SP-9", ProductName: "拿铁", Amount: 1}},
@@ -104,6 +106,9 @@ func TestDraftServiceBuildsPendingOrderWithPreview(t *testing.T) {
 	}
 	if string(order.PreviewResult) != `{"discountPrice":16}` {
 		t.Fatalf("preview result mismatch: %s", order.PreviewResult)
+	}
+	if order.CheckoutMode != CheckoutModeInitiatorUnified {
+		t.Fatalf("checkout mode = %q", order.CheckoutMode)
 	}
 	if card == nil {
 		t.Fatalf("card is nil")

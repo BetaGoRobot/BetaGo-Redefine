@@ -94,6 +94,8 @@ func testConfirmableOrder(payload json.RawMessage, expiresAt time.Time) PendingO
 		BotOpenID:          "bot",
 		ChatID:             "chat",
 		InitiatorOpenID:    "user",
+		RequesterOpenID:    "user",
+		CheckoutMode:       CheckoutModeInitiatorUnified,
 		Credential:         Credential{Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		CreateOrderPayload: payload,
 		PreviewResult:      json.RawMessage(`{}`),

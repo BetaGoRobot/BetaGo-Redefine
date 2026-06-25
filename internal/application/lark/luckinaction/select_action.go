@@ -51,6 +51,7 @@ func handleShopSelect(session luckin.SessionStore) appcardaction.SyncHandler {
 			InitiatorOpenID: sess.InitiatorOpenID,
 			ChatID:          sess.ChatID,
 			Shop:            shop,
+			CheckoutMode:    sess.CheckoutMode,
 		}
 		if err := mcpstore.WithSessionLock(ctx, key.MessageID, func() error {
 			session.SetSession(ctx, key, newSess)
@@ -226,7 +227,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 			cred, err := resolveCredential(runCtx, tokens, credReq)
 			if err != nil {
 				sendBindGuide(runCtx, credReq)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, sess.Cart), sess.InitiatorOpenID))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, sess.Cart, sess.CheckoutMode), sess.InitiatorOpenID))
 				return
 			}
 
@@ -275,7 +276,7 @@ func handleProductSelect(session luckin.SessionStore, draft luckin.DraftService,
 					AddedByOpenID: adderOpenID,
 				})
 				session.SetSession(runCtx, key, curSess)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart, curSess.CheckoutMode), curSess.InitiatorOpenID))
 				return nil
 			})
 			if lockErr != nil {
@@ -314,7 +315,7 @@ func handleCartUpdate(session luckin.SessionStore) appcardaction.AsyncHandler {
 				}
 				curSess.Cart.SetAmountByLine(lineID, qty)
 				session.SetSession(runCtx, key, curSess)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart, curSess.CheckoutMode), curSess.InitiatorOpenID))
 				return nil
 			})
 		}, nil
@@ -348,7 +349,7 @@ func handleCartRemove(session luckin.SessionStore) appcardaction.AsyncHandler {
 				}
 				curSess.Cart.RemoveByLine(lineID)
 				session.SetSession(runCtx, key, curSess)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart), curSess.InitiatorOpenID))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart, curSess.CheckoutMode), curSess.InitiatorOpenID))
 				return nil
 			})
 		}, nil
@@ -378,16 +379,30 @@ func checkoutTask(session luckin.SessionStore, draft luckin.DraftService, pendin
 		if !ok {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
-		// 结算/优惠券都是临界点，只有发起人可以推进流程。
-		if !luckin.IsInitiator(sess, actionCtx.OpenID()) {
+		mode := luckin.NormalizeCheckoutMode(formValue(actionCtx, cardactionproto.LuckinCheckoutModeField))
+		if mode == "" {
+			mode = luckin.NormalizeCheckoutMode(string(sess.CheckoutMode))
+		}
+		if mode == "" {
+			mode = luckin.CheckoutModeInitiatorUnified
+		}
+		if mode == luckin.CheckoutModeInitiatorUnified && !luckin.IsInitiator(sess, actionCtx.OpenID()) {
 			return func(context.Context) { /* no-op */ }, errInitiatorOnly()
 		}
 		shop := sess.Shop
 		if shop.DeptID == 0 || sess.Cart.Empty() {
 			return patchSessionMissing(session, actionCtx, msgID), nil
 		}
+		operatorOpenID := actionCtx.OpenID()
+		requesterOpenID := sess.InitiatorOpenID
+		if mode == luckin.CheckoutModeSelfService {
+			requesterOpenID = operatorOpenID
+		}
+		items := luckin.SelectCheckoutItems(sess.Cart, mode, operatorOpenID)
+		if len(items) == 0 {
+			return nil, errors.New("当前结算模式下没有可下单商品")
+		}
 		req := initiatorCredentialRequest(sess, actionCtx)
-		items := append([]luckin.CartItem(nil), sess.Cart.Items...)
 		initiator := sess.InitiatorOpenID
 
 		return func(runCtx context.Context) {
@@ -395,32 +410,53 @@ func checkoutTask(session luckin.SessionStore, draft luckin.DraftService, pendin
 			cred, err := resolveCredential(runCtx, tokens, req)
 			if err != nil {
 				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, luckin.Cart{Items: items}), initiator))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, luckin.Cart{Items: items}, mode), initiator))
 				return
 			}
-			order, card, err := draft.Draft(runCtx, luckin.DraftRequest{
-				AppID:           req.AppID,
-				BotOpenID:       req.BotOpenID,
-				ChatID:          req.ChatID,
-				InitiatorOpenID: initiator,
-				Credential:      cred,
-				Shop:            shop,
-				Items:           items,
-				CouponCodeList:  coupons,
-				Now:             time.Now(),
-			})
-			if err != nil {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("预览订单失败："+err.Error()), initiator))
+			subOrders := luckin.SplitItemsToSingleCupOrders(items)
+			if len(subOrders) == 0 {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("没有可拆分的下单商品"), initiator))
 				return
 			}
-			if pending != nil {
-				if err := pending.CreatePendingOrder(runCtx, order); err != nil {
-					logs.L().Ctx(runCtx).Warn("luckin create pending order failed", zap.Error(err))
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建待确认订单失败："+err.Error()), initiator))
-					return
+			summaryCard := luckin.BuildOrderProcessingCard("已按单杯拆成 " + strconv.Itoa(len(subOrders)) + " 个待确认订单，请分别选择优惠券并支付。")
+			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(summaryCard, initiator))
+			for _, orderItems := range subOrders {
+				order, card, err := draft.Draft(runCtx, luckin.DraftRequest{
+					AppID:           req.AppID,
+					BotOpenID:       req.BotOpenID,
+					ChatID:          req.ChatID,
+					InitiatorOpenID: initiator,
+					RequesterOpenID: requesterOpenID,
+					CheckoutMode:    mode,
+					Credential:      cred,
+					Shop:            shop,
+					Items:           orderItems,
+					CouponCodeList:  coupons,
+					Now:             time.Now(),
+				})
+				if err != nil {
+					_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("预览订单失败："+err.Error()), initiator), "_luckinSplitDraft", false)
+					continue
 				}
+				if pending != nil {
+					if err := pending.CreatePendingOrder(runCtx, order); err != nil {
+						logs.L().Ctx(runCtx).Warn("luckin create pending order failed", zap.Error(err))
+						_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建待确认订单失败："+err.Error()), initiator), "_luckinSplitPending", false)
+						continue
+					}
+				}
+				_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiator), "_luckinSplitOrder", false)
 			}
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiator))
+			_ = mcpstore.WithSessionLock(runCtx, msgID, func() error {
+				key, curSess, ok := requireSession(runCtx, session, actionCtx)
+				if !ok {
+					return nil
+				}
+				curSess.CheckoutMode = mode
+				curSess.Cart = luckin.RemoveCheckoutItems(curSess.Cart, mode, operatorOpenID)
+				session.SetSession(runCtx, key, curSess)
+				return larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart, curSess.CheckoutMode), curSess.InitiatorOpenID))
+			})
 		}, nil
 	}
 }

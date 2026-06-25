@@ -29,9 +29,14 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 	summary := previewSummaryFromOrder(order)
 	available := AvailableCouponsFromPreview(order.PreviewResult)
 	selected := selectedCouponsFromPayload(order.CreateOrderPayload)
+	modeText := "统一下单（发起人账号）"
+	if order.CheckoutMode == CheckoutModeSelfService {
+		modeText = "自我下单（只下当前操作者自己的商品）"
+	}
 	elements := []any{
 		larkmsg.Markdown("**🧾 确认瑞幸订单**"),
 		larkmsg.HintMarkdown("账号：" + ScopeLabel(order.CredentialScope)),
+		larkmsg.HintMarkdown("结算模式：" + modeText),
 		larkmsg.Divider(),
 		larkmsg.Markdown("🏬 **门店**\n" + summary.Shop),
 		larkmsg.Markdown("☕ **商品**\n" + summary.Products),

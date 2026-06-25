@@ -21,7 +21,11 @@ func GetChatName(ctx context.Context, chatID string) (chatName string) {
 	ctx, span := otel.Start(ctx, trace.WithAttributes(attribute.String("chat.id", chatID)))
 	defer span.End()
 
-	resp, err := lark_dal.Client().Im.V1.Chat.Get(ctx, larkim.NewGetChatReqBuilder().ChatId(chatID).Build())
+	client := lark_dal.Client()
+	if client == nil {
+		return
+	}
+	resp, err := client.Im.V1.Chat.Get(ctx, larkim.NewGetChatReqBuilder().ChatId(chatID).Build())
 	if err != nil {
 		otel.RecordError(span, err)
 		return
@@ -42,8 +46,13 @@ func GetChatInfo(ctx context.Context, chatID string) (chat *larkim.GetChatRespDa
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
+	client := lark_dal.Client()
+	if client == nil {
+		err = errors.New("lark client is not initialized")
+		return
+	}
 	req := larkim.NewGetChatReqBuilder().ChatId(chatID).Build()
-	resp, err := lark_dal.Client().Im.V1.Chat.Get(ctx, req)
+	resp, err := client.Im.V1.Chat.Get(ctx, req)
 	if err != nil {
 		return
 	}

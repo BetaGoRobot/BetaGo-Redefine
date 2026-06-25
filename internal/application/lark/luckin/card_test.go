@@ -10,10 +10,11 @@ func TestBuildPendingOrderCardContainsScopeAndActions(t *testing.T) {
 	card := BuildPendingOrderCard(PendingOrder{
 		ID:              "po_1",
 		PayloadHash:     "hash_1",
+		CheckoutMode:    CheckoutModeInitiatorUnified,
 		CredentialScope: CredentialScope{Type: ScopeChat, ID: "chat"},
 	})
 	text := mustMarshalForTest(card)
-	if !containsAll(text, "群聊默认瑞幸账号", "luckin_order_confirm", "luckin_order_cancel") {
+	if !containsAll(text, "群聊默认瑞幸账号", "统一下单", "luckin_order_confirm", "luckin_order_cancel") {
 		t.Fatalf("card missing required scope/action content")
 	}
 	if !containsAll(text, "po_1", "hash_1", "pending_order_id", "payload_hash") {
@@ -25,6 +26,7 @@ func TestBuildPendingOrderCardSummarizesPreview(t *testing.T) {
 	card := BuildPendingOrderCard(PendingOrder{
 		ID:              "po_1",
 		PayloadHash:     "hash_1",
+		CheckoutMode:    CheckoutModeSelfService,
 		CredentialScope: CredentialScope{Type: ScopePersonal, ID: "user"},
 		PreviewResult: json.RawMessage(`{
 			"shopInfo":{"deptName":"瑞幸咖啡 上海路店","address":"上海路 1 号","distance":0.8},
@@ -39,6 +41,9 @@ func TestBuildPendingOrderCardSummarizesPreview(t *testing.T) {
 	text := mustMarshalForTest(card)
 	if !containsAll(text, "瑞幸咖啡 上海路店", "上海路 1 号", "0.8km") {
 		t.Fatalf("card missing shop summary")
+	}
+	if !containsAll(text, "自我下单") {
+		t.Fatalf("card missing checkout mode")
 	}
 	if !containsAll(text, "生椰拿铁", "少冰 / 标准糖", "x 2") {
 		t.Fatalf("card missing product summary")
@@ -56,6 +61,7 @@ func TestBuildPendingOrderCardDoesNotExposePayload(t *testing.T) {
 	card := BuildPendingOrderCard(PendingOrder{
 		ID:                 "po_1",
 		PayloadHash:        "hash_1",
+		CheckoutMode:       CheckoutModeInitiatorUnified,
 		CredentialScope:    CredentialScope{Type: ScopePersonal, ID: "user"},
 		CreateOrderPayload: []byte(`{"secret":"full-order-payload"}`),
 	})

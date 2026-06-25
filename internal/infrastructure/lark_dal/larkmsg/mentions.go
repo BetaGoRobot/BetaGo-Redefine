@@ -6,8 +6,19 @@ import (
 )
 
 func IsMentioned(mentions []*larkim.MentionEvent) bool {
+	cfg := config.Get()
+	if cfg == nil || cfg.LarkConfig == nil {
+		return false
+	}
+	botOpenID := cfg.LarkConfig.BotOpenID
+	if botOpenID == "" {
+		return false
+	}
 	for _, mention := range mentions {
-		if *mention.Id.OpenId == config.Get().LarkConfig.BotOpenID {
+		if mention == nil || mention.Id == nil || mention.Id.OpenId == nil {
+			continue
+		}
+		if *mention.Id.OpenId == botOpenID {
 			return true
 		}
 	}

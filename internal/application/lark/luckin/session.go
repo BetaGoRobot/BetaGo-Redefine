@@ -24,6 +24,22 @@ type ShopSelection struct {
 	Latitude  float64
 }
 
+type CheckoutMode string
+
+const (
+	CheckoutModeInitiatorUnified CheckoutMode = "initiator_unified"
+	CheckoutModeSelfService      CheckoutMode = "self_service"
+)
+
+func NormalizeCheckoutMode(mode string) CheckoutMode {
+	switch CheckoutMode(strings.TrimSpace(mode)) {
+	case CheckoutModeSelfService:
+		return CheckoutModeSelfService
+	default:
+		return CheckoutModeInitiatorUnified
+	}
+}
+
 // ProductSelection 记录用户已选商品及当前规格，用于规格切换与下单。
 type ProductSelection struct {
 	ProductID   int64
@@ -103,6 +119,7 @@ type OrderSession struct {
 	ChatID          string
 	Shop            ShopSelection
 	Cart            Cart
+	CheckoutMode    CheckoutMode
 }
 
 // SessionStore 由 mcpstore 实现：进程内 ttlcache + Redis 持久化。

@@ -14,6 +14,8 @@ type DraftRequest struct {
 	BotOpenID       string
 	ChatID          string
 	InitiatorOpenID string
+	RequesterOpenID string
+	CheckoutMode    CheckoutMode
 	Credential      Credential
 	Shop            ShopSelection
 	Items           []CartItem
@@ -54,6 +56,8 @@ func (s DraftService) Draft(ctx context.Context, req DraftRequest) (PendingOrder
 		BotOpenID:          req.BotOpenID,
 		ChatID:             req.ChatID,
 		InitiatorOpenID:    req.InitiatorOpenID,
+		RequesterOpenID:    req.RequesterOpenID,
+		CheckoutMode:       req.CheckoutMode,
 		Credential:         req.Credential,
 		CreateOrderPayload: payload,
 		PreviewResult:      preview,

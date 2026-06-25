@@ -15,6 +15,8 @@ func TestNewPendingOrderComputesHashAndExpiry(t *testing.T) {
 		BotOpenID:          "bot",
 		ChatID:             "chat",
 		InitiatorOpenID:    "user",
+		RequesterOpenID:    "user-self",
+		CheckoutMode:       CheckoutModeSelfService,
 		Credential:         Credential{Scope: CredentialScope{Type: ScopePersonal, ID: "user"}},
 		CreateOrderPayload: payload,
 		PreviewResult:      json.RawMessage(`{"discountPrice":9.9}`),
@@ -38,6 +40,9 @@ func TestNewPendingOrderComputesHashAndExpiry(t *testing.T) {
 	}
 	if order.AppID != "app" || order.BotOpenID != "bot" {
 		t.Fatalf("app/bot mismatch: app=%q bot=%q", order.AppID, order.BotOpenID)
+	}
+	if order.RequesterOpenID != "user-self" || order.CheckoutMode != CheckoutModeSelfService {
+		t.Fatalf("requester/mode mismatch: requester=%q mode=%q", order.RequesterOpenID, order.CheckoutMode)
 	}
 }
 

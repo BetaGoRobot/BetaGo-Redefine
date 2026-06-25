@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +19,14 @@ func TestResolveStandardPromptMode(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	group := "group"
 	p2p := "p2p"
+	botOpenID := "ou_test_bot"
+	configPath := filepath.Join(t.TempDir(), "test_config.toml")
+	if err := os.WriteFile(configPath, []byte("[lark_config]\nbot_open_id = \""+botOpenID+"\"\n"), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	if _, err := infraConfig.LoadFileE(configPath); err != nil {
+		t.Fatalf("load temp config: %v", err)
+	}
 
 	if got := resolveStandardPromptMode(&larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
@@ -31,7 +41,7 @@ func TestResolveStandardPromptMode(t *testing.T) {
 			Message: &larkim.EventMessage{
 				ChatType: &group,
 				Mentions: []*larkim.MentionEvent{{
-					Id: &larkim.UserId{OpenId: new(infraConfig.Get().LarkConfig.BotOpenID)},
+					Id: &larkim.UserId{OpenId: chatHandlerStrPtr(botOpenID)},
 				}},
 			},
 		},
@@ -93,6 +103,18 @@ func TestBuildStandardChatSystemPromptGuidesFinanceToolDiscovery(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt = %q, want contain %q", prompt, want)
+		}
+	}
+}
+
+func TestBuildStandardChatSystemPromptRestrictsLuckinTriggerToExplicitOrdering(t *testing.T) {
+	prompt := buildStandardChatSystemPrompt(context.Background(), standardPromptModeAmbient, "")
+	if !strings.Contains(prompt, "明确表达想点咖啡、买咖啡、下瑞幸订单、加购饮品、结算瑞幸购物车") {
+		t.Fatalf("prompt = %q, want explicit luckin ordering trigger", prompt)
+	}
+	for _, unwanted := range []string{"查看门店", "开始点单"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt should not contain %q: %q", unwanted, prompt)
 		}
 	}
 }

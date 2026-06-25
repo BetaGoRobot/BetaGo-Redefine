@@ -367,7 +367,7 @@ func buildStandardChatSystemPrompt(ctx context.Context, mode standardPromptMode,
 先调用 finance_tool_discover 发现可用金融工具；只使用 category 或 tool_names 这类枚举参数，不要停在 discover 结果本身。结构化行情、新闻和指标查询优先用金融工具。
 
 ## 瑞幸点单工具
-当用户表达想点咖啡、买咖啡、瑞幸点单、查看门店或开始点单时，优先调用 luckin_shop_search。
+当用户明确表达想点咖啡、买咖啡、下瑞幸订单、加购饮品、结算瑞幸购物车时，优先调用 luckin_shop_search。
 如果用户没有提供明确位置，也要调用 luckin_shop_search，参数传空对象，由工具发送门店搜索入口卡片；不要先追问位置。
 
 ## 工具调用规则

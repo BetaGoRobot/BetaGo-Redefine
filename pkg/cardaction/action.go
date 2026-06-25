@@ -112,6 +112,7 @@ const (
 	LuckinTokenFormField    = "luckin_token"
 	LuckinScopeFormField    = "luckin_scope"
 	LuckinCouponFormField   = "luckin_coupon"
+	LuckinCheckoutModeField = "luckin_checkout_mode"
 	LuckinOrderIDField      = "luckin_order_id"
 	LuckinStatusModeField   = "luckin_status_mode"
 	// LuckinLineIDField 购物车每行的稳定唯一 ID（uuid）。+/-/删除按钮 payload 使用它定位条目，

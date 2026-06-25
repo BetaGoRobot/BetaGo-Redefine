@@ -447,13 +447,17 @@ func chatTopSenders(ctx context.Context, chatID string, since time.Time, topN in
 
 // chatMessageKinds 聚合某群在 since 之后按 message_type 维度的消息数分布。
 //
-// message_type 在 OpenSearch 索引里是 keyword（仓库内有现成的 term 过滤先例），
-// 直接 terms agg；空字符串桶折叠成 "unknown"。Total 走 hits.total，避免再发一次
-// count，只用一次请求。
+// message_type 在当前索引里不是可聚合 keyword 字段，因此这里直接 search
+// 命中消息样本，再在 Go 侧按 _source.message_type 计数。Total 仍走同一个 query
+// 的 hits.total，避免额外 count 请求。
 func chatMessageKinds(ctx context.Context, chatID string, since time.Time) (*webui.ChatMessageKinds, error) {
 	req := map[string]any{
-		"size":             0,
+		"size":             1000,
 		"track_total_hits": true,
+		"_source":          []string{"message_type"},
+		"sort": []map[string]any{
+			{"create_time_v2": map[string]any{"order": "desc"}},
+		},
 		"query": map[string]any{
 			"bool": map[string]any{
 				"must": []map[string]any{
@@ -463,16 +467,6 @@ func chatMessageKinds(ctx context.Context, chatID string, since time.Time) (*web
 							"gte": since.Format(time.RFC3339),
 						},
 					}},
-				},
-			},
-		},
-		"aggs": map[string]any{
-			"kinds": map[string]any{
-				"terms": map[string]any{
-					"field":         "message_type",
-					"size":          50,
-					"missing":       "unknown",
-					"min_doc_count": 1,
 				},
 			},
 		},
@@ -486,27 +480,35 @@ func chatMessageKinds(ctx context.Context, chatID string, since time.Time) (*web
 		return out, nil
 	}
 	out.Total = int64(resp.Hits.Total.Value)
-	if len(resp.Aggregations) == 0 {
+	if len(resp.Hits.Hits) == 0 {
 		return out, nil
 	}
-	var aggs struct {
-		Kinds struct {
-			Buckets []struct {
-				Key      string `json:"key"`
-				DocCount int64  `json:"doc_count"`
-			} `json:"buckets"`
-		} `json:"kinds"`
+	type hitSource struct {
+		MessageType string `json:"message_type"`
 	}
-	if err := json.Unmarshal(resp.Aggregations, &aggs); err != nil {
-		return nil, err
-	}
-	for _, b := range aggs.Kinds.Buckets {
-		kind := strings.TrimSpace(b.Key)
+	counts := make(map[string]int64)
+	for _, hit := range resp.Hits.Hits {
+		var src hitSource
+		if err := json.Unmarshal(hit.Source, &src); err != nil {
+			continue
+		}
+		kind := strings.TrimSpace(src.MessageType)
 		if kind == "" {
 			kind = "unknown"
 		}
-		out.Items = append(out.Items, webui.MessageKindCount{Kind: kind, Count: b.DocCount})
+		counts[kind]++
 	}
+	items := make([]webui.MessageKindCount, 0, len(counts))
+	for kind, count := range counts {
+		items = append(items, webui.MessageKindCount{Kind: kind, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Kind < items[j].Kind
+	})
+	out.Items = items
 	return out, nil
 }
 

@@ -50,7 +50,7 @@ func BuildReplyGeneratorPrompt(mode string, persona string, toolHints []intentme
 # 工具调用
 - 当 ToolHints 包含 search_history 时：优先调用 search_history 检索群内历史，再决定如何回答；若返回为空可以自然说明"群里好像没聊过"。
 - 当 ToolHints 包含 finance 时：优先 finance_tool_discover 发现可用金融工具，再调用具体接口，不要停在 discover 结果。
-- 当 ToolHints 包含 luckin 时：直接调用 luckin_shop_search（参数空对象也行），由工具发送门店搜索入口卡片，不要先追问位置。
+- 当 ToolHints 包含 luckin 时：说明用户已经明确要发起瑞幸点单，再调用 luckin_shop_search（参数空对象也行），由工具发送门店搜索入口卡片；不要把普通信息咨询误判成点单。
 - 即使 ToolHints 为空，你也可以根据需要自主调用其他工具，但不要无谓调用。
 - 工具一次只调用一个，必须先取得工具结果再产出最终回复。
 

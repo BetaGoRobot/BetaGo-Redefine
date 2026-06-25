@@ -271,7 +271,7 @@ func shopMetaLine(shop ShopOption) string {
 
 // BuildProductSelectCard 渲染购物车 + 商品搜索结果；购物车常驻在上半部分，搜索结果在下半部分刷新。
 func BuildProductSelectCard(shop ShopSelection, cart Cart, products []ProductOption, imageKeys map[int64]string) map[string]any {
-	header := cartElements(shop, cart)
+	header := cartElements(shop, cart, CheckoutModeInitiatorUnified)
 	header = append(header, larkmsg.Divider(), larkmsg.HintMarkdown("搜索结果："))
 	if len(products) == 0 {
 		header = append(header, larkmsg.Markdown("没有找到匹配商品，换个关键词再搜。"))
@@ -391,7 +391,7 @@ func QtyFormField(productID int64) string {
 
 // BuildProductQueryCard 在用户选定门店后展示，提供商品搜索输入框，整条动线在卡片内完成。
 func BuildProductQueryCard(shop ShopSelection, cart Cart) map[string]any {
-	elements := cartElements(shop, cart)
+	elements := cartElements(shop, cart, CheckoutModeInitiatorUnified)
 	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("想喝点什么？输入商品关键词搜索。"))
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
@@ -399,14 +399,14 @@ func BuildProductQueryCard(shop ShopSelection, cart Cart) map[string]any {
 
 // BuildProductSearchingCard 在异步搜索商品期间展示的过渡卡片。
 func BuildProductSearchingCard(shop ShopSelection, cart Cart, query string) map[string]any {
-	elements := cartElements(shop, cart)
+	elements := cartElements(shop, cart, CheckoutModeInitiatorUnified)
 	elements = append(elements, larkmsg.Divider(), larkmsg.HintMarkdown("正在搜索「"+query+"」，请稍候…"))
 	return wrapCard(elements)
 }
 
 // BuildProductSearchErrorCard 在异步搜索失败时展示，并保留搜索表单方便重试。
 func BuildProductSearchErrorCard(shop ShopSelection, cart Cart, query string) map[string]any {
-	elements := cartElements(shop, cart)
+	elements := cartElements(shop, cart, CheckoutModeInitiatorUnified)
 	elements = append(elements, larkmsg.Divider(), larkmsg.Markdown("搜索「"+query+"」失败，请重试或换个关键词。"))
 	elements = append(elements, productQueryForm(shop)...)
 	return wrapCard(elements)
