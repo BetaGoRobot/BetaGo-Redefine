@@ -1,12 +1,14 @@
 package webui
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"gorm.io/gorm"
 )
 
@@ -104,7 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/chats/{chatID}/configs/{key}", s.handleSetConfig)
 	mux.HandleFunc("DELETE /api/chats/{chatID}/configs/{key}", s.handleDeleteConfig)
 
-	return s.withCORS(s.withAuth(mux))
+	return s.withMetrics(s.withCORS(s.withAuth(mux)))
 }
 
 // withAuth 对写操作强制 Bearer Token 鉴权；未配置 token 时全部放行。
@@ -152,6 +154,42 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) withMetrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		route := normalizeMetricsRoute(r.Pattern)
+		method := normalizeMetricsLabel(r.Method)
+
+		metrics.GetOrCreateGauge(fmt.Sprintf(
+			`betago_webui_http_inflight_requests{method=%q,route=%q}`,
+			method, route,
+		), nil).Inc()
+		defer metrics.GetOrCreateGauge(fmt.Sprintf(
+			`betago_webui_http_inflight_requests{method=%q,route=%q}`,
+			method, route,
+		), nil).Dec()
+
+		next.ServeHTTP(rec, r)
+
+		status := strconv.Itoa(rec.status)
+		metrics.GetOrCreateCounter(fmt.Sprintf(
+			`betago_webui_http_requests_total{method=%q,route=%q,status=%q}`,
+			method, route, status,
+		)).Inc()
+		if rec.status >= 500 {
+			metrics.GetOrCreateCounter(fmt.Sprintf(
+				`betago_webui_http_errors_total{method=%q,route=%q,status=%q}`,
+				method, route, status,
+			)).Inc()
+		}
+		metrics.GetOrCreateHistogram(fmt.Sprintf(
+			`betago_webui_http_request_duration_seconds{method=%q,route=%q,status=%q}`,
+			method, route, status,
+		)).UpdateDuration(start)
+	})
+}
+
 // resolveAllowedOrigin 根据配置返回应回写的 Allow-Origin 值。
 // 未配置允许列表时回退为 "*"（仅建议内网使用）。
 func (s *Server) resolveAllowedOrigin(origin string) string {
@@ -192,6 +230,41 @@ func normalizeOrigins(origins []string) []string {
 		}
 	}
 	return out
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(statusCode int) {
+	r.status = statusCode
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func normalizeMetricsRoute(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return "unknown"
+	}
+	if method, path, ok := strings.Cut(pattern, " "); ok {
+		_ = method
+		pattern = path
+	}
+	return normalizeMetricsLabel(pattern)
+}
+
+func normalizeMetricsLabel(v string) string {
+	v = strings.TrimSpace(strings.ToValidUTF8(v, "?"))
+	if v == "" {
+		return "unknown"
+	}
+	const maxLen = 80
+	runes := []rune(v)
+	if len(runes) > maxLen {
+		return string(runes[:maxLen]) + "..."
+	}
+	return v
 }
 
 // isTruthy 解析常见的“开启”取值（1/true/yes/on），用于可选 query 开关。

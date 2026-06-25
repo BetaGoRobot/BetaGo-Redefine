@@ -278,87 +278,13 @@ func chatKeywordsToken(ctx context.Context, chatID string, since time.Time, topN
 
 // chatCommandsTop 聚合某群在 since 之后被调用的 Top 命令分布。
 //
-// 索引中 main_command 字段在 is_command=true 时由 messages/recording 写入。
-// 新索引优先走 main_command.keyword terms agg；老索引若没有 keyword 子字段，
-// 则回退到搜索命令消息样本并在 Go 侧按 _source.main_command 计数，避免要求
-// 在线上索引上开启 text fielddata。
+// 索引里 main_command 目前不是可聚合 keyword 字段，因此这里直接 search
+// 命令消息样本，再在 Go 侧按 _source.main_command 计数。总数仍走同一个 query
+// 的 hits.total，避免额外 count 请求。
 func chatCommandsTop(ctx context.Context, chatID string, since time.Time, topN int) (*webui.ChatCommands, error) {
 	if topN <= 0 {
 		topN = 20
 	}
-	baseQuery := map[string]any{
-		"size":             0,
-		"track_total_hits": true,
-		"query": map[string]any{
-			"bool": map[string]any{
-				"must": []map[string]any{
-					{"term": map[string]any{"chat_id": chatID}},
-					{"term": map[string]any{"is_command": true}},
-					{"range": map[string]any{
-						"create_time_v2": map[string]any{
-							"gte": since.Format(time.RFC3339),
-						},
-					}},
-				},
-			},
-		},
-	}
-	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, chatID, ""),
-		withCommandTermsAgg(baseQuery, "main_command.keyword", topN))
-	if err != nil {
-		if !isCommandAggFieldError(err) {
-			return nil, err
-		}
-		return chatCommandsTopFromSource(ctx, chatID, since, topN)
-	}
-	out := &webui.ChatCommands{Items: []webui.CommandCount{}}
-	if resp == nil {
-		return out, nil
-	}
-	out.Total = int64(resp.Hits.Total.Value)
-	if len(resp.Aggregations) == 0 {
-		return out, nil
-	}
-	var aggs struct {
-		Commands struct {
-			Buckets []struct {
-				Key      string `json:"key"`
-				DocCount int64  `json:"doc_count"`
-			} `json:"buckets"`
-		} `json:"commands"`
-	}
-	if err := json.Unmarshal(resp.Aggregations, &aggs); err != nil {
-		return nil, err
-	}
-	for _, b := range aggs.Commands.Buckets {
-		cmd := strings.TrimSpace(b.Key)
-		if cmd == "" {
-			cmd = "unknown"
-		}
-		out.Items = append(out.Items, webui.CommandCount{Command: cmd, Count: b.DocCount})
-	}
-	return out, nil
-}
-
-func withCommandTermsAgg(baseQuery map[string]any, field string, topN int) map[string]any {
-	req := make(map[string]any, len(baseQuery)+1)
-	for k, v := range baseQuery {
-		req[k] = v
-	}
-	req["aggs"] = map[string]any{
-		"commands": map[string]any{
-			"terms": map[string]any{
-				"field":         field,
-				"size":          topN,
-				"missing":       "unknown",
-				"min_doc_count": 1,
-			},
-		},
-	}
-	return req
-}
-
-func chatCommandsTopFromSource(ctx context.Context, chatID string, since time.Time, topN int) (*webui.ChatCommands, error) {
 	req := map[string]any{
 		"size":             1000,
 		"track_total_hits": true,
@@ -422,17 +348,6 @@ func chatCommandsTopFromSource(ctx context.Context, chatID string, since time.Ti
 	}
 	out.Items = items
 	return out, nil
-}
-
-func isCommandAggFieldError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "main_command") &&
-		(strings.Contains(msg, "fielddata") ||
-			strings.Contains(msg, "Text fields are not optimised") ||
-			strings.Contains(msg, "keyword"))
 }
 
 // chatTopSenders 聚合某群在 since 之后按发言数排序的 Top 用户。
