@@ -60,6 +60,10 @@ const (
 	ToolHintSearchHistory ToolHint = "search_history"
 	ToolHintFinance       ToolHint = "finance"
 	ToolHintLuckin        ToolHint = "luckin"
+	ToolHintWebSearch     ToolHint = "web_search"
+	ToolHintResearch      ToolHint = "research"
+	ToolHintMemberLookup  ToolHint = "member_lookup"
+	ToolHintEmojiReaction ToolHint = "emoji_reaction"
 )
 
 // IntentAnalysis 意图分析结果
@@ -211,7 +215,13 @@ func SanitizeToolHints(hints []ToolHint) []ToolHint {
 	out := make([]ToolHint, 0, len(hints))
 	for _, h := range hints {
 		switch h {
-		case ToolHintSearchHistory, ToolHintFinance, ToolHintLuckin:
+		case ToolHintSearchHistory,
+			ToolHintFinance,
+			ToolHintLuckin,
+			ToolHintWebSearch,
+			ToolHintResearch,
+			ToolHintMemberLookup,
+			ToolHintEmojiReaction:
 		default:
 			continue
 		}

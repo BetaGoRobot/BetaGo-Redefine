@@ -103,12 +103,18 @@ func (r *WordReplyMsgOperator) Run(ctx context.Context, event *larkim.P2MessageR
 	}
 	if len(replyList) > 0 {
 		replyItem = utils.SampleSlice(replyList)
-		_, subSpan := otel.Start(ctx)
-		defer subSpan.End()
-		err := replyTypedMessage(ctx, *event.Event.Message.MessageId, replyItem, "_wordReply")
-		if err != nil {
-			logs.L().Ctx(ctx).Error("ReplyMessage error", zap.Error(err))
-			return err
+		if meta != nil && replyItem != nil {
+			if replyItem.ReplyType == xmodel.ReplyTypeImg {
+				err := replyTypedMessage(ctx, *event.Event.Message.MessageId, replyItem, "_wordReply")
+				if err != nil {
+					logs.L().Ctx(ctx).Error("ReplyMessage error", zap.Error(err))
+					return err
+				}
+				markKeywordReplyHandled(meta)
+				return nil
+			}
+			meta.SetExtra(matchedKeywordReplyTaskKey, buildKeywordReplyTask(msg, replyItem))
+			meta.ForceReplyDirect = true
 		}
 	}
 	return nil
@@ -123,6 +129,18 @@ func CheckQuoteKeywordMatch(msg string, keyword string, matchType xmodel.WordMat
 	case xmodel.MatchTypeRegex:
 		return utils.RegexpMatch(msg, keyword)
 	default:
-		panic("unknown match type" + matchType)
+		return false
+	}
+}
+
+func buildKeywordReplyTask(triggerMsg string, replyItem *xmodel.ReplyNType) string {
+	if replyItem == nil {
+		return ""
+	}
+	switch replyItem.ReplyType {
+	case xmodel.ReplyTypeImg:
+		return ""
+	default:
+		return "检测到一条关键词回复规则被命中。请把下面这条预设回复当作“回复任务”而不是最终固定话术，结合当前上下文、群聊气氛和用户意图，生成一条最终真正要发出的自然回复。预设回复任务：" + strings.TrimSpace(replyItem.Reply) + "\n触发原消息：" + strings.TrimSpace(triggerMsg)
 	}
 }

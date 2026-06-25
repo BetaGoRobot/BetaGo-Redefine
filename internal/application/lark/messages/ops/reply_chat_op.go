@@ -28,6 +28,12 @@ func (r *ReplyChatOperator) Name() string {
 	return "ReplyChatOperator"
 }
 
+func (r *ReplyChatOperator) Depends() []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
+	return []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
+		WordReplyStage,
+	}
+}
+
 // FeatureInfo 返回功能信息
 func (r *ReplyChatOperator) FeatureInfo() *xhandler.FeatureInfo {
 	return &xhandler.FeatureInfo{
@@ -71,6 +77,10 @@ func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageRece
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
+
+	if hasHandledKeywordReply(meta) {
+		return nil
+	}
 
 	defer withProgressReaction(ctx, *event.Event.Message.MessageId)()
 

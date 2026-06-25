@@ -25,6 +25,11 @@ type (
 	Op     = xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 )
 
+const (
+	matchedKeywordReplyTaskKey  = "matched_keyword_reply_task"
+	keywordReplyHandledExtraKey = "matched_keyword_reply_handled"
+)
+
 func messageText(ctx context.Context, event *larkim.P2MessageReceiveV1) string {
 	return larkmsg.PreGetTextMsg(ctx, event).GetText()
 }
@@ -165,4 +170,27 @@ func replyTypedMessage(ctx context.Context, msgID string, reply *xmodel.ReplyNTy
 	default:
 		return stderrors.New("unknown reply type")
 	}
+}
+
+func hasMatchedKeywordReplyTask(meta *xhandler.BaseMetaData) bool {
+	if meta == nil {
+		return false
+	}
+	task, ok := meta.GetExtra(matchedKeywordReplyTaskKey)
+	return ok && strings.TrimSpace(task) != ""
+}
+
+func hasHandledKeywordReply(meta *xhandler.BaseMetaData) bool {
+	if meta == nil {
+		return false
+	}
+	handled, ok := meta.GetExtra(keywordReplyHandledExtraKey)
+	return ok && handled == "true"
+}
+
+func markKeywordReplyHandled(meta *xhandler.BaseMetaData) {
+	if meta == nil {
+		return
+	}
+	meta.SetExtra(keywordReplyHandledExtraKey, "true")
 }

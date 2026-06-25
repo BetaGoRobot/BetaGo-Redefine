@@ -67,6 +67,8 @@ const (
 	standardPromptModeAmbient standardPromptMode = "ambient"
 )
 
+const matchedKeywordReplyTaskKey = "matched_keyword_reply_task"
+
 func (chatHandler) CommandDescription() string {
 	return "与机器人对话"
 }
@@ -267,7 +269,7 @@ func (chatHandler) Handle(ctx context.Context, event *larkim.P2MessageReceiveV1,
 	if arg.NoContext {
 		size = 0
 	}
-	return runStandardChat(ctx, event, metaData, chatType, &size, arg.Input)
+	return runStandardChat(ctx, event, metaData, chatType, &size, composeChatInput(metaData, arg.Input))
 }
 
 // shouldUseStreamingCard 判断是否升级到「卡片+流式」展示。
@@ -456,6 +458,26 @@ func buildStandardChatUserPrompt(selfProfile botidentity.Profile, historyLines, 
 	return builder.String()
 }
 
+func composeChatInput(metaData *xhandler.BaseMetaData, rawInput string) string {
+	trimmedInput := strings.TrimSpace(rawInput)
+	keywordTask := keywordReplyTask(metaData)
+	if keywordTask == "" {
+		return trimmedInput
+	}
+	if trimmedInput == "" {
+		return "[关键词回复任务]\n" + keywordTask
+	}
+	return trimmedInput + "\n\n[关键词回复任务]\n" + keywordTask
+}
+
+func keywordReplyTask(metaData *xhandler.BaseMetaData) string {
+	if metaData == nil {
+		return ""
+	}
+	task, _ := metaData.GetExtra(matchedKeywordReplyTaskKey)
+	return strings.TrimSpace(task)
+}
+
 func standardChatLinesBlock(lines []string) string {
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -623,6 +645,7 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
 	currentInput := fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())
+	currentInput = composeChatInput(metaData, currentInput)
 	historyLines := messageList.ToThreadLines()
 	promptMode := resolveStandardPromptMode(event)
 	historyLimit := standardPromptHistoryLimit(promptMode, *size)

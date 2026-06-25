@@ -25,6 +25,8 @@ type ChatMsgOperator struct {
 	OpBase
 }
 
+var WordReplyStage = &WordReplyMsgOperator{}
+
 func (r *ChatMsgOperator) Name() string {
 	return "ChatMsgOperator"
 }
@@ -43,6 +45,7 @@ func (r *ChatMsgOperator) FeatureInfo() *xhandler.FeatureInfo {
 func (r *ChatMsgOperator) Depends() []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {
 	return []xhandler.Stage[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{
 		IntentRecognizeStage,
+		WordReplyStage,
 	}
 }
 
@@ -88,9 +91,23 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	chatID := *event.Event.Message.ChatId
 	openID := messageOpenID(event, meta)
 	decider := ratelimit.GetDecider()
+	if hasHandledKeywordReply(meta) {
+		logs.L().Ctx(ctx).Info("skip chat reply because keyword reply already handled")
+		return nil
+	}
+	keywordTaskMatched := hasMatchedKeywordReplyTask(meta)
 
 	// 优先尝试使用意图识别结果
 	if analysis, ok := GetIntentAnalysisFromMeta(meta); ok {
+		if keywordTaskMatched {
+			decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
+			logs.L().Ctx(ctx).Info("forcing chat reply due to matched keyword reply task",
+				zap.String("intent_type", string(analysis.IntentType)),
+				zap.String("reply_mode", string(analysis.ReplyMode)),
+				zap.String("reason", analysis.Reason),
+			)
+			return xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
+		}
 		// 使用频控决策器决定是否回复
 		decision := decider.DecideIntentReply(ctx, chatID, openID, analysis)
 		if decision.Allowed {
@@ -128,6 +145,11 @@ func (r *ChatMsgOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 	}
 
 	// 意图识别不可用，回退到原有的随机数机制（带频控）
+	if keywordTaskMatched {
+		decider.RecordReply(ctx, chatID, ratelimit.TriggerTypeIntent)
+		logs.L().Ctx(ctx).Info("forcing chat reply due to matched keyword reply task without intent analysis")
+		return xcommand.BindCLI(handlers.Chat)(ctx, event, meta)
+	}
 	logs.L().Ctx(ctx).Info("intent recognition not available, fallback to random rate with rate limit")
 	return r.runWithFallbackRate(ctx, event, meta)
 }

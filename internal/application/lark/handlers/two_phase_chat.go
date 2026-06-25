@@ -98,7 +98,7 @@ func GenerateChatSeqTwoPhase(
 	}
 
 	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
-	currentInput := fmtTwoPhaseInput(event, userName, createTime, input...)
+	currentInput := composeChatInput(metaData, fmtTwoPhaseInput(event, userName, createTime, input...))
 	historyLines := messageList.ToThreadLines()
 	promptMode := resolveStandardPromptMode(event)
 	modeStr := string(promptMode)

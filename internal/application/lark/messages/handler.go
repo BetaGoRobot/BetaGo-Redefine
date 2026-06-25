@@ -84,7 +84,7 @@ func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[
 		AddAsync(&ops.RecordMsgOperator{}).
 		AddAsync(&ops.RepeatMsgOperator{}).
 		AddAsync(&ops.ReactMsgOperator{}).
-		AddAsync(&ops.WordReplyMsgOperator{})
+		AddAsync(ops.WordReplyStage)
 }
 
 func collectMessageFeatures(processors ...*xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []appconfig.Feature {
