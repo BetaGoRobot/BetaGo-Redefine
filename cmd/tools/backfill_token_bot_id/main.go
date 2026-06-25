@@ -86,16 +86,22 @@ func run(ctx context.Context, windowDays int, dryRun bool, batchSize int) error 
 	}
 
 	since := time.Now().Add(-time.Duration(windowDays) * 24 * time.Hour)
-	chatIDs, err := authoritativeChatIDs(ctx, identity.BotOpenID, since)
+	chatIDs, matchedByBotOpenID, err := authoritativeChatIDs(ctx, identity.BotOpenID, since)
 	if err != nil {
 		return fmt.Errorf("aggregate chat ids from opensearch: %w", err)
 	}
 	if len(chatIDs) == 0 {
-		fmt.Println("no chat ids found where user_id == bot_open_id for the requested window; nothing to backfill")
+		fmt.Println("no chat ids found in current lark_msg_index for the requested window; nothing to backfill")
 		return nil
 	}
-	fmt.Printf("bot=%s bot_open_id=%s window_days=%d candidate_chat_ids=%d\n",
-		botID, identity.BotOpenID, windowDays, len(chatIDs))
+	if matchedByBotOpenID {
+		fmt.Printf("bot=%s bot_open_id=%s window_days=%d candidate_chat_ids=%d source=bot_open_id\n",
+			botID, identity.BotOpenID, windowDays, len(chatIDs))
+	} else {
+		fmt.Printf("bot=%s bot_open_id=%s window_days=%d candidate_chat_ids=%d source=index_fallback\n",
+			botID, identity.BotOpenID, windowDays, len(chatIDs))
+		fmt.Println("bot_open_id filter matched no messages; falling back to all chat_ids in current lark_msg_index")
+	}
 
 	// 安全断言：已被其他 bot 认领过的 chat_id 绝不能覆盖；共享群里多个 bot
 	// 都发过言时，这类冲突是正常现象，因此只跳过冲突 chat_id，继续回刷其余记录。
@@ -129,14 +135,14 @@ func run(ctx context.Context, windowDays int, dryRun bool, batchSize int) error 
 	return nil
 }
 
-// authoritativeChatIDs 聚合「user_id == botOpenID」近 N 天出现过的 chat_id 集合。
+// authoritativeChatIDs 优先聚合「user_id == botOpenID」近 N 天出现过的 chat_id 集合。
 //
-// 多 bot 共用同一份 lark_msg_index 时，单纯按时间过滤会把所有 bot 的会话混在一起；
-// 用 user_id 过滤是因为机器人响应消息会以自身身份写入索引，因此 user_id 等于
-// 当前 bot 的 BotOpenID 的文档就是「当前 bot 真正发过言」的会话。这种判定会
-// 漏掉「窗口内 bot 没主动发言」的会话，但绝不会错认领别的 bot 的会话。
-func authoritativeChatIDs(ctx context.Context, botOpenID string, since time.Time) ([]string, error) {
-	req := map[string]any{
+// 历史索引里的 user_id 可能不总是稳定落成 bot_open_id，因此当精确匹配不到数据时，
+// 回退到当前 lark_msg_index 内近 N 天全部 chat_id。这个回退沿用仓内 WebUI 的
+// 既有假设：每个 bot 进程对应独占 index；若线上并非如此，后续冲突检查仍会阻止
+// 覆盖别的 bot 已认领数据。
+func authoritativeChatIDs(ctx context.Context, botOpenID string, since time.Time) ([]string, bool, error) {
+	chatIDs, err := aggregateChatIDs(ctx, map[string]any{
 		"size": 0,
 		"query": map[string]any{
 			"bool": map[string]any{
@@ -158,7 +164,38 @@ func authoritativeChatIDs(ctx context.Context, botOpenID string, since time.Time
 				},
 			},
 		},
+	})
+	if err != nil {
+		return nil, false, err
 	}
+	if len(chatIDs) > 0 {
+		return chatIDs, true, nil
+	}
+	chatIDs, err = aggregateChatIDs(ctx, map[string]any{
+		"size": 0,
+		"query": map[string]any{
+			"range": map[string]any{
+				"create_time_v2": map[string]any{
+					"gte": since.Format(time.RFC3339),
+				},
+			},
+		},
+		"aggs": map[string]any{
+			"chat_ids": map[string]any{
+				"terms": map[string]any{
+					"field": "chat_id",
+					"size":  10000,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return chatIDs, false, nil
+}
+
+func aggregateChatIDs(ctx context.Context, req map[string]any) ([]string, error) {
 	resp, err := opensearch.SearchData(ctx, appconfig.GetLarkMsgIndex(ctx, "", ""), req)
 	if err != nil {
 		return nil, err
