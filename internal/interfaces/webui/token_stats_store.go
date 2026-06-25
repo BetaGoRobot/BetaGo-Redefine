@@ -26,11 +26,16 @@ func (s *tokenStatsStore) available() bool {
 	return s != nil && s.db != nil
 }
 
-// withBot 返回带 bot_id 过滤的基础查询。bot_id 为空时不加过滤（用于回刷脚本场景）。
+// withBot 返回带 bot_id 过滤的基础查询。
+//
+// 过渡期兼容：历史 llm_token_usage_records.bot_id 默认为 ''，回刷前列表 / 趋势
+// 会全空。这里把 `bot_id = self` 与 `bot_id = ''` 一起放行，保证旧数据仍可见；
+// 回刷脚本跑完之后空字符串记录消失，自然就只剩当前 bot 的精确数据。
+// 单进程下其他 bot 的写入也不会进入本表的"未归属"段，因此这种放行是安全的。
 func (s *tokenStatsStore) withBot(ctx context.Context) *gorm.DB {
 	q := s.db.WithContext(ctx).Model(&model.LlmTokenUsageRecord{})
 	if s.botID != "" {
-		q = q.Where("bot_id = ?", s.botID)
+		q = q.Where("bot_id = ? OR bot_id = ''", s.botID)
 	}
 	return q
 }

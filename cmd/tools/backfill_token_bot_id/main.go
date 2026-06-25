@@ -3,12 +3,13 @@
 //
 // 工作流：
 //  1. 加载与 larkrobot 相同的配置与基础设施（db / opensearch）。
-//  2. 从当前 bot 进程独占的 lark_msg_index 聚合"近 N 天出现过的 chat_id 集合"
-//     作为权威归属白名单。
+//  2. 在 lark_msg_index 中按 user_id == BotOpenID 过滤近 N 天的消息文档，聚合
+//     出"当前 bot 真正发过言的 chat_id 集合"作为权威归属白名单。
 //  3. 在 token 表里把 bot_id='' 且 chat_id 命中白名单的行 UPDATE 成当前 bot id。
 //
-// 强假设：每个 bot 进程使用独立的 lark_msg_index。如果两个 bot 共用一份索引，
-// 数据归属本身就无法切分，需要先在 OpenSearch 侧做隔离。
+// 注意：本脚本依赖"机器人发过言"这一信号——若某会话窗口内 bot 没主动发言
+// （例如只接收消息或只补 token 计费），那个 chat_id 不会被回刷，会保留 bot_id=''。
+// 这对历史归属来说是「稍微不准但一定不错归属」的取舍：宁可漏认领也不能错认领。
 //
 // 用法：
 //
@@ -65,10 +66,14 @@ func run(ctx context.Context, windowDays int, dryRun bool, batchSize int) error 
 	if cfg == nil || cfg.LarkConfig == nil || strings.TrimSpace(cfg.LarkConfig.AppID) == "" {
 		return errors.New("config missing lark_config.app_id; cannot identify bot")
 	}
-	botID := "lark:" + strings.TrimSpace(botidentity.Current().AppID)
-	if botID == "lark:" {
+	identity := botidentity.Current()
+	if identity.AppID == "" {
 		return errors.New("bot identity unavailable; check lark_config.app_id")
 	}
+	if identity.BotOpenID == "" {
+		return errors.New("config missing lark_config.bot_open_id; cannot match bot user_id in lark_msg_index")
+	}
+	botID := "lark:" + strings.TrimSpace(identity.AppID)
 
 	db.Init(cfg.DBConfig)
 	gormDB := db.DB()
@@ -81,26 +86,35 @@ func run(ctx context.Context, windowDays int, dryRun bool, batchSize int) error 
 	}
 
 	since := time.Now().Add(-time.Duration(windowDays) * 24 * time.Hour)
-	chatIDs, err := authoritativeChatIDs(ctx, since)
+	chatIDs, err := authoritativeChatIDs(ctx, identity.BotOpenID, since)
 	if err != nil {
 		return fmt.Errorf("aggregate chat ids from opensearch: %w", err)
 	}
 	if len(chatIDs) == 0 {
-		fmt.Println("no chat ids found in lark_msg_index for the requested window; nothing to backfill")
+		fmt.Println("no chat ids found where user_id == bot_open_id for the requested window; nothing to backfill")
 		return nil
 	}
-	fmt.Printf("bot=%s window_days=%d candidate_chat_ids=%d\n", botID, windowDays, len(chatIDs))
+	fmt.Printf("bot=%s bot_open_id=%s window_days=%d candidate_chat_ids=%d\n",
+		botID, identity.BotOpenID, windowDays, len(chatIDs))
 
-	// 安全断言：候选 chat_id 不应已被其他 bot 认领。若发现冲突，必须先排查
-	// OpenSearch 索引是否真的按 bot 隔离，再决定是否继续。
-	if conflicts, err := findConflicts(ctx, gormDB, botID, chatIDs, batchSize); err != nil {
+	// 安全断言：已被其他 bot 认领过的 chat_id 绝不能覆盖；共享群里多个 bot
+	// 都发过言时，这类冲突是正常现象，因此只跳过冲突 chat_id，继续回刷其余记录。
+	conflictSet, conflictPairs, err := findConflicts(ctx, gormDB, botID, chatIDs, batchSize)
+	if err != nil {
 		return fmt.Errorf("conflict check: %w", err)
-	} else if len(conflicts) > 0 {
-		sample := conflicts
+	}
+	if len(conflictPairs) > 0 {
+		sample := conflictPairs
 		if len(sample) > 5 {
 			sample = sample[:5]
 		}
-		return fmt.Errorf("aborting: %d chat_id already owned by other bot_id, sample=%v", len(conflicts), sample)
+		fmt.Printf("skipping %d conflicting chat_ids already owned by other bot_id, sample=%v\n",
+			len(conflictSet), sample)
+	}
+	chatIDs = filterChatIDs(chatIDs, conflictSet)
+	if len(chatIDs) == 0 {
+		fmt.Println("no non-conflicting chat ids left after ownership check; nothing to backfill")
+		return nil
 	}
 
 	total, err := updateRows(ctx, gormDB, botID, chatIDs, batchSize, dryRun)
@@ -115,14 +129,24 @@ func run(ctx context.Context, windowDays int, dryRun bool, batchSize int) error 
 	return nil
 }
 
-// authoritativeChatIDs 聚合当前 bot 进程独占索引中的 chat_id 集合。
-func authoritativeChatIDs(ctx context.Context, since time.Time) ([]string, error) {
+// authoritativeChatIDs 聚合「user_id == botOpenID」近 N 天出现过的 chat_id 集合。
+//
+// 多 bot 共用同一份 lark_msg_index 时，单纯按时间过滤会把所有 bot 的会话混在一起；
+// 用 user_id 过滤是因为机器人响应消息会以自身身份写入索引，因此 user_id 等于
+// 当前 bot 的 BotOpenID 的文档就是「当前 bot 真正发过言」的会话。这种判定会
+// 漏掉「窗口内 bot 没主动发言」的会话，但绝不会错认领别的 bot 的会话。
+func authoritativeChatIDs(ctx context.Context, botOpenID string, since time.Time) ([]string, error) {
 	req := map[string]any{
 		"size": 0,
 		"query": map[string]any{
-			"range": map[string]any{
-				"create_time_v2": map[string]any{
-					"gte": since.Format(time.RFC3339),
+			"bool": map[string]any{
+				"must": []map[string]any{
+					{"term": map[string]any{"user_id": botOpenID}},
+					{"range": map[string]any{
+						"create_time_v2": map[string]any{
+							"gte": since.Format(time.RFC3339),
+						},
+					}},
 				},
 			},
 		},
@@ -162,12 +186,14 @@ func authoritativeChatIDs(ctx context.Context, since time.Time) ([]string, error
 	return out, nil
 }
 
-// findConflicts 返回已经被别的 bot_id 认领过的 (chat_id, bot_id) 对。
-func findConflicts(ctx context.Context, gormDB *gorm.DB, botID string, chatIDs []string, batchSize int) ([]string, error) {
+// findConflicts 返回已经被别的 bot_id 认领过的 chat_id 集合，以及展示用的
+// (chat_id, bot_id) 样例对。
+func findConflicts(ctx context.Context, gormDB *gorm.DB, botID string, chatIDs []string, batchSize int) (map[string]struct{}, []string, error) {
 	type row struct {
 		ChatID string
 		BotID  string
 	}
+	conflictSet := make(map[string]struct{})
 	conflicts := make([]string, 0)
 	for start := 0; start < len(chatIDs); start += batchSize {
 		end := start + batchSize
@@ -184,13 +210,32 @@ func findConflicts(ctx context.Context, gormDB *gorm.DB, botID string, chatIDs [
 			Where("bot_id <> ?", botID).
 			Scan(&rows).Error
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, r := range rows {
-			conflicts = append(conflicts, fmt.Sprintf("%s=%s", r.ChatID, r.BotID))
+			chatID := strings.TrimSpace(r.ChatID)
+			if chatID == "" {
+				continue
+			}
+			conflictSet[chatID] = struct{}{}
+			conflicts = append(conflicts, fmt.Sprintf("%s=%s", chatID, strings.TrimSpace(r.BotID)))
 		}
 	}
-	return conflicts, nil
+	return conflictSet, conflicts, nil
+}
+
+func filterChatIDs(chatIDs []string, exclude map[string]struct{}) []string {
+	if len(exclude) == 0 {
+		return chatIDs
+	}
+	filtered := make([]string, 0, len(chatIDs))
+	for _, chatID := range chatIDs {
+		if _, blocked := exclude[chatID]; blocked {
+			continue
+		}
+		filtered = append(filtered, chatID)
+	}
+	return filtered
 }
 
 // updateRows 把候选 chat_id 中 bot_id='' 的行 UPDATE 成当前 bot id。
