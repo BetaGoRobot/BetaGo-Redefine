@@ -91,6 +91,31 @@ func (r *PendingOrderRepository) MarkCancelled(ctx context.Context, id, payloadH
 	return nil
 }
 
+func (r *PendingOrderRepository) UpdateDraft(ctx context.Context, order luckin.PendingOrder, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	updates := map[string]any{
+		"create_order_payload": datatypes.JSON(defaultJSON(order.CreateOrderPayload)),
+		"payload_hash":         order.PayloadHash,
+		"preview_result":       datatypes.JSON(defaultJSON(order.PreviewResult)),
+		"updated_at":           now,
+	}
+	ins := r.q.LuckinPendingOrder
+	result, err := ins.WithContext(ctx).
+		Where(ins.ID.Eq(order.ID)).
+		Where(ins.Status.Eq(string(luckin.PendingStatusPending))).
+		Where(ins.ExpiresAt.Gt(now)).
+		Updates(updates)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected == 0 {
+		return luckin.ErrPendingOrderNotConfirmable
+	}
+	return nil
+}
+
 func buildPendingOrderRow(order luckin.PendingOrder) *model.LuckinPendingOrder {
 	confirmedAt := time.Time{}
 	if order.ConfirmedAt != nil {

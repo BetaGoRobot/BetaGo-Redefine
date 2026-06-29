@@ -89,7 +89,9 @@ func couponSelectForm(order PendingOrder, available, selected []string) map[stri
 		Type:           "default",
 		FormActionType: "submit",
 		Payload: map[string]any{
-			cardactionproto.ActionField: cardactionproto.ActionLuckinCouponApply,
+			cardactionproto.ActionField:         cardactionproto.ActionLuckinCouponApply,
+			cardactionproto.PendingOrderIDField: order.ID,
+			cardactionproto.PayloadHashField:    order.PayloadHash,
 		},
 	})
 	return map[string]any{

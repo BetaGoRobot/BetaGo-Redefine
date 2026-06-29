@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
 
@@ -163,6 +165,75 @@ func TestShopStartCardUsesRecentShops(t *testing.T) {
 	}
 }
 
+func TestSplitOrderReplySuffixIsUniquePerOrder(t *testing.T) {
+	s1 := splitOrderReplySuffix("_luckinSplitOrder", "po_1", 0)
+	s2 := splitOrderReplySuffix("_luckinSplitOrder", "po_2", 1)
+	if s1 == s2 {
+		t.Fatalf("suffix should differ: %q vs %q", s1, s2)
+	}
+	if !strings.Contains(s1, "po_1") || !strings.Contains(s2, "po_2") {
+		t.Fatalf("suffix should include order id: %q %q", s1, s2)
+	}
+}
+
+func TestHandleCouponApplyForSplitPendingOrderDoesNotRequireSession(t *testing.T) {
+	order := luckin.NewPendingOrder(luckin.NewPendingOrderRequest{
+		AppID:           "app",
+		BotOpenID:       "bot",
+		ChatID:          "oc_chat",
+		InitiatorOpenID: "ou_user",
+		RequesterOpenID: "ou_user",
+		CheckoutMode:    luckin.CheckoutModeInitiatorUnified,
+		Credential:      luckin.Credential{Scope: luckin.CredentialScope{Type: luckin.ScopePersonal, ID: "ou_user"}},
+		CreateOrderPayload: json.RawMessage(`{
+			"deptId":1,
+			"longitude":116.39,
+			"latitude":39.98,
+			"productList":[{"amount":1,"productId":2,"skuCode":"sku-1"}],
+			"couponCodeList":[]
+		}`),
+		PreviewResult: json.RawMessage(`{"couponCodeList":["coupon-a"]}`),
+		CartSnapshot: []luckin.CartItem{{
+			LineID:        "line-1",
+			ProductID:     2,
+			SkuCode:       "sku-1",
+			ProductName:   "拿铁",
+			Amount:        1,
+			AddedByOpenID: "ou_user",
+		}},
+		Now: time.Now(),
+	})
+	pending := &memPendingStore{order: order}
+	tokens := &memCredentialStore{credential: luckin.Credential{Token: "token-1", Scope: order.CredentialScope}}
+	draft := luckin.NewDraftService(&fakeDraftToolCaller{
+		result: mcpclient.CallResult{Content: json.RawMessage(`[{"type":"text","text":"{\"data\":{\"couponCodeList\":[\"coupon-a\"],\"discountPrice\":9.9}}"}]`)},
+	}, luckin.ServerURL)
+
+	task, err := handleCouponApply(&memSessionStore{}, draft, pending, tokens)(context.Background(), testActionContextNoMsgWithForm(
+		map[string]any{
+			cardactionproto.ActionField:         cardactionproto.ActionLuckinCouponApply,
+			cardactionproto.PendingOrderIDField: order.ID,
+			cardactionproto.PayloadHashField:    order.PayloadHash,
+		},
+		map[string]any{
+			cardactionproto.LuckinCouponFormField: []string{"coupon-a"},
+		},
+	))
+	if err != nil {
+		t.Fatalf("handleCouponApply error = %v", err)
+	}
+	if task == nil {
+		t.Fatalf("expected async task")
+	}
+	task(context.Background())
+	if !pending.updated {
+		t.Fatalf("expected pending order draft updated")
+	}
+	if !strings.Contains(string(pending.order.CreateOrderPayload), "coupon-a") {
+		t.Fatalf("coupon not written into payload: %s", pending.order.CreateOrderPayload)
+	}
+}
+
 func mustMarshalForTest(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -173,6 +244,18 @@ func mustMarshalForTest(v any) string {
 
 func testActionContextWithForm(value, form map[string]any) *appcardaction.Context {
 	ctx := testActionContext(value)
+	ctx.Action.FormValue = form
+	return ctx
+}
+
+func testActionContextNoMsgWithForm(value, form map[string]any) *appcardaction.Context {
+	ctx := testActionContextNoMsg(value)
+	ctx.Action.FormValue = form
+	return ctx
+}
+
+func testActionContextWithMsgAndForm(value, form map[string]any, messageID string) *appcardaction.Context {
+	ctx := testActionContextWithMsg(value, messageID)
 	ctx.Action.FormValue = form
 	return ctx
 }
@@ -256,4 +339,40 @@ func (w *memCredentialWriter) DeleteToken(ctx context.Context, lookup luckin.Cre
 	w.deleteCalled = true
 	w.lookup = lookup
 	return w.deleted, nil
+}
+
+type memPendingStore struct {
+	order   luckin.PendingOrder
+	updated bool
+}
+
+func (s *memPendingStore) CreatePendingOrder(ctx context.Context, order luckin.PendingOrder) error {
+	s.order = order
+	return nil
+}
+
+func (s *memPendingStore) FindPendingOrder(ctx context.Context, id string) (luckin.PendingOrder, error) {
+	return s.order, nil
+}
+
+func (s *memPendingStore) UpdateDraft(ctx context.Context, order luckin.PendingOrder, now time.Time) error {
+	s.order = order
+	s.updated = true
+	return nil
+}
+
+type memCredentialStore struct {
+	credential luckin.Credential
+}
+
+func (s *memCredentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLookup) (luckin.Credential, error) {
+	return s.credential, nil
+}
+
+type fakeDraftToolCaller struct {
+	result mcpclient.CallResult
+}
+
+func (c *fakeDraftToolCaller) CallTool(ctx context.Context, req mcpclient.CallRequest) (mcpclient.CallResult, error) {
+	return c.result, nil
 }

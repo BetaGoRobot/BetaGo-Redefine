@@ -128,6 +128,11 @@ func (s *fakePendingStore) MarkCancelled(ctx context.Context, id, payloadHash, o
 	return nil
 }
 
+func (s *fakePendingStore) UpdateDraft(ctx context.Context, order PendingOrder, now time.Time) error {
+	s.order = order
+	return nil
+}
+
 type fakeCredentialLookup struct {
 	credential Credential
 	lookup     CredentialLookup

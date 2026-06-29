@@ -35,6 +35,7 @@ type PendingOrderStore interface {
 	FindPendingOrder(context.Context, string) (PendingOrder, error)
 	MarkConfirmed(context.Context, string, string, string, json.RawMessage, time.Time) error
 	MarkCancelled(context.Context, string, string, string, string, time.Time) error
+	UpdateDraft(context.Context, PendingOrder, time.Time) error
 }
 
 type ToolCaller interface {
