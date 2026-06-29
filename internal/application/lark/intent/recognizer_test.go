@@ -16,6 +16,10 @@ func TestIntentSystemPromptKeepsStandardOnlyInteractionMode(t *testing.T) {
 		"reply_mode 用于判断这条消息属于哪种回复模式",
 		"user_willingness 表示用户此刻主观上有多希望机器人接话",
 		"interrupt_risk 表示如果机器人现在插话，打扰感有多强",
+		"MessageContext",
+		"direct_addressing=true",
+		"mentioned_bot=true",
+		"reply_mode 通常应优先考虑 direct",
 		`"interaction_mode": "standard"`,
 	}
 	for _, phrase := range requiredPhrases {
@@ -151,6 +155,38 @@ func TestAnalyzeMessageIncludesRecentLinesInUserPrompt(t *testing.T) {
 	wantPrompt := buildIntentUserPrompt("把刚才讨论的方案接着说完", recent)
 	if captured.UserPrompt != wantPrompt {
 		t.Fatalf("user prompt = %q, want %q", captured.UserPrompt, wantPrompt)
+	}
+}
+
+func TestAnalyzeMessageWithContextIncludesDirectSignalsInUserPrompt(t *testing.T) {
+	oldResponseTextWithCacheFn := responseTextWithCacheFn
+	defer func() {
+		responseTextWithCacheFn = oldResponseTextWithCacheFn
+	}()
+
+	var captured ark_dal.CachedResponseRequest
+	responseTextWithCacheFn = func(ctx context.Context, req ark_dal.CachedResponseRequest, scope llmusage.Scope) (string, error) {
+		captured = req
+		return `{"intent_type":"chat","need_reply":true,"reply_confidence":72,"reason":"用户明确在找机器人接话","suggest_action":"chat","interaction_mode":"standard","reply_mode":"direct","user_willingness":95,"interrupt_risk":5}`, nil
+	}
+
+	msgCtx := MessageContext{
+		ChatType:     "group",
+		MentionedBot: true,
+		Direct:       true,
+	}
+	if _, err := analyzeMessageWithContext(context.Background(), "来杯生椰拿铁", nil, msgCtx, "intent-lite", testIntentScope()); err != nil {
+		t.Fatalf("analyzeMessageWithContext() error = %v", err)
+	}
+
+	wantPrompt := buildIntentUserPromptWithContext("来杯生椰拿铁", nil, msgCtx)
+	if captured.UserPrompt != wantPrompt {
+		t.Fatalf("user prompt = %q, want %q", captured.UserPrompt, wantPrompt)
+	}
+	for _, want := range []string{"消息元信息", "chat_type: group", "mentioned_bot: true", "direct_addressing: true"} {
+		if !strings.Contains(captured.UserPrompt, want) {
+			t.Fatalf("user prompt = %q, want contain %q", captured.UserPrompt, want)
+		}
 	}
 }
 

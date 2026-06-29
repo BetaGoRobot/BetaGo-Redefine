@@ -40,9 +40,8 @@ func bindTokenGuideParams() *arktools.Param {
 
 func shopSearchParams() *arktools.Param {
 	return arktools.NewParams("object").
-		AddProp("locationText", &arktools.Prop{Type: "string", Desc: "用户描述的位置，用于定位附近门店，例如“上海人民广场”“北京安贞环宇荟”"}).
-		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称关键词，可选，用于在附近门店中进一步过滤"}).
-		AddRequired("locationText")
+		AddProp("locationText", &arktools.Prop{Type: "string", Desc: "用户描述的位置，可选；如果用户没有提供位置，传空对象 {}，系统会发送门店搜索入口卡片让用户输入位置或选择最近门店"}).
+		AddProp("deptName", &arktools.Prop{Type: "string", Desc: "门店名称关键词，可选，用于在附近门店中进一步过滤"})
 }
 
 func productSearchParams() *arktools.Param {

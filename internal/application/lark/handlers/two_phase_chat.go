@@ -128,13 +128,17 @@ func GenerateChatSeqTwoPhase(
 
 	// 工具计划阶段：仅在 intent 表明需要时调用，避免随便闲聊也付一次 LLM token。
 	if twophase.ShouldRunToolPlanner(intent) {
-		hints, planErr := twophase.PlanTools(
+		hints, planErr := twophase.PlanToolsWithContext(
 			ctx,
 			chatID,
 			currentOpenID(event, metaData),
 			accessor.IntentLiteModel(),
 			currentInput,
 			historyLines,
+			twophase.PlannerMessageContext{
+				Direct:       promptMode == standardPromptModeDirect,
+				MentionedBot: event != nil && event.Event != nil && event.Event.Message != nil && larkmsg.IsMentioned(event.Event.Message.Mentions),
+			},
 			baseScope,
 		)
 		if planErr != nil {

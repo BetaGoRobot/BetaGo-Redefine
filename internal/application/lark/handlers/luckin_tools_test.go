@@ -23,3 +23,18 @@ func TestSchedulableToolsDoNotIncludeLuckinCreate(t *testing.T) {
 		t.Fatalf("schedulable tools include luckin_order_prepare_create")
 	}
 }
+
+func TestLuckinShopSearchDoesNotRequireLocationText(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	tools := BuildLarkTools()
+	unit, ok := tools.Get("luckin_shop_search")
+	if !ok {
+		t.Fatalf("lark tools missing luckin_shop_search")
+	}
+
+	for _, required := range unit.Parameters.Required {
+		if required == "locationText" {
+			t.Fatalf("luckin_shop_search should not require locationText, got required=%v", unit.Parameters.Required)
+		}
+	}
+}

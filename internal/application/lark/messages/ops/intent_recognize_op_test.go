@@ -75,6 +75,33 @@ func TestIntentRecognizeOperatorRunSkipsWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestIntentRecognizeOperatorPreRunDoesNotSkipMentionedMessages(t *testing.T) {
+	op := &IntentRecognizeOperator{}
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
+
+	group := "group"
+	botOpenID := "ou_test_bot"
+	mentionKey := "@_user_1"
+	mentionName := "机器人"
+	event := testMessageEvent("group", "oc_chat", "ou_actor")
+	event.Event.Message.ChatType = &group
+	msgType := larkim.MsgTypeText
+	text := `{"text":"@_user_1 来杯生椰拿铁"}`
+	event.Event.Message.MessageType = &msgType
+	event.Event.Message.Content = &text
+	event.Event.Message.Mentions = []*larkim.MentionEvent{{
+		Key:  &mentionKey,
+		Name: &mentionName,
+		Id: &larkim.UserId{
+			OpenId: &botOpenID,
+		},
+	}}
+
+	if err := op.PreRun(context.Background(), event, meta); err != nil {
+		t.Fatalf("PreRun() should not skip mentioned messages, got error = %v", err)
+	}
+}
+
 func testMessageEvent(chatType, chatID, openID string) *larkim.P2MessageReceiveV1 {
 	text := `{"text":"hello"}`
 	msgID := "om_test"

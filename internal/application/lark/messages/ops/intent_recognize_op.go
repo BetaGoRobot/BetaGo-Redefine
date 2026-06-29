@@ -9,6 +9,7 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/pkg/errors"
@@ -77,10 +78,6 @@ func (r *IntentRecognizeOperator) PreRun(ctx context.Context, event *larkim.P2Me
 	if err := skipIfCommand(ctx, r.Name(), event); err != nil {
 		return err
 	}
-
-	if err := skipIfMentioned(r.Name(), event); err != nil { // mentioned直接不过意图识别了就。
-		return err
-	}
 	if err := skipIfChatModerated(ctx, r.Name(), event, meta); err != nil {
 		return err
 	}
@@ -113,7 +110,7 @@ func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2Messa
 	}
 
 	// 调用意图识别
-	analysis, err := r.analyzeIntent(ctx, text, recentLines, buildIntentLLMUsageScope(ctx, event, meta))
+	analysis, err := r.analyzeIntent(ctx, event, text, recentLines, buildIntentLLMUsageScope(ctx, event, meta))
 	if err != nil {
 		logs.L().Ctx(ctx).Error("intent analysis failed", zap.Error(err))
 		return nil
@@ -140,11 +137,16 @@ func (r *IntentRecognizeOperator) intentConfigAccessor(ctx context.Context, even
 	return messageConfigAccessor(ctx, event, meta)
 }
 
-func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, text string, recentLines []string, scope llmusage.Scope) (*intent.IntentAnalysis, error) {
+func (r *IntentRecognizeOperator) analyzeIntent(ctx context.Context, event *larkim.P2MessageReceiveV1, text string, recentLines []string, scope llmusage.Scope) (*intent.IntentAnalysis, error) {
 	if r != nil && r.analyzer != nil {
 		return r.analyzer(ctx, text, recentLines, scope)
 	}
-	return intent.AnalyzeMessage(ctx, text, recentLines, scope)
+	msgCtx := intent.MessageContext{
+		ChatType:     currentChatType(event),
+		MentionedBot: event != nil && event.Event != nil && event.Event.Message != nil && larkmsg.IsMentioned(event.Event.Message.Mentions),
+		Direct:       currentChatType(event) == "p2p" || (event != nil && event.Event != nil && event.Event.Message != nil && larkmsg.IsMentioned(event.Event.Message.Mentions)),
+	}
+	return intent.AnalyzeMessageWithContext(ctx, text, recentLines, msgCtx, scope)
 }
 
 func buildIntentLLMUsageScope(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) llmusage.Scope {
