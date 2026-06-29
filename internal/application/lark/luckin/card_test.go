@@ -71,6 +71,23 @@ func TestBuildPendingOrderCardDoesNotExposePayload(t *testing.T) {
 	}
 }
 
+func TestBuildCartCardCheckoutModeFormContainsSubmitButton(t *testing.T) {
+	card := BuildCartCard(ShopSelection{DeptName: "门店A"}, Cart{
+		Items: []CartItem{{
+			ProductID:   9,
+			SkuCode:     "SP-9",
+			ProductName: "拿铁",
+			Amount:      1,
+			LineID:      "line-1",
+		}},
+	}, CheckoutModeInitiatorUnified)
+
+	text := mustMarshalForTest(card)
+	if !containsAll(text, "luckin_checkout_mode_form", "luckin_checkout_submit", "\"form_action_type\":\"submit\"", "luckin_cart_checkout") {
+		t.Fatalf("cart card missing checkout submit form: %s", text)
+	}
+}
+
 func mustMarshalForTest(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)

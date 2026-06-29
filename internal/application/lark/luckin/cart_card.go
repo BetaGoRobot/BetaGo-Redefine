@@ -31,14 +31,6 @@ func cartElements(shop ShopSelection, cart Cart, mode CheckoutMode) []any {
 		elements = append(elements, larkmsg.Divider(), cartItemRow(item))
 	}
 	elements = append(elements, larkmsg.Divider())
-	elements = append(elements, larkmsg.ButtonRow("none",
-		larkmsg.Button("去结算（仅发起人可点）", larkmsg.ButtonOptions{
-			Type: "primary",
-			Payload: map[string]any{
-				cardactionproto.ActionField: cardactionproto.ActionLuckinCartCheckout,
-			},
-		}),
-	))
 	return elements
 }
 
@@ -51,6 +43,14 @@ func checkoutModeForm(mode CheckoutMode) map[string]any {
 	if mode == CheckoutModeSelfService {
 		description = "自我下单：结算者只下自己加入的商品，任何人都能各自完成自己的订单。"
 	}
+	checkoutSubmit := larkmsg.Button("去结算（仅发起人可点）", larkmsg.ButtonOptions{
+		Name:           "luckin_checkout_submit",
+		Type:           "primary",
+		FormActionType: "submit",
+		Payload: map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinCartCheckout,
+		},
+	})
 	return map[string]any{
 		"tag":                "form",
 		"name":               "luckin_checkout_mode_form",
@@ -65,6 +65,7 @@ func checkoutModeForm(mode CheckoutMode) map[string]any {
 				Options:       options,
 			}),
 			larkmsg.HintMarkdown(description),
+			larkmsg.ButtonRow("none", checkoutSubmit),
 		},
 	}
 }
