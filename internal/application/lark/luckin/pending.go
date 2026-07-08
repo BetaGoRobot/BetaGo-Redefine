@@ -23,6 +23,16 @@ const (
 var (
 	ErrPendingOrderNotFound       = errors.New("luckin pending order not found")
 	ErrPendingOrderNotConfirmable = errors.New("luckin pending order cannot be confirmed")
+	// ErrPendingOrderAlreadyDone 已经被确认或取消过；一般是重复点击/回放。
+	ErrPendingOrderAlreadyDone = errors.New("luckin pending order already confirmed or cancelled")
+	// ErrPendingOrderExpired 已过 10 分钟有效期。
+	ErrPendingOrderExpired = errors.New("luckin pending order expired")
+	// ErrPendingOrderPayloadMismatch 卡片按钮携带的 payload_hash 与 DB 里的 row 对不上。
+	ErrPendingOrderPayloadMismatch = errors.New("luckin pending order payload mismatch")
+	// ErrPendingOrderNotOwnedByOperator 点击确认的人不是当初结算的那个人；SelfService 单归属人才能确认。
+	ErrPendingOrderNotOwnedByOperator = errors.New("luckin pending order not owned by operator")
+	// ErrPendingOrderChatMismatch 卡片跨了群 / 跨了会话。
+	ErrPendingOrderChatMismatch = errors.New("luckin pending order chat mismatch")
 )
 
 type PendingOrder struct {

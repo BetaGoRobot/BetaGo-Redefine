@@ -57,19 +57,20 @@ func TestConfirmationServiceConfirmRejectsInvalidPendingOrder(t *testing.T) {
 	now := time.Unix(100, 0)
 	base := testConfirmableOrder(json.RawMessage(`{"deptId":1}`), now.Add(time.Minute))
 	tests := []struct {
-		name string
-		req  ConfirmRequest
-		edit func(*PendingOrder)
+		name    string
+		req     ConfirmRequest
+		edit    func(*PendingOrder)
+		wantErr error
 	}{
-		{name: "hash", req: ConfirmRequest{PayloadHash: "wrong", OperatorOpenID: base.RequesterOpenID, ChatID: base.ChatID, Now: now}},
-		{name: "chat", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: base.RequesterOpenID, ChatID: "other-chat", Now: now}},
-		{name: "operator", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: "other-user", ChatID: base.ChatID, Now: now}},
+		{name: "hash", req: ConfirmRequest{PayloadHash: "wrong", OperatorOpenID: base.RequesterOpenID, ChatID: base.ChatID, Now: now}, wantErr: ErrPendingOrderPayloadMismatch},
+		{name: "chat", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: base.RequesterOpenID, ChatID: "other-chat", Now: now}, wantErr: ErrPendingOrderChatMismatch},
+		{name: "operator", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: "other-user", ChatID: base.ChatID, Now: now}, wantErr: ErrPendingOrderNotOwnedByOperator},
 		{name: "status", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: base.RequesterOpenID, ChatID: base.ChatID, Now: now}, edit: func(order *PendingOrder) {
 			order.Status = PendingStatusCancelled
-		}},
+		}, wantErr: ErrPendingOrderAlreadyDone},
 		{name: "expired", req: ConfirmRequest{PayloadHash: base.PayloadHash, OperatorOpenID: base.RequesterOpenID, ChatID: base.ChatID, Now: now}, edit: func(order *PendingOrder) {
 			order.ExpiresAt = now.Add(-time.Second)
-		}},
+		}, wantErr: ErrPendingOrderExpired},
 	}
 
 	for _, tt := range tests {
@@ -81,8 +82,8 @@ func TestConfirmationServiceConfirmRejectsInvalidPendingOrder(t *testing.T) {
 			tt.req.PendingOrderID = order.ID
 			store := &fakePendingStore{order: order}
 			service := NewConfirmationService(store, &fakeCredentialLookup{}, &fakeToolCaller{}, ServerURL)
-			if _, err := service.Confirm(context.Background(), tt.req); !errors.Is(err, ErrPendingOrderNotConfirmable) {
-				t.Fatalf("Confirm err = %v, want ErrPendingOrderNotConfirmable", err)
+			if _, err := service.Confirm(context.Background(), tt.req); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Confirm err = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}

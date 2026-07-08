@@ -107,9 +107,22 @@ func handleConfirm(service luckin.ConfirmationService, session luckin.SessionSto
 				return nil
 			})
 			if lockErr != nil {
-				logs.L().Ctx(runCtx).Warn("luckin confirm order failed", zap.String("pending_id", id), zap.Error(lockErr))
+				logs.L().Ctx(runCtx).Warn("luckin confirm order failed",
+					zap.String("pending_id", id),
+					zap.String("payload_hash", hash),
+					zap.String("operator_open_id", req.OperatorOpenID),
+					zap.String("chat_id", req.ChatID),
+					zap.String("msg_id", msgID),
+					zap.Bool("has_session", ok),
+					zap.Error(lockErr),
+				)
+				// 双击/回放：DB 里已经是 confirmed/cancelled，之前那次已经把成功卡贴回去了；
+				// 什么都不改，避免用二次点击的错误文案覆盖已经成功的卡片。
+				if errors.Is(lockErr, luckin.ErrPendingOrderAlreadyDone) {
+					return
+				}
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建订单失败："+lockErr.Error()), initiatorOpenID))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard(friendlyConfirmError("创建订单失败", lockErr)), initiatorOpenID))
 				}
 				return
 			}
@@ -153,9 +166,20 @@ func handleCancel(service luckin.ConfirmationService, session luckin.SessionStor
 				return service.Cancel(runCtx, req)
 			})
 			if lockErr != nil {
-				logs.L().Ctx(runCtx).Warn("luckin cancel order failed", zap.String("pending_id", id), zap.Error(lockErr))
+				logs.L().Ctx(runCtx).Warn("luckin cancel order failed",
+					zap.String("pending_id", id),
+					zap.String("payload_hash", hash),
+					zap.String("operator_open_id", req.OperatorOpenID),
+					zap.String("chat_id", req.ChatID),
+					zap.String("msg_id", msgID),
+					zap.Bool("has_session", ok),
+					zap.Error(lockErr),
+				)
+				if errors.Is(lockErr, luckin.ErrPendingOrderAlreadyDone) {
+					return
+				}
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("取消失败："+lockErr.Error()), initiatorOpenID))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard(friendlyConfirmError("取消失败", lockErr)), initiatorOpenID))
 				}
 				return
 			}
@@ -167,6 +191,28 @@ func handleCancel(service luckin.ConfirmationService, session luckin.SessionStor
 }
 
 type credentialStore struct{}
+
+// friendlyConfirmError 把 pending-order 前置校验的 sentinel error 映射成 UI 文案。
+// prefix 用来区分是「确认下单」还是「取消订单」路径。未识别的 error 直接透传给用户，
+// 保持和以前一致的 "prefix: 原始错误" 形态。
+func friendlyConfirmError(prefix string, err error) string {
+	switch {
+	case errors.Is(err, luckin.ErrPendingOrderAlreadyDone):
+		return "该订单已经处理过，请勿重复点击"
+	case errors.Is(err, luckin.ErrPendingOrderExpired):
+		return "订单已过期，请重新结算"
+	case errors.Is(err, luckin.ErrPendingOrderPayloadMismatch):
+		return "订单信息已变更，请刷新后重试"
+	case errors.Is(err, luckin.ErrPendingOrderChatMismatch):
+		return "订单不属于当前群，请勿跨群点击"
+	case errors.Is(err, luckin.ErrPendingOrderNotOwnedByOperator):
+		return "只有下单人才能确认或取消该订单"
+	case errors.Is(err, luckin.ErrPendingOrderNotFound):
+		return "订单不存在或已失效，请重新结算"
+	default:
+		return prefix + "：" + err.Error()
+	}
+}
 
 func (credentialStore) FindToken(ctx context.Context, lookup luckin.CredentialLookup) (luckin.Credential, error) {
 	// 仅支持个人凭证：不再支持系统/群级 token。

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"go.uber.org/zap"
 )
 
 type ConfirmationService interface {
@@ -98,8 +100,17 @@ func (s confirmationService) Confirm(ctx context.Context, req ConfirmRequest) (m
 	if err != nil {
 		return nil, err
 	}
-	if !confirmRequestMatches(order, req, now) {
-		return nil, ErrPendingOrderNotConfirmable
+	if err := confirmRequestMatch(order, req, now); err != nil {
+		logs.L().Ctx(ctx).Warn("luckin confirm pending order mismatch",
+			zap.String("pending_id", req.PendingOrderID),
+			zap.String("order_status", string(order.Status)),
+			zap.Bool("chat_match", strings.TrimSpace(order.ChatID) == strings.TrimSpace(req.ChatID)),
+			zap.Bool("hash_match", strings.TrimSpace(order.PayloadHash) == strings.TrimSpace(req.PayloadHash)),
+			zap.Bool("requester_match", strings.TrimSpace(order.RequesterOpenID) == strings.TrimSpace(req.OperatorOpenID)),
+			zap.Bool("expired", !order.ExpiresAt.After(now)),
+			zap.Error(err),
+		)
+		return nil, err
 	}
 	cred, err := s.tokens.FindToken(ctx, CredentialLookup{
 		Provider:  ProviderLuckin,
@@ -171,12 +182,17 @@ func (s confirmationService) Cancel(ctx context.Context, req CancelRequest) erro
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(order.PayloadHash) != strings.TrimSpace(req.PayloadHash) ||
-		strings.TrimSpace(order.ChatID) != strings.TrimSpace(req.ChatID) ||
-		strings.TrimSpace(order.RequesterOpenID) != strings.TrimSpace(req.OperatorOpenID) ||
-		order.Status != PendingStatusPending ||
-		!order.ExpiresAt.After(now) {
-		return ErrPendingOrderNotConfirmable
+	if err := cancelRequestMatch(order, req, now); err != nil {
+		logs.L().Ctx(ctx).Warn("luckin cancel pending order mismatch",
+			zap.String("pending_id", req.PendingOrderID),
+			zap.String("order_status", string(order.Status)),
+			zap.Bool("chat_match", strings.TrimSpace(order.ChatID) == strings.TrimSpace(req.ChatID)),
+			zap.Bool("hash_match", strings.TrimSpace(order.PayloadHash) == strings.TrimSpace(req.PayloadHash)),
+			zap.Bool("requester_match", strings.TrimSpace(order.RequesterOpenID) == strings.TrimSpace(req.OperatorOpenID)),
+			zap.Bool("expired", !order.ExpiresAt.After(now)),
+			zap.Error(err),
+		)
+		return err
 	}
 	return s.store.MarkCancelled(ctx, order.ID, order.PayloadHash, req.OperatorOpenID, req.ChatID, now)
 }
@@ -188,11 +204,53 @@ func (s confirmationService) remoteURL() string {
 	return ServerURL
 }
 
-func confirmRequestMatches(order PendingOrder, req ConfirmRequest, now time.Time) bool {
-	return strings.TrimSpace(order.ID) == strings.TrimSpace(req.PendingOrderID) &&
-		strings.TrimSpace(order.PayloadHash) == strings.TrimSpace(req.PayloadHash) &&
-		strings.TrimSpace(order.ChatID) == strings.TrimSpace(req.ChatID) &&
-		strings.TrimSpace(order.RequesterOpenID) == strings.TrimSpace(req.OperatorOpenID) &&
-		order.Status == PendingStatusPending &&
-		order.ExpiresAt.After(now)
+// confirmRequestMatch 把 6 条前置校验拆成不同 sentinel error，便于上层给用户友好文案与日志定位。
+// 顺序上先校验强身份字段（ID / hash / chat），再校验业务状态（status / expires）与归属人。
+func confirmRequestMatch(order PendingOrder, req ConfirmRequest, now time.Time) error {
+	if strings.TrimSpace(order.ID) != strings.TrimSpace(req.PendingOrderID) ||
+		strings.TrimSpace(order.PayloadHash) != strings.TrimSpace(req.PayloadHash) {
+		return ErrPendingOrderPayloadMismatch
+	}
+	if strings.TrimSpace(order.ChatID) != strings.TrimSpace(req.ChatID) {
+		return ErrPendingOrderChatMismatch
+	}
+	switch order.Status {
+	case PendingStatusPending:
+	case PendingStatusConfirmed, PendingStatusCancelled, PendingStatusFailed, PendingStatusExpired:
+		return ErrPendingOrderAlreadyDone
+	default:
+		return ErrPendingOrderNotConfirmable
+	}
+	if !order.ExpiresAt.After(now) {
+		return ErrPendingOrderExpired
+	}
+	if strings.TrimSpace(order.RequesterOpenID) != strings.TrimSpace(req.OperatorOpenID) {
+		return ErrPendingOrderNotOwnedByOperator
+	}
+	return nil
+}
+
+// cancelRequestMatch Cancel 的前置校验，语义同 confirmRequestMatch。
+func cancelRequestMatch(order PendingOrder, req CancelRequest, now time.Time) error {
+	if strings.TrimSpace(order.ID) != strings.TrimSpace(req.PendingOrderID) ||
+		strings.TrimSpace(order.PayloadHash) != strings.TrimSpace(req.PayloadHash) {
+		return ErrPendingOrderPayloadMismatch
+	}
+	if strings.TrimSpace(order.ChatID) != strings.TrimSpace(req.ChatID) {
+		return ErrPendingOrderChatMismatch
+	}
+	switch order.Status {
+	case PendingStatusPending:
+	case PendingStatusConfirmed, PendingStatusCancelled, PendingStatusFailed, PendingStatusExpired:
+		return ErrPendingOrderAlreadyDone
+	default:
+		return ErrPendingOrderNotConfirmable
+	}
+	if !order.ExpiresAt.After(now) {
+		return ErrPendingOrderExpired
+	}
+	if strings.TrimSpace(order.RequesterOpenID) != strings.TrimSpace(req.OperatorOpenID) {
+		return ErrPendingOrderNotOwnedByOperator
+	}
+	return nil
 }
