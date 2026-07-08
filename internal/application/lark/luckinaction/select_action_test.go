@@ -234,6 +234,40 @@ func TestHandleCouponApplyForSplitPendingOrderDoesNotRequireSession(t *testing.T
 	}
 }
 
+// TestHandleCouponApplyMissingPendingFieldsDoesNotRevertToShopSelect 守护本次修复：
+// 优惠券卡一定携带 pending_order_id + payload_hash；即使字段异常缺失，也绝不能回退到
+// 购物车结算流程（那会在回复卡的 msgID 上找不到 session，把卡片打回“选择门店”）。
+// 缺字段时应保持只读，不触发结算 / 不改动 session。
+func TestHandleCouponApplyMissingPendingFieldsDoesNotRevertToShopSelect(t *testing.T) {
+	session := &memSessionStore{}
+	pending := &memPendingStore{}
+	draft := luckin.NewDraftService(&fakeDraftToolCaller{}, luckin.ServerURL)
+
+	task, err := handleCouponApply(session, draft, pending, &memCredentialStore{})(context.Background(), testActionContextNoMsgWithForm(
+		map[string]any{
+			cardactionproto.ActionField: cardactionproto.ActionLuckinCouponApply,
+			// 故意不带 pending_order_id / payload_hash
+		},
+		map[string]any{
+			cardactionproto.LuckinCouponFormField: []string{"coupon-a"},
+		},
+	))
+	if err != nil {
+		t.Fatalf("handleCouponApply error = %v", err)
+	}
+	if task == nil {
+		t.Fatalf("expected async task")
+	}
+	task(context.Background())
+	// 未回退到结算：既没有查/改 pending order，也没有把 session 标记为已开始点单。
+	if pending.updated {
+		t.Fatalf("checkout flow should not run when pending fields missing")
+	}
+	if session.seen {
+		t.Fatalf("session should not be mutated (no revert to shop-select flow)")
+	}
+}
+
 func mustMarshalForTest(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {

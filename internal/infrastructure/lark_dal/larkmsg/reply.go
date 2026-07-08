@@ -20,17 +20,13 @@ func ReplyMsgRawContentType(ctx context.Context, msgID, msgType, content, suffix
 	span.SetAttributes(otel.PreviewAttrs("message.content", content, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	uuid := (msgID + suffix)
-	if len(uuid) > 50 {
-		uuid = uuid[:50]
-	}
 
 	req := larkim.NewReplyMessageReqBuilder().Body(
 		larkim.NewReplyMessageReqBodyBuilder().
 			MsgType(msgType).
 			Content(content).
 			ReplyInThread(replyInThread).
-			Uuid(utils.GenUUIDStr(uuid, 50)).Build(),
+			Uuid(utils.GenUUIDStr(msgID+suffix, 50)).Build(),
 	).MessageId(msgID).Build()
 
 	return sendReplyMessage(ctx, req, content)
@@ -56,17 +52,13 @@ func ReplyMsgRawAsText(ctx context.Context, msgID, msgType, content, suffix stri
 	span.SetAttributes(otel.PreviewAttrs("message.content", content, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	uuid := (msgID + suffix)
-	if len(uuid) > 50 {
-		uuid = uuid[:50]
-	}
 
 	req := larkim.NewReplyMessageReqBuilder().Body(
 		larkim.NewReplyMessageReqBodyBuilder().
 			MsgType(msgType).
 			Content(NewTextMsgBuilder().Text(content).Build()).
 			ReplyInThread(replyInThread).
-			Uuid(utils.GenUUIDStr(uuid, 50)).Build(),
+			Uuid(utils.GenUUIDStr(msgID+suffix, 50)).Build(),
 	).MessageId(msgID).Build()
 
 	return sendReplyMessage(ctx, req, content)
@@ -112,18 +104,13 @@ func ReplyCardWithResp(ctx context.Context, cardContent *larktpl.TemplateCardCon
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	uuid := msgID + suffix
-	if len(uuid) > 50 {
-		uuid = uuid[:50]
-	}
-
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(msgID).
 		Body(
 			larkim.NewReplyMessageReqBodyBuilder().
 				MsgType(larkim.MsgTypeInteractive).
 				Content(cardContent.String()).
-				Uuid(utils.GenUUIDStr(uuid, 50)).
+				Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
 				ReplyInThread(replyInThread).
 				Build(),
 		).

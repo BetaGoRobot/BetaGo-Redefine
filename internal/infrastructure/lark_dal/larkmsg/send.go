@@ -297,10 +297,6 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 	if msgID == "" {
 		msgID = fmt.Sprintf("create-%d", time.Now().UnixNano())
 	}
-	uuid := msgID + suffix
-	if len(uuid) > 50 {
-		uuid = uuid[:50]
-	}
 	receiveIDType = strings.TrimSpace(receiveIDType)
 	if receiveIDType == "" {
 		receiveIDType = larkim.CreateMessageV1ReceiveIDTypeChatId
@@ -312,7 +308,7 @@ func createMsgRawContentTypeByReceiveID(ctx context.Context, receiveIDType, rece
 			larkim.NewCreateMessageReqBodyBuilder().
 				ReceiveId(receiveID).
 				Content(content).
-				Uuid(utils.GenUUIDStr(uuid, 50)).
+				Uuid(utils.GenUUIDStr(msgID+suffix, 50)).
 				MsgType(msgType).
 				Build(),
 		).

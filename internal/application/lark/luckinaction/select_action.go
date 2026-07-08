@@ -369,83 +369,93 @@ func handleCartCheckout(session luckin.SessionStore, draft luckin.DraftService, 
 }
 
 // handleCouponApply 用户在确认卡上选中优惠券后重新预览，刷新价格与确认卡。
+// 优惠券卡片一定源自某张待确认订单卡（携带 pending_order_id + payload_hash），
+// 因此这里只按 pending order 重新预览、原地刷新当前卡片；绝不回退到购物车结算流程
+// （那会在回复卡的 msgID 上找不到 session，进而把卡片打回“选择门店”，正是本次要修的 bug）。
 func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderStore, tokens luckin.CredentialStore) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		pendingID, _ := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		payloadHash, _ := actionCtx.Action.RequiredString(cardactionproto.PayloadHashField)
 		coupons := selectedCoupons(actionCtx)
 		msgID := strings.TrimSpace(actionCtx.MessageID())
-		if pendingID != "" && payloadHash != "" && pending != nil {
+		pendingID = strings.TrimSpace(pendingID)
+		payloadHash = strings.TrimSpace(payloadHash)
+		if pendingID == "" || payloadHash == "" || pending == nil {
+			// 理论上不会发生：优惠券卡一定带 pending 信息。宁可原地报错，也不要回退到选门店。
 			return func(runCtx context.Context) {
-				order, err := pending.FindPendingOrder(runCtx, pendingID)
-				if err != nil {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已失效，请重新结算"))
-					}
-					return
-				}
-				if strings.TrimSpace(order.PayloadHash) != strings.TrimSpace(payloadHash) || order.Status != luckin.PendingStatusPending || !order.ExpiresAt.After(time.Now()) {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已过期，请重新结算"))
-					}
-					return
-				}
-				cred, err := tokens.FindToken(runCtx, luckin.CredentialLookup{
-					Provider:  luckin.ProviderLuckin,
-					AppID:     order.AppID,
-					BotOpenID: order.BotOpenID,
-					Scope:     order.CredentialScope,
-				})
-				if err != nil {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("瑞幸账号凭证失效，请重新绑定后结算"))
-					}
-					return
-				}
-				var payload map[string]any
-				if err := json.Unmarshal(order.CreateOrderPayload, &payload); err != nil {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("订单草稿损坏，请重新结算"))
-					}
-					return
-				}
-				shop := luckin.ShopSelection{
-					DeptID:    int64(numberFloat(payload["deptId"])),
-					Longitude: numberFloat(payload["longitude"]),
-					Latitude:  numberFloat(payload["latitude"]),
-				}
-				nextOrder, card, err := draft.Draft(runCtx, luckin.DraftRequest{
-					AppID:           order.AppID,
-					BotOpenID:       order.BotOpenID,
-					ChatID:          order.ChatID,
-					InitiatorOpenID: order.InitiatorOpenID,
-					RequesterOpenID: order.RequesterOpenID,
-					CheckoutMode:    order.CheckoutMode,
-					Credential:      cred,
-					Shop:            shop,
-					Items:           order.CartSnapshot,
-					CouponCodeList:  coupons,
-					Now:             time.Now(),
-				})
-				if err != nil {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("预览优惠券失败："+err.Error()))
-					}
-					return
-				}
-				nextOrder.ID = order.ID
-				if err := pending.UpdateDraft(runCtx, nextOrder, time.Now()); err != nil {
-					if msgID != "" {
-						_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("刷新待确认订单失败："+err.Error()))
-					}
-					return
-				}
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, order.InitiatorOpenID))
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单信息缺失，请重新结算"))
 				}
 			}, nil
 		}
-		return checkoutTask(session, draft, pending, tokens, coupons)(ctx, actionCtx)
+		return func(runCtx context.Context) {
+			order, err := pending.FindPendingOrder(runCtx, pendingID)
+			if err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已失效，请重新结算"))
+				}
+				return
+			}
+			if strings.TrimSpace(order.PayloadHash) != payloadHash || order.Status != luckin.PendingStatusPending || !order.ExpiresAt.After(time.Now()) {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已过期，请重新结算"))
+				}
+				return
+			}
+			cred, err := tokens.FindToken(runCtx, luckin.CredentialLookup{
+				Provider:  luckin.ProviderLuckin,
+				AppID:     order.AppID,
+				BotOpenID: order.BotOpenID,
+				Scope:     order.CredentialScope,
+			})
+			if err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("瑞幸账号凭证失效，请重新绑定后结算"))
+				}
+				return
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(order.CreateOrderPayload, &payload); err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("订单草稿损坏，请重新结算"))
+				}
+				return
+			}
+			shop := luckin.ShopSelection{
+				DeptID:    int64(numberFloat(payload["deptId"])),
+				Longitude: numberFloat(payload["longitude"]),
+				Latitude:  numberFloat(payload["latitude"]),
+			}
+			nextOrder, card, err := draft.Draft(runCtx, luckin.DraftRequest{
+				AppID:           order.AppID,
+				BotOpenID:       order.BotOpenID,
+				ChatID:          order.ChatID,
+				InitiatorOpenID: order.InitiatorOpenID,
+				RequesterOpenID: order.RequesterOpenID,
+				CheckoutMode:    order.CheckoutMode,
+				Credential:      cred,
+				Shop:            shop,
+				Items:           order.CartSnapshot,
+				CouponCodeList:  coupons,
+				Now:             time.Now(),
+			})
+			if err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("预览优惠券失败："+err.Error()))
+				}
+				return
+			}
+			nextOrder.ID = order.ID
+			if err := pending.UpdateDraft(runCtx, nextOrder, time.Now()); err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("刷新待确认订单失败："+err.Error()))
+				}
+				return
+			}
+			if msgID != "" {
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, order.InitiatorOpenID))
+			}
+		}, nil
 	}
 }
 
