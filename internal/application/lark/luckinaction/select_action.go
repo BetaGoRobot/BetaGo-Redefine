@@ -426,7 +426,7 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 				Longitude: numberFloat(payload["longitude"]),
 				Latitude:  numberFloat(payload["latitude"]),
 			}
-			nextOrder, card, err := draft.Draft(runCtx, luckin.DraftRequest{
+			nextOrder, _, err := draft.Draft(runCtx, luckin.DraftRequest{
 				AppID:           order.AppID,
 				BotOpenID:       order.BotOpenID,
 				ChatID:          order.ChatID,
@@ -445,6 +445,8 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 				}
 				return
 			}
+			// draft.Draft 会分配新的 UUID；这里必须让 pending_order 落库 ID 与卡片按钮里的 pending_order_id
+			// 保持一致，否则用户点「确认下单」时会拿着 draft 分配的新 UUID 去查 DB，永远 not found。
 			nextOrder.ID = order.ID
 			if err := pending.UpdateDraft(runCtx, nextOrder, time.Now()); err != nil {
 				if msgID != "" {
@@ -453,7 +455,7 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 				return
 			}
 			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, order.InitiatorOpenID))
+				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildPendingOrderCard(nextOrder), order.InitiatorOpenID))
 			}
 		}, nil
 	}
