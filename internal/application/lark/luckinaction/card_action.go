@@ -122,7 +122,10 @@ func handleConfirm(service luckin.ConfirmationService, session luckin.SessionSto
 					return
 				}
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard(friendlyConfirmError("创建订单失败", lockErr)), initiatorOpenID))
+					// pending 仍有效时回到确认下单页（可改券重试），不要退回选店初始态。
+					notice := friendlyConfirmError("创建订单失败", lockErr)
+					failCard := service.CardAfterConfirmError(runCtx, id, lockErr, notice)
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(failCard, initiatorOpenID))
 				}
 				return
 			}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,32 @@ func TestConfirmationServiceConfirmCreatesRemoteOrderAndMarksConfirmed(t *testin
 	}
 	if credentials.lookup.Scope != order.CredentialScope {
 		t.Fatalf("credential lookup scope = %+v", credentials.lookup.Scope)
+	}
+}
+
+func TestCardAfterConfirmErrorRestoresPendingConfirmCard(t *testing.T) {
+	now := time.Now()
+	order := testConfirmableOrder(json.RawMessage(`{"deptId":1}`), now.Add(time.Minute))
+	order.PreviewResult = json.RawMessage(`{"couponCodeList":["coupon-a"],"discountPrice":12}`)
+	store := &fakePendingStore{order: order}
+	service := NewConfirmationService(store, &fakeCredentialLookup{}, &fakeToolCaller{}, ServerURL)
+
+	card := service.CardAfterConfirmError(context.Background(), order.ID, errors.New("coupon already used"), "创建订单失败：coupon already used")
+	text := string(mustJSON(card))
+	if !containsJSON(text, "coupon already used", "luckin_order_confirm", order.ID, order.PayloadHash) {
+		t.Fatalf("expected restored confirm card, got %s", text)
+	}
+	if containsJSON(text, "重新选择门店", "luckin_cart_checkout") {
+		t.Fatalf("must not fall back to initial shop search: %s", text)
+	}
+}
+
+func TestCardAfterConfirmErrorUsesTerminalFailedWhenExpired(t *testing.T) {
+	service := NewConfirmationService(&fakePendingStore{}, &fakeCredentialLookup{}, &fakeToolCaller{}, ServerURL)
+	card := service.CardAfterConfirmError(context.Background(), "po_x", ErrPendingOrderExpired, "订单已过期，请重新结算")
+	text := string(mustJSON(card))
+	if !containsJSON(text, "订单已过期", "重新结算") {
+		t.Fatalf("expected terminal failed card, got %s", text)
 	}
 }
 
@@ -109,13 +136,34 @@ func testConfirmableOrder(payload json.RawMessage, expiresAt time.Time) PendingO
 
 type fakePendingStore struct {
 	order               PendingOrder
+	findErr             error
 	markConfirmedCalled bool
 	markHash            string
 	markResult          json.RawMessage
 }
 
 func (s *fakePendingStore) FindPendingOrder(ctx context.Context, id string) (PendingOrder, error) {
+	if s.findErr != nil {
+		return PendingOrder{}, s.findErr
+	}
 	return s.order, nil
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func containsJSON(s string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *fakePendingStore) MarkConfirmed(ctx context.Context, id, payloadHash, confirmedByOpenID string, resultJSON json.RawMessage, now time.Time) error {

@@ -3,6 +3,7 @@ package luckin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 type ConfirmationService interface {
 	Confirm(context.Context, ConfirmRequest) (map[string]any, error)
 	Cancel(context.Context, CancelRequest) error
+	// CardAfterConfirmError 确认失败后的回写卡片：
+	// pending 仍有效时回到确认下单页（可改券重试），否则才落到终态失败卡。
+	CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any
 }
 
 type ConfirmRequest struct {
@@ -202,6 +206,27 @@ func (s confirmationService) remoteURL() string {
 		return s.serverURL
 	}
 	return ServerURL
+}
+
+// CardAfterConfirmError 在 createOrder 被拒等可恢复失败时，把卡片刷回待确认订单页；
+// 仅当草稿已失效/找不到/明确过期时才使用终态失败卡（含重新结算/重选门店）。
+func (s confirmationService) CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any {
+	notice = strings.TrimSpace(notice)
+	if notice == "" {
+		notice = "创建订单失败"
+	}
+	// 已明确过期或找不到：必须重新结算，不能再留在确认页。
+	if errors.Is(confirmErr, ErrPendingOrderExpired) || errors.Is(confirmErr, ErrPendingOrderNotFound) {
+		return BuildOrderFailedCard(notice)
+	}
+	order, err := s.store.FindPendingOrder(ctx, strings.TrimSpace(pendingOrderID))
+	if err != nil {
+		return BuildOrderFailedCard(notice)
+	}
+	if order.Status == PendingStatusPending && order.ExpiresAt.After(time.Now()) {
+		return BuildPendingOrderCardWithNotice(order, notice)
+	}
+	return BuildOrderFailedCard(notice)
 }
 
 // confirmRequestMatch 把 6 条前置校验拆成不同 sentinel error，便于上层给用户友好文案与日志定位。

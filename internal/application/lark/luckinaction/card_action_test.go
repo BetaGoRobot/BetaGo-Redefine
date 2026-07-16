@@ -140,6 +140,7 @@ type fakeConfirmationService struct {
 	confirmReq    luckin.ConfirmRequest
 	cancelCalled  bool
 	cancelReq     luckin.CancelRequest
+	failCard      map[string]any
 }
 
 func (s *fakeConfirmationService) Confirm(ctx context.Context, req luckin.ConfirmRequest) (map[string]any, error) {
@@ -152,6 +153,13 @@ func (s *fakeConfirmationService) Cancel(ctx context.Context, req luckin.CancelR
 	s.cancelCalled = true
 	s.cancelReq = req
 	return nil
+}
+
+func (s *fakeConfirmationService) CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any {
+	if s.failCard != nil {
+		return s.failCard
+	}
+	return map[string]any{"schema": "2.0", "pending": pendingOrderID, "notice": notice}
 }
 
 func writeLuckinConfigForTest(t *testing.T, credentialsKey, serverURL string) {

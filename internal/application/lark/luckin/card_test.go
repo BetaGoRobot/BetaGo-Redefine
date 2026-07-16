@@ -71,6 +71,23 @@ func TestBuildPendingOrderCardDoesNotExposePayload(t *testing.T) {
 	}
 }
 
+func TestBuildPendingOrderCardWithNoticeKeepsConfirmActions(t *testing.T) {
+	card := BuildPendingOrderCardWithNotice(PendingOrder{
+		ID:              "po_2",
+		PayloadHash:     "hash_2",
+		CheckoutMode:    CheckoutModeInitiatorUnified,
+		CredentialScope: CredentialScope{Type: ScopePersonal, ID: "user"},
+		PreviewResult:   json.RawMessage(`{"couponCodeList":["coupon-b"],"discountPrice":9.9}`),
+	}, "创建订单失败：优惠券不可用。可更换优惠券后重试，无需重新选店。")
+	text := mustMarshalForTest(card)
+	if !containsAll(text, "优惠券不可用", "订单草稿仍有效", "luckin_order_confirm", "luckin_coupon_apply", "po_2", "hash_2") {
+		t.Fatalf("notice card should stay on confirm page with actions: %s", text)
+	}
+	if containsAll(text, "重新选择门店", "luckin_cart_checkout") {
+		t.Fatalf("notice card must not fall back to shop search / re-checkout: %s", text)
+	}
+}
+
 func TestBuildCartCardCheckoutModeFormContainsSubmitButton(t *testing.T) {
 	card := BuildCartCard(ShopSelection{DeptName: "门店A"}, Cart{
 		Items: []CartItem{{

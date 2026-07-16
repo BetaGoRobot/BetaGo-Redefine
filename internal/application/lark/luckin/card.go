@@ -26,6 +26,12 @@ func ScopeLabel(scope CredentialScope) string {
 }
 
 func BuildPendingOrderCard(order PendingOrder) map[string]any {
+	return BuildPendingOrderCardWithNotice(order, "")
+}
+
+// BuildPendingOrderCardWithNotice 渲染待确认订单卡，可选顶部错误/提示条。
+// 下单被瑞幸拒绝（如优惠券冲突）时应用：留在确认页，允许改券后重试，而不是退回选店初始态。
+func BuildPendingOrderCardWithNotice(order PendingOrder, notice string) map[string]any {
 	summary := previewSummaryFromOrder(order)
 	available := AvailableCouponsFromPreview(order.PreviewResult)
 	selected := selectedCouponsFromPayload(order.CreateOrderPayload)
@@ -35,12 +41,20 @@ func BuildPendingOrderCard(order PendingOrder) map[string]any {
 	}
 	elements := []any{
 		larkmsg.Markdown("**🧾 确认瑞幸订单**"),
-		larkmsg.HintMarkdown("账号：" + ScopeLabel(order.CredentialScope)),
-		larkmsg.HintMarkdown("结算模式：" + modeText),
-		larkmsg.Divider(),
-		larkmsg.Markdown("🏬 **门店**\n" + summary.Shop),
-		larkmsg.Markdown("☕ **商品**\n" + summary.Products),
 	}
+	if notice = strings.TrimSpace(notice); notice != "" {
+		elements = append(elements,
+			larkmsg.Markdown("⚠️ "+notice),
+			larkmsg.HintMarkdown("订单草稿仍有效，可更换优惠券后再次确认下单。"),
+		)
+	}
+	elements = append(elements,
+		larkmsg.HintMarkdown("账号："+ScopeLabel(order.CredentialScope)),
+		larkmsg.HintMarkdown("结算模式："+modeText),
+		larkmsg.Divider(),
+		larkmsg.Markdown("🏬 **门店**\n"+summary.Shop),
+		larkmsg.Markdown("☕ **商品**\n"+summary.Products),
+	)
 	elements = append(elements,
 		larkmsg.Markdown("💰 **价格**\n"+summary.Price),
 	)
