@@ -17,14 +17,6 @@ const (
 	ScopeTypeThread ScopeType = "thread"
 )
 
-type Store interface {
-	GetOrCreateSession(context.Context, *AgentSession) (*AgentSession, error)
-	FindRunBySessionAndTriggerMessage(context.Context, string, string) (*AgentRun, error)
-	CreateRun(context.Context, *AgentRun) error
-	UpdateSessionActiveRun(context.Context, string, string, string, string) (*AgentSession, error)
-	CreateStep(context.Context, *AgentStep) error
-}
-
 type RunCoordinator struct {
 	store Store
 }

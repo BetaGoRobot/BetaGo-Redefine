@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRunCoordinatorStartShadowRunCreatesSessionRunAndPlanStep(t *testing.T) {
@@ -129,4 +130,36 @@ func (s *memoryStore) UpdateSessionActiveRun(_ context.Context, sessionID, runID
 func (s *memoryStore) CreateStep(_ context.Context, step *AgentStep) error {
 	s.steps = append(s.steps, cloneStep(step))
 	return nil
+}
+
+func (s *memoryStore) FindActiveRun(_ context.Context, _ string) (*AgentRun, error) {
+	return nil, ErrNotFound
+}
+
+func (s *memoryStore) StartInteraction(_ context.Context, _ StartInteractionRequest) (*AgentRun, *AgentStep, error) {
+	return nil, nil, errors.New("memory store does not support interactions")
+}
+
+func (s *memoryStore) ResolveInteraction(_ context.Context, _ ResolveInteractionRequest) (*AgentRun, *AgentStep, error) {
+	return nil, nil, errors.New("memory store does not support interactions")
+}
+
+func (s *memoryStore) AppendEvent(_ context.Context, step *AgentStep, _ ProjectionDocument) (*AgentStep, error) {
+	return cloneStep(step), nil
+}
+
+func (s *memoryStore) ClaimQueuedStep(_ context.Context, _ StepClaim) (*AgentStep, error) {
+	return nil, ErrNotFound
+}
+
+func (s *memoryStore) CompleteStep(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (s *memoryStore) RetryStep(_ context.Context, _, _ string, _ time.Time) error {
+	return nil
+}
+
+func (s *memoryStore) ReclaimStaleSteps(_ context.Context, _ time.Time, _ int) (int64, error) {
+	return 0, nil
 }

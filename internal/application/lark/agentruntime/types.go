@@ -106,6 +106,9 @@ type AgentRun struct {
 	HeartbeatAt      time.Time
 	LeaseExpiresAt   time.Time
 	RepairAttempts   int64
+	ActivationSource string
+	TopicFingerprint string
+	LastRelevantAt   time.Time
 }
 
 type AgentStep struct {
@@ -122,6 +125,11 @@ type AgentStep struct {
 	StartedAt      time.Time
 	FinishedAt     time.Time
 	CreatedAt      time.Time
+	DedupeKey      string
+	AttemptCount   int32
+	WorkerID       string
+	LeaseExpiresAt time.Time
+	RetryOfStepID  string
 }
 
 type NewRunRequest struct {
