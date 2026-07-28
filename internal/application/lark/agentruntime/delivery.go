@@ -10,6 +10,7 @@ import (
 )
 
 type ReplyRequest struct {
+	Version          int    `json:"version"`
 	StepID           string `json:"step_id"`
 	RunID            string `json:"run_id"`
 	Text             string `json:"text"`

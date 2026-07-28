@@ -199,7 +199,7 @@ func ValidateRunTransition(from, to RunStatus) error {
 			return nil
 		}
 	case RunStatusRunning:
-		if to == RunStatusWaitingApproval || to == RunStatusWaitingSchedule || to == RunStatusWaitingCallback ||
+		if to == RunStatusQueued || to == RunStatusWaitingApproval || to == RunStatusWaitingSchedule || to == RunStatusWaitingCallback ||
 			to == RunStatusCompleted || to == RunStatusFailed || to == RunStatusCancelled {
 			return nil
 		}
@@ -224,7 +224,7 @@ func ValidateStepTransition(from, to StepStatus) error {
 			return nil
 		}
 	case StepStatusRunning:
-		if to == StepStatusCompleted || to == StepStatusFailed || to == StepStatusSkipped {
+		if to == StepStatusQueued || to == StepStatusCompleted || to == StepStatusFailed || to == StepStatusSkipped {
 			return nil
 		}
 	}

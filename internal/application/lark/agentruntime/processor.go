@@ -94,16 +94,21 @@ func (p *ContinuationProcessor) ProcessRun(ctx context.Context, runID string) er
 		p.config.LeaseTTL <= 0 || p.config.RetryDelay <= 0 {
 		return errors.New("continuation processor is not configured")
 	}
-	if err := p.store.RepairContinuation(ctx, runID, p.config.Now()); err != nil &&
-		!errors.Is(err, ErrNotFound) {
-		return err
-	}
+	repairAttempted := false
 	for range 4 {
 		step, err := p.store.ClaimContinuationStep(ctx, ContinuationClaim{
 			RunID: runID, WorkerID: p.config.WorkerID,
 			LeaseTTL: p.config.LeaseTTL, Now: p.config.Now(),
 		})
 		if errors.Is(err, ErrNotFound) {
+			if !repairAttempted {
+				repairAttempted = true
+				if repairErr := p.store.RepairContinuation(ctx, runID, p.config.Now()); repairErr != nil &&
+					!errors.Is(repairErr, ErrNotFound) {
+					return repairErr
+				}
+				continue
+			}
 			return nil
 		}
 		if err != nil {
@@ -125,7 +130,7 @@ func (p *ContinuationProcessor) processClaimed(ctx context.Context, step *AgentS
 		return err
 	}
 	switch step.Kind {
-	case StepKindObserve:
+	case StepKindDecide:
 		input, err := p.store.LoadContinuationContext(ctx, LoadContinuationContextRequest{
 			RunID: step.RunID, AnchorStepID: step.ID, RecentLimit: p.config.RecentStepLimit,
 		})
@@ -201,7 +206,7 @@ func decodeReplyRequest(input string) (ReplyRequest, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return ReplyRequest{}, errors.New("reply request must be one JSON document")
 	}
-	if req.StepID == "" || req.RunID == "" || strings.TrimSpace(req.Text) == "" ||
+	if req.Version != 1 || req.StepID == "" || req.RunID == "" || strings.TrimSpace(req.Text) == "" ||
 		req.IdempotencyKey != req.StepID || (req.TriggerMessageID == "" && req.ChatID == "") {
 		return ReplyRequest{}, errors.New("invalid frozen reply request")
 	}

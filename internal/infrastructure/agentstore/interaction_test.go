@@ -356,7 +356,7 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 	if err := f.db.Where(
 		"run_id = ? AND kind = ?",
 		f.runID,
-		string(agentruntime.StepKindObserve),
+		string(agentruntime.StepKindDecide),
 	).Find(&continuations).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 	}
 	var continuationCount int64
 	if err := f.db.Model(&model.AgentStep{}).
-		Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindObserve)).
+		Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindDecide)).
 		Count(&continuationCount).Error; err != nil {
 		t.Fatal(err)
 	}

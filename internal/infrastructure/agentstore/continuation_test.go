@@ -19,14 +19,15 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 		Update("active_run_id", f.runID).Error; err != nil {
 		t.Fatal(err)
 	}
-	f.createStep(t, &agentruntime.AgentStep{
-		Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusQueued,
-	})
+	ordinaryObservation := &agentruntime.AgentStep{
+		Index: 1, Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusQueued,
+	}
+	f.createStep(t, ordinaryObservation)
 	_, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
 		RunID: f.runID, WorkerID: "worker", LeaseTTL: time.Minute, Now: time.Now().UTC(),
 	})
 	if !errors.Is(err, agentruntime.ErrNotFound) {
-		t.Fatalf("capability claim error = %v, want not found", err)
+		t.Fatalf("ordinary observation claim error = %v, want not found", err)
 	}
 
 	if err := f.db.Model(&model.AgentStep{}).Where("run_id = ?", f.runID).
@@ -34,8 +35,36 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.createStep(t, &agentruntime.AgentStep{
-		Index: 2, Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusQueued,
-		InputJSON: `{"version":1,"source_step_id":"source"}`, DedupeKey: "continuation:test",
+		Index: 2, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"planner":"ordinary"}`, DedupeKey: "ordinary:decide",
+	})
+	if _, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "worker", LeaseTTL: time.Minute, Now: time.Now().UTC(),
+	}); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("ordinary decide claim error = %v, want not found", err)
+	}
+	if err := f.db.Model(&model.AgentStep{}).Where(
+		"run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindDecide),
+	).Update("status", string(agentruntime.StepStatusCompleted)).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 3, Kind: agentruntime.StepKindReply, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"ordinary":true}`, DedupeKey: "ordinary:reply",
+	})
+	if _, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "worker", LeaseTTL: time.Minute, Now: time.Now().UTC(),
+	}); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("ordinary reply claim error = %v, want not found", err)
+	}
+	if err := f.db.Model(&model.AgentStep{}).Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindReply)).
+		Update("status", string(agentruntime.StepStatusCompleted)).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 4, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"version":1,"source_step_id":"` + ordinaryObservation.ID + `"}`,
+		DedupeKey: "anchor:continuation",
 	})
 	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
 		Update("active_run_id", "newer-run").Error; err != nil {
@@ -60,7 +89,7 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if claimed.Kind != agentruntime.StepKindObserve || run.Status != string(agentruntime.RunStatusRunning) {
+	if claimed.Kind != agentruntime.StepKindDecide || run.Status != string(agentruntime.RunStatusRunning) {
 		t.Fatalf("claimed=%#v run=%#v", claimed, run)
 	}
 }
@@ -163,10 +192,20 @@ func TestRepairContinuationRestoresExactlyOneMissingStage(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindObserve)).
+	if err := f.db.Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindDecide)).
 		Delete(&model.AgentStep{}).Error; err != nil {
 		t.Fatal(err)
 	}
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: -2, Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusCompleted,
+		InputJSON: `{"ordinary":true}`, OutputJSON: `{"observed":true}`,
+		DedupeKey: "ordinary:observe",
+	})
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: -1, Kind: agentruntime.StepKindReply, Status: agentruntime.StepStatusCompleted,
+		InputJSON: `{"ordinary":true}`, OutputJSON: `{"message_id":"om-old"}`,
+		DedupeKey: "ordinary:reply",
+	})
 	now := request.ResolvedAt.Add(time.Minute)
 	if err := f.repo.RepairContinuation(context.Background(), f.runID, now); err != nil {
 		t.Fatal(err)
@@ -176,7 +215,7 @@ func TestRepairContinuationRestoresExactlyOneMissingStage(t *testing.T) {
 	}
 	var count int64
 	if err := f.db.Model(&model.AgentStep{}).Where(
-		"run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindObserve),
+		"run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindDecide),
 	).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +232,7 @@ func TestPersistDecisionRollsBackModelCompletionAndReplyEnqueue(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	step := &agentruntime.AgentStep{
-		Index: 1, Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusRunning,
+		Index: 1, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusRunning,
 		InputJSON: `{"version":1,"source_step_id":"source"}`, OutputJSON: "{}",
 		DedupeKey: "continuation:rollback", WorkerID: "worker", AttemptCount: 1,
 		LeaseExpiresAt: now.Add(time.Minute),
@@ -238,7 +277,7 @@ func TestCompleteReplyDeliveryRollsBackStepWhenRunFinalizeFails(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	step := &agentruntime.AgentStep{
 		Index: 1, Kind: agentruntime.StepKindReply, Status: agentruntime.StepStatusRunning,
-		InputJSON:  `{"step_id":"reply","run_id":"run","text":"完成","chat_id":"oc","idempotency_key":"reply"}`,
+		InputJSON:  `{"version":1,"step_id":"reply","run_id":"run","text":"完成","chat_id":"oc","idempotency_key":"reply"}`,
 		OutputJSON: "{}", DedupeKey: "continuation:reply", WorkerID: "worker",
 		AttemptCount: 1, LeaseExpiresAt: now.Add(time.Minute),
 	}

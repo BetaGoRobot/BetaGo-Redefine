@@ -48,7 +48,7 @@ func enqueueContinuationStepTx(
 	sum := sha256.Sum256([]byte(run.ID + "\x00" + dedupeKey))
 	step := &model.AgentStep{
 		ID: "step_continuation_" + hex.EncodeToString(sum[:]), RunID: run.ID, Index: index,
-		Kind: string(agentruntime.StepKindObserve), Status: string(agentruntime.StepStatusQueued),
+		Kind: string(agentruntime.StepKindDecide), Status: string(agentruntime.StepStatusQueued),
 		InputJSON: string(input), OutputJSON: "{}", CreatedAt: now, DedupeKey: dedupeKey,
 	}
 	if err := tx.Create(step).Error; err != nil {

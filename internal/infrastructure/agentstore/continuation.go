@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -51,7 +52,27 @@ func (r *Repository) ClaimContinuationStep(
 			  ON sessions.id = runs.session_id
 			 AND sessions.active_run_id = runs.id
 			WHERE steps.run_id = ?
-			  AND steps.kind IN (?, ?)
+			  AND (
+			    (
+			      steps.kind = ?
+			      AND steps.input_json->>'version' = '1'
+			      AND COALESCE(steps.input_json->>'source_step_id', '') <> ''
+			      AND steps.dedupe_key LIKE '%:continuation'
+			      AND EXISTS (
+			        SELECT 1 FROM agent_steps AS source
+			        WHERE source.id = steps.input_json->>'source_step_id'
+			          AND source.run_id = steps.run_id
+			          AND source.index < steps.index
+			      )
+			    )
+			    OR (
+			      steps.kind = ?
+			      AND steps.input_json->>'version' = '1'
+			      AND steps.input_json->>'step_id' = steps.id
+			      AND steps.input_json->>'idempotency_key' = steps.id
+			      AND steps.dedupe_key LIKE '%:continuation:reply'
+			    )
+			  )
 			  AND steps.status = ?
 			  AND (steps.lease_expires_at IS NULL OR steps.lease_expires_at <= ?)
 			  AND runs.status IN (?, ?)
@@ -64,7 +85,7 @@ func (r *Repository) ClaimContinuationStep(
 			ORDER BY steps.index, steps.id
 			FOR UPDATE OF sessions, runs, steps SKIP LOCKED
 			LIMIT 1`,
-			claim.RunID, string(agentruntime.StepKindObserve), string(agentruntime.StepKindReply),
+			claim.RunID, string(agentruntime.StepKindDecide), string(agentruntime.StepKindReply),
 			string(agentruntime.StepStatusQueued), claim.Now,
 			string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
 			string(agentruntime.StepStatusQueued), string(agentruntime.StepStatusRunning),
@@ -121,7 +142,7 @@ func (r *Repository) ValidateContinuationLease(ctx context.Context, lease agentr
 			step.Status != string(agentruntime.StepStatusRunning) ||
 			step.WorkerID != lease.WorkerID || step.AttemptCount != lease.AttemptCount ||
 			!step.LeaseExpiresAt.After(lease.Now) ||
-			(step.Kind != string(agentruntime.StepKindObserve) && step.Kind != string(agentruntime.StepKindReply)) {
+			(step.Kind != string(agentruntime.StepKindDecide) && step.Kind != string(agentruntime.StepKindReply)) {
 			return agentruntime.ErrLeaseLost
 		}
 		result := tx.Model(&model.AgentStep{}).
@@ -157,7 +178,7 @@ func (r *Repository) LoadContinuationContext(
 		}
 		var anchor model.AgentStep
 		if err := tx.First(&anchor,
-			"id = ? AND run_id = ? AND kind = ?", req.AnchorStepID, req.RunID, string(agentruntime.StepKindObserve),
+			"id = ? AND run_id = ? AND kind = ?", req.AnchorStepID, req.RunID, string(agentruntime.StepKindDecide),
 		).Error; err != nil {
 			return mapNotFound(err)
 		}
@@ -260,7 +281,7 @@ func (r *Repository) PersistDecision(
 		if err != nil {
 			return err
 		}
-		if !continuationLeaseMatches(step, req.WorkerID, req.AttemptCount, agentruntime.StepKindObserve) {
+		if !continuationLeaseMatches(step, req.WorkerID, req.AttemptCount, agentruntime.StepKindDecide) {
 			return agentruntime.ErrLeaseLost
 		}
 		if run.Status != string(agentruntime.RunStatusRunning) || session.ActiveRunID != run.ID {
@@ -274,7 +295,8 @@ func (r *Repository) PersistDecision(
 		if req.Decision.Decision == agentruntime.TurnDecisionReply {
 			replyID := stableContinuationChildID(run.ID, step.ID, "reply")
 			frozen := agentruntime.ReplyRequest{
-				StepID: replyID, RunID: run.ID, Text: req.Decision.Reply,
+				Version: 1,
+				StepID:  replyID, RunID: run.ID, Text: req.Decision.Reply,
 				TriggerMessageID: run.TriggerMessageID, ChatID: session.ChatID,
 				IdempotencyKey: replyID,
 			}
@@ -487,28 +509,6 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		if run.Status != string(agentruntime.RunStatusQueued) {
 			return nil
 		}
-		var active int64
-		if err := tx.Model(&model.AgentStep{}).Where(
-			"run_id = ? AND kind IN ? AND status IN ?", runID,
-			[]string{string(agentruntime.StepKindObserve), string(agentruntime.StepKindReply)},
-			[]string{string(agentruntime.StepStatusQueued), string(agentruntime.StepStatusRunning)},
-		).Count(&active).Error; err != nil {
-			return err
-		}
-		if active > 0 {
-			return nil
-		}
-		var completed int64
-		if err := tx.Model(&model.AgentStep{}).Where(
-			"run_id = ? AND kind IN ? AND status = ?", runID,
-			[]string{string(agentruntime.StepKindObserve), string(agentruntime.StepKindReply)},
-			string(agentruntime.StepStatusCompleted),
-		).Count(&completed).Error; err != nil {
-			return err
-		}
-		if completed > 0 {
-			return agentruntime.ErrInteractionConflict
-		}
 		var anchor model.AgentStep
 		if err := tx.Where("run_id = ? AND kind IN ?", runID, []string{
 			string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
@@ -518,6 +518,22 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		}
 		if !json.Valid([]byte(anchor.OutputJSON)) {
 			return agentruntime.ErrInteractionConflict
+		}
+		continuationDedupe := anchor.DedupeKey + ":continuation"
+		var existing model.AgentStep
+		existingErr := tx.Where(
+			"run_id = ? AND dedupe_key = ?", runID, continuationDedupe,
+		).First(&existing).Error
+		if existingErr == nil {
+			if existing.Kind == string(agentruntime.StepKindDecide) &&
+				(existing.Status == string(agentruntime.StepStatusQueued) ||
+					existing.Status == string(agentruntime.StepStatusRunning)) {
+				return nil
+			}
+			return agentruntime.ErrInteractionConflict
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return existingErr
 		}
 		var later int64
 		if err := tx.Model(&model.AgentStep{}).Where(

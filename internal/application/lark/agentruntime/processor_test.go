@@ -42,7 +42,7 @@ func TestContinuationProcessorLeaseLostBeforeReplySkipsDelivery(t *testing.T) {
 	store := &continuationStoreFake{
 		step: &AgentStep{
 			ID: "step-reply", RunID: "run-1", Kind: StepKindReply, Status: StepStatusQueued,
-			InputJSON: `{"step_id":"step-reply","run_id":"run-1","text":"完成","chat_id":"oc","idempotency_key":"step-reply"}`,
+			InputJSON: `{"version":1,"step_id":"step-reply","run_id":"run-1","text":"完成","chat_id":"oc","idempotency_key":"step-reply"}`,
 		},
 		leaseErr: ErrLeaseLost,
 	}
@@ -76,7 +76,8 @@ func (f *continuationStoreFake) PersistDecision(
 		return nil, nil
 	}
 	input, _ := json.Marshal(ReplyRequest{
-		StepID: "step-reply", RunID: f.step.RunID, Text: req.Decision.Reply,
+		Version: 1,
+		StepID:  "step-reply", RunID: f.step.RunID, Text: req.Decision.Reply,
 		TriggerMessageID: "om-trigger", ChatID: "oc-chat", IdempotencyKey: "step-reply",
 	})
 	f.step = &AgentStep{
@@ -134,7 +135,7 @@ func (f *replyDelivererFake) Deliver(_ context.Context, req ReplyRequest) (strin
 
 func TestContinuationProcessorDeliveryRetryDoesNotRegenerate(t *testing.T) {
 	store := &continuationStoreFake{
-		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindObserve, Status: StepStatusQueued},
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
 		context: ContinuationContext{
 			RunID:         "run-1",
 			LatestOutcome: ConversationEvent{Type: EventTypeCapabilityResult, Payload: []byte(`{}`)},
@@ -162,7 +163,7 @@ func TestContinuationProcessorDeliveryRetryDoesNotRegenerate(t *testing.T) {
 
 func TestContinuationProcessorObserveOnlySkipsDelivery(t *testing.T) {
 	store := &continuationStoreFake{
-		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindObserve, Status: StepStatusQueued},
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
 		context: ContinuationContext{
 			RunID:         "run-1",
 			LatestOutcome: ConversationEvent{Type: EventTypeCapabilityResult, Payload: []byte(`{}`)},
@@ -185,7 +186,7 @@ func TestContinuationProcessorObserveOnlySkipsDelivery(t *testing.T) {
 
 func TestContinuationProcessorGeneratesOnceThenDeliversFrozenReply(t *testing.T) {
 	store := &continuationStoreFake{
-		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindObserve, Status: StepStatusQueued},
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
 		context: ContinuationContext{
 			RunID: "run-1", ChatID: "oc-chat",
 			LatestOutcome: ConversationEvent{Type: EventTypeCapabilityResult, Payload: []byte(`{}`)},
@@ -212,7 +213,7 @@ func TestContinuationProcessorGeneratesOnceThenDeliversFrozenReply(t *testing.T)
 func TestContinuationProcessorRetriesOnlyFailedStage(t *testing.T) {
 	generatorErr := errors.New("model unavailable")
 	store := &continuationStoreFake{
-		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindObserve, Status: StepStatusQueued},
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
 		context: ContinuationContext{
 			RunID:         "run-1",
 			LatestOutcome: ConversationEvent{Type: EventTypeCapabilityResult, Payload: []byte(`{}`)},
@@ -225,7 +226,7 @@ func TestContinuationProcessorRetriesOnlyFailedStage(t *testing.T) {
 	if err := processor.ProcessRun(context.Background(), "run-1"); !errors.Is(err, generatorErr) {
 		t.Fatalf("ProcessRun() error = %v", err)
 	}
-	if store.retries != 1 || store.step.Kind != StepKindObserve {
+	if store.retries != 1 || store.step.Kind != StepKindDecide {
 		t.Fatalf("retries=%d step=%#v", store.retries, store.step)
 	}
 }

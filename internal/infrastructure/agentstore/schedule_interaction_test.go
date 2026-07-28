@@ -282,7 +282,7 @@ func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 	}
 	if err := f.db.Model(&model.AgentStep{}).
 		Where("run_id = ? AND kind = ? AND status = ?",
-			f.runID, string(agentruntime.StepKindObserve), string(agentruntime.StepStatusQueued)).
+			f.runID, string(agentruntime.StepKindDecide), string(agentruntime.StepStatusQueued)).
 		Count(&continuations).Error; err != nil {
 		t.Fatal(err)
 	}
