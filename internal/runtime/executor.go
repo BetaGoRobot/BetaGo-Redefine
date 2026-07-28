@@ -264,8 +264,8 @@ func (e *Executor) worker() {
 func (e *Executor) runTask(task task) error {
 	ctx := task.ctx
 	if e.taskTimeout > 0 {
-		timeoutCtx, _ := context.WithTimeout(ctx, e.taskTimeout)
-		// TODO: 这里不能主动取消，因为超时会自动触发上下文取消，下游其实有异步处理依赖。除非保证下游的所有异步都直接withoutCancel。
+		timeoutCtx, cancel := context.WithTimeout(ctx, e.taskTimeout)
+		defer cancel()
 		ctx = timeoutCtx
 	}
 	ctx, span := otel.StartNamed(ctx, "runtime.executor.run")
