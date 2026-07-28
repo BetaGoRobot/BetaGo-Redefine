@@ -340,9 +340,15 @@ func finalizeScheduleInteractionTx(
 	if err := insertProjectionOutbox(tx, resultStep.ID, resultProjection, req.ResolvedAt); err != nil {
 		return err
 	}
+	continuation, err := enqueueContinuationStepTx(
+		tx, run, resultStep.ID, scheduleInteractionKey(req), req.ResolvedAt,
+	)
+	if err != nil {
+		return err
+	}
 	runUpdate := tx.Model(&model.AgentRun{}).Where("id = ?", req.RunID).Updates(map[string]any{
 		"status": string(agentruntime.RunStatusQueued), "waiting_reason": "", "waiting_token": "",
-		"revision": req.Revision + 1, "current_step_index": firstIndex + 1,
+		"revision": req.Revision + 1, "current_step_index": continuation.Index,
 		"updated_at": req.ResolvedAt,
 	})
 	if runUpdate.Error != nil {

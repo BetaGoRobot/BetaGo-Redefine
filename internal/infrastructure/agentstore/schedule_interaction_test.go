@@ -269,7 +269,7 @@ func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 		t.Fatalf("resolved run = status:%q reason:%q token_empty:%v revision:%d",
 			run.Status, run.WaitingReason, run.WaitingToken == "", run.Revision)
 	}
-	var cardActions, capabilityResults int64
+	var cardActions, capabilityResults, continuations int64
 	if err := f.db.Model(&model.AgentStep{}).
 		Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindCardAction)).
 		Count(&cardActions).Error; err != nil {
@@ -280,8 +280,17 @@ func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 		Count(&capabilityResults).Error; err != nil {
 		t.Fatal(err)
 	}
-	if cardActions != 1 || capabilityResults != 1 {
-		t.Fatalf("persisted steps = card_action:%d capability_result:%d, want 1/1", cardActions, capabilityResults)
+	if err := f.db.Model(&model.AgentStep{}).
+		Where("run_id = ? AND kind = ? AND status = ?",
+			f.runID, string(agentruntime.StepKindObserve), string(agentruntime.StepStatusQueued)).
+		Count(&continuations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cardActions != 1 || capabilityResults != 1 || continuations != 1 {
+		t.Fatalf(
+			"persisted steps = card_action:%d capability_result:%d continuation:%d, want 1/1/1",
+			cardActions, capabilityResults, continuations,
+		)
 	}
 	var cardStep model.AgentStep
 	if err := f.db.First(&cardStep,

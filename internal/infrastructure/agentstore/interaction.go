@@ -267,12 +267,18 @@ func (r *Repository) ResolveInteraction(ctx context.Context, req agentruntime.Re
 		if err := insertProjectionOutbox(tx, resume.ID, req.Projection, req.ResolvedAt); err != nil {
 			return err
 		}
+		continuation, err := enqueueContinuationStepTx(
+			tx, &run, resume.ID, dedupeKey, req.ResolvedAt,
+		)
+		if err != nil {
+			return err
+		}
 		result := tx.Model(&model.AgentRun{}).Where("id = ?", req.RunID).Updates(map[string]any{
 			"status":             string(agentruntime.RunStatusQueued),
 			"waiting_reason":     "",
 			"waiting_token":      "",
 			"revision":           req.Revision + 1,
-			"current_step_index": index,
+			"current_step_index": continuation.Index,
 			"updated_at":         req.ResolvedAt,
 		})
 		if result.Error != nil {
@@ -285,7 +291,7 @@ func (r *Repository) ResolveInteraction(ctx context.Context, req agentruntime.Re
 		run.WaitingReason = ""
 		run.WaitingToken = ""
 		run.Revision = req.Revision + 1
-		run.CurrentStepIndex = index
+		run.CurrentStepIndex = continuation.Index
 		run.UpdatedAt = req.ResolvedAt
 		storedRun = toRuntimeRun(&run)
 		storedStep = resume

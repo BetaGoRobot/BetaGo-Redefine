@@ -2,6 +2,8 @@ package agentstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,48 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+type continuationStepInput struct {
+	Version      int    `json:"version"`
+	SourceStepID string `json:"source_step_id"`
+}
+
+func enqueueContinuationStepTx(
+	tx *gorm.DB,
+	run *model.AgentRun,
+	sourceStepID string,
+	dedupeBase string,
+	now time.Time,
+) (*model.AgentStep, error) {
+	dedupeKey := dedupeBase + ":continuation"
+	var existing model.AgentStep
+	err := tx.Where("run_id = ? AND dedupe_key = ?", run.ID, dedupeKey).First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	index, err := nextStepIndex(tx, run)
+	if err != nil {
+		return nil, err
+	}
+	input, err := json.Marshal(continuationStepInput{Version: 1, SourceStepID: sourceStepID})
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(run.ID + "\x00" + dedupeKey))
+	step := &model.AgentStep{
+		ID: "step_continuation_" + hex.EncodeToString(sum[:]), RunID: run.ID, Index: index,
+		Kind: string(agentruntime.StepKindObserve), Status: string(agentruntime.StepStatusQueued),
+		InputJSON: string(input), OutputJSON: "{}", CreatedAt: now, DedupeKey: dedupeKey,
+	}
+	if err := tx.Create(step).Error; err != nil {
+		return nil, err
+	}
+	run.CurrentStepIndex = index
+	return step, nil
+}
 
 func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentStep, projection agentruntime.ProjectionDocument) (*agentruntime.AgentStep, error) {
 	if err := validateAppendEvent(step, projection); err != nil {

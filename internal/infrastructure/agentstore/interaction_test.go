@@ -352,6 +352,17 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 		resume.OutputJSON != string(resolve.Outcome) {
 		t.Fatalf("resume step = %#v", resume)
 	}
+	var continuations []model.AgentStep
+	if err := f.db.Where(
+		"run_id = ? AND kind = ?",
+		f.runID,
+		string(agentruntime.StepKindObserve),
+	).Find(&continuations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(continuations) != 1 || continuations[0].Status != string(agentruntime.StepStatusQueued) {
+		t.Fatalf("continuation steps = %#v, want one queued observation", continuations)
+	}
 	retry := resolve
 	retry.EventID = "retry-event-with-different-id"
 	retry.Outcome = json.RawMessage(`{"approved":true,"retry_payload_changed":true}`)
@@ -361,6 +372,15 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 	}
 	if againRun.ID != run.ID || againResume.ID != resume.ID {
 		t.Fatalf("duplicate returned run=%q step=%q, want run=%q step=%q", againRun.ID, againResume.ID, run.ID, resume.ID)
+	}
+	var continuationCount int64
+	if err := f.db.Model(&model.AgentStep{}).
+		Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindObserve)).
+		Count(&continuationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if continuationCount != 1 {
+		t.Fatalf("continuation count after replay = %d, want 1", continuationCount)
 	}
 	wrongToken := retry
 	wrongToken.PresentedToken = "wrong-token"
