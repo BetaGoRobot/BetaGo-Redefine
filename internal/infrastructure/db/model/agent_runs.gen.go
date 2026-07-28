@@ -37,6 +37,9 @@ type AgentRun struct {
 	HeartbeatAt      time.Time `gorm:"column:heartbeat_at" json:"heartbeat_at"`
 	LeaseExpiresAt   time.Time `gorm:"column:lease_expires_at" json:"lease_expires_at"`
 	RepairAttempts   int64     `gorm:"column:repair_attempts;not null" json:"repair_attempts"`
+	ActivationSource string    `gorm:"column:activation_source;not null" json:"activation_source"`
+	TopicFingerprint string    `gorm:"column:topic_fingerprint;not null" json:"topic_fingerprint"`
+	LastRelevantAt   time.Time `gorm:"column:last_relevant_at" json:"last_relevant_at"`
 }
 
 // TableName AgentRun's table name

@@ -38,6 +38,11 @@ func newAgentStep(db *gorm.DB, opts ...gen.DOOption) agentStep {
 	_agentStep.StartedAt = field.NewTime(tableName, "started_at")
 	_agentStep.FinishedAt = field.NewTime(tableName, "finished_at")
 	_agentStep.CreatedAt = field.NewTime(tableName, "created_at")
+	_agentStep.DedupeKey = field.NewString(tableName, "dedupe_key")
+	_agentStep.AttemptCount = field.NewInt32(tableName, "attempt_count")
+	_agentStep.WorkerID = field.NewString(tableName, "worker_id")
+	_agentStep.LeaseExpiresAt = field.NewTime(tableName, "lease_expires_at")
+	_agentStep.RetryOfStepID = field.NewString(tableName, "retry_of_step_id")
 
 	_agentStep.fillFieldMap()
 
@@ -61,6 +66,11 @@ type agentStep struct {
 	StartedAt      field.Time
 	FinishedAt     field.Time
 	CreatedAt      field.Time
+	DedupeKey      field.String
+	AttemptCount   field.Int32
+	WorkerID       field.String
+	LeaseExpiresAt field.Time
+	RetryOfStepID  field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -90,6 +100,11 @@ func (a *agentStep) updateTableName(table string) *agentStep {
 	a.StartedAt = field.NewTime(table, "started_at")
 	a.FinishedAt = field.NewTime(table, "finished_at")
 	a.CreatedAt = field.NewTime(table, "created_at")
+	a.DedupeKey = field.NewString(table, "dedupe_key")
+	a.AttemptCount = field.NewInt32(table, "attempt_count")
+	a.WorkerID = field.NewString(table, "worker_id")
+	a.LeaseExpiresAt = field.NewTime(table, "lease_expires_at")
+	a.RetryOfStepID = field.NewString(table, "retry_of_step_id")
 
 	a.fillFieldMap()
 
@@ -116,7 +131,7 @@ func (a *agentStep) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *agentStep) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 13)
+	a.fieldMap = make(map[string]field.Expr, 18)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["run_id"] = a.RunID
 	a.fieldMap["index"] = a.Index
@@ -130,6 +145,11 @@ func (a *agentStep) fillFieldMap() {
 	a.fieldMap["started_at"] = a.StartedAt
 	a.fieldMap["finished_at"] = a.FinishedAt
 	a.fieldMap["created_at"] = a.CreatedAt
+	a.fieldMap["dedupe_key"] = a.DedupeKey
+	a.fieldMap["attempt_count"] = a.AttemptCount
+	a.fieldMap["worker_id"] = a.WorkerID
+	a.fieldMap["lease_expires_at"] = a.LeaseExpiresAt
+	a.fieldMap["retry_of_step_id"] = a.RetryOfStepID
 }
 
 func (a agentStep) clone(db *gorm.DB) agentStep {

@@ -25,6 +25,11 @@ type AgentStep struct {
 	StartedAt      time.Time `gorm:"column:started_at" json:"started_at"`
 	FinishedAt     time.Time `gorm:"column:finished_at" json:"finished_at"`
 	CreatedAt      time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	DedupeKey      string    `gorm:"column:dedupe_key;not null" json:"dedupe_key"`
+	AttemptCount   int32     `gorm:"column:attempt_count;not null" json:"attempt_count"`
+	WorkerID       string    `gorm:"column:worker_id;not null" json:"worker_id"`
+	LeaseExpiresAt time.Time `gorm:"column:lease_expires_at" json:"lease_expires_at"`
+	RetryOfStepID  string    `gorm:"column:retry_of_step_id;not null" json:"retry_of_step_id"`
 }
 
 // TableName AgentStep's table name

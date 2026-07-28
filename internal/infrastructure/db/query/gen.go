@@ -16,53 +16,57 @@ import (
 )
 
 var (
-	Q                     = new(Query)
-	Administrator         *administrator
-	AgentRun              *agentRun
-	AgentSession          *agentSession
-	AgentStep             *agentStep
-	AlertList             *alertList
-	CardActionRecordLog   *cardActionRecordLog
-	ChannelLog            *channelLog
-	ChannelLogExt         *channelLogExt
-	ChatContextRecord     *chatContextRecord
-	ChatRecordLog         *chatRecordLog
-	CommandInfo           *commandInfo
-	CopyWritingCustom     *copyWritingCustom
-	CopyWritingGeneral    *copyWritingGeneral
-	CronCmdTask           *cronCmdTask
-	DynamicConfig         *dynamicConfig
-	FunctionEnabling      *functionEnabling
-	ImitateRateCustom     *imitateRateCustom
-	InteractionStat       *interactionStat
-	LarkImg               *larkImg
-	LlmTokenUsageRecord   *llmTokenUsageRecord
-	LuckinOrder           *luckinOrder
-	LuckinPendingOrder    *luckinPendingOrder
-	McpCredential         *mcpCredential
-	MessageLog            *messageLog
-	MsgTraceLog           *msgTraceLog
-	PermissionGrant       *permissionGrant
-	PrivateMode           *privateMode
-	PromptConf            *promptConf
-	PromptTemplateArg     *promptTemplateArg
-	QuoteReplyMsg         *quoteReplyMsg
-	QuoteReplyMsgCustom   *quoteReplyMsgCustom
-	ReactImageMeterial    *reactImageMeterial
-	ReactionWhitelist     *reactionWhitelist
-	RepeatWhitelist       *repeatWhitelist
-	RepeatWordsRate       *repeatWordsRate
-	RepeatWordsRateCustom *repeatWordsRateCustom
-	ScheduledTask         *scheduledTask
-	StickerMapping        *stickerMapping
-	TemplateVersion       *templateVersion
-	TodoItem              *todoItem
-	TodoReminder          *todoReminder
+	Q                        = new(Query)
+	Administrator            *administrator
+	AgentCapabilityExecution *agentCapabilityExecution
+	AgentProjectionOutbox    *agentProjectionOutbox
+	AgentRun                 *agentRun
+	AgentSession             *agentSession
+	AgentStep                *agentStep
+	AlertList                *alertList
+	CardActionRecordLog      *cardActionRecordLog
+	ChannelLog               *channelLog
+	ChannelLogExt            *channelLogExt
+	ChatContextRecord        *chatContextRecord
+	ChatRecordLog            *chatRecordLog
+	CommandInfo              *commandInfo
+	CopyWritingCustom        *copyWritingCustom
+	CopyWritingGeneral       *copyWritingGeneral
+	CronCmdTask              *cronCmdTask
+	DynamicConfig            *dynamicConfig
+	FunctionEnabling         *functionEnabling
+	ImitateRateCustom        *imitateRateCustom
+	InteractionStat          *interactionStat
+	LarkImg                  *larkImg
+	LlmTokenUsageRecord      *llmTokenUsageRecord
+	LuckinOrder              *luckinOrder
+	LuckinPendingOrder       *luckinPendingOrder
+	McpCredential            *mcpCredential
+	MessageLog               *messageLog
+	MsgTraceLog              *msgTraceLog
+	PermissionGrant          *permissionGrant
+	PrivateMode              *privateMode
+	PromptConf               *promptConf
+	PromptTemplateArg        *promptTemplateArg
+	QuoteReplyMsg            *quoteReplyMsg
+	QuoteReplyMsgCustom      *quoteReplyMsgCustom
+	ReactImageMeterial       *reactImageMeterial
+	ReactionWhitelist        *reactionWhitelist
+	RepeatWhitelist          *repeatWhitelist
+	RepeatWordsRate          *repeatWordsRate
+	RepeatWordsRateCustom    *repeatWordsRateCustom
+	ScheduledTask            *scheduledTask
+	StickerMapping           *stickerMapping
+	TemplateVersion          *templateVersion
+	TodoItem                 *todoItem
+	TodoReminder             *todoReminder
 )
 
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	*Q = *Use(db, opts...)
 	Administrator = &Q.Administrator
+	AgentCapabilityExecution = &Q.AgentCapabilityExecution
+	AgentProjectionOutbox = &Q.AgentProjectionOutbox
 	AgentRun = &Q.AgentRun
 	AgentSession = &Q.AgentSession
 	AgentStep = &Q.AgentStep
@@ -107,95 +111,99 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
-		db:                    db,
-		Administrator:         newAdministrator(db, opts...),
-		AgentRun:              newAgentRun(db, opts...),
-		AgentSession:          newAgentSession(db, opts...),
-		AgentStep:             newAgentStep(db, opts...),
-		AlertList:             newAlertList(db, opts...),
-		CardActionRecordLog:   newCardActionRecordLog(db, opts...),
-		ChannelLog:            newChannelLog(db, opts...),
-		ChannelLogExt:         newChannelLogExt(db, opts...),
-		ChatContextRecord:     newChatContextRecord(db, opts...),
-		ChatRecordLog:         newChatRecordLog(db, opts...),
-		CommandInfo:           newCommandInfo(db, opts...),
-		CopyWritingCustom:     newCopyWritingCustom(db, opts...),
-		CopyWritingGeneral:    newCopyWritingGeneral(db, opts...),
-		CronCmdTask:           newCronCmdTask(db, opts...),
-		DynamicConfig:         newDynamicConfig(db, opts...),
-		FunctionEnabling:      newFunctionEnabling(db, opts...),
-		ImitateRateCustom:     newImitateRateCustom(db, opts...),
-		InteractionStat:       newInteractionStat(db, opts...),
-		LarkImg:               newLarkImg(db, opts...),
-		LlmTokenUsageRecord:   newLlmTokenUsageRecord(db, opts...),
-		LuckinOrder:           newLuckinOrder(db, opts...),
-		LuckinPendingOrder:    newLuckinPendingOrder(db, opts...),
-		McpCredential:         newMcpCredential(db, opts...),
-		MessageLog:            newMessageLog(db, opts...),
-		MsgTraceLog:           newMsgTraceLog(db, opts...),
-		PermissionGrant:       newPermissionGrant(db, opts...),
-		PrivateMode:           newPrivateMode(db, opts...),
-		PromptConf:            newPromptConf(db, opts...),
-		PromptTemplateArg:     newPromptTemplateArg(db, opts...),
-		QuoteReplyMsg:         newQuoteReplyMsg(db, opts...),
-		QuoteReplyMsgCustom:   newQuoteReplyMsgCustom(db, opts...),
-		ReactImageMeterial:    newReactImageMeterial(db, opts...),
-		ReactionWhitelist:     newReactionWhitelist(db, opts...),
-		RepeatWhitelist:       newRepeatWhitelist(db, opts...),
-		RepeatWordsRate:       newRepeatWordsRate(db, opts...),
-		RepeatWordsRateCustom: newRepeatWordsRateCustom(db, opts...),
-		ScheduledTask:         newScheduledTask(db, opts...),
-		StickerMapping:        newStickerMapping(db, opts...),
-		TemplateVersion:       newTemplateVersion(db, opts...),
-		TodoItem:              newTodoItem(db, opts...),
-		TodoReminder:          newTodoReminder(db, opts...),
+		db:                       db,
+		Administrator:            newAdministrator(db, opts...),
+		AgentCapabilityExecution: newAgentCapabilityExecution(db, opts...),
+		AgentProjectionOutbox:    newAgentProjectionOutbox(db, opts...),
+		AgentRun:                 newAgentRun(db, opts...),
+		AgentSession:             newAgentSession(db, opts...),
+		AgentStep:                newAgentStep(db, opts...),
+		AlertList:                newAlertList(db, opts...),
+		CardActionRecordLog:      newCardActionRecordLog(db, opts...),
+		ChannelLog:               newChannelLog(db, opts...),
+		ChannelLogExt:            newChannelLogExt(db, opts...),
+		ChatContextRecord:        newChatContextRecord(db, opts...),
+		ChatRecordLog:            newChatRecordLog(db, opts...),
+		CommandInfo:              newCommandInfo(db, opts...),
+		CopyWritingCustom:        newCopyWritingCustom(db, opts...),
+		CopyWritingGeneral:       newCopyWritingGeneral(db, opts...),
+		CronCmdTask:              newCronCmdTask(db, opts...),
+		DynamicConfig:            newDynamicConfig(db, opts...),
+		FunctionEnabling:         newFunctionEnabling(db, opts...),
+		ImitateRateCustom:        newImitateRateCustom(db, opts...),
+		InteractionStat:          newInteractionStat(db, opts...),
+		LarkImg:                  newLarkImg(db, opts...),
+		LlmTokenUsageRecord:      newLlmTokenUsageRecord(db, opts...),
+		LuckinOrder:              newLuckinOrder(db, opts...),
+		LuckinPendingOrder:       newLuckinPendingOrder(db, opts...),
+		McpCredential:            newMcpCredential(db, opts...),
+		MessageLog:               newMessageLog(db, opts...),
+		MsgTraceLog:              newMsgTraceLog(db, opts...),
+		PermissionGrant:          newPermissionGrant(db, opts...),
+		PrivateMode:              newPrivateMode(db, opts...),
+		PromptConf:               newPromptConf(db, opts...),
+		PromptTemplateArg:        newPromptTemplateArg(db, opts...),
+		QuoteReplyMsg:            newQuoteReplyMsg(db, opts...),
+		QuoteReplyMsgCustom:      newQuoteReplyMsgCustom(db, opts...),
+		ReactImageMeterial:       newReactImageMeterial(db, opts...),
+		ReactionWhitelist:        newReactionWhitelist(db, opts...),
+		RepeatWhitelist:          newRepeatWhitelist(db, opts...),
+		RepeatWordsRate:          newRepeatWordsRate(db, opts...),
+		RepeatWordsRateCustom:    newRepeatWordsRateCustom(db, opts...),
+		ScheduledTask:            newScheduledTask(db, opts...),
+		StickerMapping:           newStickerMapping(db, opts...),
+		TemplateVersion:          newTemplateVersion(db, opts...),
+		TodoItem:                 newTodoItem(db, opts...),
+		TodoReminder:             newTodoReminder(db, opts...),
 	}
 }
 
 type Query struct {
 	db *gorm.DB
 
-	Administrator         administrator
-	AgentRun              agentRun
-	AgentSession          agentSession
-	AgentStep             agentStep
-	AlertList             alertList
-	CardActionRecordLog   cardActionRecordLog
-	ChannelLog            channelLog
-	ChannelLogExt         channelLogExt
-	ChatContextRecord     chatContextRecord
-	ChatRecordLog         chatRecordLog
-	CommandInfo           commandInfo
-	CopyWritingCustom     copyWritingCustom
-	CopyWritingGeneral    copyWritingGeneral
-	CronCmdTask           cronCmdTask
-	DynamicConfig         dynamicConfig
-	FunctionEnabling      functionEnabling
-	ImitateRateCustom     imitateRateCustom
-	InteractionStat       interactionStat
-	LarkImg               larkImg
-	LlmTokenUsageRecord   llmTokenUsageRecord
-	LuckinOrder           luckinOrder
-	LuckinPendingOrder    luckinPendingOrder
-	McpCredential         mcpCredential
-	MessageLog            messageLog
-	MsgTraceLog           msgTraceLog
-	PermissionGrant       permissionGrant
-	PrivateMode           privateMode
-	PromptConf            promptConf
-	PromptTemplateArg     promptTemplateArg
-	QuoteReplyMsg         quoteReplyMsg
-	QuoteReplyMsgCustom   quoteReplyMsgCustom
-	ReactImageMeterial    reactImageMeterial
-	ReactionWhitelist     reactionWhitelist
-	RepeatWhitelist       repeatWhitelist
-	RepeatWordsRate       repeatWordsRate
-	RepeatWordsRateCustom repeatWordsRateCustom
-	ScheduledTask         scheduledTask
-	StickerMapping        stickerMapping
-	TemplateVersion       templateVersion
-	TodoItem              todoItem
-	TodoReminder          todoReminder
+	Administrator            administrator
+	AgentCapabilityExecution agentCapabilityExecution
+	AgentProjectionOutbox    agentProjectionOutbox
+	AgentRun                 agentRun
+	AgentSession             agentSession
+	AgentStep                agentStep
+	AlertList                alertList
+	CardActionRecordLog      cardActionRecordLog
+	ChannelLog               channelLog
+	ChannelLogExt            channelLogExt
+	ChatContextRecord        chatContextRecord
+	ChatRecordLog            chatRecordLog
+	CommandInfo              commandInfo
+	CopyWritingCustom        copyWritingCustom
+	CopyWritingGeneral       copyWritingGeneral
+	CronCmdTask              cronCmdTask
+	DynamicConfig            dynamicConfig
+	FunctionEnabling         functionEnabling
+	ImitateRateCustom        imitateRateCustom
+	InteractionStat          interactionStat
+	LarkImg                  larkImg
+	LlmTokenUsageRecord      llmTokenUsageRecord
+	LuckinOrder              luckinOrder
+	LuckinPendingOrder       luckinPendingOrder
+	McpCredential            mcpCredential
+	MessageLog               messageLog
+	MsgTraceLog              msgTraceLog
+	PermissionGrant          permissionGrant
+	PrivateMode              privateMode
+	PromptConf               promptConf
+	PromptTemplateArg        promptTemplateArg
+	QuoteReplyMsg            quoteReplyMsg
+	QuoteReplyMsgCustom      quoteReplyMsgCustom
+	ReactImageMeterial       reactImageMeterial
+	ReactionWhitelist        reactionWhitelist
+	RepeatWhitelist          repeatWhitelist
+	RepeatWordsRate          repeatWordsRate
+	RepeatWordsRateCustom    repeatWordsRateCustom
+	ScheduledTask            scheduledTask
+	StickerMapping           stickerMapping
+	TemplateVersion          templateVersion
+	TodoItem                 todoItem
+	TodoReminder             todoReminder
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -204,48 +212,50 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
-		db:                    db,
-		Administrator:         q.Administrator.clone(db),
-		AgentRun:              q.AgentRun.clone(db),
-		AgentSession:          q.AgentSession.clone(db),
-		AgentStep:             q.AgentStep.clone(db),
-		AlertList:             q.AlertList.clone(db),
-		CardActionRecordLog:   q.CardActionRecordLog.clone(db),
-		ChannelLog:            q.ChannelLog.clone(db),
-		ChannelLogExt:         q.ChannelLogExt.clone(db),
-		ChatContextRecord:     q.ChatContextRecord.clone(db),
-		ChatRecordLog:         q.ChatRecordLog.clone(db),
-		CommandInfo:           q.CommandInfo.clone(db),
-		CopyWritingCustom:     q.CopyWritingCustom.clone(db),
-		CopyWritingGeneral:    q.CopyWritingGeneral.clone(db),
-		CronCmdTask:           q.CronCmdTask.clone(db),
-		DynamicConfig:         q.DynamicConfig.clone(db),
-		FunctionEnabling:      q.FunctionEnabling.clone(db),
-		ImitateRateCustom:     q.ImitateRateCustom.clone(db),
-		InteractionStat:       q.InteractionStat.clone(db),
-		LarkImg:               q.LarkImg.clone(db),
-		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.clone(db),
-		LuckinOrder:           q.LuckinOrder.clone(db),
-		LuckinPendingOrder:    q.LuckinPendingOrder.clone(db),
-		McpCredential:         q.McpCredential.clone(db),
-		MessageLog:            q.MessageLog.clone(db),
-		MsgTraceLog:           q.MsgTraceLog.clone(db),
-		PermissionGrant:       q.PermissionGrant.clone(db),
-		PrivateMode:           q.PrivateMode.clone(db),
-		PromptConf:            q.PromptConf.clone(db),
-		PromptTemplateArg:     q.PromptTemplateArg.clone(db),
-		QuoteReplyMsg:         q.QuoteReplyMsg.clone(db),
-		QuoteReplyMsgCustom:   q.QuoteReplyMsgCustom.clone(db),
-		ReactImageMeterial:    q.ReactImageMeterial.clone(db),
-		ReactionWhitelist:     q.ReactionWhitelist.clone(db),
-		RepeatWhitelist:       q.RepeatWhitelist.clone(db),
-		RepeatWordsRate:       q.RepeatWordsRate.clone(db),
-		RepeatWordsRateCustom: q.RepeatWordsRateCustom.clone(db),
-		ScheduledTask:         q.ScheduledTask.clone(db),
-		StickerMapping:        q.StickerMapping.clone(db),
-		TemplateVersion:       q.TemplateVersion.clone(db),
-		TodoItem:              q.TodoItem.clone(db),
-		TodoReminder:          q.TodoReminder.clone(db),
+		db:                       db,
+		Administrator:            q.Administrator.clone(db),
+		AgentCapabilityExecution: q.AgentCapabilityExecution.clone(db),
+		AgentProjectionOutbox:    q.AgentProjectionOutbox.clone(db),
+		AgentRun:                 q.AgentRun.clone(db),
+		AgentSession:             q.AgentSession.clone(db),
+		AgentStep:                q.AgentStep.clone(db),
+		AlertList:                q.AlertList.clone(db),
+		CardActionRecordLog:      q.CardActionRecordLog.clone(db),
+		ChannelLog:               q.ChannelLog.clone(db),
+		ChannelLogExt:            q.ChannelLogExt.clone(db),
+		ChatContextRecord:        q.ChatContextRecord.clone(db),
+		ChatRecordLog:            q.ChatRecordLog.clone(db),
+		CommandInfo:              q.CommandInfo.clone(db),
+		CopyWritingCustom:        q.CopyWritingCustom.clone(db),
+		CopyWritingGeneral:       q.CopyWritingGeneral.clone(db),
+		CronCmdTask:              q.CronCmdTask.clone(db),
+		DynamicConfig:            q.DynamicConfig.clone(db),
+		FunctionEnabling:         q.FunctionEnabling.clone(db),
+		ImitateRateCustom:        q.ImitateRateCustom.clone(db),
+		InteractionStat:          q.InteractionStat.clone(db),
+		LarkImg:                  q.LarkImg.clone(db),
+		LlmTokenUsageRecord:      q.LlmTokenUsageRecord.clone(db),
+		LuckinOrder:              q.LuckinOrder.clone(db),
+		LuckinPendingOrder:       q.LuckinPendingOrder.clone(db),
+		McpCredential:            q.McpCredential.clone(db),
+		MessageLog:               q.MessageLog.clone(db),
+		MsgTraceLog:              q.MsgTraceLog.clone(db),
+		PermissionGrant:          q.PermissionGrant.clone(db),
+		PrivateMode:              q.PrivateMode.clone(db),
+		PromptConf:               q.PromptConf.clone(db),
+		PromptTemplateArg:        q.PromptTemplateArg.clone(db),
+		QuoteReplyMsg:            q.QuoteReplyMsg.clone(db),
+		QuoteReplyMsgCustom:      q.QuoteReplyMsgCustom.clone(db),
+		ReactImageMeterial:       q.ReactImageMeterial.clone(db),
+		ReactionWhitelist:        q.ReactionWhitelist.clone(db),
+		RepeatWhitelist:          q.RepeatWhitelist.clone(db),
+		RepeatWordsRate:          q.RepeatWordsRate.clone(db),
+		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.clone(db),
+		ScheduledTask:            q.ScheduledTask.clone(db),
+		StickerMapping:           q.StickerMapping.clone(db),
+		TemplateVersion:          q.TemplateVersion.clone(db),
+		TodoItem:                 q.TodoItem.clone(db),
+		TodoReminder:             q.TodoReminder.clone(db),
 	}
 }
 
@@ -259,138 +269,144 @@ func (q *Query) WriteDB() *Query {
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
-		db:                    db,
-		Administrator:         q.Administrator.replaceDB(db),
-		AgentRun:              q.AgentRun.replaceDB(db),
-		AgentSession:          q.AgentSession.replaceDB(db),
-		AgentStep:             q.AgentStep.replaceDB(db),
-		AlertList:             q.AlertList.replaceDB(db),
-		CardActionRecordLog:   q.CardActionRecordLog.replaceDB(db),
-		ChannelLog:            q.ChannelLog.replaceDB(db),
-		ChannelLogExt:         q.ChannelLogExt.replaceDB(db),
-		ChatContextRecord:     q.ChatContextRecord.replaceDB(db),
-		ChatRecordLog:         q.ChatRecordLog.replaceDB(db),
-		CommandInfo:           q.CommandInfo.replaceDB(db),
-		CopyWritingCustom:     q.CopyWritingCustom.replaceDB(db),
-		CopyWritingGeneral:    q.CopyWritingGeneral.replaceDB(db),
-		CronCmdTask:           q.CronCmdTask.replaceDB(db),
-		DynamicConfig:         q.DynamicConfig.replaceDB(db),
-		FunctionEnabling:      q.FunctionEnabling.replaceDB(db),
-		ImitateRateCustom:     q.ImitateRateCustom.replaceDB(db),
-		InteractionStat:       q.InteractionStat.replaceDB(db),
-		LarkImg:               q.LarkImg.replaceDB(db),
-		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.replaceDB(db),
-		LuckinOrder:           q.LuckinOrder.replaceDB(db),
-		LuckinPendingOrder:    q.LuckinPendingOrder.replaceDB(db),
-		McpCredential:         q.McpCredential.replaceDB(db),
-		MessageLog:            q.MessageLog.replaceDB(db),
-		MsgTraceLog:           q.MsgTraceLog.replaceDB(db),
-		PermissionGrant:       q.PermissionGrant.replaceDB(db),
-		PrivateMode:           q.PrivateMode.replaceDB(db),
-		PromptConf:            q.PromptConf.replaceDB(db),
-		PromptTemplateArg:     q.PromptTemplateArg.replaceDB(db),
-		QuoteReplyMsg:         q.QuoteReplyMsg.replaceDB(db),
-		QuoteReplyMsgCustom:   q.QuoteReplyMsgCustom.replaceDB(db),
-		ReactImageMeterial:    q.ReactImageMeterial.replaceDB(db),
-		ReactionWhitelist:     q.ReactionWhitelist.replaceDB(db),
-		RepeatWhitelist:       q.RepeatWhitelist.replaceDB(db),
-		RepeatWordsRate:       q.RepeatWordsRate.replaceDB(db),
-		RepeatWordsRateCustom: q.RepeatWordsRateCustom.replaceDB(db),
-		ScheduledTask:         q.ScheduledTask.replaceDB(db),
-		StickerMapping:        q.StickerMapping.replaceDB(db),
-		TemplateVersion:       q.TemplateVersion.replaceDB(db),
-		TodoItem:              q.TodoItem.replaceDB(db),
-		TodoReminder:          q.TodoReminder.replaceDB(db),
+		db:                       db,
+		Administrator:            q.Administrator.replaceDB(db),
+		AgentCapabilityExecution: q.AgentCapabilityExecution.replaceDB(db),
+		AgentProjectionOutbox:    q.AgentProjectionOutbox.replaceDB(db),
+		AgentRun:                 q.AgentRun.replaceDB(db),
+		AgentSession:             q.AgentSession.replaceDB(db),
+		AgentStep:                q.AgentStep.replaceDB(db),
+		AlertList:                q.AlertList.replaceDB(db),
+		CardActionRecordLog:      q.CardActionRecordLog.replaceDB(db),
+		ChannelLog:               q.ChannelLog.replaceDB(db),
+		ChannelLogExt:            q.ChannelLogExt.replaceDB(db),
+		ChatContextRecord:        q.ChatContextRecord.replaceDB(db),
+		ChatRecordLog:            q.ChatRecordLog.replaceDB(db),
+		CommandInfo:              q.CommandInfo.replaceDB(db),
+		CopyWritingCustom:        q.CopyWritingCustom.replaceDB(db),
+		CopyWritingGeneral:       q.CopyWritingGeneral.replaceDB(db),
+		CronCmdTask:              q.CronCmdTask.replaceDB(db),
+		DynamicConfig:            q.DynamicConfig.replaceDB(db),
+		FunctionEnabling:         q.FunctionEnabling.replaceDB(db),
+		ImitateRateCustom:        q.ImitateRateCustom.replaceDB(db),
+		InteractionStat:          q.InteractionStat.replaceDB(db),
+		LarkImg:                  q.LarkImg.replaceDB(db),
+		LlmTokenUsageRecord:      q.LlmTokenUsageRecord.replaceDB(db),
+		LuckinOrder:              q.LuckinOrder.replaceDB(db),
+		LuckinPendingOrder:       q.LuckinPendingOrder.replaceDB(db),
+		McpCredential:            q.McpCredential.replaceDB(db),
+		MessageLog:               q.MessageLog.replaceDB(db),
+		MsgTraceLog:              q.MsgTraceLog.replaceDB(db),
+		PermissionGrant:          q.PermissionGrant.replaceDB(db),
+		PrivateMode:              q.PrivateMode.replaceDB(db),
+		PromptConf:               q.PromptConf.replaceDB(db),
+		PromptTemplateArg:        q.PromptTemplateArg.replaceDB(db),
+		QuoteReplyMsg:            q.QuoteReplyMsg.replaceDB(db),
+		QuoteReplyMsgCustom:      q.QuoteReplyMsgCustom.replaceDB(db),
+		ReactImageMeterial:       q.ReactImageMeterial.replaceDB(db),
+		ReactionWhitelist:        q.ReactionWhitelist.replaceDB(db),
+		RepeatWhitelist:          q.RepeatWhitelist.replaceDB(db),
+		RepeatWordsRate:          q.RepeatWordsRate.replaceDB(db),
+		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.replaceDB(db),
+		ScheduledTask:            q.ScheduledTask.replaceDB(db),
+		StickerMapping:           q.StickerMapping.replaceDB(db),
+		TemplateVersion:          q.TemplateVersion.replaceDB(db),
+		TodoItem:                 q.TodoItem.replaceDB(db),
+		TodoReminder:             q.TodoReminder.replaceDB(db),
 	}
 }
 
 type queryCtx struct {
-	Administrator         IAdministratorDo
-	AgentRun              IAgentRunDo
-	AgentSession          IAgentSessionDo
-	AgentStep             IAgentStepDo
-	AlertList             IAlertListDo
-	CardActionRecordLog   ICardActionRecordLogDo
-	ChannelLog            IChannelLogDo
-	ChannelLogExt         IChannelLogExtDo
-	ChatContextRecord     IChatContextRecordDo
-	ChatRecordLog         IChatRecordLogDo
-	CommandInfo           ICommandInfoDo
-	CopyWritingCustom     ICopyWritingCustomDo
-	CopyWritingGeneral    ICopyWritingGeneralDo
-	CronCmdTask           ICronCmdTaskDo
-	DynamicConfig         IDynamicConfigDo
-	FunctionEnabling      IFunctionEnablingDo
-	ImitateRateCustom     IImitateRateCustomDo
-	InteractionStat       IInteractionStatDo
-	LarkImg               ILarkImgDo
-	LlmTokenUsageRecord   ILlmTokenUsageRecordDo
-	LuckinOrder           ILuckinOrderDo
-	LuckinPendingOrder    ILuckinPendingOrderDo
-	McpCredential         IMcpCredentialDo
-	MessageLog            IMessageLogDo
-	MsgTraceLog           IMsgTraceLogDo
-	PermissionGrant       IPermissionGrantDo
-	PrivateMode           IPrivateModeDo
-	PromptConf            IPromptConfDo
-	PromptTemplateArg     IPromptTemplateArgDo
-	QuoteReplyMsg         IQuoteReplyMsgDo
-	QuoteReplyMsgCustom   IQuoteReplyMsgCustomDo
-	ReactImageMeterial    IReactImageMeterialDo
-	ReactionWhitelist     IReactionWhitelistDo
-	RepeatWhitelist       IRepeatWhitelistDo
-	RepeatWordsRate       IRepeatWordsRateDo
-	RepeatWordsRateCustom IRepeatWordsRateCustomDo
-	ScheduledTask         IScheduledTaskDo
-	StickerMapping        IStickerMappingDo
-	TemplateVersion       ITemplateVersionDo
-	TodoItem              ITodoItemDo
-	TodoReminder          ITodoReminderDo
+	Administrator            IAdministratorDo
+	AgentCapabilityExecution IAgentCapabilityExecutionDo
+	AgentProjectionOutbox    IAgentProjectionOutboxDo
+	AgentRun                 IAgentRunDo
+	AgentSession             IAgentSessionDo
+	AgentStep                IAgentStepDo
+	AlertList                IAlertListDo
+	CardActionRecordLog      ICardActionRecordLogDo
+	ChannelLog               IChannelLogDo
+	ChannelLogExt            IChannelLogExtDo
+	ChatContextRecord        IChatContextRecordDo
+	ChatRecordLog            IChatRecordLogDo
+	CommandInfo              ICommandInfoDo
+	CopyWritingCustom        ICopyWritingCustomDo
+	CopyWritingGeneral       ICopyWritingGeneralDo
+	CronCmdTask              ICronCmdTaskDo
+	DynamicConfig            IDynamicConfigDo
+	FunctionEnabling         IFunctionEnablingDo
+	ImitateRateCustom        IImitateRateCustomDo
+	InteractionStat          IInteractionStatDo
+	LarkImg                  ILarkImgDo
+	LlmTokenUsageRecord      ILlmTokenUsageRecordDo
+	LuckinOrder              ILuckinOrderDo
+	LuckinPendingOrder       ILuckinPendingOrderDo
+	McpCredential            IMcpCredentialDo
+	MessageLog               IMessageLogDo
+	MsgTraceLog              IMsgTraceLogDo
+	PermissionGrant          IPermissionGrantDo
+	PrivateMode              IPrivateModeDo
+	PromptConf               IPromptConfDo
+	PromptTemplateArg        IPromptTemplateArgDo
+	QuoteReplyMsg            IQuoteReplyMsgDo
+	QuoteReplyMsgCustom      IQuoteReplyMsgCustomDo
+	ReactImageMeterial       IReactImageMeterialDo
+	ReactionWhitelist        IReactionWhitelistDo
+	RepeatWhitelist          IRepeatWhitelistDo
+	RepeatWordsRate          IRepeatWordsRateDo
+	RepeatWordsRateCustom    IRepeatWordsRateCustomDo
+	ScheduledTask            IScheduledTaskDo
+	StickerMapping           IStickerMappingDo
+	TemplateVersion          ITemplateVersionDo
+	TodoItem                 ITodoItemDo
+	TodoReminder             ITodoReminderDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		Administrator:         q.Administrator.WithContext(ctx),
-		AgentRun:              q.AgentRun.WithContext(ctx),
-		AgentSession:          q.AgentSession.WithContext(ctx),
-		AgentStep:             q.AgentStep.WithContext(ctx),
-		AlertList:             q.AlertList.WithContext(ctx),
-		CardActionRecordLog:   q.CardActionRecordLog.WithContext(ctx),
-		ChannelLog:            q.ChannelLog.WithContext(ctx),
-		ChannelLogExt:         q.ChannelLogExt.WithContext(ctx),
-		ChatContextRecord:     q.ChatContextRecord.WithContext(ctx),
-		ChatRecordLog:         q.ChatRecordLog.WithContext(ctx),
-		CommandInfo:           q.CommandInfo.WithContext(ctx),
-		CopyWritingCustom:     q.CopyWritingCustom.WithContext(ctx),
-		CopyWritingGeneral:    q.CopyWritingGeneral.WithContext(ctx),
-		CronCmdTask:           q.CronCmdTask.WithContext(ctx),
-		DynamicConfig:         q.DynamicConfig.WithContext(ctx),
-		FunctionEnabling:      q.FunctionEnabling.WithContext(ctx),
-		ImitateRateCustom:     q.ImitateRateCustom.WithContext(ctx),
-		InteractionStat:       q.InteractionStat.WithContext(ctx),
-		LarkImg:               q.LarkImg.WithContext(ctx),
-		LlmTokenUsageRecord:   q.LlmTokenUsageRecord.WithContext(ctx),
-		LuckinOrder:           q.LuckinOrder.WithContext(ctx),
-		LuckinPendingOrder:    q.LuckinPendingOrder.WithContext(ctx),
-		McpCredential:         q.McpCredential.WithContext(ctx),
-		MessageLog:            q.MessageLog.WithContext(ctx),
-		MsgTraceLog:           q.MsgTraceLog.WithContext(ctx),
-		PermissionGrant:       q.PermissionGrant.WithContext(ctx),
-		PrivateMode:           q.PrivateMode.WithContext(ctx),
-		PromptConf:            q.PromptConf.WithContext(ctx),
-		PromptTemplateArg:     q.PromptTemplateArg.WithContext(ctx),
-		QuoteReplyMsg:         q.QuoteReplyMsg.WithContext(ctx),
-		QuoteReplyMsgCustom:   q.QuoteReplyMsgCustom.WithContext(ctx),
-		ReactImageMeterial:    q.ReactImageMeterial.WithContext(ctx),
-		ReactionWhitelist:     q.ReactionWhitelist.WithContext(ctx),
-		RepeatWhitelist:       q.RepeatWhitelist.WithContext(ctx),
-		RepeatWordsRate:       q.RepeatWordsRate.WithContext(ctx),
-		RepeatWordsRateCustom: q.RepeatWordsRateCustom.WithContext(ctx),
-		ScheduledTask:         q.ScheduledTask.WithContext(ctx),
-		StickerMapping:        q.StickerMapping.WithContext(ctx),
-		TemplateVersion:       q.TemplateVersion.WithContext(ctx),
-		TodoItem:              q.TodoItem.WithContext(ctx),
-		TodoReminder:          q.TodoReminder.WithContext(ctx),
+		Administrator:            q.Administrator.WithContext(ctx),
+		AgentCapabilityExecution: q.AgentCapabilityExecution.WithContext(ctx),
+		AgentProjectionOutbox:    q.AgentProjectionOutbox.WithContext(ctx),
+		AgentRun:                 q.AgentRun.WithContext(ctx),
+		AgentSession:             q.AgentSession.WithContext(ctx),
+		AgentStep:                q.AgentStep.WithContext(ctx),
+		AlertList:                q.AlertList.WithContext(ctx),
+		CardActionRecordLog:      q.CardActionRecordLog.WithContext(ctx),
+		ChannelLog:               q.ChannelLog.WithContext(ctx),
+		ChannelLogExt:            q.ChannelLogExt.WithContext(ctx),
+		ChatContextRecord:        q.ChatContextRecord.WithContext(ctx),
+		ChatRecordLog:            q.ChatRecordLog.WithContext(ctx),
+		CommandInfo:              q.CommandInfo.WithContext(ctx),
+		CopyWritingCustom:        q.CopyWritingCustom.WithContext(ctx),
+		CopyWritingGeneral:       q.CopyWritingGeneral.WithContext(ctx),
+		CronCmdTask:              q.CronCmdTask.WithContext(ctx),
+		DynamicConfig:            q.DynamicConfig.WithContext(ctx),
+		FunctionEnabling:         q.FunctionEnabling.WithContext(ctx),
+		ImitateRateCustom:        q.ImitateRateCustom.WithContext(ctx),
+		InteractionStat:          q.InteractionStat.WithContext(ctx),
+		LarkImg:                  q.LarkImg.WithContext(ctx),
+		LlmTokenUsageRecord:      q.LlmTokenUsageRecord.WithContext(ctx),
+		LuckinOrder:              q.LuckinOrder.WithContext(ctx),
+		LuckinPendingOrder:       q.LuckinPendingOrder.WithContext(ctx),
+		McpCredential:            q.McpCredential.WithContext(ctx),
+		MessageLog:               q.MessageLog.WithContext(ctx),
+		MsgTraceLog:              q.MsgTraceLog.WithContext(ctx),
+		PermissionGrant:          q.PermissionGrant.WithContext(ctx),
+		PrivateMode:              q.PrivateMode.WithContext(ctx),
+		PromptConf:               q.PromptConf.WithContext(ctx),
+		PromptTemplateArg:        q.PromptTemplateArg.WithContext(ctx),
+		QuoteReplyMsg:            q.QuoteReplyMsg.WithContext(ctx),
+		QuoteReplyMsgCustom:      q.QuoteReplyMsgCustom.WithContext(ctx),
+		ReactImageMeterial:       q.ReactImageMeterial.WithContext(ctx),
+		ReactionWhitelist:        q.ReactionWhitelist.WithContext(ctx),
+		RepeatWhitelist:          q.RepeatWhitelist.WithContext(ctx),
+		RepeatWordsRate:          q.RepeatWordsRate.WithContext(ctx),
+		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.WithContext(ctx),
+		ScheduledTask:            q.ScheduledTask.WithContext(ctx),
+		StickerMapping:           q.StickerMapping.WithContext(ctx),
+		TemplateVersion:          q.TemplateVersion.WithContext(ctx),
+		TodoItem:                 q.TodoItem.WithContext(ctx),
+		TodoReminder:             q.TodoReminder.WithContext(ctx),
 	}
 }
 
