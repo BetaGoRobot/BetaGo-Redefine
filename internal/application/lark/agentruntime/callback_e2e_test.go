@@ -63,24 +63,165 @@ func TestConversationCallbackRuntimeEndToEnd(t *testing.T) {
 	}
 }
 
+func TestConversationCallbackRuntimeRejectsInvalidConfirmation(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*callbackE2EHarness, *callback.CardActionTriggerEvent)
+		wantErr error
+	}{
+		{
+			name: "wrong actor",
+			mutate: func(_ *callbackE2EHarness, event *callback.CardActionTriggerEvent) {
+				event.Event.Operator.OpenID = "actor-other"
+			},
+		},
+		{
+			name: "expired wait",
+			mutate: func(harness *callbackE2EHarness, _ *callback.CardActionTriggerEvent) {
+				harness.now = harness.now.Add(16 * time.Minute)
+			},
+			wantErr: agentruntime.ErrInteractionExpired,
+		},
+		{
+			name: "wrong token",
+			mutate: func(_ *callbackE2EHarness, event *callback.CardActionTriggerEvent) {
+				event.Event.Action.Value[cardactionproto.TokenField] = "wrong-token"
+			},
+			wantErr: agentruntime.ErrInteractionTokenMismatch,
+		},
+		{
+			name: "stale revision",
+			mutate: func(_ *callbackE2EHarness, event *callback.CardActionTriggerEvent) {
+				event.Event.Action.Value[cardactionproto.RevisionField] = "2"
+			},
+			wantErr: agentruntime.ErrInteractionConflict,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			harness := newCallbackE2EHarness(t)
+			envelope := harness.startScheduleEdit(t)
+			event := harness.confirmEvent(envelope, "event-invalid")
+			tt.mutate(harness, event)
+
+			_, err := harness.dispatch(event)
+			if err == nil {
+				t.Fatal("Dispatch(invalid confirmation) error = nil")
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Dispatch(invalid confirmation) error = %v, want %v", err, tt.wantErr)
+			}
+			snapshot := harness.store.snapshot()
+			if harness.updater.calls() != 0 || harness.deliverer.calls() != 0 ||
+				snapshot.runStatus != agentruntime.RunStatusWaitingApproval ||
+				snapshot.outboxCount != 1 || snapshot.continuationRetries != 0 {
+				t.Fatalf("invalid confirmation mutated state: %#v", snapshot)
+			}
+		})
+	}
+}
+
+func TestConversationCallbackRuntimeGeneratorFailureRemainsRetryable(t *testing.T) {
+	harness := newCallbackE2EHarness(t)
+	generatorErr := errors.New("generator unavailable")
+	harness.generator.err = generatorErr
+	envelope := harness.startScheduleEdit(t)
+	if _, err := harness.dispatch(harness.confirmEvent(envelope, "event-generator-failure")); err != nil {
+		t.Fatalf("Dispatch(confirm) error = %v", err)
+	}
+
+	if _, err := harness.runtime.SubmitDueContinuations(context.Background(), 8); !errors.Is(err, generatorErr) {
+		t.Fatalf("SubmitDueContinuations() error = %v, want generator failure", err)
+	}
+	snapshot := harness.store.snapshot()
+	if harness.updater.calls() != 1 || harness.deliverer.calls() != 0 ||
+		snapshot.runStatus != agentruntime.RunStatusQueued ||
+		snapshot.continuationRetries != 1 ||
+		snapshot.continuationStatus != agentruntime.StepStatusQueued ||
+		!snapshot.continuationRetryAt.After(harness.now) ||
+		snapshot.outboxCount != 3 {
+		t.Fatalf("generator failure state = %#v", snapshot)
+	}
+}
+
+func TestConversationCallbackRuntimeOpenSearchFailureDoesNotBlockContinuation(t *testing.T) {
+	harness := newCallbackE2EHarness(t)
+	openSearchErr := errors.New("opensearch unavailable")
+	harness.writer.err = openSearchErr
+	envelope := harness.startScheduleEdit(t)
+
+	if err := harness.runtime.SubmitNextProjection(context.Background()); !errors.Is(err, openSearchErr) {
+		t.Fatalf("SubmitNextProjection() error = %v, want OpenSearch failure", err)
+	}
+	if _, err := harness.dispatch(harness.confirmEvent(envelope, "event-opensearch")); err != nil {
+		t.Fatalf("Dispatch(confirm) error = %v", err)
+	}
+	if _, err := harness.runtime.SubmitDueContinuations(context.Background(), 8); err != nil {
+		t.Fatalf("SubmitDueContinuations() error = %v", err)
+	}
+	snapshot := harness.store.snapshot()
+	if harness.updater.calls() != 1 || harness.deliverer.calls() != 1 ||
+		snapshot.runStatus != agentruntime.RunStatusCompleted ||
+		snapshot.projectionRetries != 1 ||
+		snapshot.projectionStatus != agentruntime.ProjectionStatusPending ||
+		!snapshot.projectionRetryAt.After(harness.now) ||
+		snapshot.outboxCount < 4 {
+		t.Fatalf("OpenSearch failure blocked durable continuation: %#v", snapshot)
+	}
+}
+
+func TestConversationCallbackRuntimeFreshRuntimeConsumesDurableContinuation(t *testing.T) {
+	first := newCallbackE2EHarness(t)
+	envelope := first.startScheduleEdit(t)
+	if _, err := first.dispatch(first.confirmEvent(envelope, "event-before-restart")); err != nil {
+		t.Fatalf("Dispatch(confirm) error = %v", err)
+	}
+	if snapshot := first.store.snapshot(); snapshot.runStatus != agentruntime.RunStatusQueued {
+		t.Fatalf("pre-restart run status = %q, want queued", snapshot.runStatus)
+	}
+
+	restarted := newCallbackE2EHarnessWithStore(t, first.store)
+	if submitted, err := restarted.runtime.SubmitDueContinuations(context.Background(), 8); err != nil {
+		t.Fatalf("restarted SubmitDueContinuations() error = %v", err)
+	} else if submitted != 1 {
+		t.Fatalf("restarted submitted continuations = %d, want 1", submitted)
+	}
+	snapshot := restarted.store.snapshot()
+	if first.updater.calls() != 1 || restarted.deliverer.calls() != 1 ||
+		snapshot.runStatus != agentruntime.RunStatusCompleted ||
+		snapshot.outboxCount < 4 {
+		t.Fatalf("restart recovery state = %#v", snapshot)
+	}
+}
+
 type callbackE2EHarness struct {
 	now        time.Time
 	store      *callbackE2EStore
 	updater    *callbackE2EUpdater
 	generator  *callbackE2EGenerator
 	deliverer  *callbackE2EDeliverer
+	writer     *callbackE2EProjectionWriter
 	runtime    *agentruntime.Runtime
 	dispatcher *appcardaction.ScheduleInteractionDispatcher
 }
 
 func newCallbackE2EHarness(t *testing.T) *callbackE2EHarness {
 	t.Helper()
+	return newCallbackE2EHarnessWithStore(t, &callbackE2EStore{})
+}
+
+func newCallbackE2EHarnessWithStore(
+	t *testing.T,
+	store *callbackE2EStore,
+) *callbackE2EHarness {
+	t.Helper()
 	harness := &callbackE2EHarness{
 		now:       time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC),
-		store:     &callbackE2EStore{},
+		store:     store,
 		updater:   &callbackE2EUpdater{},
 		generator: &callbackE2EGenerator{},
 		deliverer: &callbackE2EDeliverer{},
+		writer:    &callbackE2EProjectionWriter{},
 	}
 	executor := callbackE2EInlineExecutor{}
 	runtime, err := agentruntime.NewRuntime(agentruntime.RuntimeOptions{
@@ -119,13 +260,23 @@ func newCallbackE2EHarness(t *testing.T) *callbackE2EHarness {
 			Now: func() time.Time { return harness.now },
 		},
 	)
+	projector := agentruntime.NewProjector(
+		harness.store,
+		harness.writer,
+		executor,
+		agentruntime.ProjectorConfig{
+			WorkerID: "projection-worker-e2e", LeaseTTL: time.Minute,
+			WriteTimeout: 10 * time.Second,
+			Now:          func() time.Time { return harness.now },
+		},
+	)
 	if err := runtime.Bind(agentruntime.RuntimeDependencies{
 		InteractionStarter: starter,
 		ScheduleResolver:   resolver,
 		EnabledProcessor:   enabled,
 		DisabledProcessor:  disabled,
 		Catalog:            harness.store,
-		Projector:          callbackE2EProjectionSubmitter{},
+		Projector:          projector,
 		Expirer:            harness.store,
 	}); err != nil {
 		t.Fatal(err)
@@ -145,6 +296,18 @@ func newCallbackE2EHarness(t *testing.T) *callbackE2EHarness {
 	harness.runtime = runtime
 	harness.dispatcher = dispatcher
 	return harness
+}
+
+func (h *callbackE2EHarness) dispatch(
+	event *callback.CardActionTriggerEvent,
+) (*callback.CardActionTriggerResponse, error) {
+	parsed, err := cardactionproto.Parse(event)
+	if err != nil {
+		return nil, err
+	}
+	return h.dispatcher.Dispatch(context.Background(), appcardaction.ContinuationRequest{
+		Event: event, Action: parsed,
+	})
 }
 
 func (h *callbackE2EHarness) startScheduleEdit(t *testing.T) *agentruntime.RuntimeEnvelope {
@@ -190,9 +353,15 @@ func (h *callbackE2EHarness) confirmEvent(
 }
 
 type callbackE2ESnapshot struct {
-	runStatus    agentruntime.RunStatus
-	trustedInput json.RawMessage
-	outboxCount  int
+	runStatus           agentruntime.RunStatus
+	trustedInput        json.RawMessage
+	outboxCount         int
+	continuationRetries int
+	continuationStatus  agentruntime.StepStatus
+	continuationRetryAt time.Time
+	projectionRetries   int
+	projectionStatus    agentruntime.ProjectionStatus
+	projectionRetryAt   time.Time
 }
 
 type callbackE2EStore struct {
@@ -217,16 +386,31 @@ type callbackE2EStore struct {
 	latestOutcome agentruntime.ConversationEvent
 	retryAt       time.Time
 	outboxCount   int
+
+	continuationRetries int
+	projectionRetries   int
+	projection          *agentruntime.ProjectionOutbox
 }
 
 func (s *callbackE2EStore) snapshot() callbackE2ESnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return callbackE2ESnapshot{
-		runStatus:    s.runStatus,
-		trustedInput: append(json.RawMessage(nil), s.trustedInput...),
-		outboxCount:  s.outboxCount,
+	snapshot := callbackE2ESnapshot{
+		runStatus:           s.runStatus,
+		trustedInput:        append(json.RawMessage(nil), s.trustedInput...),
+		outboxCount:         s.outboxCount,
+		continuationRetries: s.continuationRetries,
+		continuationRetryAt: s.retryAt,
+		projectionRetries:   s.projectionRetries,
 	}
+	if s.continuation != nil {
+		snapshot.continuationStatus = s.continuation.Status
+	}
+	if s.projection != nil {
+		snapshot.projectionStatus = s.projection.Status
+		snapshot.projectionRetryAt = s.projection.NextAttemptAt
+	}
+	return snapshot
 }
 
 func (s *callbackE2EStore) CreateScheduleEditInteraction(
@@ -255,6 +439,13 @@ func (s *callbackE2EStore) CreateScheduleEditInteraction(
 	s.trustedInput = append(json.RawMessage(nil), req.TrustedInput...)
 	s.expiresAt = time.Date(2026, time.July, 29, 10, 15, 0, 0, time.UTC)
 	s.outboxCount++
+	s.projection = &agentruntime.ProjectionOutbox{
+		ID: "outbox-start-e2e", StepID: req.StepID,
+		IndexAlias: req.Projection.IndexAlias, DocumentID: req.Projection.DocumentID,
+		Payload:       append(json.RawMessage(nil), req.Projection.Payload...),
+		Status:        agentruntime.ProjectionStatusPending,
+		NextAttemptAt: time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC),
+	}
 	return s.startResult(), nil
 }
 
@@ -497,6 +688,7 @@ func (s *callbackE2EStore) RetryContinuationStep(
 	s.continuation.WorkerID = ""
 	s.retryAt = req.RetryAt
 	s.runStatus = agentruntime.RunStatusQueued
+	s.continuationRetries++
 	return nil
 }
 
@@ -542,11 +734,109 @@ func (s *callbackE2EStore) ExpireScheduleEditInteractions(
 	return 0, nil
 }
 
+func (s *callbackE2EStore) ClaimProjection(
+	_ context.Context,
+	claim agentruntime.ProjectionClaim,
+) (*agentruntime.ProjectionOutbox, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := claim.Validate(); err != nil {
+		return nil, err
+	}
+	if s.projection == nil || s.projection.Status != agentruntime.ProjectionStatusPending ||
+		s.projection.NextAttemptAt.After(claim.Now) {
+		return nil, agentruntime.ErrNotFound
+	}
+	s.projection.Status = agentruntime.ProjectionStatusRunning
+	s.projection.AttemptCount++
+	s.projection.WorkerID = claim.WorkerID
+	s.projection.LeaseExpiresAt = claim.Now.Add(claim.LeaseTTL)
+	return cloneCallbackE2EProjection(s.projection), nil
+}
+
+func (s *callbackE2EStore) RenewProjectionLease(
+	_ context.Context,
+	req agentruntime.RenewProjectionLeaseRequest,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if !s.matchesProjectionLease(req.OutboxID, req.WorkerID, req.AttemptCount) {
+		return agentruntime.ErrProjectionLeaseLost
+	}
+	s.projection.LeaseExpiresAt = req.Now.Add(req.LeaseTTL)
+	return nil
+}
+
+func (s *callbackE2EStore) CompleteProjection(
+	_ context.Context,
+	req agentruntime.CompleteProjectionRequest,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if !s.matchesProjectionLease(req.OutboxID, req.WorkerID, req.AttemptCount) {
+		return agentruntime.ErrProjectionLeaseLost
+	}
+	s.projection.Status = agentruntime.ProjectionStatusCompleted
+	s.projection.WorkerID = ""
+	s.projection.LeaseExpiresAt = time.Time{}
+	return nil
+}
+
+func (s *callbackE2EStore) RetryProjection(
+	_ context.Context,
+	req agentruntime.RetryProjectionRequest,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if !s.matchesProjectionLease(req.OutboxID, req.WorkerID, req.AttemptCount) {
+		return agentruntime.ErrProjectionLeaseLost
+	}
+	s.projection.Status = agentruntime.ProjectionStatusPending
+	s.projection.WorkerID = ""
+	s.projection.LeaseExpiresAt = time.Time{}
+	s.projection.LastError = req.ErrorText
+	s.projection.NextAttemptAt = req.RetryAt
+	s.projectionRetries++
+	return nil
+}
+
+func (s *callbackE2EStore) matchesProjectionLease(
+	outboxID string,
+	workerID string,
+	attempt int32,
+) bool {
+	return s.projection != nil &&
+		s.projection.ID == outboxID &&
+		s.projection.Status == agentruntime.ProjectionStatusRunning &&
+		s.projection.WorkerID == workerID &&
+		s.projection.AttemptCount == attempt
+}
+
 func cloneCallbackE2EStep(step *agentruntime.AgentStep) *agentruntime.AgentStep {
 	if step == nil {
 		return nil
 	}
 	cloned := *step
+	return &cloned
+}
+
+func cloneCallbackE2EProjection(
+	outbox *agentruntime.ProjectionOutbox,
+) *agentruntime.ProjectionOutbox {
+	if outbox == nil {
+		return nil
+	}
+	cloned := *outbox
+	cloned.Payload = append(json.RawMessage(nil), outbox.Payload...)
 	return &cloned
 }
 
@@ -574,13 +864,19 @@ func (u *callbackE2EUpdater) ExecuteScheduleEdit(
 
 func (u *callbackE2EUpdater) calls() int { return int(u.count.Load()) }
 
-type callbackE2EGenerator struct{ count atomic.Int32 }
+type callbackE2EGenerator struct {
+	count atomic.Int32
+	err   error
+}
 
 func (g *callbackE2EGenerator) Generate(
 	context.Context,
 	agentruntime.ContinuationContext,
 ) (agentruntime.TurnDecision, error) {
 	g.count.Add(1)
+	if g.err != nil {
+		return agentruntime.TurnDecision{}, g.err
+	}
 	return agentruntime.TurnDecision{
 		Decision: agentruntime.TurnDecisionReply,
 		Reply:    "Schedule 已更新。",
@@ -610,8 +906,17 @@ func (callbackE2EInlineExecutor) Submit(
 	return task(ctx)
 }
 
-type callbackE2EProjectionSubmitter struct{}
+type callbackE2EProjectionWriter struct {
+	count atomic.Int32
+	err   error
+}
 
-func (callbackE2EProjectionSubmitter) SubmitNext(context.Context) error {
-	return agentruntime.ErrNotFound
+func (w *callbackE2EProjectionWriter) Upsert(
+	context.Context,
+	string,
+	string,
+	json.RawMessage,
+) error {
+	w.count.Add(1)
+	return w.err
 }
