@@ -95,6 +95,7 @@ type scheduleInteractionStoreFake struct {
 	claimCalls    int
 	completeCalls int
 	failCalls     int
+	resolvedActor string
 }
 
 func (s *scheduleInteractionStoreFake) InspectScheduleInteraction(
@@ -110,24 +111,29 @@ func (s *scheduleInteractionStoreFake) InspectScheduleInteraction(
 	if s.completed {
 		outcome := s.outcome
 		inspection.CompletedOutcome = &outcome
+		inspection.ResolvedActorOpenID = s.resolvedActor
 	}
 	return inspection, nil
 }
 
 func (s *scheduleInteractionStoreFake) ClaimScheduleInteraction(
 	_ context.Context,
-	_ ScheduleInteractionRequest,
+	req ScheduleInteractionRequest,
 ) (ScheduleInteractionClaim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claimCalls++
 	switch {
 	case s.completed:
-		return ScheduleInteractionClaim{State: ScheduleClaimCompleted, Outcome: s.outcome}, nil
+		return ScheduleInteractionClaim{
+			State: ScheduleClaimCompleted, Outcome: s.outcome,
+			ResolvedActorOpenID: s.resolvedActor,
+		}, nil
 	case s.claimed:
 		return ScheduleInteractionClaim{State: ScheduleClaimRunning}, nil
 	default:
 		s.claimed = true
+		s.resolvedActor = req.ActorOpenID
 		return ScheduleInteractionClaim{State: ScheduleClaimAcquired, TrustedInput: s.trusted}, nil
 	}
 }
@@ -193,11 +199,18 @@ func (f *scheduleEditCapabilityFake) ExecuteScheduleEdit(
 }
 
 type runSubmitterFake struct {
-	calls atomic.Int32
+	calls  atomic.Int32
+	mu     sync.Mutex
+	errors []error
 }
 
 func (f *runSubmitterFake) SubmitRun(context.Context, string) error {
-	f.calls.Add(1)
+	call := int(f.calls.Add(1))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if call <= len(f.errors) {
+		return f.errors[call-1]
+	}
 	return nil
 }
 
@@ -218,7 +231,7 @@ func TestScheduleInteractionServiceValidatesPermissionBeforeClaim(t *testing.T) 
 	}
 }
 
-func TestScheduleInteractionServiceConfirmExecutesAndCompletesOnce(t *testing.T) {
+func TestScheduleInteractionServiceSameActorCompletedReplayBypassesChangedPermissionAndWakes(t *testing.T) {
 	trusted := mustScheduleTrustedInput(t)
 	store := &scheduleInteractionStoreFake{trusted: trusted}
 	capability := &scheduleEditCapabilityFake{}
@@ -245,8 +258,89 @@ func TestScheduleInteractionServiceConfirmExecutesAndCompletesOnce(t *testing.T)
 	if capability.validateCalls.Load() != 1 {
 		t.Fatalf("validate calls = %d, want completed replay to bypass changed validator", capability.validateCalls.Load())
 	}
-	if submitter.calls.Load() != 1 {
-		t.Fatalf("submit calls = %d, want no second continuation wake on replay", submitter.calls.Load())
+	if submitter.calls.Load() != 2 {
+		t.Fatalf("submit calls = %d, want idempotent wake on every same-actor replay", submitter.calls.Load())
+	}
+}
+
+func TestScheduleInteractionServiceDifferentActorCompletedReplayRequiresPermission(t *testing.T) {
+	tests := []struct {
+		name          string
+		permissionErr error
+		wantErr       error
+	}{
+		{name: "unauthorized", permissionErr: errors.New("permission denied"), wantErr: errors.New("permission denied")},
+		{name: "authorized"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trusted := mustScheduleTrustedInput(t)
+			store := &scheduleInteractionStoreFake{
+				trusted: trusted, completed: true, resolvedActor: "ou-original",
+				outcome: ScheduleInteractionOutcome{
+					Status: "updated", TaskID: "task-1", InteractionID: "interaction-1",
+					Action: ScheduleInteractionConfirm, Result: json.RawMessage(`{"status":"updated"}`),
+				},
+			}
+			capability := &scheduleEditCapabilityFake{validateErr: tt.permissionErr}
+			submitter := &runSubmitterFake{}
+			service := NewScheduleInteractionService(store, capability, submitter)
+			req := validScheduleInteractionRequest()
+			req.ActorOpenID = "ou-different"
+
+			outcome, err := service.Resolve(context.Background(), req)
+
+			if tt.wantErr != nil {
+				if err == nil || err.Error() != tt.wantErr.Error() {
+					t.Fatalf("Resolve() error = %v, want %v", err, tt.wantErr)
+				}
+				if outcome.Status != "" {
+					t.Fatalf("unauthorized outcome = %#v", outcome)
+				}
+			} else {
+				if err != nil || outcome.Status != "updated" {
+					t.Fatalf("authorized replay = %#v, %v", outcome, err)
+				}
+			}
+			if capability.validateCalls.Load() != 1 ||
+				capability.executeCalls.Load() != 0 ||
+				store.claimCalls != 0 || store.completeCalls != 0 ||
+				submitter.calls.Load() != 0 {
+				t.Fatalf("side effects validate=%d execute=%d claim=%d complete=%d wake=%d",
+					capability.validateCalls.Load(), capability.executeCalls.Load(),
+					store.claimCalls, store.completeCalls, submitter.calls.Load())
+			}
+		})
+	}
+}
+
+func TestScheduleInteractionServiceRetriesIdempotentWakeAfterCommit(t *testing.T) {
+	trusted := mustScheduleTrustedInput(t)
+	store := &scheduleInteractionStoreFake{trusted: trusted}
+	capability := &scheduleEditCapabilityFake{}
+	wakeErr := errors.New("wake queue unavailable")
+	submitter := &runSubmitterFake{errors: []error{wakeErr, nil, nil}}
+	service := NewScheduleInteractionService(store, capability, submitter)
+	req := validScheduleInteractionRequest()
+
+	if _, err := service.Resolve(context.Background(), req); !errors.Is(err, wakeErr) {
+		t.Fatalf("Resolve(first) error = %v, want wake failure", err)
+	}
+	if !store.completed {
+		t.Fatal("wake failure rolled back an already committed outcome")
+	}
+	second, err := service.Resolve(context.Background(), req)
+	if err != nil || second.Status != "updated" {
+		t.Fatalf("Resolve(second) = %#v, %v", second, err)
+	}
+	third, err := service.Resolve(context.Background(), req)
+	if err != nil || third.Status != "updated" {
+		t.Fatalf("Resolve(third) = %#v, %v", third, err)
+	}
+	if capability.executeCalls.Load() != 1 || store.completeCalls != 1 ||
+		submitter.calls.Load() != 3 {
+		t.Fatalf("execute=%d complete=%d wake=%d, want 1/1/3",
+			capability.executeCalls.Load(), store.completeCalls, submitter.calls.Load())
 	}
 }
 

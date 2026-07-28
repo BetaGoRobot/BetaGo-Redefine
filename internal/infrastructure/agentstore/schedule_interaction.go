@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
@@ -21,6 +22,7 @@ type scheduleCapabilityClaimInput struct {
 	Version      int             `json:"version"`
 	ClaimID      string          `json:"claim_id"`
 	Action       string          `json:"action"`
+	ActorOpenID  string          `json:"actor_open_id"`
 	TrustedInput json.RawMessage `json:"trusted_input"`
 }
 
@@ -46,11 +48,28 @@ func (r *Repository) InspectScheduleInteraction(
 	err = r.db.WithContext(ctx).First(&execution, "idempotency_key = ?", scheduleInteractionKey(req)).Error
 	switch {
 	case err == nil && execution.Status == "completed":
+		claimInput, decodeErr := decodeScheduleClaimInput(execution.InputJSON, payload.TrustedInput)
+		if decodeErr != nil {
+			return agentruntime.ScheduleInteractionInspection{}, decodeErr
+		}
 		outcome, decodeErr := decodeScheduleOutcome(execution.OutputJSON)
 		if decodeErr != nil {
 			return agentruntime.ScheduleInteractionInspection{}, decodeErr
 		}
+		trusted, decodeErr := agentruntime.DecodeScheduleEditTrustedInput(payload.TrustedInput)
+		if decodeErr != nil {
+			return agentruntime.ScheduleInteractionInspection{}, decodeErr
+		}
+		if decodeErr := validateScheduleOutcomeValues(
+			outcome,
+			agentruntime.ScheduleInteractionAction(claimInput.Action),
+			req.InteractionID,
+			trusted,
+		); decodeErr != nil {
+			return agentruntime.ScheduleInteractionInspection{}, decodeErr
+		}
 		inspection.CompletedOutcome = &outcome
+		inspection.ResolvedActorOpenID = claimInput.ActorOpenID
 	case err == nil:
 	case errors.Is(err, gorm.ErrRecordNotFound):
 	default:
@@ -75,15 +94,41 @@ func (r *Repository) ClaimScheduleInteraction(
 		var execution model.AgentCapabilityExecution
 		executionErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&execution, "idempotency_key = ?", scheduleInteractionKey(req)).Error
-		if executionErr == nil && execution.Status == "completed" {
-			outcome, err := decodeScheduleOutcome(execution.OutputJSON)
+		var storedClaim scheduleCapabilityClaimInput
+		if executionErr == nil {
+			storedClaim, err = decodeScheduleClaimInput(execution.InputJSON, payload.TrustedInput)
 			if err != nil {
 				return err
 			}
-			result = agentruntime.ScheduleInteractionClaim{
-				State: agentruntime.ScheduleClaimCompleted, Outcome: outcome,
+			if execution.Status == "completed" {
+				outcome, err := decodeScheduleOutcome(execution.OutputJSON)
+				if err != nil {
+					return err
+				}
+				trusted, err := agentruntime.DecodeScheduleEditTrustedInput(payload.TrustedInput)
+				if err != nil {
+					return err
+				}
+				if err := validateScheduleOutcomeValues(
+					outcome,
+					agentruntime.ScheduleInteractionAction(storedClaim.Action),
+					req.InteractionID,
+					trusted,
+				); err != nil {
+					return err
+				}
+				result = agentruntime.ScheduleInteractionClaim{
+					State: agentruntime.ScheduleClaimCompleted, Outcome: outcome,
+					ResolvedActorOpenID: storedClaim.ActorOpenID,
+				}
+				return nil
 			}
-			return nil
+			if storedClaim.Action != string(req.Action) {
+				return agentruntime.ErrInteractionConflict
+			}
+			if execution.Status != "running" && execution.Status != "failed" {
+				return agentruntime.ErrInteractionConflict
+			}
 		}
 		if executionErr != nil && !errors.Is(executionErr, gorm.ErrRecordNotFound) {
 			return executionErr
@@ -98,7 +143,7 @@ func (r *Repository) ClaimScheduleInteraction(
 		}
 		claimInput, err := json.Marshal(scheduleCapabilityClaimInput{
 			Version: 1, ClaimID: req.ClaimID, Action: string(req.Action),
-			TrustedInput: payload.TrustedInput,
+			ActorOpenID: req.ActorOpenID, TrustedInput: payload.TrustedInput,
 		})
 		if err != nil {
 			return err
@@ -155,18 +200,36 @@ func (r *Repository) CompleteScheduleInteraction(
 			First(&execution, "idempotency_key = ?", scheduleInteractionKey(req.Request)).Error; err != nil {
 			return mapNotFound(err)
 		}
-		if execution.Status == "completed" {
-			stored, err = decodeScheduleOutcome(execution.OutputJSON)
+		claimInput, err := decodeScheduleClaimInput(execution.InputJSON, payload.TrustedInput)
+		if err != nil {
 			return err
 		}
-		if execution.Status != "running" || !scheduleClaimMatches(execution.InputJSON, req.Request.ClaimID) {
+		if !scheduleClaimMatches(claimInput, req.Request) {
 			return agentruntime.ErrScheduleInteractionClaimLost
-		}
-		if err := validateUnresolvedScheduleRun(run, payload, req.Request); err != nil {
-			return err
 		}
 		trusted, err := agentruntime.DecodeScheduleEditTrustedInput(payload.TrustedInput)
 		if err != nil {
+			return err
+		}
+		if err := validateScheduleOutcome(req.Outcome, req.Request, trusted); err != nil {
+			return err
+		}
+		if execution.Status == "completed" {
+			stored, err = decodeScheduleOutcome(execution.OutputJSON)
+			if err != nil {
+				return err
+			}
+			return validateScheduleOutcomeValues(
+				stored,
+				agentruntime.ScheduleInteractionAction(claimInput.Action),
+				req.Request.InteractionID,
+				trusted,
+			)
+		}
+		if execution.Status != "running" {
+			return agentruntime.ErrScheduleInteractionClaimLost
+		}
+		if err := validateUnresolvedScheduleRun(run, payload, req.Request); err != nil {
 			return err
 		}
 		firstIndex, err := nextStepIndex(tx, run)
@@ -289,10 +352,17 @@ func (r *Repository) FailScheduleInteraction(
 			First(&execution, "idempotency_key = ?", scheduleInteractionKey(req.Request)).Error; err != nil {
 			return mapNotFound(err)
 		}
+		claimInput, err := decodeScheduleClaimInput(execution.InputJSON, nil)
+		if err != nil {
+			return err
+		}
+		if !scheduleClaimMatches(claimInput, req.Request) {
+			return agentruntime.ErrScheduleInteractionClaimLost
+		}
 		if execution.Status == "completed" {
 			return nil
 		}
-		if execution.Status != "running" || !scheduleClaimMatches(execution.InputJSON, req.Request.ClaimID) {
+		if execution.Status != "running" {
 			return agentruntime.ErrScheduleInteractionClaimLost
 		}
 		return tx.Model(&model.AgentCapabilityExecution{}).
@@ -368,10 +438,71 @@ func scheduleInteractionKey(req agentruntime.ScheduleInteractionRequest) string 
 	return fmt.Sprintf("schedule_edit:%s:%s:%d", req.RunID, req.InteractionID, req.Revision)
 }
 
-func scheduleClaimMatches(inputJSON, claimID string) bool {
+func scheduleClaimMatches(
+	claim scheduleCapabilityClaimInput,
+	req agentruntime.ScheduleInteractionRequest,
+) bool {
+	return claim.ClaimID == req.ClaimID &&
+		claim.Action == string(req.Action) &&
+		claim.ActorOpenID == req.ActorOpenID
+}
+
+func decodeScheduleClaimInput(
+	inputJSON string,
+	expectedTrustedInput json.RawMessage,
+) (scheduleCapabilityClaimInput, error) {
 	var input scheduleCapabilityClaimInput
-	return json.Unmarshal([]byte(inputJSON), &input) == nil &&
-		input.Version == 1 && input.ClaimID == claimID
+	if json.Unmarshal([]byte(inputJSON), &input) != nil ||
+		input.Version != 1 ||
+		strings.TrimSpace(input.ClaimID) == "" || strings.TrimSpace(input.ClaimID) != input.ClaimID ||
+		strings.TrimSpace(input.ActorOpenID) == "" || strings.TrimSpace(input.ActorOpenID) != input.ActorOpenID ||
+		(input.Action != string(agentruntime.ScheduleInteractionConfirm) &&
+			input.Action != string(agentruntime.ScheduleInteractionCancel)) {
+		return scheduleCapabilityClaimInput{}, agentruntime.ErrInteractionConflict
+	}
+	if _, err := agentruntime.DecodeScheduleEditTrustedInput(input.TrustedInput); err != nil {
+		return scheduleCapabilityClaimInput{}, agentruntime.ErrInteractionConflict
+	}
+	if len(expectedTrustedInput) > 0 &&
+		!equalJSONDocument(input.TrustedInput, expectedTrustedInput) {
+		return scheduleCapabilityClaimInput{}, agentruntime.ErrInteractionConflict
+	}
+	return input, nil
+}
+
+func validateScheduleOutcome(
+	outcome agentruntime.ScheduleInteractionOutcome,
+	req agentruntime.ScheduleInteractionRequest,
+	trusted agentruntime.ScheduleEditTrustedInput,
+) error {
+	return validateScheduleOutcomeValues(outcome, req.Action, req.InteractionID, trusted)
+}
+
+func validateScheduleOutcomeValues(
+	outcome agentruntime.ScheduleInteractionOutcome,
+	expectedAction agentruntime.ScheduleInteractionAction,
+	expectedInteractionID string,
+	trusted agentruntime.ScheduleEditTrustedInput,
+) error {
+	if outcome.TaskID != trusted.TaskID ||
+		outcome.InteractionID != expectedInteractionID ||
+		outcome.Action != expectedAction ||
+		!json.Valid(outcome.Result) {
+		return agentruntime.ErrInteractionConflict
+	}
+	switch expectedAction {
+	case agentruntime.ScheduleInteractionConfirm:
+		if outcome.Status != "updated" {
+			return agentruntime.ErrInteractionConflict
+		}
+	case agentruntime.ScheduleInteractionCancel:
+		if outcome.Status != "cancelled_by_user" {
+			return agentruntime.ErrInteractionConflict
+		}
+	default:
+		return agentruntime.ErrInteractionConflict
+	}
+	return nil
 }
 
 func decodeScheduleOutcome(outputJSON string) (agentruntime.ScheduleInteractionOutcome, error) {

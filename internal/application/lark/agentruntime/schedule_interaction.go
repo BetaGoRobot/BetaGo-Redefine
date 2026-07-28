@@ -102,14 +102,16 @@ type ScheduleInteractionOutcome struct {
 }
 
 type ScheduleInteractionClaim struct {
-	State        ScheduleClaimState
-	TrustedInput json.RawMessage
-	Outcome      ScheduleInteractionOutcome
+	State               ScheduleClaimState
+	TrustedInput        json.RawMessage
+	Outcome             ScheduleInteractionOutcome
+	ResolvedActorOpenID string
 }
 
 type ScheduleInteractionInspection struct {
-	TrustedInput     json.RawMessage
-	CompletedOutcome *ScheduleInteractionOutcome
+	TrustedInput        json.RawMessage
+	CompletedOutcome    *ScheduleInteractionOutcome
+	ResolvedActorOpenID string
 }
 
 type CompleteScheduleInteractionRequest struct {
@@ -135,6 +137,9 @@ type ScheduleEditCapability interface {
 }
 
 type RunSubmitter interface {
+	// SubmitRun is an idempotent wake hint keyed by runID. Implementations must
+	// deduplicate safely; durable run state and processor-side DB claims remain
+	// the source of truth.
 	SubmitRun(context.Context, string) error
 }
 
@@ -167,7 +172,10 @@ func (s *ScheduleInteractionService) Resolve(
 		return ScheduleInteractionOutcome{}, err
 	}
 	if inspection.CompletedOutcome != nil {
-		return *inspection.CompletedOutcome, nil
+		return s.resolveCompletedReplay(
+			ctx, req, inspection.TrustedInput, inspection.ResolvedActorOpenID,
+			*inspection.CompletedOutcome, false,
+		)
 	}
 	trusted, err := DecodeScheduleEditTrustedInput(inspection.TrustedInput)
 	if err != nil {
@@ -184,7 +192,10 @@ func (s *ScheduleInteractionService) Resolve(
 	}
 	switch claim.State {
 	case ScheduleClaimCompleted:
-		return claim.Outcome, nil
+		return s.resolveCompletedReplay(
+			ctx, req, inspection.TrustedInput, claim.ResolvedActorOpenID,
+			claim.Outcome, true,
+		)
 	case ScheduleClaimRunning:
 		return ScheduleInteractionOutcome{}, ErrScheduleInteractionRunning
 	case ScheduleClaimAcquired:
@@ -222,6 +233,37 @@ func (s *ScheduleInteractionService) Resolve(
 		return ScheduleInteractionOutcome{}, err
 	}
 	return completed, nil
+}
+
+func (s *ScheduleInteractionService) resolveCompletedReplay(
+	ctx context.Context,
+	req ScheduleInteractionRequest,
+	trustedInput json.RawMessage,
+	resolvedActorOpenID string,
+	outcome ScheduleInteractionOutcome,
+	permissionAlreadyValidated bool,
+) (ScheduleInteractionOutcome, error) {
+	if strings.TrimSpace(resolvedActorOpenID) == "" {
+		return ScheduleInteractionOutcome{}, ErrInteractionConflict
+	}
+	if resolvedActorOpenID != req.ActorOpenID {
+		if !permissionAlreadyValidated {
+			trusted, err := DecodeScheduleEditTrustedInput(trustedInput)
+			if err != nil {
+				return ScheduleInteractionOutcome{}, err
+			}
+			if err := s.capability.ValidateScheduleEdit(ctx, req.ActorOpenID, trusted); err != nil {
+				return ScheduleInteractionOutcome{}, err
+			}
+		}
+		// A different authorized actor may observe the durable outcome, but only
+		// the resolving actor retries the idempotent wake hint.
+		return outcome, nil
+	}
+	if err := s.submit(ctx, req.RunID); err != nil {
+		return ScheduleInteractionOutcome{}, err
+	}
+	return outcome, nil
 }
 
 func (s *ScheduleInteractionService) submit(ctx context.Context, runID string) error {
