@@ -12,11 +12,22 @@ import (
 
 var (
 	ErrLeaseLost                = errors.New("agent step lease lost")
+	ErrProjectionLeaseLost      = errors.New("conversation projection lease lost")
 	ErrActiveRunConflict        = errors.New("session already has a different active run")
 	ErrInteractionConflict      = errors.New("interaction state conflicts with the request")
 	ErrInteractionExpired       = errors.New("interaction has expired")
 	ErrInteractionTokenMismatch = errors.New("interaction token does not match")
 	ErrTerminalRun              = errors.New("agent run is terminal")
+)
+
+const MaxProjectionErrorBytes = 4096
+
+type ProjectionStatus string
+
+const (
+	ProjectionStatusPending   ProjectionStatus = "pending"
+	ProjectionStatusRunning   ProjectionStatus = "running"
+	ProjectionStatusCompleted ProjectionStatus = "completed"
 )
 
 type ProjectionDocument struct {
@@ -25,14 +36,126 @@ type ProjectionDocument struct {
 	Payload    json.RawMessage
 }
 
+type ProjectionOutbox struct {
+	ID             string
+	StepID         string
+	IndexAlias     string
+	DocumentID     string
+	Payload        json.RawMessage
+	Status         ProjectionStatus
+	AttemptCount   int32
+	NextAttemptAt  time.Time
+	WorkerID       string
+	LeaseExpiresAt time.Time
+	LastError      string
+}
+
+type ProjectionClaim struct {
+	WorkerID string
+	LeaseTTL time.Duration
+	Now      time.Time
+}
+
+func (c ProjectionClaim) Validate() error {
+	if err := validateCanonical("worker_id", c.WorkerID); err != nil {
+		return err
+	}
+	if c.LeaseTTL <= 0 {
+		return invalidRuntimeContract("lease_ttl must be positive")
+	}
+	if c.Now.IsZero() {
+		return invalidRuntimeContract("now is required")
+	}
+	return nil
+}
+
+type CompleteProjectionRequest struct {
+	OutboxID     string
+	WorkerID     string
+	AttemptCount int32
+	FinishedAt   time.Time
+}
+
+func (r CompleteProjectionRequest) Validate() error {
+	if err := validateCanonical("outbox_id", r.OutboxID); err != nil {
+		return err
+	}
+	if err := validateCanonical("worker_id", r.WorkerID); err != nil {
+		return err
+	}
+	if r.AttemptCount <= 0 {
+		return invalidRuntimeContract("attempt_count must be positive")
+	}
+	if r.FinishedAt.IsZero() {
+		return invalidRuntimeContract("finished_at is required")
+	}
+	return nil
+}
+
+type RetryProjectionRequest struct {
+	OutboxID     string
+	WorkerID     string
+	AttemptCount int32
+	ErrorText    string
+	FailedAt     time.Time
+	RetryAt      time.Time
+}
+
+func (r RetryProjectionRequest) Validate() error {
+	if err := validateCanonical("outbox_id", r.OutboxID); err != nil {
+		return err
+	}
+	if err := validateCanonical("worker_id", r.WorkerID); err != nil {
+		return err
+	}
+	if r.AttemptCount <= 0 {
+		return invalidRuntimeContract("attempt_count must be positive")
+	}
+	if strings.TrimSpace(r.ErrorText) == "" {
+		return invalidRuntimeContract("error_text is required")
+	}
+	if len(r.ErrorText) > MaxProjectionErrorBytes {
+		return invalidRuntimeContract("error_text is too long")
+	}
+	if r.FailedAt.IsZero() {
+		return invalidRuntimeContract("failed_at is required")
+	}
+	if r.RetryAt.IsZero() {
+		return invalidRuntimeContract("retry_at is required")
+	}
+	return nil
+}
+
+type ProjectionOutboxStore interface {
+	ClaimProjection(context.Context, ProjectionClaim) (*ProjectionOutbox, error)
+	CompleteProjection(context.Context, CompleteProjectionRequest) error
+	RetryProjection(context.Context, RetryProjectionRequest) error
+}
+
 func (d ProjectionDocument) Validate() error {
 	if err := validateCanonical("index_alias", d.IndexAlias); err != nil {
 		return err
 	}
+	if len(d.IndexAlias) > 255 {
+		return invalidRuntimeContract("index_alias is too long")
+	}
 	if err := validateCanonical("document_id", d.DocumentID); err != nil {
 		return err
 	}
-	return validateJSONDocument("projection payload", d.Payload)
+	if len(d.DocumentID) > 1024 {
+		return invalidRuntimeContract("document_id is too long")
+	}
+	if len(d.Payload) > 1<<20 {
+		return invalidRuntimeContract("projection payload is too large")
+	}
+	if err := validateJSONDocument("projection payload", d.Payload); err != nil {
+		return err
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(d.Payload, &object) != nil || object == nil {
+		return invalidRuntimeContract("projection payload must be a JSON object")
+	}
+	return nil
 }
 
 type StartInteractionRequest struct {

@@ -358,16 +358,20 @@ func (r *Repository) PersistDecision(
 			if result.RowsAffected != 1 {
 				return agentruntime.ErrLeaseLost
 			}
-			return nil
+		} else {
+			if req.Decision.Decision != agentruntime.TurnDecisionObserveOnly &&
+				req.Decision.Decision != agentruntime.TurnDecisionClose {
+				return agentruntime.ErrInvalidRuntimeContract
+			}
+			if err := completeContinuationRunTx(tx, session, run, req.Decision.Reason, req.FinishedAt); err != nil {
+				return err
+			}
 		}
-		if req.Decision.Decision != agentruntime.TurnDecisionObserveOnly &&
-			req.Decision.Decision != agentruntime.TurnDecisionClose {
-			return agentruntime.ErrInvalidRuntimeContract
-		}
-		if err := completeContinuationRunTx(tx, session, run, req.Decision.Reason, req.FinishedAt); err != nil {
+		projection, err := decisionProjectionTx(tx, session, run, step, req.Decision, req.FinishedAt)
+		if err != nil {
 			return err
 		}
-		return nil
+		return insertProjectionOutbox(tx, step.ID, projection, req.FinishedAt)
 	})
 	return reply, err
 }
@@ -443,7 +447,14 @@ func (r *Repository) CompleteReplyDelivery(
 			}
 			return agentruntime.ErrLeaseLost
 		}
-		return completeContinuationRunTx(tx, session, run, req.MessageID, req.FinishedAt)
+		if err := completeContinuationRunTx(tx, session, run, req.MessageID, req.FinishedAt); err != nil {
+			return err
+		}
+		projection, err := replyProjectionTx(tx, session, run, step, req.MessageID, req.FinishedAt)
+		if err != nil {
+			return err
+		}
+		return insertProjectionOutbox(tx, step.ID, projection, req.FinishedAt)
 	})
 }
 

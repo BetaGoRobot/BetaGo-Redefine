@@ -59,3 +59,29 @@ docker compose down -v         # 停止并清除 pgdata/redisdata
 
 - `betago-bystage-duration.json`：各阶段耗时
 - `betago-llm-token-usage.json`：LLM token 用量
+
+## OpenSearch 会话事件索引
+
+先创建物理索引，再把稳定写别名指向该版本。升级 mapping 时创建新的物理版本，并用一次 `_aliases` 请求原子切换。
+
+```bash
+curl -fsS -X PUT \
+  "${OPENSEARCH_URL}/agent_conversation_events_v1" \
+  -H 'Content-Type: application/json' \
+  --data-binary @../script/opensearch/agent_conversation_events_v1.json
+
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "add": {
+          "index": "agent_conversation_events_v1",
+          "alias": "agent_conversation_events",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```

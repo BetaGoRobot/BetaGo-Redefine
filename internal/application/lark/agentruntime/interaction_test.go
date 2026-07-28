@@ -144,6 +144,13 @@ func TestProjectionDocumentValidate(t *testing.T) {
 		{name: "non-canonical document id", mutate: func(d *ProjectionDocument) { d.DocumentID = "doc " }},
 		{name: "missing payload", mutate: func(d *ProjectionDocument) { d.Payload = nil }},
 		{name: "bad payload", mutate: func(d *ProjectionDocument) { d.Payload = json.RawMessage(`{"secret":`) }},
+		{name: "array payload", mutate: func(d *ProjectionDocument) { d.Payload = json.RawMessage(`[]`) }},
+		{name: "null payload", mutate: func(d *ProjectionDocument) { d.Payload = json.RawMessage(`null`) }},
+		{name: "index alias too long", mutate: func(d *ProjectionDocument) { d.IndexAlias = strings.Repeat("i", 256) }},
+		{name: "document id too long", mutate: func(d *ProjectionDocument) { d.DocumentID = strings.Repeat("d", 1025) }},
+		{name: "payload too large", mutate: func(d *ProjectionDocument) {
+			d.Payload = json.RawMessage(`{"content":"` + strings.Repeat("x", 1<<20) + `"}`)
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

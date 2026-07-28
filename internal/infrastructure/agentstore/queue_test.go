@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,20 @@ func TestAppendEventDeduplicatesAndAdvancesIndex(t *testing.T) {
 	if outboxes != 2 {
 		t.Fatalf("outboxes = %d, want 2", outboxes)
 	}
+	var firstOutbox, secondOutbox model.AgentProjectionOutbox
+	if err := f.db.First(&firstOutbox, "step_id = ?", stored.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&secondOutbox, "step_id = ?", storedSecond.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if firstOutbox.DocumentID == secondOutbox.DocumentID {
+		t.Fatalf("different steps overwrite document %q", firstOutbox.DocumentID)
+	}
+	if firstOutbox.DocumentID != f.runID+":"+stored.ID ||
+		secondOutbox.DocumentID != f.runID+":"+storedSecond.ID {
+		t.Fatalf("stable per-step document IDs = %q, %q", firstOutbox.DocumentID, secondOutbox.DocumentID)
+	}
 }
 
 func TestAppendEventRejectsInvalidProjectionWithoutPersistingStep(t *testing.T) {
@@ -99,6 +114,28 @@ func TestAppendEventRejectsInvalidProjectionWithoutPersistingStep(t *testing.T) 
 	}
 	if count != 0 {
 		t.Fatalf("persisted steps = %d, want 0", count)
+	}
+}
+
+func TestAppendEventRejectsDocumentIDThatOverflowsAfterStepScoping(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusQueued)
+	step := &agentruntime.AgentStep{
+		ID: "step_" + uuid.NewV4().String(), RunID: f.runID,
+		Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusQueued,
+		InputJSON: "{}", OutputJSON: "{}", DedupeKey: "event:oversized-doc",
+		CreatedAt: time.Now().UTC(),
+	}
+	projection := testProjection(f.runID)
+	projection.DocumentID = strings.Repeat("d", 1000)
+	if _, err := f.repo.AppendEvent(context.Background(), step, projection); !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	var count int64
+	if err := f.db.Model(&model.AgentStep{}).Where("id = ?", step.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("step persisted despite oversized scoped document ID")
 	}
 }
 

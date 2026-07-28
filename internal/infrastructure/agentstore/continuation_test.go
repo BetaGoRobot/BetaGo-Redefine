@@ -9,6 +9,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/gorm"
 )
@@ -168,6 +169,23 @@ func TestContinuationContextDecisionAndDeliveryAreDurableAndFenced(t *testing.T)
 		input.LatestOutcome.ID == "" || input.LatestOutcome.Action != string(request.Action) {
 		t.Fatalf("latest outcome = %#v", input.LatestOutcome)
 	}
+	var sourceOutbox model.AgentProjectionOutbox
+	if err := f.db.First(&sourceOutbox, "step_id = ?", input.LatestOutcome.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := opensearch.UpsertData(
+		context.Background(), sourceOutbox.IndexAlias, sourceOutbox.DocumentID,
+		json.RawMessage(sourceOutbox.PayloadJSON),
+	); !errors.Is(err, opensearch.ErrUnavailable) {
+		t.Fatalf("unavailable OpenSearch error = %v", err)
+	}
+	reloaded, err := f.repo.LoadContinuationContext(context.Background(), agentruntime.LoadContinuationContextRequest{
+		RunID: f.runID, AnchorStepID: modelStep.ID, RecentLimit: 20,
+	})
+	if err != nil || reloaded.LatestOutcome.ID != input.LatestOutcome.ID ||
+		len(reloaded.RecentSteps) != len(input.RecentSteps) {
+		t.Fatalf("Postgres context after OpenSearch outage = %#v, err=%v", reloaded, err)
+	}
 	reply, err := f.repo.PersistDecision(context.Background(), agentruntime.PersistDecisionRequest{
 		StepID: modelStep.ID, WorkerID: modelStep.WorkerID, AttemptCount: modelStep.AttemptCount,
 		Decision: agentruntime.TurnDecision{
@@ -177,6 +195,27 @@ func TestContinuationContextDecisionAndDeliveryAreDurableAndFenced(t *testing.T)
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var decisionOutbox model.AgentProjectionOutbox
+	if err := f.db.First(&decisionOutbox, "step_id = ?", modelStep.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var decisionProjection map[string]any
+	if json.Unmarshal([]byte(decisionOutbox.PayloadJSON), &decisionProjection) != nil {
+		t.Fatalf("decision projection = %s", decisionOutbox.PayloadJSON)
+	}
+	if decisionOutbox.IndexAlias != sourceOutbox.IndexAlias ||
+		decisionOutbox.DocumentID == sourceOutbox.DocumentID ||
+		decisionProjection["event_type"] != "model_decision" ||
+		decisionProjection["step_id"] != modelStep.ID ||
+		decisionProjection["source_step_id"] != input.LatestOutcome.ID ||
+		decisionProjection["step_status"] != "completed" ||
+		decisionProjection["outcome_status"] != "reply" ||
+		decisionProjection["content"] != "修改完成" {
+		t.Fatalf("decision outbox = %#v payload=%#v", decisionOutbox, decisionProjection)
+	}
+	if _, leaked := decisionProjection["worker_id"]; leaked {
+		t.Fatalf("decision projection leaks worker: %#v", decisionProjection)
 	}
 	var frozen agentruntime.ReplyRequest
 	if json.Unmarshal([]byte(reply.InputJSON), &frozen) != nil ||
@@ -220,6 +259,56 @@ func TestContinuationContextDecisionAndDeliveryAreDurableAndFenced(t *testing.T)
 	}
 	if stored.ExternalRef != "om-result" || stored.Status != string(agentruntime.StepStatusCompleted) {
 		t.Fatalf("delivered step = %#v", stored)
+	}
+	var replyOutbox model.AgentProjectionOutbox
+	if err := f.db.First(&replyOutbox, "step_id = ?", claimedReply.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var replyProjection struct {
+		EventType     string `json:"event_type"`
+		StepID        string `json:"step_id"`
+		SourceStepID  string `json:"source_step_id"`
+		StepStatus    string `json:"step_status"`
+		OutcomeStatus string `json:"outcome_status"`
+		Content       string `json:"content"`
+		ExternalRef   string `json:"external_ref"`
+		Structured    struct {
+			MessageID        string `json:"message_id"`
+			Text             string `json:"text"`
+			ChatID           string `json:"chat_id"`
+			TriggerMessageID string `json:"trigger_message_id"`
+			DeliveryKey      string `json:"delivery_key"`
+			Route            string `json:"route"`
+		} `json:"structured_payload"`
+	}
+	if json.Unmarshal([]byte(replyOutbox.PayloadJSON), &replyProjection) != nil {
+		t.Fatalf("reply projection = %s", replyOutbox.PayloadJSON)
+	}
+	if replyOutbox.IndexAlias != sourceOutbox.IndexAlias ||
+		replyOutbox.DocumentID == decisionOutbox.DocumentID ||
+		replyProjection.EventType != "agent_reply" ||
+		replyProjection.StepID != claimedReply.ID ||
+		replyProjection.SourceStepID != modelStep.ID ||
+		replyProjection.StepStatus != "completed" ||
+		replyProjection.OutcomeStatus != "delivered" ||
+		replyProjection.Content != "修改完成" ||
+		replyProjection.ExternalRef != "om-result" ||
+		replyProjection.Structured.MessageID != "om-result" ||
+		replyProjection.Structured.Text != "修改完成" ||
+		replyProjection.Structured.ChatID == "" ||
+		replyProjection.Structured.TriggerMessageID == "" ||
+		replyProjection.Structured.DeliveryKey != claimedReply.ID ||
+		replyProjection.Structured.Route != "reply" {
+		t.Fatalf("reply outbox = %#v payload=%#v", replyOutbox, replyProjection)
+	}
+}
+
+func TestProjectionReplyRouteMatchesDeliveryTarget(t *testing.T) {
+	if got := projectionReplyRoute(agentruntime.ReplyRequest{TriggerMessageID: "om-trigger"}); got != "reply" {
+		t.Fatalf("reply route = %q", got)
+	}
+	if got := projectionReplyRoute(agentruntime.ReplyRequest{ChatID: "oc-chat"}); got != "create" {
+		t.Fatalf("create route = %q", got)
 	}
 }
 
