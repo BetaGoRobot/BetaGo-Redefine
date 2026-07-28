@@ -170,6 +170,82 @@ func TestAppendEventRejectsQueuedStepForTerminalRun(t *testing.T) {
 	}
 }
 
+func TestAppendEventRejectsQueuedStepForWaitingRunWithoutChangingState(t *testing.T) {
+	tests := []struct {
+		name   string
+		status agentruntime.RunStatus
+		reason agentruntime.WaitingReason
+	}{
+		{name: "approval", status: agentruntime.RunStatusWaitingApproval, reason: agentruntime.WaitingReasonApproval},
+		{name: "callback", status: agentruntime.RunStatusWaitingCallback, reason: agentruntime.WaitingReasonCallback},
+		{name: "schedule", status: agentruntime.RunStatusWaitingSchedule, reason: agentruntime.WaitingReasonSchedule},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRepositoryFixture(t, tt.status)
+			lastRelevantAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
+			waitingToken := agentruntime.HashInteractionToken("waiting-token")
+			if err := f.db.Model(&model.AgentRun{}).Where("id = ?", f.runID).Updates(map[string]any{
+				"waiting_reason":   string(tt.reason),
+				"waiting_token":    waitingToken,
+				"revision":         int64(2),
+				"last_relevant_at": lastRelevantAt,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			step := appendEventStep(
+				f.runID, "event:waiting-"+tt.name, agentruntime.StepStatusQueued, lastRelevantAt.Add(time.Hour),
+			)
+			_, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+			if !errors.Is(err, ErrInteractionConflict) {
+				t.Fatalf("AppendEvent() error = %v, want ErrInteractionConflict", err)
+			}
+			var run model.AgentRun
+			if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != string(tt.status) || run.WaitingReason != string(tt.reason) ||
+				run.WaitingToken != waitingToken || run.Revision != 2 ||
+				!run.LastRelevantAt.Equal(lastRelevantAt) || run.CurrentStepIndex != 0 {
+				t.Fatalf("waiting run changed: %#v", run)
+			}
+			requireRunStepAndOutboxCounts(t, f, 0, 0, 0)
+		})
+	}
+}
+
+func TestAppendEventCompletedObservationPreservesWaitingState(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusWaitingCallback)
+	lastRelevantAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
+	waitingToken := agentruntime.HashInteractionToken("waiting-token")
+	if err := f.db.Model(&model.AgentRun{}).Where("id = ?", f.runID).Updates(map[string]any{
+		"waiting_reason":   string(agentruntime.WaitingReasonCallback),
+		"waiting_token":    waitingToken,
+		"revision":         int64(2),
+		"last_relevant_at": lastRelevantAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	step := appendEventStep(
+		f.runID, "event:waiting-observation", agentruntime.StepStatusCompleted, lastRelevantAt.Add(time.Hour),
+	)
+	stored, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+	if err != nil {
+		t.Fatalf("AppendEvent(): %v", err)
+	}
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusWaitingCallback) ||
+		run.WaitingReason != string(agentruntime.WaitingReasonCallback) ||
+		run.WaitingToken != waitingToken || run.Revision != 2 ||
+		!run.LastRelevantAt.Equal(lastRelevantAt) || run.CurrentStepIndex != stored.Index {
+		t.Fatalf("waiting run changed after completed observation: %#v", run)
+	}
+	requireRunStepAndOutboxCounts(t, f, stored.Index, 1, 1)
+}
+
 func TestAppendEventDedupeHitDoesNotRefreshRun(t *testing.T) {
 	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
 	firstAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)

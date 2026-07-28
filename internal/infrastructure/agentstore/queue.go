@@ -29,6 +29,10 @@ func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentSt
 			terminalRunStatus(agentruntime.RunStatus(run.Status)) {
 			return ErrTerminalRun
 		}
+		if step.Status == agentruntime.StepStatusQueued &&
+			waitingRunStatus(agentruntime.RunStatus(run.Status)) {
+			return ErrInteractionConflict
+		}
 
 		var maxIndex int32
 		if err := tx.Model(&model.AgentStep{}).
