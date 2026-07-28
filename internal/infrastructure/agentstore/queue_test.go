@@ -126,7 +126,7 @@ func TestAppendEventRejectsDocumentIDThatOverflowsAfterStepScoping(t *testing.T)
 		CreatedAt: time.Now().UTC(),
 	}
 	projection := testProjection(f.runID)
-	projection.DocumentID = strings.Repeat("d", 1000)
+	projection.DocumentID = strings.Repeat("d", 500)
 	if _, err := f.repo.AppendEvent(context.Background(), step, projection); !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
 		t.Fatalf("AppendEvent() error = %v", err)
 	}

@@ -76,6 +76,15 @@ func (p *Projector) SubmitNext(ctx context.Context) error {
 }
 
 func (p *Projector) project(ctx context.Context, outbox *ProjectionOutbox) error {
+	executionTime := p.config.Now()
+	if err := p.store.RenewProjectionLease(ctx, RenewProjectionLeaseRequest{
+		OutboxID: outbox.ID, WorkerID: outbox.WorkerID, AttemptCount: outbox.AttemptCount,
+		LeaseTTL: p.config.LeaseTTL, Now: executionTime,
+	}); err != nil {
+		return err
+	}
+	outbox.LeaseExpiresAt = executionTime.Add(p.config.LeaseTTL)
+
 	var err error
 	projection := ProjectionDocument{
 		IndexAlias: outbox.IndexAlias,
@@ -85,7 +94,9 @@ func (p *Projector) project(ctx context.Context, outbox *ProjectionOutbox) error
 	if outbox.ID == "" || projection.Validate() != nil {
 		err = ErrInvalidRuntimeContract
 	} else {
-		err = p.writer.Upsert(ctx, outbox.IndexAlias, outbox.DocumentID, outbox.Payload)
+		writeCtx, cancel := context.WithTimeout(ctx, p.config.LeaseTTL)
+		err = p.writer.Upsert(writeCtx, outbox.IndexAlias, outbox.DocumentID, outbox.Payload)
+		cancel()
 	}
 	finishedAt := p.config.Now()
 	if err != nil {

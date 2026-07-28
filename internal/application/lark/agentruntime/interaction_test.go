@@ -147,7 +147,7 @@ func TestProjectionDocumentValidate(t *testing.T) {
 		{name: "array payload", mutate: func(d *ProjectionDocument) { d.Payload = json.RawMessage(`[]`) }},
 		{name: "null payload", mutate: func(d *ProjectionDocument) { d.Payload = json.RawMessage(`null`) }},
 		{name: "index alias too long", mutate: func(d *ProjectionDocument) { d.IndexAlias = strings.Repeat("i", 256) }},
-		{name: "document id too long", mutate: func(d *ProjectionDocument) { d.DocumentID = strings.Repeat("d", 1025) }},
+		{name: "document id too long", mutate: func(d *ProjectionDocument) { d.DocumentID = strings.Repeat("d", 513) }},
 		{name: "payload too large", mutate: func(d *ProjectionDocument) {
 			d.Payload = json.RawMessage(`{"content":"` + strings.Repeat("x", 1<<20) + `"}`)
 		}},

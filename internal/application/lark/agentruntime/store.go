@@ -56,6 +56,33 @@ type ProjectionClaim struct {
 	Now      time.Time
 }
 
+type RenewProjectionLeaseRequest struct {
+	OutboxID     string
+	WorkerID     string
+	AttemptCount int32
+	LeaseTTL     time.Duration
+	Now          time.Time
+}
+
+func (r RenewProjectionLeaseRequest) Validate() error {
+	if err := validateCanonical("outbox_id", r.OutboxID); err != nil {
+		return err
+	}
+	if err := validateCanonical("worker_id", r.WorkerID); err != nil {
+		return err
+	}
+	if r.AttemptCount <= 0 {
+		return invalidRuntimeContract("attempt_count must be positive")
+	}
+	if r.LeaseTTL <= 0 {
+		return invalidRuntimeContract("lease_ttl must be positive")
+	}
+	if r.Now.IsZero() {
+		return invalidRuntimeContract("now is required")
+	}
+	return nil
+}
+
 func (c ProjectionClaim) Validate() error {
 	if err := validateCanonical("worker_id", c.WorkerID); err != nil {
 		return err
@@ -128,6 +155,7 @@ func (r RetryProjectionRequest) Validate() error {
 
 type ProjectionOutboxStore interface {
 	ClaimProjection(context.Context, ProjectionClaim) (*ProjectionOutbox, error)
+	RenewProjectionLease(context.Context, RenewProjectionLeaseRequest) error
 	CompleteProjection(context.Context, CompleteProjectionRequest) error
 	RetryProjection(context.Context, RetryProjectionRequest) error
 }
@@ -142,7 +170,7 @@ func (d ProjectionDocument) Validate() error {
 	if err := validateCanonical("document_id", d.DocumentID); err != nil {
 		return err
 	}
-	if len(d.DocumentID) > 1024 {
+	if len(d.DocumentID) > 512 {
 		return invalidRuntimeContract("document_id is too long")
 	}
 	if len(d.Payload) > 1<<20 {

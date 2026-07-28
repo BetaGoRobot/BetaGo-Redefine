@@ -23,6 +23,13 @@ func TestProjectorUpsertsExactDocumentAndCompletes(t *testing.T) {
 	if writer.index != "agent_conversation_events" || writer.documentID != "step-1" {
 		t.Fatalf("upsert target = %q/%q", writer.index, writer.documentID)
 	}
+	if !writer.hasDeadline || writer.deadlineRemaining <= 0 || writer.deadlineRemaining > time.Minute {
+		t.Fatalf("writer deadline remaining = %v, present=%v", writer.deadlineRemaining, writer.hasDeadline)
+	}
+	if store.renewed.OutboxID != "outbox-1" || !store.renewed.Now.Equal(now) ||
+		store.renewed.LeaseTTL != time.Minute {
+		t.Fatalf("renewed = %#v", store.renewed)
+	}
 	if string(writer.payload) != `{"event_id":"step-1"}` {
 		t.Fatalf("payload = %s", writer.payload)
 	}
@@ -32,6 +39,45 @@ func TestProjectorUpsertsExactDocumentAndCompletes(t *testing.T) {
 	}
 	if store.retried.OutboxID != "" {
 		t.Fatalf("unexpected retry = %#v", store.retried)
+	}
+}
+
+func TestProjectorDoesNotWriteWhenLeaseExpiredInExecutorQueue(t *testing.T) {
+	claimTime := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	taskTime := claimTime
+	store := &projectionStoreFake{claimed: projectionOutboxFixture(1, claimTime)}
+	writer := &projectionWriterFake{}
+	executor := &projectionExecutorFake{beforeTask: func() {
+		taskTime = claimTime.Add(time.Minute)
+	}}
+	projector := NewProjector(store, writer, executor, ProjectorConfig{
+		WorkerID: "projector-1", LeaseTTL: time.Minute, Now: func() time.Time { return taskTime },
+	})
+	err := projector.SubmitNext(context.Background())
+	if !errors.Is(err, ErrProjectionLeaseLost) {
+		t.Fatalf("SubmitNext() error = %v, want lease lost", err)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("writer called %d times after queued lease expired", writer.calls)
+	}
+	if store.completed.OutboxID != "" || store.retried.OutboxID != "" {
+		t.Fatalf("expired owner finalized row: completed=%#v retried=%#v", store.completed, store.retried)
+	}
+}
+
+func TestRenewProjectionLeaseRequestValidate(t *testing.T) {
+	now := time.Now().UTC()
+	valid := RenewProjectionLeaseRequest{
+		OutboxID: "outbox-1", WorkerID: "worker-1", AttemptCount: 1,
+		LeaseTTL: time.Minute, Now: now,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	invalid := valid
+	invalid.AttemptCount = 0
+	if !errors.Is(invalid.Validate(), ErrInvalidRuntimeContract) {
+		t.Fatalf("invalid Validate() error = %v", invalid.Validate())
 	}
 }
 
@@ -162,12 +208,27 @@ func TestRetryProjectionContractBoundsPersistedError(t *testing.T) {
 type projectionStoreFake struct {
 	claimed   *ProjectionOutbox
 	claimErr  error
+	renewed   RenewProjectionLeaseRequest
 	completed CompleteProjectionRequest
 	retried   RetryProjectionRequest
 }
 
 func (f *projectionStoreFake) ClaimProjection(context.Context, ProjectionClaim) (*ProjectionOutbox, error) {
 	return f.claimed, f.claimErr
+}
+
+func (f *projectionStoreFake) RenewProjectionLease(
+	_ context.Context,
+	req RenewProjectionLeaseRequest,
+) error {
+	f.renewed = req
+	if f.claimed == nil || !f.claimed.LeaseExpiresAt.After(req.Now) ||
+		f.claimed.ID != req.OutboxID || f.claimed.WorkerID != req.WorkerID ||
+		f.claimed.AttemptCount != req.AttemptCount {
+		return ErrProjectionLeaseLost
+	}
+	f.claimed.LeaseExpiresAt = req.Now.Add(req.LeaseTTL)
+	return nil
 }
 
 func (f *projectionStoreFake) CompleteProjection(_ context.Context, req CompleteProjectionRequest) error {
@@ -181,19 +242,28 @@ func (f *projectionStoreFake) RetryProjection(_ context.Context, req RetryProjec
 }
 
 type projectionWriterFake struct {
-	index       string
-	documentID  string
-	documentIDs []string
-	payload     json.RawMessage
-	err         error
+	index             string
+	documentID        string
+	documentIDs       []string
+	payload           json.RawMessage
+	err               error
+	calls             int
+	hasDeadline       bool
+	deadlineRemaining time.Duration
 }
 
 func (f *projectionWriterFake) Upsert(
-	_ context.Context,
+	ctx context.Context,
 	index string,
 	documentID string,
 	payload json.RawMessage,
 ) error {
+	f.calls++
+	deadline, ok := ctx.Deadline()
+	f.hasDeadline = ok
+	if ok {
+		f.deadlineRemaining = time.Until(deadline)
+	}
 	f.index = index
 	f.documentID = documentID
 	f.documentIDs = append(f.documentIDs, documentID)
@@ -202,7 +272,8 @@ func (f *projectionWriterFake) Upsert(
 }
 
 type projectionExecutorFake struct {
-	submitErr error
+	submitErr  error
+	beforeTask func()
 }
 
 func (f *projectionExecutorFake) Submit(
@@ -212,6 +283,9 @@ func (f *projectionExecutorFake) Submit(
 ) error {
 	if f.submitErr != nil {
 		return f.submitErr
+	}
+	if f.beforeTask != nil {
+		f.beforeTask()
 	}
 	return task(ctx)
 }

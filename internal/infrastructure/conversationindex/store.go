@@ -105,6 +105,32 @@ func (s *Store) CompleteProjection(
 	return nil
 }
 
+func (s *Store) RenewProjectionLease(
+	ctx context.Context,
+	req agentruntime.RenewProjectionLeaseRequest,
+) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	result := s.db.WithContext(ctx).Model(&model.AgentProjectionOutbox{}).
+		Where(
+			"id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
+			req.OutboxID, string(agentruntime.ProjectionStatusRunning),
+			req.WorkerID, req.AttemptCount, req.Now,
+		).
+		Updates(map[string]any{
+			"lease_expires_at": req.Now.Add(req.LeaseTTL),
+			"updated_at":       req.Now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return agentruntime.ErrProjectionLeaseLost
+	}
+	return nil
+}
+
 func (s *Store) RetryProjection(
 	ctx context.Context,
 	req agentruntime.RetryProjectionRequest,

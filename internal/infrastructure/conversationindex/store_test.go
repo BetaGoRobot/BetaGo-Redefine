@@ -87,6 +87,53 @@ func TestClaimProjectionReclaimsExpiredRunningLease(t *testing.T) {
 	}
 }
 
+func TestRenewProjectionLeaseFencesExpiredAndExtendsCurrentOwner(t *testing.T) {
+	db := newProjectionDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for _, outbox := range []*model.AgentProjectionOutbox{
+		{
+			ID: "outbox-renew-current", StepID: "step-renew-current",
+			IndexAlias: "agent_conversation_events", DocumentID: "step-renew-current",
+			PayloadJSON: `{"event_id":"step-renew-current"}`,
+			Status:      "running", AttemptCount: 2, WorkerID: "worker-renew",
+			NextAttemptAt: now.Add(-time.Hour), LeaseExpiresAt: now.Add(time.Second),
+			CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		},
+		{
+			ID: "outbox-renew-expired", StepID: "step-renew-expired",
+			IndexAlias: "agent_conversation_events", DocumentID: "step-renew-expired",
+			PayloadJSON: `{"event_id":"step-renew-expired"}`,
+			Status:      "running", AttemptCount: 3, WorkerID: "worker-expired",
+			NextAttemptAt: now.Add(-time.Hour), LeaseExpiresAt: now.Add(-time.Second),
+			CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		},
+	} {
+		createProjection(t, db, outbox)
+	}
+	store := NewStore(db)
+	current := agentruntime.RenewProjectionLeaseRequest{
+		OutboxID: "outbox-renew-current", WorkerID: "worker-renew", AttemptCount: 2,
+		LeaseTTL: time.Minute, Now: now,
+	}
+	if err := store.RenewProjectionLease(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	var renewed model.AgentProjectionOutbox
+	if err := db.First(&renewed, "id = ?", current.OutboxID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.LeaseExpiresAt.Equal(now.Add(time.Minute)) || !renewed.UpdatedAt.Equal(now) {
+		t.Fatalf("renewed = %#v", renewed)
+	}
+	expired := agentruntime.RenewProjectionLeaseRequest{
+		OutboxID: "outbox-renew-expired", WorkerID: "worker-expired", AttemptCount: 3,
+		LeaseTTL: time.Minute, Now: now,
+	}
+	if err := store.RenewProjectionLease(context.Background(), expired); !errors.Is(err, agentruntime.ErrProjectionLeaseLost) {
+		t.Fatalf("expired RenewProjectionLease() error = %v", err)
+	}
+}
+
 func TestRetryProjectionRequiresCurrentWorkerAndAttempt(t *testing.T) {
 	db := newProjectionDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)

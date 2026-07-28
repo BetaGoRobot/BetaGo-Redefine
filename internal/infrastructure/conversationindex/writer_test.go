@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,21 @@ func TestOpenSearchWriterReportsUnavailableInsteadOfPretendingSuccess(t *testing
 	)
 	if !errors.Is(err, opensearch.ErrUnavailable) {
 		t.Fatalf("Upsert() error = %v, want ErrUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "opensearch not initialized") ||
+		err.Error() != "conversation projection index write failed" {
+		t.Fatalf("Upsert() exposed backend reason: %q", err)
+	}
+}
+
+func TestSafeOpenSearchErrorRedactsCauseButPreservesIdentity(t *testing.T) {
+	err := safeOpenSearchError(fmt.Errorf("%w: secret-token", opensearch.ErrUnavailable))
+	if !errors.Is(err, opensearch.ErrUnavailable) {
+		t.Fatalf("safe error lost identity: %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-token") ||
+		err.Error() != "conversation projection index write failed" {
+		t.Fatalf("safe error exposed cause: %q", err)
 	}
 }
 
@@ -48,7 +65,9 @@ func TestOpenSearchUnavailableLeavesPostgresOutboxDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stored.Status != "pending" || stored.PayloadJSON == "" ||
-		!stored.NextAttemptAt.Equal(now.Add(5*time.Second)) {
+		!stored.NextAttemptAt.Equal(now.Add(5*time.Second)) ||
+		stored.LastError != "conversation projection index write failed" ||
+		strings.Contains(stored.LastError, "opensearch not initialized") {
 		t.Fatalf("Postgres context after OpenSearch outage = %#v", stored)
 	}
 }
