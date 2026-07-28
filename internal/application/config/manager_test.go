@@ -193,6 +193,39 @@ func TestChunkEnabledDefaultsToTrue(t *testing.T) {
 	}
 }
 
+func TestConversationRuntimeFlagsDefaultOffAndHonorChatScope(t *testing.T) {
+	manager := NewManager()
+	ctx := context.Background()
+	accessor := NewAccessorWithManager(ctx, "chat-enabled", "", manager)
+
+	if accessor.ConversationRuntimeEnabled() ||
+		accessor.ConversationCallbackContinuationEnabled() {
+		t.Fatal("conversation runtime flags must default off")
+	}
+	manager.cache[buildConfigKey(ScopeChat, "chat-enabled", "", KeyConversationRuntimeEnabled)] = "true"
+	manager.cache[buildConfigKey(ScopeChat, "chat-enabled", "", KeyConversationCallbackContinuationEnabled)] = "true"
+	if !accessor.ConversationRuntimeEnabled() ||
+		!accessor.ConversationCallbackContinuationEnabled() {
+		t.Fatal("conversation runtime flags did not honor chat scope")
+	}
+	for _, key := range []ConfigKey{
+		KeyConversationRuntimeEnabled,
+		KeyConversationCallbackContinuationEnabled,
+	} {
+		def, ok := GetConfigDefinition(key)
+		if !ok || def.ValueType != "bool" {
+			t.Fatalf("definition %q = %#v, %v", key, def, ok)
+		}
+	}
+}
+
+func TestConversationRuntimeGlobalHelpersDefaultOff(t *testing.T) {
+	if IsConversationRuntimeEnabled(context.Background(), "chat-default", "") ||
+		IsConversationCallbackContinuationEnabled(context.Background(), "chat-default", "") {
+		t.Fatal("global conversation flags must default off")
+	}
+}
+
 func TestConfigDefaultDisplayValueSupportsStringDefaults(t *testing.T) {
 	oldConfig := currentBaseConfig
 	currentBaseConfig = func() *infraConfig.BaseConfig {

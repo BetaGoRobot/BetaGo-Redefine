@@ -36,6 +36,17 @@
     embedding_model = "ep-xxx"
     chunk_model = "ep-xxx"
 
+# Conversation Runtime 使用有界 executor；动态开关仍在配置管理中按 chat
+# 控制。projection 写入失败只会降级索引，不影响 PostgreSQL 中的回调续接。
+[runtime_config]
+    conversation_workers = 4
+    conversation_queue_size = 128
+    conversation_timeout_seconds = 120
+    conversation_projection_workers = 2
+    conversation_projection_queue_size = 128
+    conversation_projection_timeout_seconds = 60
+    conversation_event_index = "agent_conversation_events"
+
 # 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
 # WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。
 [webui_config]

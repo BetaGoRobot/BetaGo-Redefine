@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,6 +304,91 @@ func TestContinuationContextDecisionAndDeliveryAreDurableAndFenced(t *testing.T)
 	}
 }
 
+func TestSuppressReplyDeliveryCompletesRunWithoutExternalMessage(t *testing.T) {
+	f, _, request := newScheduleInteractionFixture(t)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(), request,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			return validScheduleOutcome(request, "task-1", "new-name"), nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := request.ResolvedAt.Add(time.Second)
+	decide, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "model-worker", LeaseTTL: time.Minute, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := f.repo.PersistDecision(context.Background(), agentruntime.PersistDecisionRequest{
+		StepID: decide.ID, WorkerID: decide.WorkerID, AttemptCount: decide.AttemptCount,
+		Decision: agentruntime.TurnDecision{
+			Decision: agentruntime.TurnDecisionReply, Reply: "should not send", Reason: "queued before toggle",
+		},
+		FinishedAt: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "disabled-worker", LeaseTTL: time.Minute, Now: now.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != reply.ID {
+		t.Fatalf("claimed reply = %s, want %s", claimed.ID, reply.ID)
+	}
+	if err := f.repo.SuppressReplyDelivery(context.Background(), agentruntime.SuppressReplyDeliveryRequest{
+		StepID: claimed.ID, WorkerID: claimed.WorkerID, AttemptCount: claimed.AttemptCount,
+		Reason: "callback continuation disabled", FinishedAt: now.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatalf("SuppressReplyDelivery() error = %v", err)
+	}
+
+	var run model.AgentRun
+	var session model.AgentSession
+	var stored model.AgentStep
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&session, "id = ?", f.sessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&stored, "id = ?", reply.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusCompleted) ||
+		session.ActiveRunID != "" ||
+		stored.Status != string(agentruntime.StepStatusCompleted) ||
+		stored.ExternalRef != "" {
+		t.Fatalf("run=%#v session=%#v reply=%#v", run, session, stored)
+	}
+	var output map[string]any
+	if json.Unmarshal([]byte(stored.OutputJSON), &output) != nil ||
+		output["status"] != "suppressed" ||
+		output["reason"] != "callback continuation disabled" {
+		t.Fatalf("suppressed output = %s", stored.OutputJSON)
+	}
+	var decisionOutbox model.AgentProjectionOutbox
+	var suppressedOutbox model.AgentProjectionOutbox
+	if err := f.db.First(&decisionOutbox, "step_id = ?", decide.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&suppressedOutbox, "step_id = ?", reply.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if decisionOutbox.DocumentID == suppressedOutbox.DocumentID ||
+		!strings.HasSuffix(suppressedOutbox.DocumentID, ":"+reply.ID) {
+		t.Fatalf("decision document=%q suppressed document=%q, want distinct per-step IDs",
+			decisionOutbox.DocumentID, suppressedOutbox.DocumentID)
+	}
+}
+
 func TestProjectionReplyRouteMatchesDeliveryTarget(t *testing.T) {
 	if got := projectionReplyRoute(agentruntime.ReplyRequest{TriggerMessageID: "om-trigger"}); got != "reply" {
 		t.Fatalf("reply route = %q", got)
@@ -354,6 +440,46 @@ func TestRepairContinuationRestoresExactlyOneMissingStage(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("repaired continuation count = %d", count)
+	}
+}
+
+func TestRepairContinuationRequeuesExpiredRunningStage(t *testing.T) {
+	f, _, request := newScheduleInteractionFixture(t)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(), request,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			return validScheduleOutcome(request, "task-1", "new-name"), nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	claimedAt := request.ResolvedAt.Add(time.Second)
+	claimed, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "lost-worker", LeaseTTL: time.Minute, Now: claimedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoverAt := claimedAt.Add(2 * time.Minute)
+	if err := f.repo.RepairContinuation(context.Background(), f.runID, recoverAt); err != nil {
+		t.Fatalf("RepairContinuation() error = %v", err)
+	}
+	var step model.AgentStep
+	var run model.AgentRun
+	if err := f.db.First(&step, "id = ?", claimed.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if step.Status != string(agentruntime.StepStatusQueued) ||
+		step.WorkerID != "" ||
+		!step.LeaseExpiresAt.Equal(recoverAt) ||
+		run.Status != string(agentruntime.RunStatusQueued) {
+		t.Fatalf("repaired step=%#v run=%#v", step, run)
 	}
 }
 

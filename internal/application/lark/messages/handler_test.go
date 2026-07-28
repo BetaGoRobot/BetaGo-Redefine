@@ -9,9 +9,19 @@ import (
 	"unsafe"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type messageInteractionStarterStub struct{}
+
+func (messageInteractionStarterStub) StartScheduleEdit(
+	context.Context,
+	agentruntime.StartScheduleEditRequest,
+) (*agentruntime.RuntimeEnvelope, error) {
+	return nil, nil
+}
 
 func TestResolveChatNameUsesUserNameForP2P(t *testing.T) {
 	oldGetUserNameByID := getUserNameByID
@@ -112,6 +122,52 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 		if !found {
 			t.Fatalf("expected stage %q in unified pipeline, got %+v", want, stageTypes)
 		}
+	}
+}
+
+func TestMessageProcessorInjectsInteractionStarterOnlyWhenChatRuntimeEnabled(t *testing.T) {
+	chatID := "chat-runtime"
+	chatType := "group"
+	openID := "actor-runtime"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{ChatId: &chatID, ChatType: &chatType},
+			Sender:  &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+	enabled := false
+	var gateChatID, gateOpenID string
+	starter := messageInteractionStarterStub{}
+	handler := NewMessageProcessorWithOptions(config.NewManager(), MessageHandlerOptions{
+		InteractionStarter: starter,
+		RuntimeEnabled: func(_ context.Context, gotChatID, gotOpenID string) bool {
+			gateChatID, gateOpenID = gotChatID, gotOpenID
+			return enabled
+		},
+	})
+
+	disabledCtx := handler.contextForEvent(context.Background(), event)
+	if _, ok := agentruntime.InteractionStarterFromContext(disabledCtx); ok {
+		t.Fatal("disabled chat received an interaction starter")
+	}
+	if gateChatID != chatID || gateOpenID != openID {
+		t.Fatalf("runtime gate identity = %q/%q, want %q/%q",
+			gateChatID, gateOpenID, chatID, openID)
+	}
+
+	enabled = true
+	enabledCtx := handler.contextForEvent(context.Background(), event)
+	got, ok := agentruntime.InteractionStarterFromContext(enabledCtx)
+	if !ok || got != starter {
+		t.Fatalf("enabled chat starter = %#v, %v", got, ok)
+	}
+}
+
+func TestLegacyMessageProcessorNeverInjectsRuntimeStarter(t *testing.T) {
+	handler := NewMessageProcessor(config.NewManager())
+	ctx := handler.contextForEvent(context.Background(), nil)
+	if _, ok := agentruntime.InteractionStarterFromContext(ctx); ok {
+		t.Fatal("legacy constructor injected an interaction starter")
 	}
 }
 

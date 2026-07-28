@@ -42,6 +42,9 @@ func (a *App) AddModule(module Module) {
 	}
 	a.modules = append(a.modules, module)
 	a.registry.Register(module.Name(), module.Critical())
+	if provider, ok := module.(StatsProvider); ok {
+		a.registry.RegisterProvider(module.Name(), provider)
+	}
 }
 
 // Registry 返回管理面使用的共享健康注册表。

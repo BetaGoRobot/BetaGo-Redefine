@@ -121,6 +121,12 @@ func newSession(req StartRunRequest) *AgentSession {
 	}
 }
 
+// NewSessionForRun returns the deterministic session identity used by both the
+// legacy coordinator and atomic interaction creation.
+func NewSessionForRun(req StartRunRequest) *AgentSession {
+	return newSession(req)
+}
+
 func deterministicSessionID(appID, botOpenID, chatID, scopeType, scopeID string) string {
 	raw := fmt.Sprintf("%s:%s:%s:%s:%s", appID, botOpenID, chatID, scopeType, scopeID)
 	sum := sha256.Sum256([]byte(raw))

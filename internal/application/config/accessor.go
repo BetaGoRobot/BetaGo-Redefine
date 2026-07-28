@@ -103,6 +103,14 @@ func (a *Accessor) ChunkEnabled() bool {
 	return a.manager.GetBool(a.ctx, KeyChunkEnabled, a.chatID, a.openID)
 }
 
+func (a *Accessor) ConversationRuntimeEnabled() bool {
+	return a.manager.GetBool(a.ctx, KeyConversationRuntimeEnabled, a.chatID, a.openID)
+}
+
+func (a *Accessor) ConversationCallbackContinuationEnabled() bool {
+	return a.manager.GetBool(a.ctx, KeyConversationCallbackContinuationEnabled, a.chatID, a.openID)
+}
+
 // MusicCardInThread 检查音乐卡片是否默认回帖中发送
 func (a *Accessor) MusicCardInThread() bool {
 	return a.manager.GetBool(a.ctx, KeyMusicCardInThread, a.chatID, a.openID)
@@ -198,6 +206,14 @@ func IsIntentRecognitionEnabled(ctx context.Context, chatID, openID string) bool
 
 func IsChunkEnabled(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyChunkEnabled, chatID, openID)
+}
+
+func IsConversationRuntimeEnabled(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyConversationRuntimeEnabled, chatID, openID)
+}
+
+func IsConversationCallbackContinuationEnabled(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyConversationCallbackContinuationEnabled, chatID, openID)
 }
 
 func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {

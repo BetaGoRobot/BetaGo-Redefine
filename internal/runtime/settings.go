@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"time"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -62,7 +63,28 @@ func ExecutorConfigs(cfg *infraConfig.BaseConfig) map[string]ExecutorConfig {
 			QueueSize:   defaultInt(runtimeCfg.ScheduleQueueSize, 128),
 			TaskTimeout: defaultDuration(runtimeCfg.ScheduleTaskTimeoutSeconds, 10*time.Minute),
 		},
+		"conversation": {
+			Name:        "conversation_executor",
+			Workers:     defaultInt(runtimeCfg.ConversationWorkers, 4),
+			QueueSize:   defaultInt(runtimeCfg.ConversationQueueSize, 128),
+			TaskTimeout: defaultDuration(runtimeCfg.ConversationTimeoutSeconds, 2*time.Minute),
+		},
+		"projection": {
+			Name:        "conversation_projection_executor",
+			Workers:     defaultInt(runtimeCfg.ConversationProjectionWorkers, 2),
+			QueueSize:   defaultInt(runtimeCfg.ConversationProjectionQueueSize, 128),
+			TaskTimeout: defaultDuration(runtimeCfg.ConversationProjectionTimeoutSeconds, time.Minute),
+		},
 	}
+}
+
+func ConversationEventIndex(cfg *infraConfig.BaseConfig) string {
+	if cfg != nil && cfg.RuntimeConfig != nil {
+		if index := strings.TrimSpace(cfg.RuntimeConfig.ConversationEventIndex); index != "" {
+			return index
+		}
+	}
+	return "agent_conversation_events"
 }
 
 // defaultInt 为正整数配置应用兜底值。

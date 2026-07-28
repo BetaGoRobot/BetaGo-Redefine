@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 )
@@ -21,6 +24,74 @@ func TestAddInfrastructureModulesRegistersAKShareAPIModule(t *testing.T) {
 	}
 }
 
+func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	components, err := newAppComponents(cfg)
+	if err != nil {
+		t.Fatalf("newAppComponents() error = %v", err)
+	}
+	if components.conversationExecutor == nil ||
+		components.projectionExecutor == nil ||
+		components.conversationRuntime == nil ||
+		components.conversationWorker == nil ||
+		components.conversationProjectionWorker == nil ||
+		components.continuationDispatcher == nil {
+		t.Fatalf("conversation components are incomplete: %#v", components)
+	}
+	if components.conversationWorker.Critical() ||
+		components.conversationProjectionWorker.Critical() {
+		t.Fatal("dynamic conversation and OpenSearch projection workers must be non-critical")
+	}
+	if _, err := components.conversationRuntime.StartScheduleEdit(context.Background(), agentruntime.StartScheduleEditRequest{}); err == nil {
+		t.Fatal("conversation runtime should remain unbound before application_services starts")
+	}
+}
+
+func TestNewAppComponentsRejectsUnsafeConversationBudgets(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	cfg.RuntimeConfig = &infraConfig.RuntimeConfig{
+		ConversationTimeoutSeconds:           180,
+		ConversationProjectionTimeoutSeconds: 120,
+	}
+	if _, err := newAppComponents(cfg); err == nil {
+		t.Fatal("newAppComponents() accepted executor timeouts that reach their durable leases")
+	}
+}
+
+func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	app, err := buildApp(cfg)
+	if err != nil {
+		t.Fatalf("buildApp() error = %v", err)
+	}
+	snapshot := app.Registry().Snapshot()
+	for _, name := range []string{
+		"conversation_executor",
+		"conversation_projection_executor",
+		"conversation_runtime_worker",
+		"conversation_projection_worker",
+	} {
+		if !hasComponent(snapshot.Components, name) {
+			t.Fatalf("missing runtime component %q: %+v", name, snapshot.Components)
+		}
+	}
+}
+
+func testConversationRuntimeConfig() *infraConfig.BaseConfig {
+	return &infraConfig.BaseConfig{
+		LarkConfig: &infraConfig.LarkConfig{
+			AppID: "app-test", AppSecret: "secret-test", BotOpenID: "bot-test",
+		},
+		ArkConfig: &infraConfig.ArkConfig{
+			NormalModel: "normal-test", ReasoningModel: "reasoning-test",
+		},
+		RuntimeConfig: &infraConfig.RuntimeConfig{
+			ConversationTimeoutSeconds:           int((2 * time.Minute) / time.Second),
+			ConversationProjectionTimeoutSeconds: int(time.Minute / time.Second),
+		},
+	}
+}
+
 func hasComponent(items []appruntime.ComponentStatus, name string) bool {
 	for _, item := range items {
 		if item.Name == name {
@@ -29,4 +100,3 @@ func hasComponent(items []appruntime.ComponentStatus, name string) bool {
 	}
 	return false
 }
-

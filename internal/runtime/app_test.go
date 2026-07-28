@@ -48,6 +48,49 @@ func TestAppFailsWhenCriticalModuleIsNotReady(t *testing.T) {
 	}
 }
 
+func TestRegistrySnapshotReadsLiveModuleStatsOutsideRegistryLock(t *testing.T) {
+	app := NewApp()
+	value := int64(1)
+	app.AddModule(NewFuncModule(FuncModuleOptions{
+		Name: "live-stats",
+		Stats: func() map[string]any {
+			// This would deadlock if Snapshot invoked providers while holding
+			// the registry read lock.
+			app.Registry().Update("side-effect", StateReady, "", nil)
+			return map[string]any{"value": value}
+		},
+	}))
+
+	firstDone := make(chan Snapshot, 1)
+	go func() {
+		firstDone <- app.Registry().Snapshot()
+	}()
+	var first Snapshot
+	select {
+	case first = <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("Snapshot deadlocked while invoking live stats provider")
+	}
+	if got := componentStatsValue(first, "live-stats"); got != int64(1) {
+		t.Fatalf("first live stats value = %#v, want 1", got)
+	}
+
+	value = 2
+	second := app.Registry().Snapshot()
+	if got := componentStatsValue(second, "live-stats"); got != int64(2) {
+		t.Fatalf("second live stats value = %#v, want 2", got)
+	}
+}
+
+func componentStatsValue(snapshot Snapshot, name string) any {
+	for _, component := range snapshot.Components {
+		if component.Name == name {
+			return component.Stats["value"]
+		}
+	}
+	return nil
+}
+
 func TestExecutorProcessesTasksAndStops(t *testing.T) {
 	executor := NewExecutor(ExecutorConfig{
 		Name:      "test_executor",

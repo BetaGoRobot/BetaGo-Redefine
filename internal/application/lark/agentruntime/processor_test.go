@@ -14,6 +14,8 @@ type continuationStoreFake struct {
 	persisted       TurnDecision
 	retries         int
 	deliveryMessage string
+	suppressed      int
+	loadCalls       int
 	leaseErr        error
 }
 
@@ -81,6 +83,7 @@ func (f *continuationStoreFake) LoadContinuationContext(
 	context.Context,
 	LoadContinuationContextRequest,
 ) (ContinuationContext, error) {
+	f.loadCalls++
 	return f.context, nil
 }
 
@@ -120,6 +123,16 @@ func (f *continuationStoreFake) CompleteReplyDelivery(
 	req CompleteReplyDeliveryRequest,
 ) error {
 	f.deliveryMessage = req.MessageID
+	f.step.Status = StepStatusCompleted
+	f.step = nil
+	return nil
+}
+
+func (f *continuationStoreFake) SuppressReplyDelivery(
+	_ context.Context,
+	req SuppressReplyDeliveryRequest,
+) error {
+	f.suppressed++
 	f.step.Status = StepStatusCompleted
 	f.step = nil
 	return nil
@@ -247,5 +260,43 @@ func TestContinuationProcessorRetriesOnlyFailedStage(t *testing.T) {
 	}
 	if store.retries != 1 || store.step.Kind != StepKindDecide {
 		t.Fatalf("retries=%d step=%#v", store.retries, store.step)
+	}
+}
+
+func TestDisabledContinuationProcessorCompletesDecideWithoutModel(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
+	}
+	processor := NewDisabledContinuationProcessor(store, DisabledContinuationProcessorConfig{
+		WorkerID: "worker-disabled", LeaseTTL: time.Minute,
+	})
+	if err := processor.ProcessRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+	if store.persisted.Decision != TurnDecisionObserveOnly ||
+		store.persisted.Reason != "callback continuation disabled" {
+		t.Fatalf("persisted decision = %#v, want deterministic observe_only", store.persisted)
+	}
+	if store.loadCalls != 0 || store.deliveryMessage != "" {
+		t.Fatalf("load calls=%d delivery=%q, want no model context or delivery",
+			store.loadCalls, store.deliveryMessage)
+	}
+}
+
+func TestDisabledContinuationProcessorSuppressesAlreadyQueuedReply(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{
+			ID: "step-reply", RunID: "run-1", Kind: StepKindReply, Status: StepStatusQueued,
+			InputJSON: `{"version":1,"step_id":"step-reply","run_id":"run-1","text":"完成","chat_id":"oc","idempotency_key":"step-reply"}`,
+		},
+	}
+	processor := NewDisabledContinuationProcessor(store, DisabledContinuationProcessorConfig{
+		WorkerID: "worker-disabled", LeaseTTL: time.Minute,
+	})
+	if err := processor.ProcessRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+	if store.suppressed != 1 || store.deliveryMessage != "" {
+		t.Fatalf("suppressed=%d delivery=%q, want suppressed reply", store.suppressed, store.deliveryMessage)
 	}
 }

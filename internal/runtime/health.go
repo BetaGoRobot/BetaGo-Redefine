@@ -54,12 +54,14 @@ type Registry struct {
 	live      bool
 	updatedAt time.Time
 	items     map[string]ComponentStatus
+	providers map[string]StatsProvider
 }
 
 // NewRegistry 创建一个空注册表，并初始化时间戳，避免第一份快照出现零值时间。
 func NewRegistry() *Registry {
 	return &Registry{
 		items:     make(map[string]ComponentStatus),
+		providers: make(map[string]StatsProvider),
 		updatedAt: time.Now(),
 	}
 }
@@ -95,6 +97,19 @@ func (r *Registry) Register(name string, critical bool) {
 	r.updatedAt = time.Now()
 }
 
+// RegisterProvider attaches a live stats source to a component. Snapshot copies
+// provider references under the registry lock and invokes them only after
+// releasing it, because providers are application code and may call back into
+// the registry.
+func (r *Registry) RegisterProvider(name string, provider StatsProvider) {
+	if r == nil || name == "" || provider == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.providers[name] = provider
+}
+
 // Update 更新组件当前状态，并复制一份 stats，避免模块后续继续修改 map
 // 时和读取方发生数据竞争。
 func (r *Registry) Update(name string, state State, message string, stats map[string]any) {
@@ -122,14 +137,28 @@ func (r *Registry) Snapshot() Snapshot {
 	}
 
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	live := r.live
+	updatedAt := r.updatedAt
+	items := make(map[string]ComponentStatus, len(r.items))
+	for name, item := range r.items {
+		items[name] = item
+	}
+	providers := make(map[string]StatsProvider, len(r.providers))
+	for name, provider := range r.providers {
+		providers[name] = provider
+	}
+	r.mu.RUnlock()
 
-	components := make([]ComponentStatus, 0, len(r.items))
-	ready := r.live
+	components := make([]ComponentStatus, 0, len(items))
+	ready := live
 	degraded := false
-	for _, item := range r.items {
+	for name, item := range items {
 		copied := item
-		copied.Stats = cloneStats(item.Stats)
+		if provider := providers[name]; provider != nil {
+			copied.Stats = safeProviderStats(provider)
+		} else {
+			copied.Stats = cloneStats(item.Stats)
+		}
 		components = append(components, copied)
 		if item.Critical && item.State != StateReady {
 			ready = false
@@ -150,12 +179,21 @@ func (r *Registry) Snapshot() Snapshot {
 	})
 
 	return Snapshot{
-		Live:       r.live,
+		Live:       live,
 		Ready:      ready,
 		Degraded:   degraded,
-		UpdatedAt:  r.updatedAt,
+		UpdatedAt:  updatedAt,
 		Components: components,
 	}
+}
+
+func safeProviderStats(provider StatsProvider) (stats map[string]any) {
+	defer func() {
+		if recover() != nil {
+			stats = map[string]any{"stats_error": "stats provider panicked"}
+		}
+	}()
+	return cloneStats(provider.Stats())
 }
 
 // cloneStats 对 stats map 做一次防御性复制，因为模块可能在快照生成后

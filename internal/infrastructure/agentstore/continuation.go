@@ -458,6 +458,56 @@ func (r *Repository) CompleteReplyDelivery(
 	})
 }
 
+func (r *Repository) SuppressReplyDelivery(
+	ctx context.Context,
+	req agentruntime.SuppressReplyDeliveryRequest,
+) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, run, step, err := lockContinuationStage(tx, req.StepID)
+		if err != nil {
+			return err
+		}
+		if !continuationLeaseMatches(step, req.WorkerID, req.AttemptCount, agentruntime.StepKindReply) {
+			return agentruntime.ErrLeaseLost
+		}
+		if run.Status != string(agentruntime.RunStatusRunning) || session.ActiveRunID != run.ID {
+			return agentruntime.ErrLeaseLost
+		}
+		output, err := json.Marshal(map[string]string{
+			"status": "suppressed",
+			"reason": req.Reason,
+		})
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&model.AgentStep{}).
+			Where("id = ? AND status = ? AND worker_id = ? AND attempt_count = ?",
+				step.ID, string(agentruntime.StepStatusRunning), req.WorkerID, req.AttemptCount).
+			Updates(map[string]any{
+				"status": string(agentruntime.StepStatusCompleted), "output_json": string(output),
+				"external_ref": "", "error_text": "", "finished_at": req.FinishedAt,
+				"worker_id": "", "lease_expires_at": nil,
+			})
+		if result.Error != nil || result.RowsAffected != 1 {
+			if result.Error != nil {
+				return result.Error
+			}
+			return agentruntime.ErrLeaseLost
+		}
+		if err := completeContinuationRunTx(tx, session, run, req.Reason, req.FinishedAt); err != nil {
+			return err
+		}
+		projection, err := suppressedReplyProjectionTx(tx, session, run, step, req.Reason, req.FinishedAt)
+		if err != nil {
+			return err
+		}
+		return insertProjectionOutbox(tx, step.ID, projection, req.FinishedAt)
+	})
+}
+
 func lockContinuationStage(
 	tx *gorm.DB,
 	stepID string,
@@ -531,7 +581,8 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, "id = ?", runID).Error; err != nil {
 			return mapNotFound(err)
 		}
-		if run.Status != string(agentruntime.RunStatusQueued) {
+		if run.Status != string(agentruntime.RunStatusQueued) &&
+			run.Status != string(agentruntime.RunStatusRunning) {
 			return nil
 		}
 		var anchor model.AgentStep
@@ -550,6 +601,43 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 			"run_id = ? AND dedupe_key = ?", runID, continuationDedupe,
 		).First(&existing).Error
 		if existingErr == nil {
+			if (existing.Kind == string(agentruntime.StepKindDecide) ||
+				existing.Kind == string(agentruntime.StepKindReply)) &&
+				existing.Status == string(agentruntime.StepStatusRunning) {
+				if existing.LeaseExpiresAt.IsZero() || existing.LeaseExpiresAt.After(now) {
+					return nil
+				}
+				stepResult := tx.Model(&model.AgentStep{}).
+					Where("id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at <= ?",
+						existing.ID, string(agentruntime.StepStatusRunning),
+						existing.WorkerID, existing.AttemptCount, now).
+					Updates(map[string]any{
+						"status":           string(agentruntime.StepStatusQueued),
+						"worker_id":        "",
+						"lease_expires_at": now,
+					})
+				if stepResult.Error != nil {
+					return stepResult.Error
+				}
+				if stepResult.RowsAffected != 1 {
+					return agentruntime.ErrLeaseLost
+				}
+				if run.Status == string(agentruntime.RunStatusRunning) {
+					runResult := tx.Model(&model.AgentRun{}).
+						Where("id = ? AND status = ?", run.ID, string(agentruntime.RunStatusRunning)).
+						Updates(map[string]any{
+							"status":     string(agentruntime.RunStatusQueued),
+							"updated_at": now,
+						})
+					if runResult.Error != nil {
+						return runResult.Error
+					}
+					if runResult.RowsAffected != 1 {
+						return agentruntime.ErrLeaseLost
+					}
+				}
+				return nil
+			}
 			if existing.Kind == string(agentruntime.StepKindDecide) &&
 				(existing.Status == string(agentruntime.StepStatusQueued) ||
 					existing.Status == string(agentruntime.StepStatusRunning)) {
@@ -566,6 +654,11 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 					(reply.Status == string(agentruntime.StepStatusQueued) ||
 						reply.Status == string(agentruntime.StepStatusRunning)) &&
 					validFrozenReplyStep(&reply) {
+					if reply.Status == string(agentruntime.StepStatusRunning) &&
+						!reply.LeaseExpiresAt.IsZero() &&
+						!reply.LeaseExpiresAt.After(now) {
+						return requeueExpiredContinuationTx(tx, &run, &reply, now)
+					}
 					return nil
 				}
 				if replyErr != nil && !errors.Is(replyErr, gorm.ErrRecordNotFound) {
@@ -576,6 +669,9 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		}
 		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
+		}
+		if run.Status != string(agentruntime.RunStatusQueued) {
+			return nil
 		}
 		var later int64
 		if err := tx.Model(&model.AgentStep{}).Where(
@@ -596,6 +692,44 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		return tx.Model(&model.AgentRun{}).Where("id = ?", run.ID).
 			Updates(map[string]any{"current_step_index": continuation.Index, "updated_at": now}).Error
 	})
+}
+
+func requeueExpiredContinuationTx(
+	tx *gorm.DB,
+	run *model.AgentRun,
+	step *model.AgentStep,
+	now time.Time,
+) error {
+	result := tx.Model(&model.AgentStep{}).
+		Where("id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at <= ?",
+			step.ID, string(agentruntime.StepStatusRunning), step.WorkerID, step.AttemptCount, now).
+		Updates(map[string]any{
+			"status":           string(agentruntime.StepStatusQueued),
+			"worker_id":        "",
+			"lease_expires_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return agentruntime.ErrLeaseLost
+	}
+	if run.Status != string(agentruntime.RunStatusRunning) {
+		return nil
+	}
+	result = tx.Model(&model.AgentRun{}).
+		Where("id = ? AND status = ?", run.ID, string(agentruntime.RunStatusRunning)).
+		Updates(map[string]any{
+			"status":     string(agentruntime.RunStatusQueued),
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return agentruntime.ErrLeaseLost
+	}
+	return nil
 }
 
 func validFrozenReplyStep(step *model.AgentStep) bool {

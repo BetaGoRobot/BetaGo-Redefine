@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	chatmetrics "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chatmetrics"
@@ -18,10 +20,11 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/conversationindex"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
@@ -39,17 +42,31 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	uuid "github.com/satori/go.uuid"
 )
 
 type appComponents struct {
-	messageExecutor   *appruntime.Executor
-	reactionExecutor  *appruntime.Executor
-	recordingExecutor *appruntime.Executor
-	chunkExecutor     *appruntime.Executor
-	scheduleExecutor  *appruntime.Executor
-	handlerSet        *larkiface.HandlerSet
-	eventDispatcher   *dispatcher.EventDispatcher
+	messageExecutor              *appruntime.Executor
+	reactionExecutor             *appruntime.Executor
+	recordingExecutor            *appruntime.Executor
+	chunkExecutor                *appruntime.Executor
+	scheduleExecutor             *appruntime.Executor
+	conversationExecutor         *appruntime.Executor
+	projectionExecutor           *appruntime.Executor
+	conversationRuntime          *agentruntime.Runtime
+	conversationWorker           *agentruntime.ConversationWorker
+	conversationProjectionWorker *agentruntime.ProjectionWorker
+	continuationDispatcher       *appcardaction.ScheduleInteractionDispatcher
+	handlerSet                   *larkiface.HandlerSet
+	eventDispatcher              *dispatcher.EventDispatcher
 }
+
+const (
+	conversationContinuationLeaseTTL = 3 * time.Minute
+	conversationProjectionLeaseTTL   = 2 * time.Minute
+	conversationProjectionWriteTTL   = 30 * time.Second
+	conversationInteractionWaitTTL   = 30 * time.Minute
+)
 
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
@@ -63,10 +80,19 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
 	}
+	if cfg.LarkConfig == nil {
+		return nil, errors.New("lark config is nil")
+	}
+	if cfg.ArkConfig == nil {
+		return nil, errors.New("ark config is nil")
+	}
 
 	appcardaction.RegisterBuiltins()
 
-	components := newAppComponents(cfg)
+	components, err := newAppComponents(cfg)
+	if err != nil {
+		return nil, err
+	}
 	app := appruntime.NewApp()
 
 	addInfrastructureModules(app, cfg)
@@ -78,33 +104,113 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 
 // newAppComponents 只负责构造“会被多个模块共享”的装配对象，不直接向
 // App 注册模块，避免对象创建和生命周期注册混在一起。
-func newAppComponents(cfg *infraConfig.BaseConfig) *appComponents {
+func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
+	if cfg == nil {
+		return nil, errors.New("config is nil")
+	}
+	if cfg.LarkConfig == nil {
+		return nil, errors.New("lark config is nil")
+	}
+	if cfg.ArkConfig == nil {
+		return nil, errors.New("ark config is nil")
+	}
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
+	if err := validateConversationRuntimeBudgets(executorConfigs); err != nil {
+		return nil, err
+	}
 
 	messageExecutor := appruntime.NewExecutor(executorConfigs["message"])
 	reactionExecutor := appruntime.NewExecutor(executorConfigs["reaction"])
 	recordingExecutor := appruntime.NewExecutor(executorConfigs["recording"])
 	chunkExecutor := appruntime.NewExecutor(executorConfigs["chunk"])
 	scheduleExecutor := appruntime.NewExecutor(executorConfigs["schedule"])
+	conversationExecutor := appruntime.NewExecutor(executorConfigs["conversation"])
+	projectionExecutor := appruntime.NewExecutor(executorConfigs["projection"])
 
-	messageProcessor := messages.NewMessageProcessor(appconfig.GetManager())
+	conversationRuntime, err := agentruntime.NewRuntime(agentruntime.RuntimeOptions{
+		ConversationExecutor: conversationExecutor,
+		CallbackContinuationEnabled: func(ctx context.Context, chatID string) bool {
+			return appconfig.IsConversationCallbackContinuationEnabled(ctx, chatID, "")
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	continuationDispatcher, err := appcardaction.NewScheduleInteractionDispatcher(
+		conversationRuntime,
+		appcardaction.ScheduleInteractionDispatcherOptions{
+			IndexAlias: appruntime.ConversationEventIndex(cfg),
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	conversationWorker, err := agentruntime.NewConversationWorker(
+		conversationRuntime,
+		agentruntime.ConversationWorkerOptions{
+			Interval: 2 * time.Second, MaxBackoff: time.Minute, BatchSize: 64,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	conversationProjectionWorker, err := agentruntime.NewProjectionWorker(
+		conversationRuntime,
+		agentruntime.ProjectionWorkerOptions{
+			Interval: time.Second, MaxBackoff: time.Minute, BatchSize: 64,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	messageProcessor := messages.NewMessageProcessorWithOptions(
+		appconfig.GetManager(),
+		messages.MessageHandlerOptions{InteractionStarter: conversationRuntime},
+	)
 	reactionProcessor := reaction.NewReactionProcessor()
 	handlerSet := larkiface.NewHandlerSet(larkiface.HandlerSetOptions{
-		MessageProcessor:  messageProcessor,
-		ReactionProcessor: reactionProcessor,
-		MessageExecutor:   messageExecutor,
-		ReactionExecutor:  reactionExecutor,
+		MessageProcessor:       messageProcessor,
+		ReactionProcessor:      reactionProcessor,
+		MessageExecutor:        messageExecutor,
+		ReactionExecutor:       reactionExecutor,
+		ContinuationDispatcher: continuationDispatcher,
 	})
 
 	return &appComponents{
-		messageExecutor:   messageExecutor,
-		reactionExecutor:  reactionExecutor,
-		recordingExecutor: recordingExecutor,
-		chunkExecutor:     chunkExecutor,
-		scheduleExecutor:  scheduleExecutor,
-		handlerSet:        handlerSet,
-		eventDispatcher:   newEventDispatcher(handlerSet),
+		messageExecutor: messageExecutor, reactionExecutor: reactionExecutor,
+		recordingExecutor: recordingExecutor, chunkExecutor: chunkExecutor,
+		scheduleExecutor: scheduleExecutor, conversationExecutor: conversationExecutor,
+		projectionExecutor:  projectionExecutor,
+		conversationRuntime: conversationRuntime, conversationWorker: conversationWorker,
+		conversationProjectionWorker: conversationProjectionWorker,
+		continuationDispatcher:       continuationDispatcher,
+		handlerSet:                   handlerSet,
+		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
+	}, nil
+}
+
+func validateConversationRuntimeBudgets(configs map[string]appruntime.ExecutorConfig) error {
+	conversation := configs["conversation"]
+	projection := configs["projection"]
+	if conversation.TaskTimeout <= 0 ||
+		conversation.TaskTimeout >= conversationContinuationLeaseTTL {
+		return fmt.Errorf(
+			"conversation executor timeout %s must be positive and shorter than continuation lease %s",
+			conversation.TaskTimeout,
+			conversationContinuationLeaseTTL,
+		)
 	}
+	if projection.TaskTimeout <= conversationProjectionWriteTTL ||
+		projection.TaskTimeout >= conversationProjectionLeaseTTL {
+		return fmt.Errorf(
+			"projection budget must satisfy write timeout %s < executor timeout %s < lease %s",
+			conversationProjectionWriteTTL,
+			projection.TaskTimeout,
+			conversationProjectionLeaseTTL,
+		)
+	}
+	return nil
 }
 
 // addInfrastructureModules 注册基础设施层模块。顺序严格反映依赖方向：
@@ -224,6 +330,8 @@ func addExecutorModules(app *appruntime.App, components *appComponents) {
 	app.AddModule(components.recordingExecutor)
 	app.AddModule(components.chunkExecutor)
 	app.AddModule(components.scheduleExecutor)
+	app.AddModule(components.conversationExecutor)
+	app.AddModule(components.projectionExecutor)
 }
 
 // addApplicationModules 注册依赖基础设施和执行器的上层模块。这里把遗留
@@ -248,7 +356,70 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			larkchunking.SetExecutor(components.chunkExecutor)
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
-			return nil
+			repository := agentstore.NewRepository(db.DB())
+			appID := ""
+			botOpenID := ""
+			tokenSecret := ""
+			if cfg.LarkConfig != nil {
+				appID = cfg.LarkConfig.AppID
+				botOpenID = cfg.LarkConfig.BotOpenID
+				tokenSecret = cfg.LarkConfig.AppSecret
+			}
+			starter, err := agentruntime.NewDurableScheduleEditStarter(
+				agentruntime.DurableScheduleEditStarterOptions{
+					Store: repository, AppID: appID, BotOpenID: botOpenID,
+					TokenSecret:     []byte(tokenSecret),
+					WaitTTL:         conversationInteractionWaitTTL,
+					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+				},
+			)
+			if err != nil {
+				return err
+			}
+			generator := agentruntime.NewContinuationGenerator(continuationModelID(cfg))
+			enabledProcessor := agentruntime.NewContinuationProcessor(
+				repository,
+				generator,
+				agentruntime.NewLarkReplyDeliverer(),
+				agentruntime.ContinuationProcessorConfig{
+					WorkerID:        "conversation-enabled-" + uuid.NewV4().String(),
+					LeaseTTL:        conversationContinuationLeaseTTL,
+					RetryDelay:      5 * time.Second,
+					RecentStepLimit: 32,
+				},
+			)
+			disabledProcessor := agentruntime.NewDisabledContinuationProcessor(
+				repository,
+				agentruntime.DisabledContinuationProcessorConfig{
+					WorkerID: "conversation-disabled-" + uuid.NewV4().String(),
+					LeaseTTL: conversationContinuationLeaseTTL,
+				},
+			)
+			projector := agentruntime.NewProjector(
+				conversationindex.NewStore(db.DB()),
+				conversationindex.OpenSearchWriter{},
+				components.projectionExecutor,
+				agentruntime.ProjectorConfig{
+					WorkerID:     "conversation-projection-" + uuid.NewV4().String(),
+					LeaseTTL:     conversationProjectionLeaseTTL,
+					WriteTimeout: conversationProjectionWriteTTL,
+					Now:          func() time.Time { return time.Now().UTC() },
+				},
+			)
+			scheduleInteractionService := agentruntime.NewScheduleInteractionService(
+				repository,
+				scheduleapp.NewRuntimeScheduleEditCapability(scheduleapp.GetService()),
+				components.conversationRuntime,
+			)
+			return components.conversationRuntime.Bind(agentruntime.RuntimeDependencies{
+				InteractionStarter: starter,
+				ScheduleResolver:   scheduleInteractionService,
+				EnabledProcessor:   enabledProcessor,
+				DisabledProcessor:  disabledProcessor,
+				Catalog:            repository,
+				Projector:          projector,
+				Expirer:            repository,
+			})
 		},
 		Ready: func(context.Context) error {
 			if !scheduleapp.GetService().Available() {
@@ -260,6 +431,8 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			return nil
 		},
 	}))
+	app.AddModule(components.conversationWorker)
+	app.AddModule(components.conversationProjectionWorker)
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "chunking",
 		Critical: false,
@@ -288,18 +461,18 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		appruntime.PrometheusProvider{},
 	))
 	app.AddModule(webui.NewModule(webui.Options{
-		Config:        webuiConfig(cfg),
-		ConfigManager: appconfig.GetManager(),
-		DBProvider:    db.DB,
-		ChatService:   webui.NewLarkChatService(),
-		MemberCount:   webui.LarkMemberCount,
-		MemberList:    webui.LarkMemberList,
-		MessageStats:  countRecentChatMessages,
-		RecentChatIDs: recentChatIDs,
-		ChatActivity:  chatActivityHourOfWeek,
-		ChatKeywords:   chatKeywordsToken,
-		ChatCommands:   chatCommandsTop,
-		ChatTopSenders: chatTopSenders,
+		Config:           webuiConfig(cfg),
+		ConfigManager:    appconfig.GetManager(),
+		DBProvider:       db.DB,
+		ChatService:      webui.NewLarkChatService(),
+		MemberCount:      webui.LarkMemberCount,
+		MemberList:       webui.LarkMemberList,
+		MessageStats:     countRecentChatMessages,
+		RecentChatIDs:    recentChatIDs,
+		ChatActivity:     chatActivityHourOfWeek,
+		ChatKeywords:     chatKeywordsToken,
+		ChatCommands:     chatCommandsTop,
+		ChatTopSenders:   chatTopSenders,
 		ChatMessageKinds: chatMessageKinds,
 		ChatCommandTrend: chatCommandTrend,
 		ChatTopMentions:  chatTopMentions,
@@ -312,9 +485,8 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		}(),
 		Instance: cfg.LarkConfig.AppID,
 		BotID: func() string {
-			id := botidentity.Current()
-			if id.AppID != "" {
-				return "lark:" + id.AppID
+			if cfg.LarkConfig != nil && cfg.LarkConfig.AppID != "" {
+				return "lark:" + cfg.LarkConfig.AppID
 			}
 			return ""
 		}(),
@@ -362,9 +534,18 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 
 // newEventDispatcher 负责把运行时管理的 HandlerSet 绑定到当前订阅的
 // Lark 事件类型上。
-func newEventDispatcher(handlerSet *larkiface.HandlerSet) *dispatcher.EventDispatcher {
+func newEventDispatcher(
+	cfg *infraConfig.BaseConfig,
+	handlerSet *larkiface.HandlerSet,
+) *dispatcher.EventDispatcher {
+	verificationToken := ""
+	encryptionKey := ""
+	if cfg != nil && cfg.LarkConfig != nil {
+		verificationToken = cfg.LarkConfig.VerificationToken
+		encryptionKey = cfg.LarkConfig.EncryptionKey
+	}
 	return dispatcher.
-		NewEventDispatcher(config.Get().LarkConfig.VerificationToken, config.Get().LarkConfig.EncryptionKey).
+		NewEventDispatcher(verificationToken, encryptionKey).
 		OnP2MessageReactionCreatedV1(handlerSet.MessageReactionHandler).
 		OnP2MessageReceiveV1(handlerSet.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(handlerSet.AuditV6Handler).
@@ -373,6 +554,16 @@ func newEventDispatcher(handlerSet *larkiface.HandlerSet) *dispatcher.EventDispa
 		OnP2ChatMemberUserAddedV1(emptyHandler).
 		OnP2ChatMemberBotDeletedV1(emptyHandler).
 		OnP2ChatMemberUserDeletedV1(emptyHandler)
+}
+
+func continuationModelID(cfg *infraConfig.BaseConfig) string {
+	if cfg == nil || cfg.ArkConfig == nil {
+		return ""
+	}
+	if modelID := strings.TrimSpace(cfg.ArkConfig.NormalModel); modelID != "" {
+		return modelID
+	}
+	return strings.TrimSpace(cfg.ArkConfig.ReasoningModel)
 }
 
 func initVMMetrics(cfg *infraConfig.VMConfig) {

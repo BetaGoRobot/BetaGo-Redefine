@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
@@ -18,7 +19,14 @@ import (
 )
 
 type MessageHandler struct {
-	processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
+	interactionStarter agentruntime.InteractionStarter
+	runtimeEnabled     func(context.Context, string, string) bool
+}
+
+type MessageHandlerOptions struct {
+	InteractionStarter agentruntime.InteractionStarter
+	RuntimeEnabled     func(context.Context, string, string) bool
 }
 
 // Handler 消息处理入口。
@@ -33,10 +41,29 @@ var (
 )
 
 func NewMessageProcessor(cfgManager *appconfig.Manager) *MessageHandler {
+	return NewMessageProcessorWithOptions(cfgManager, MessageHandlerOptions{})
+}
+
+func NewMessageProcessorWithOptions(
+	cfgManager *appconfig.Manager,
+	options MessageHandlerOptions,
+) *MessageHandler {
 	if cfgManager == nil {
 		cfgManager = appconfig.GetManager()
 	}
+	if options.RuntimeEnabled == nil {
+		options.RuntimeEnabled = func(ctx context.Context, chatID, openID string) bool {
+			return cfgManager.GetBool(
+				ctx,
+				appconfig.KeyConversationRuntimeEnabled,
+				chatID,
+				openID,
+			)
+		}
+	}
 	handler := &MessageHandler{
+		interactionStarter: options.InteractionStarter,
+		runtimeEnabled:     options.RuntimeEnabled,
 		processor: newMessageProcessorBase(cfgManager).
 			AddAsync(&ops.ReplyChatOperator{}).
 			AddAsync(&ops.CommandOperator{}).
@@ -56,7 +83,35 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 	if processor == nil {
 		return
 	}
+	ctx = h.contextForEvent(ctx, event)
 	processor.NewExecution().WithCtx(ctx).WithData(event).Run()
+}
+
+func (h *MessageHandler) contextForEvent(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if h == nil || h.interactionStarter == nil || h.runtimeEnabled == nil ||
+		event == nil || event.Event == nil {
+		return ctx
+	}
+	chatID := ""
+	if event.Event.Message != nil && event.Event.Message.ChatId != nil {
+		chatID = *event.Event.Message.ChatId
+	}
+	openID := ""
+	if event.Event.Sender != nil &&
+		event.Event.Sender.SenderId != nil &&
+		event.Event.Sender.SenderId.OpenId != nil {
+		openID = *event.Event.Sender.SenderId.OpenId
+	}
+	if !h.runtimeEnabled(ctx, chatID, openID) {
+		return ctx
+	}
+	return agentruntime.WithInteractionStarter(ctx, h.interactionStarter)
 }
 
 func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {

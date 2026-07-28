@@ -167,7 +167,66 @@ func replyProjectionTx(
 	}
 	return agentruntime.ProjectionDocument{
 		IndexAlias: source.IndexAlias,
-		DocumentID: projectionBaseDocumentID(source.DocumentID, parent.ID),
+		DocumentID: projectionBaseDocumentID(source.DocumentID, parent.ID) + ":" + step.ID,
+		Payload:    payload,
+	}, nil
+}
+
+func suppressedReplyProjectionTx(
+	tx *gorm.DB,
+	session *model.AgentSession,
+	run *model.AgentRun,
+	step *model.AgentStep,
+	reason string,
+	occurredAt time.Time,
+) (agentruntime.ProjectionDocument, error) {
+	var frozen agentruntime.ReplyRequest
+	if json.Unmarshal([]byte(step.InputJSON), &frozen) != nil ||
+		frozen.StepID != step.ID || frozen.RunID != run.ID ||
+		frozen.Text == "" || frozen.ChatID == "" || frozen.IdempotencyKey == "" {
+		return agentruntime.ProjectionDocument{}, agentruntime.ErrInteractionConflict
+	}
+	parentDedupe := strings.TrimSuffix(step.DedupeKey, ":reply")
+	var parent model.AgentStep
+	if parentDedupe == step.DedupeKey ||
+		tx.Where("run_id = ? AND kind = ? AND dedupe_key = ?",
+			run.ID, string(agentruntime.StepKindDecide), parentDedupe).
+			First(&parent).Error != nil {
+		return agentruntime.ProjectionDocument{}, agentruntime.ErrInteractionConflict
+	}
+	source, err := findProjectionOutboxByStep(tx, parent.ID)
+	if err != nil {
+		return agentruntime.ProjectionDocument{}, err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema_version":    conversationEventsSchemaVersion,
+		"event_id":          step.ID,
+		"event_type":        "agent_reply",
+		"run_id":            run.ID,
+		"step_id":           step.ID,
+		"source_step_id":    parent.ID,
+		"parent_step_id":    parent.ID,
+		"session_id":        session.ID,
+		"chat_id":           session.ChatID,
+		"actor_open_id":     run.ActorOpenID,
+		"status":            "completed",
+		"step_status":       "completed",
+		"outcome_status":    "suppressed",
+		"occurred_at":       occurredAt,
+		"source_message_id": frozen.TriggerMessageID,
+		"structured_payload": map[string]any{
+			"reason":             reason,
+			"chat_id":            frozen.ChatID,
+			"trigger_message_id": frozen.TriggerMessageID,
+			"delivery_key":       frozen.IdempotencyKey,
+		},
+	})
+	if err != nil {
+		return agentruntime.ProjectionDocument{}, err
+	}
+	return agentruntime.ProjectionDocument{
+		IndexAlias: source.IndexAlias,
+		DocumentID: projectionBaseDocumentID(source.DocumentID, parent.ID) + ":" + step.ID,
 		Payload:    payload,
 	}, nil
 }
