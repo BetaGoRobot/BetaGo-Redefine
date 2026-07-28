@@ -51,17 +51,17 @@ func (e RuntimeEnvelope) Validate() error {
 }
 
 type ConversationEvent struct {
-	ID            string
-	Type          EventType
-	ChatID        string
-	ActorOpenID   string
-	RunID         string
-	InteractionID string
-	Revision      int64
-	Action        string
-	SourceRef     string
-	OccurredAt    time.Time
-	Payload       json.RawMessage
+	ID            string          `json:"id"`
+	Type          EventType       `json:"type"`
+	ChatID        string          `json:"chat_id"`
+	ActorOpenID   string          `json:"actor_open_id"`
+	RunID         string          `json:"run_id"`
+	InteractionID string          `json:"interaction_id"`
+	Revision      int64           `json:"revision"`
+	Action        string          `json:"action"`
+	SourceRef     string          `json:"source_ref"`
+	OccurredAt    time.Time       `json:"occurred_at"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 func (e ConversationEvent) DedupeKey() string {

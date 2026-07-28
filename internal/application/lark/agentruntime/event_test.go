@@ -108,6 +108,46 @@ func TestRuntimeEnvelopeJSONFields(t *testing.T) {
 	}
 }
 
+func TestConversationEventJSONFields(t *testing.T) {
+	data, err := json.Marshal(ConversationEvent{
+		ID:            "evt_1",
+		Type:          EventTypeCardAction,
+		ChatID:        "oc_1",
+		ActorOpenID:   "ou_1",
+		RunID:         "run_1",
+		InteractionID: "ix_1",
+		Revision:      3,
+		Action:        "confirm",
+		SourceRef:     "source_1",
+		OccurredAt:    time.Date(2026, 7, 28, 15, 0, 0, 0, time.UTC),
+		Payload:       json.RawMessage(`{"approved":true}`),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	got := make(map[string]struct{}, len(fields))
+	for key := range fields {
+		got[key] = struct{}{}
+	}
+	want := map[string]struct{}{
+		"id": {}, "type": {}, "chat_id": {}, "actor_open_id": {},
+		"run_id": {}, "interaction_id": {}, "revision": {}, "action": {},
+		"source_ref": {}, "occurred_at": {}, "payload": {},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ConversationEvent JSON keys = %v, want exactly %v", got, want)
+	}
+	for _, legacyKey := range []string{"ID", "ChatID", "RunID"} {
+		if _, exists := fields[legacyKey]; exists {
+			t.Errorf("ConversationEvent JSON unexpectedly contains %q", legacyKey)
+		}
+	}
+}
+
 func TestConversationEventDedupeKeyForCardAction(t *testing.T) {
 	event := ConversationEvent{
 		Type:          EventTypeCardAction,
