@@ -43,6 +43,7 @@ type StartInteractionRequest struct {
 	TokenHash       string
 	InteractionKind string
 	ExpiresAt       time.Time
+	TrustedInput    json.RawMessage
 	Projection      ProjectionDocument
 }
 
@@ -68,6 +69,11 @@ func (r StartInteractionRequest) Validate() error {
 	}
 	if r.ExpiresAt.IsZero() {
 		return invalidRuntimeContract("expires_at is required")
+	}
+	if len(r.TrustedInput) > 0 {
+		if err := validateJSONDocument("trusted_input", r.TrustedInput); err != nil {
+			return err
+		}
 	}
 	return r.Projection.Validate()
 }

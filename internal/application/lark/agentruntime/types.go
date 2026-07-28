@@ -53,15 +53,17 @@ const (
 type StepKind string
 
 const (
-	StepKindDecide          StepKind = "decide"
-	StepKindComposeContext  StepKind = "compose_context"
-	StepKindPlan            StepKind = "plan"
-	StepKindCapabilityCall  StepKind = "capability_call"
-	StepKindObserve         StepKind = "observe"
-	StepKindReply           StepKind = "reply"
-	StepKindApprovalRequest StepKind = "approval_request"
-	StepKindWait            StepKind = "wait"
-	StepKindResume          StepKind = "resume"
+	StepKindDecide           StepKind = "decide"
+	StepKindComposeContext   StepKind = "compose_context"
+	StepKindPlan             StepKind = "plan"
+	StepKindCapabilityCall   StepKind = "capability_call"
+	StepKindObserve          StepKind = "observe"
+	StepKindReply            StepKind = "reply"
+	StepKindApprovalRequest  StepKind = "approval_request"
+	StepKindWait             StepKind = "wait"
+	StepKindResume           StepKind = "resume"
+	StepKindCardAction       StepKind = "card_action"
+	StepKindCapabilityResult StepKind = "capability_result"
 )
 
 type AgentSession struct {

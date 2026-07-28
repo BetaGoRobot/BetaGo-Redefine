@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -26,12 +27,13 @@ var (
 )
 
 type interactionWaitPayload struct {
-	Version       int       `json:"version"`
-	InteractionID string    `json:"interaction_id"`
-	Kind          string    `json:"kind"`
-	Revision      int64     `json:"revision"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	TokenHash     string    `json:"token_hash"`
+	Version       int             `json:"version"`
+	InteractionID string          `json:"interaction_id"`
+	Kind          string          `json:"kind"`
+	Revision      int64           `json:"revision"`
+	ExpiresAt     time.Time       `json:"expires_at"`
+	TokenHash     string          `json:"token_hash"`
+	TrustedInput  json.RawMessage `json:"trusted_input"`
 }
 
 func (r *Repository) FindActiveRun(ctx context.Context, sessionID string) (*agentruntime.AgentRun, error) {
@@ -131,6 +133,7 @@ func (r *Repository) StartInteraction(ctx context.Context, req agentruntime.Star
 		payload := interactionWaitPayload{
 			Version: 1, InteractionID: req.InteractionID, Kind: req.InteractionKind,
 			Revision: req.Revision, ExpiresAt: req.ExpiresAt, TokenHash: req.TokenHash,
+			TrustedInput: normalizedTrustedInput(req.TrustedInput),
 		}
 		input, err := json.Marshal(payload)
 		if err != nil {
@@ -325,7 +328,24 @@ func sameInteractionStart(run *model.AgentRun, wait *model.AgentStep, req agentr
 	}
 	return payload.Version == 1 && payload.InteractionID == req.InteractionID &&
 		payload.Kind == req.InteractionKind && payload.Revision == req.Revision &&
-		payload.ExpiresAt.Equal(req.ExpiresAt) && strings.EqualFold(payload.TokenHash, req.TokenHash)
+		payload.ExpiresAt.Equal(req.ExpiresAt) && strings.EqualFold(payload.TokenHash, req.TokenHash) &&
+		equalJSONDocument(payload.TrustedInput, normalizedTrustedInput(req.TrustedInput))
+}
+
+func normalizedTrustedInput(input json.RawMessage) json.RawMessage {
+	if len(input) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return append(json.RawMessage(nil), input...)
+}
+
+func equalJSONDocument(left, right json.RawMessage) bool {
+	var leftValue any
+	var rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func validateWaitStep(wait *model.AgentStep, req agentruntime.ResolveInteractionRequest) (*interactionWaitPayload, error) {
@@ -363,7 +383,7 @@ func nextStepIndex(tx *gorm.DB, run *model.AgentRun) (int32, error) {
 
 func waitingState(kind string) (agentruntime.RunStatus, agentruntime.WaitingReason) {
 	switch kind {
-	case "approval":
+	case "approval", "schedule_edit":
 		return agentruntime.RunStatusWaitingApproval, agentruntime.WaitingReasonApproval
 	case "schedule":
 		return agentruntime.RunStatusWaitingSchedule, agentruntime.WaitingReasonSchedule

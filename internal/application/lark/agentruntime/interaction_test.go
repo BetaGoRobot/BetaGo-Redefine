@@ -183,6 +183,7 @@ func TestStartInteractionRequestValidate(t *testing.T) {
 		{name: "missing interaction kind", mutate: func(r *StartInteractionRequest) { r.InteractionKind = "" }},
 		{name: "non-canonical interaction kind", mutate: func(r *StartInteractionRequest) { r.InteractionKind = "approval " }},
 		{name: "missing expiry", mutate: func(r *StartInteractionRequest) { r.ExpiresAt = time.Time{} }},
+		{name: "invalid trusted input", mutate: func(r *StartInteractionRequest) { r.TrustedInput = json.RawMessage(`{"task":`) }},
 		{name: "invalid projection", mutate: func(r *StartInteractionRequest) { r.Projection.Payload = nil }},
 	}
 	for _, tt := range tests {

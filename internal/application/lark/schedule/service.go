@@ -32,10 +32,11 @@ const (
 )
 
 var (
-	globalService     TaskService = noopService{reason: "schedule service not initialized"}
-	serviceRegistry               = make(map[string]TaskService)
-	serviceRegistryMu sync.RWMutex
-	warnOnce          sync.Once
+	globalService               TaskService = noopService{reason: "schedule service not initialized"}
+	serviceRegistry                         = make(map[string]TaskService)
+	serviceRegistryMu           sync.RWMutex
+	warnOnce                    sync.Once
+	ErrNoScheduleFieldsToUpdate = errors.New("no fields to update")
 )
 
 var errScheduleServiceUnavailable = errors.New("schedule service unavailable")
@@ -365,6 +366,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 
 	updates := map[string]any{}
 	now := time.Now()
+	timeFieldsChanged := false
 
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -387,6 +389,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 			}
 			updates["cron_expr"] = cronExpr
 			task.CronExpr = cronExpr
+			timeFieldsChanged = true
 		}
 	}
 	if req.Timezone != nil {
@@ -400,6 +403,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 			}
 			updates["timezone"] = tz
 			task.Timezone = tz
+			timeFieldsChanged = true
 		}
 	}
 	if req.RunAt != nil {
@@ -409,6 +413,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 		if task.RunAt == nil || !req.RunAt.Equal(*task.RunAt) {
 			updates["run_at"] = req.RunAt
 			task.RunAt = req.RunAt
+			timeFieldsChanged = true
 		}
 	}
 	if req.Message != nil {
@@ -437,7 +442,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 	}
 
 	// Recompute NextRunAt if time-related fields changed
-	if req.CronExpr != nil || req.Timezone != nil || req.RunAt != nil {
+	if timeFieldsChanged {
 		var nextRunAt time.Time
 		var recomputeErr error
 		if task.Type == model.ScheduleTaskTypeCron {
@@ -458,7 +463,7 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 	}
 
 	if len(updates) == 0 {
-		return nil, fmt.Errorf("no fields to update")
+		return nil, ErrNoScheduleFieldsToUpdate
 	}
 
 	updates["updated_at"] = now

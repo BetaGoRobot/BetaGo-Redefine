@@ -21,6 +21,7 @@ func TestStartInteractionIsIdempotentAndDoesNotPersistPlaintextToken(t *testing.
 	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	req := startInteractionRequest(f.runID, "secret-token", now)
+	req.TrustedInput = json.RawMessage(`{"version":1,"task_id":"task-1"}`)
 	run, wait, err := f.repo.StartInteraction(context.Background(), req)
 	if err != nil {
 		t.Fatalf("StartInteraction(first): %v", err)
@@ -41,7 +42,8 @@ func TestStartInteractionIsIdempotentAndDoesNotPersistPlaintextToken(t *testing.
 	}
 	if envelope.Version != 1 || envelope.InteractionID != req.InteractionID ||
 		envelope.Kind != req.InteractionKind || envelope.Revision != req.Revision ||
-		!envelope.ExpiresAt.Equal(req.ExpiresAt) || envelope.TokenHash != req.TokenHash {
+		!envelope.ExpiresAt.Equal(req.ExpiresAt) || envelope.TokenHash != req.TokenHash ||
+		string(envelope.TrustedInput) != string(req.TrustedInput) {
 		t.Fatalf("wait input = %#v", envelope)
 	}
 	var outboxes int64

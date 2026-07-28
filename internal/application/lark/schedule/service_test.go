@@ -1,10 +1,15 @@
 package schedule
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	scheduleinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schedule"
+	"github.com/bytedance/mockey"
 )
 
 func TestComputeNextRun(t *testing.T) {
@@ -23,6 +28,87 @@ func TestComputeNextRun(t *testing.T) {
 	expected := time.Date(2026, 3, 9, 9, 0, 0, 0, loc)
 	if !next.Equal(expected) {
 		t.Fatalf("unexpected next run: got %s want %s", next.Format(time.RFC3339), expected.Format(time.RFC3339))
+	}
+}
+
+func TestUpdateTaskSameTimeFieldsDoesNotMoveNextRunAt(t *testing.T) {
+	nextRunAt := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	task := &model.ScheduledTask{
+		ID: "task-1", CreatorID: "ou-actor", Type: model.ScheduleTaskTypeCron,
+		CronExpr: "0 10 * * *", Timezone: "Asia/Shanghai", NextRunAt: nextRunAt,
+	}
+	repo := &scheduleinfra.Repository{}
+	getPatch := mockey.Mock((*scheduleinfra.Repository).GetTaskByID).
+		Return(task, nil).
+		Build()
+	updateCalls := 0
+	updatePatch := mockey.Mock((*scheduleinfra.Repository).UpdateTaskFields).
+		To(func(*scheduleinfra.Repository, context.Context, string, map[string]any) error {
+			updateCalls++
+			return nil
+		}).
+		Build()
+	t.Cleanup(func() {
+		updatePatch.UnPatch()
+		getPatch.UnPatch()
+	})
+	service := NewService(repo, &ToolExecutor{}, botidentity.Identity{AppID: "app-test"})
+	sameCron := task.CronExpr
+	sameTimezone := task.Timezone
+
+	got, err := service.UpdateTask(context.Background(), &UpdateTaskRequest{
+		ID: "task-1", ActorOpenID: "ou-actor",
+		CronExpr: &sameCron, Timezone: &sameTimezone,
+	})
+
+	if !errors.Is(err, ErrNoScheduleFieldsToUpdate) {
+		t.Fatalf("UpdateTask() error = %v, want ErrNoScheduleFieldsToUpdate", err)
+	}
+	if got != nil {
+		t.Fatalf("UpdateTask() task = %#v, want nil with existing no-op error contract", got)
+	}
+	if updateCalls != 0 {
+		t.Fatalf("UpdateTaskFields() calls = %d, want 0", updateCalls)
+	}
+	if !task.NextRunAt.Equal(nextRunAt) {
+		t.Fatalf("next_run_at drifted: got %v want %v", task.NextRunAt, nextRunAt)
+	}
+}
+
+func TestUpdateTaskSameAbsoluteRunAtDoesNotMoveNextRunAt(t *testing.T) {
+	runAt := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	task := &model.ScheduledTask{
+		ID: "task-once", CreatorID: "ou-actor", Type: model.ScheduleTaskTypeOnce,
+		Timezone: model.ScheduleTaskDefaultTimezone, RunAt: &runAt, NextRunAt: runAt,
+	}
+	repo := &scheduleinfra.Repository{}
+	getPatch := mockey.Mock((*scheduleinfra.Repository).GetTaskByID).
+		Return(task, nil).
+		Build()
+	updateCalls := 0
+	updatePatch := mockey.Mock((*scheduleinfra.Repository).UpdateTaskFields).
+		To(func(*scheduleinfra.Repository, context.Context, string, map[string]any) error {
+			updateCalls++
+			return nil
+		}).
+		Build()
+	t.Cleanup(func() {
+		updatePatch.UnPatch()
+		getPatch.UnPatch()
+	})
+	service := NewService(repo, &ToolExecutor{}, botidentity.Identity{AppID: "app-test"})
+	sameInstant := runAt.In(time.FixedZone("UTC+8", 8*60*60))
+
+	got, err := service.UpdateTask(context.Background(), &UpdateTaskRequest{
+		ID: "task-once", ActorOpenID: "ou-actor", RunAt: &sameInstant,
+	})
+
+	if !errors.Is(err, ErrNoScheduleFieldsToUpdate) || got != nil {
+		t.Fatalf("UpdateTask() = %#v, %v; want no-op sentinel", got, err)
+	}
+	if updateCalls != 0 || !task.NextRunAt.Equal(runAt) {
+		t.Fatalf("update calls = %d, next_run_at = %v, want unchanged %v",
+			updateCalls, task.NextRunAt, runAt)
 	}
 }
 
