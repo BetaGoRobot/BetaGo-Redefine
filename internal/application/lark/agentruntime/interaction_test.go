@@ -183,7 +183,8 @@ func TestStepClaimValidate(t *testing.T) {
 
 func TestCompleteStepRequestValidate(t *testing.T) {
 	valid := CompleteStepRequest{
-		StepID: "step_1", Output: json.RawMessage(`{"status":"done"}`), FinishedAt: fixedRuntimeTime(),
+		StepID: "step_1", WorkerID: "worker_1", AttemptCount: 2,
+		Output: json.RawMessage(`{"status":"done"}`), FinishedAt: fixedRuntimeTime(),
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want nil", err)
@@ -194,6 +195,10 @@ func TestCompleteStepRequestValidate(t *testing.T) {
 	}{
 		{name: "missing step", mutate: func(r *CompleteStepRequest) { r.StepID = "" }},
 		{name: "non-canonical step", mutate: func(r *CompleteStepRequest) { r.StepID = "step_1 " }},
+		{name: "missing worker", mutate: func(r *CompleteStepRequest) { r.WorkerID = "" }},
+		{name: "non-canonical worker", mutate: func(r *CompleteStepRequest) { r.WorkerID = " worker_1" }},
+		{name: "zero attempt", mutate: func(r *CompleteStepRequest) { r.AttemptCount = 0 }},
+		{name: "negative attempt", mutate: func(r *CompleteStepRequest) { r.AttemptCount = -1 }},
 		{name: "missing output", mutate: func(r *CompleteStepRequest) { r.Output = nil }},
 		{name: "bad output", mutate: func(r *CompleteStepRequest) { r.Output = json.RawMessage(`{"secret":`) }},
 		{name: "missing finished at", mutate: func(r *CompleteStepRequest) { r.FinishedAt = time.Time{} }},
@@ -208,7 +213,10 @@ func TestCompleteStepRequestValidate(t *testing.T) {
 }
 
 func TestRetryStepRequestValidate(t *testing.T) {
-	valid := RetryStepRequest{StepID: "step_1", ErrorText: "temporary failure", RetryAt: fixedRuntimeTime()}
+	valid := RetryStepRequest{
+		StepID: "step_1", WorkerID: "worker_1", AttemptCount: 2,
+		ErrorText: "temporary failure", RetryAt: fixedRuntimeTime(),
+	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want nil", err)
 	}
@@ -218,6 +226,10 @@ func TestRetryStepRequestValidate(t *testing.T) {
 	}{
 		{name: "missing step", mutate: func(r *RetryStepRequest) { r.StepID = "" }},
 		{name: "non-canonical step", mutate: func(r *RetryStepRequest) { r.StepID = " step_1" }},
+		{name: "missing worker", mutate: func(r *RetryStepRequest) { r.WorkerID = "" }},
+		{name: "non-canonical worker", mutate: func(r *RetryStepRequest) { r.WorkerID = "worker_1 " }},
+		{name: "zero attempt", mutate: func(r *RetryStepRequest) { r.AttemptCount = 0 }},
+		{name: "negative attempt", mutate: func(r *RetryStepRequest) { r.AttemptCount = -1 }},
 		{name: "missing error", mutate: func(r *RetryStepRequest) { r.ErrorText = "" }},
 		{name: "whitespace error", mutate: func(r *RetryStepRequest) { r.ErrorText = " \t" }},
 		{name: "missing retry at", mutate: func(r *RetryStepRequest) { r.RetryAt = time.Time{} }},
@@ -228,6 +240,22 @@ func TestRetryStepRequestValidate(t *testing.T) {
 			tt.mutate(&req)
 			requireInvalidRuntimeContract(t, req.Validate())
 		})
+	}
+}
+
+func TestStoreSentinelsAreStableDomainErrors(t *testing.T) {
+	sentinels := []error{
+		ErrLeaseLost,
+		ErrActiveRunConflict,
+		ErrInteractionConflict,
+		ErrInteractionExpired,
+		ErrInteractionTokenMismatch,
+		ErrTerminalRun,
+	}
+	for _, sentinel := range sentinels {
+		if sentinel == nil || !errors.Is(sentinel, sentinel) {
+			t.Fatalf("invalid domain sentinel: %v", sentinel)
+		}
 	}
 }
 

@@ -5,8 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
+)
+
+var (
+	ErrLeaseLost                = errors.New("agent step lease lost")
+	ErrActiveRunConflict        = errors.New("session already has a different active run")
+	ErrInteractionConflict      = errors.New("interaction state conflicts with the request")
+	ErrInteractionExpired       = errors.New("interaction has expired")
+	ErrInteractionTokenMismatch = errors.New("interaction token does not match")
+	ErrTerminalRun              = errors.New("agent run is terminal")
 )
 
 type ProjectionDocument struct {
@@ -137,14 +147,22 @@ func (c StepClaim) Validate() error {
 }
 
 type CompleteStepRequest struct {
-	StepID     string
-	Output     json.RawMessage
-	FinishedAt time.Time
+	StepID       string
+	WorkerID     string
+	AttemptCount int32
+	Output       json.RawMessage
+	FinishedAt   time.Time
 }
 
 func (r CompleteStepRequest) Validate() error {
 	if err := validateCanonical("step_id", r.StepID); err != nil {
 		return err
+	}
+	if err := validateCanonical("worker_id", r.WorkerID); err != nil {
+		return err
+	}
+	if r.AttemptCount <= 0 {
+		return invalidRuntimeContract("attempt_count must be positive")
 	}
 	if err := validateJSONDocument("output", r.Output); err != nil {
 		return err
@@ -156,14 +174,22 @@ func (r CompleteStepRequest) Validate() error {
 }
 
 type RetryStepRequest struct {
-	StepID    string
-	ErrorText string
-	RetryAt   time.Time
+	StepID       string
+	WorkerID     string
+	AttemptCount int32
+	ErrorText    string
+	RetryAt      time.Time
 }
 
 func (r RetryStepRequest) Validate() error {
 	if err := validateCanonical("step_id", r.StepID); err != nil {
 		return err
+	}
+	if err := validateCanonical("worker_id", r.WorkerID); err != nil {
+		return err
+	}
+	if r.AttemptCount <= 0 {
+		return invalidRuntimeContract("attempt_count must be positive")
 	}
 	if strings.TrimSpace(r.ErrorText) == "" {
 		return invalidRuntimeContract("error_text is required")
