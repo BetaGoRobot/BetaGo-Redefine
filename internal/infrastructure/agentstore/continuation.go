@@ -63,12 +63,17 @@ func (r *Repository) ClaimContinuationStep(
 			        WHERE source.id = steps.input_json->>'source_step_id'
 			          AND source.run_id = steps.run_id
 			          AND source.index < steps.index
+			          AND source.kind IN (?, ?)
+			          AND source.status = ?
+			          AND source.dedupe_key <> ''
+			          AND steps.dedupe_key = source.dedupe_key || ':continuation'
 			      )
 			    )
 			    OR (
 			      steps.kind = ?
 			      AND steps.input_json->>'version' = '1'
 			      AND steps.input_json->>'step_id' = steps.id
+			      AND steps.input_json->>'run_id' = steps.run_id
 			      AND steps.input_json->>'idempotency_key' = steps.id
 			      AND steps.dedupe_key LIKE '%:continuation:reply'
 			    )
@@ -85,7 +90,9 @@ func (r *Repository) ClaimContinuationStep(
 			ORDER BY steps.index, steps.id
 			FOR UPDATE OF sessions, runs, steps SKIP LOCKED
 			LIMIT 1`,
-			claim.RunID, string(agentruntime.StepKindDecide), string(agentruntime.StepKindReply),
+			claim.RunID, string(agentruntime.StepKindDecide),
+			string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
+			string(agentruntime.StepStatusCompleted), string(agentruntime.StepKindReply),
 			string(agentruntime.StepStatusQueued), claim.Now,
 			string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
 			string(agentruntime.StepStatusQueued), string(agentruntime.StepStatusRunning),
@@ -111,9 +118,16 @@ func (r *Repository) ClaimContinuationStep(
 			}
 			return agentruntime.ErrLeaseLost
 		}
-		if err := tx.Model(&model.AgentRun{}).Where("id = ?", claim.RunID).
-			Updates(map[string]any{"status": string(agentruntime.RunStatusRunning), "updated_at": claim.Now}).Error; err != nil {
-			return err
+		runResult := tx.Model(&model.AgentRun{}).
+			Where("id = ? AND status IN ?", claim.RunID, []string{
+				string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
+			}).
+			Updates(map[string]any{"status": string(agentruntime.RunStatusRunning), "updated_at": claim.Now})
+		if runResult.Error != nil {
+			return runResult.Error
+		}
+		if runResult.RowsAffected != 1 {
+			return agentruntime.ErrLeaseLost
 		}
 		claimed.Status = string(agentruntime.StepStatusRunning)
 		claimed.AttemptCount++
@@ -530,6 +544,23 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 					existing.Status == string(agentruntime.StepStatusRunning)) {
 				return nil
 			}
+			if existing.Kind == string(agentruntime.StepKindDecide) &&
+				existing.Status == string(agentruntime.StepStatusCompleted) {
+				var reply model.AgentStep
+				replyErr := tx.Where(
+					"run_id = ? AND dedupe_key = ?", runID, continuationDedupe+":reply",
+				).First(&reply).Error
+				if replyErr == nil &&
+					reply.Kind == string(agentruntime.StepKindReply) &&
+					(reply.Status == string(agentruntime.StepStatusQueued) ||
+						reply.Status == string(agentruntime.StepStatusRunning)) &&
+					validFrozenReplyStep(&reply) {
+					return nil
+				}
+				if replyErr != nil && !errors.Is(replyErr, gorm.ErrRecordNotFound) {
+					return replyErr
+				}
+			}
 			return agentruntime.ErrInteractionConflict
 		}
 		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
@@ -554,4 +585,12 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		return tx.Model(&model.AgentRun{}).Where("id = ?", run.ID).
 			Updates(map[string]any{"current_step_index": continuation.Index, "updated_at": now}).Error
 	})
+}
+
+func validFrozenReplyStep(step *model.AgentStep) bool {
+	var input agentruntime.ReplyRequest
+	return json.Unmarshal([]byte(step.InputJSON), &input) == nil &&
+		input.Version == 1 && input.StepID == step.ID && input.RunID == step.RunID &&
+		input.IdempotencyKey == step.ID && strings.TrimSpace(input.Text) != "" &&
+		(input.TriggerMessageID != "" || input.ChatID != "")
 }

@@ -341,7 +341,7 @@ func finalizeScheduleInteractionTx(
 		return err
 	}
 	continuation, err := enqueueContinuationStepTx(
-		tx, run, resultStep.ID, scheduleInteractionKey(req), req.ResolvedAt,
+		tx, run, resultStep.ID, resultStep.DedupeKey, req.ResolvedAt,
 	)
 	if err != nil {
 		return err

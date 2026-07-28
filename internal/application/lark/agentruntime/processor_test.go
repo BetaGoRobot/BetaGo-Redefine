@@ -58,6 +58,25 @@ func TestContinuationProcessorLeaseLostBeforeReplySkipsDelivery(t *testing.T) {
 	}
 }
 
+func TestContinuationProcessorRejectsCrossRunFrozenReply(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{
+			ID: "step-reply", RunID: "run-1", Kind: StepKindReply, Status: StepStatusQueued,
+			InputJSON: `{"version":1,"step_id":"step-reply","run_id":"run-other","text":"完成","chat_id":"oc","idempotency_key":"step-reply"}`,
+		},
+	}
+	deliverer := &replyDelivererFake{}
+	processor := NewContinuationProcessor(store, &continuationGeneratorFake{}, deliverer, ContinuationProcessorConfig{
+		WorkerID: "worker-1", LeaseTTL: time.Minute, RetryDelay: time.Second,
+	})
+	if err := processor.ProcessRun(context.Background(), "run-1"); err == nil {
+		t.Fatal("ProcessRun() error = nil")
+	}
+	if deliverer.calls != 0 || store.retries != 1 {
+		t.Fatalf("deliverer=%d retries=%d", deliverer.calls, store.retries)
+	}
+}
+
 func (f *continuationStoreFake) LoadContinuationContext(
 	context.Context,
 	LoadContinuationContextRequest,

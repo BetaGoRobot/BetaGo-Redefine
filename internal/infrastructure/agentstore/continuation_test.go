@@ -13,6 +13,26 @@ import (
 	"gorm.io/gorm"
 )
 
+type continuationGeneratorCounter struct{ calls int }
+
+func (f *continuationGeneratorCounter) Generate(
+	context.Context,
+	agentruntime.ContinuationContext,
+) (agentruntime.TurnDecision, error) {
+	f.calls++
+	return agentruntime.TurnDecision{}, errors.New("generator must not run")
+}
+
+type continuationDelivererCounter struct{ calls int }
+
+func (f *continuationDelivererCounter) Deliver(
+	context.Context,
+	agentruntime.ReplyRequest,
+) (string, error) {
+	f.calls++
+	return "om-retry-delivered", nil
+}
+
 func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 	f := newRepositoryFixture(t, agentruntime.RunStatusQueued)
 	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
@@ -21,6 +41,7 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 	}
 	ordinaryObservation := &agentruntime.AgentStep{
 		Index: 1, Kind: agentruntime.StepKindObserve, Status: agentruntime.StepStatusQueued,
+		DedupeKey: "ordinary:observe",
 	}
 	f.createStep(t, ordinaryObservation)
 	_, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
@@ -36,6 +57,21 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 	}
 	f.createStep(t, &agentruntime.AgentStep{
 		Index: 2, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"version":1,"source_step_id":"` + ordinaryObservation.ID + `"}`,
+		DedupeKey: ordinaryObservation.DedupeKey + ":continuation",
+	})
+	if _, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "worker", LeaseTTL: time.Minute, Now: time.Now().UTC(),
+	}); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("forged observation-anchor decide claim error = %v, want not found", err)
+	}
+	if err := f.db.Model(&model.AgentStep{}).Where(
+		"run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindDecide),
+	).Update("status", string(agentruntime.StepStatusCompleted)).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 3, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
 		InputJSON: `{"planner":"ordinary"}`, DedupeKey: "ordinary:decide",
 	})
 	if _, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
@@ -48,9 +84,12 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 	).Update("status", string(agentruntime.StepStatusCompleted)).Error; err != nil {
 		t.Fatal(err)
 	}
+	crossRunReplyID := "step_test_" + uuid.NewV4().String()
 	f.createStep(t, &agentruntime.AgentStep{
-		Index: 3, Kind: agentruntime.StepKindReply, Status: agentruntime.StepStatusQueued,
-		InputJSON: `{"ordinary":true}`, DedupeKey: "ordinary:reply",
+		ID: crossRunReplyID, Index: 4, Kind: agentruntime.StepKindReply, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"version":1,"step_id":"` + crossRunReplyID +
+			`","run_id":"run-other","text":"bad","chat_id":"oc","idempotency_key":"` + crossRunReplyID + `"}`,
+		DedupeKey: "anchor:continuation:reply",
 	})
 	if _, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
 		RunID: f.runID, WorkerID: "worker", LeaseTTL: time.Minute, Now: time.Now().UTC(),
@@ -61,10 +100,15 @@ func TestClaimContinuationStepFiltersKindsAndTransitionsRun(t *testing.T) {
 		Update("status", string(agentruntime.StepStatusCompleted)).Error; err != nil {
 		t.Fatal(err)
 	}
+	anchor := &agentruntime.AgentStep{
+		Index: 5, Kind: agentruntime.StepKindResume, Status: agentruntime.StepStatusCompleted,
+		InputJSON: `{}`, OutputJSON: `{}`, DedupeKey: "anchor",
+	}
+	f.createStep(t, anchor)
 	f.createStep(t, &agentruntime.AgentStep{
-		Index: 4, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
-		InputJSON: `{"version":1,"source_step_id":"` + ordinaryObservation.ID + `"}`,
-		DedupeKey: "anchor:continuation",
+		Index: 6, Kind: agentruntime.StepKindDecide, Status: agentruntime.StepStatusQueued,
+		InputJSON: `{"version":1,"source_step_id":"` + anchor.ID + `"}`,
+		DedupeKey: anchor.DedupeKey + ":continuation",
 	})
 	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
 		Update("active_run_id", "newer-run").Error; err != nil {
@@ -221,6 +265,85 @@ func TestRepairContinuationRestoresExactlyOneMissingStage(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("repaired continuation count = %d", count)
+	}
+}
+
+func TestRepairContinuationNoOpsForCompletedDecisionWithFutureReplyRetry(t *testing.T) {
+	f, _, request := newScheduleInteractionFixture(t)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(), request,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			return validScheduleOutcome(request, "task-1", "new-name"), nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := request.ResolvedAt.Add(time.Second)
+	decision, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "model", LeaseTTL: time.Minute, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := f.repo.PersistDecision(context.Background(), agentruntime.PersistDecisionRequest{
+		StepID: decision.ID, WorkerID: decision.WorkerID, AttemptCount: decision.AttemptCount,
+		Decision: agentruntime.TurnDecision{
+			Decision: agentruntime.TurnDecisionReply, Reply: "完成", Reason: "反馈",
+		},
+		FinishedAt: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedReply, err := f.repo.ClaimContinuationStep(context.Background(), agentruntime.ContinuationClaim{
+		RunID: f.runID, WorkerID: "delivery", LeaseTTL: time.Minute, Now: now.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAt := now.Add(time.Hour)
+	if err := f.repo.RetryContinuationStep(context.Background(), agentruntime.RetryStepRequest{
+		StepID: claimedReply.ID, WorkerID: claimedReply.WorkerID,
+		AttemptCount: claimedReply.AttemptCount, ErrorText: "temporary", RetryAt: retryAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	generator := &continuationGeneratorCounter{}
+	deliverer := &continuationDelivererCounter{}
+	earlyProcessor := agentruntime.NewContinuationProcessor(
+		f.repo, generator, deliverer, agentruntime.ContinuationProcessorConfig{
+			WorkerID: "early", LeaseTTL: time.Minute, RetryDelay: time.Second,
+			Now: func() time.Time { return retryAt.Add(-time.Second) },
+		},
+	)
+	if err := earlyProcessor.ProcessRun(context.Background(), f.runID); err != nil {
+		t.Fatalf("early ProcessRun() error = %v", err)
+	}
+	if generator.calls != 0 || deliverer.calls != 0 {
+		t.Fatalf("early generator=%d deliverer=%d", generator.calls, deliverer.calls)
+	}
+	dueProcessor := agentruntime.NewContinuationProcessor(
+		f.repo, generator, deliverer, agentruntime.ContinuationProcessorConfig{
+			WorkerID: "due", LeaseTTL: time.Minute, RetryDelay: time.Second,
+			Now: func() time.Time { return retryAt },
+		},
+	)
+	if err := dueProcessor.ProcessRun(context.Background(), f.runID); err != nil {
+		t.Fatalf("due ProcessRun() error = %v", err)
+	}
+	if generator.calls != 0 || deliverer.calls != 1 {
+		t.Fatalf("due generator=%d deliverer=%d", generator.calls, deliverer.calls)
+	}
+	var delivered model.AgentStep
+	if err := f.db.First(&delivered, "id = ?", reply.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if delivered.Status != string(agentruntime.StepStatusCompleted) ||
+		delivered.ExternalRef != "om-retry-delivered" {
+		t.Fatalf("delivered reply = %#v", delivered)
 	}
 }
 

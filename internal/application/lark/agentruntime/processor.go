@@ -166,6 +166,9 @@ func (p *ContinuationProcessor) processClaimed(ctx context.Context, step *AgentS
 		if err != nil {
 			return p.retry(ctx, step, err)
 		}
+		if req.RunID != step.RunID {
+			return p.retry(ctx, step, errors.New("frozen reply run does not match claimed step"))
+		}
 		messageID, err := p.deliverer.Deliver(ctx, req)
 		if err != nil {
 			return p.retry(ctx, step, err)
