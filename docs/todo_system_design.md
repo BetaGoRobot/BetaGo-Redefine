@@ -90,6 +90,35 @@
 - `007` 会为 `todo_items` 和 `scheduled_tasks` 增加 `app_id` / `bot_open_id`，用于多机器人隔离
 - `010` 会为 `scheduled_tasks` 增加 `source_message_id`，用于执行时回链到原始触发消息
 
+## 2026-07-28 · 阶段进展 · Schedule 确认接入 Conversation Callback Runtime
+
+### 方案
+
+- `edit_schedule` 在目标群启用 `conversation_runtime_enabled` 后，不再把待确认编辑只保存在进程内存中，而是在 PostgreSQL 原子创建 shadow run、completed wait step、可信输入和 projection outbox。
+- 确认卡只携带 `run_id / step_id / interaction_id / revision / token / interaction_kind / continue_agent` 组成的 runtime envelope。任务 ID、目标字段和权限上下文只从 PostgreSQL 的 trusted input 读取。
+- 卡片点击统一作为 Agent 可消费的输入：callback 同步完成 actor、token、revision、expiry 校验和一次性 Schedule mutation；随后写入 capability result，并由 durable continuation 决定是否生成回复。
+- `conversation_callback_continuation_enabled` 只控制是否进入 LLM 续接。关闭时 callback mutation 仍然执行，queued continuation 由 disabled processor 确定性收口，不调用模型。
+
+### 兼容与恢复
+
+- 两个动态开关均默认关闭，并且只按 chat/global 生效；user 或 chat-user override 不会误激活。
+- 不含 runtime envelope 的历史 Schedule 卡片继续走 V1 handler。已发出的 runtime 卡片即使后来关闭新建开关，仍可通过 continuation dispatcher 完成或过期。
+- 重复确认由 interaction revision、token 和 capability idempotency key 保证只执行一次 mutation；重复事件返回已持久化 outcome。
+- run、step、lease、retry 和 projection outbox 以 PostgreSQL 为事实来源。进程重启后，新 worker 会重新发现 queued 或 lease 已过期的工作。
+- OpenSearch 只承载 `agent_conversation_events` 可检索投影。索引不可用会令 projection worker 降级和 outbox 重试，不回滚 PostgreSQL callback 或阻塞用户回复。
+
+### 运行与验收
+
+- runtime 生命周期按 executor → application services → worker → Lark ingress 启动，停止顺序相反。
+- `conversation_runtime_worker` 负责过期 wait 和 durable continuation；`conversation_projection_worker` 使用独立 executor 写 OpenSearch。worker 连续三次失败进入 degraded，成功一轮后恢复 ready。
+- 回调 E2E 覆盖 happy path、重复确认、wrong actor、过期、错 token、stale revision、生成失败、OpenSearch 不可用和 fresh Runtime 重启恢复。
+- 上线、灰度、排障与回滚步骤见 `docs/operations/conversation-callback-runtime.md`。
+
+### 后续
+
+- 并轨评测：在同一时间窗口采集 Control/Candidate 两条链路的话题切入、上下文选择、回复决策、前后向消息和用户反馈，并对回复质量做版本化 Judge。
+- Agent Card：提供受约束的卡片知识、组件 schema、校验与发送能力，让 Agent 在安全边界内按任务自行构造卡片，而不是只选择固定模板。
+
 ## 2026-03-11 · 阶段进展 · Schedule 查询卡片交互补齐
 
 ### 方案
