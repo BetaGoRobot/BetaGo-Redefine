@@ -185,32 +185,34 @@ func (e *Executor) Submit(ctx context.Context, name string, fn func(context.Cont
 	if fn == nil {
 		return errors.New("task func is nil")
 	}
+	taskCtx := context.WithoutCancel(ctx)
 	e.mu.RLock()
-	started := e.started
-	closed := e.closed
-	e.mu.RUnlock()
-	if !started {
+	if !e.started {
+		e.mu.RUnlock()
 		return ErrExecutorNotStarted
 	}
-	if closed {
+	if e.closed {
+		e.mu.RUnlock()
 		return ErrExecutorClosed
 	}
 
-	taskCtx := context.WithoutCancel(ctx)
 	select {
 	case e.queue <- task{ctx: taskCtx, name: name, fn: TaskFunc(fn)}:
+		e.mu.RUnlock()
 		return nil
 	default:
-		e.rejected.Add(1)
-		err := fmt.Errorf("%w: %s", ErrExecutorQueueFull, e.name)
-		e.setLastError(err.Error())
-		trace.SpanFromContext(ctx).AddEvent("executor.submit.rejected", trace.WithAttributes(
-			attribute.String("executor.name", e.name),
-			attribute.String("task.name", name),
-		))
-		otel.RecordError(trace.SpanFromContext(ctx), err)
-		return err
+		e.mu.RUnlock()
 	}
+
+	e.rejected.Add(1)
+	err := fmt.Errorf("%w: %s", ErrExecutorQueueFull, e.name)
+	e.setLastError(err.Error())
+	trace.SpanFromContext(ctx).AddEvent("executor.submit.rejected", trace.WithAttributes(
+		attribute.String("executor.name", e.name),
+		attribute.String("task.name", name),
+	))
+	otel.RecordError(trace.SpanFromContext(ctx), err)
+	return err
 }
 
 // Stats 输出运行时计数器，这些数据会被共享健康注册表和管理面 HTTP 直接

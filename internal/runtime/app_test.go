@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -78,5 +79,52 @@ func TestExecutorProcessesTasksAndStops(t *testing.T) {
 	stats := executor.Stats()
 	if stats["completed"].(int64) == 0 {
 		t.Fatalf("expected completed tasks, got stats=%+v", stats)
+	}
+}
+
+func TestExecutorSubmitAndStopAreSafeWhenConcurrent(t *testing.T) {
+	for iteration := 0; iteration < 100; iteration++ {
+		executor := NewExecutor(ExecutorConfig{
+			Name:      "concurrent_stop_executor",
+			Workers:   1,
+			QueueSize: 1,
+		})
+		if err := executor.Start(context.Background()); err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+
+		release := make(chan struct{})
+		if err := executor.Submit(context.Background(), "block-worker", func(context.Context) error {
+			<-release
+			return nil
+		}); err != nil {
+			t.Fatalf("Submit(block-worker) error = %v", err)
+		}
+
+		var submitters sync.WaitGroup
+		submitters.Add(16)
+		for index := 0; index < 16; index++ {
+			go func() {
+				defer submitters.Done()
+				err := executor.Submit(context.Background(), "concurrent", func(context.Context) error {
+					return nil
+				})
+				if err != nil &&
+					!errors.Is(err, ErrExecutorClosed) &&
+					!errors.Is(err, ErrExecutorQueueFull) {
+					t.Errorf("Submit() error = %v", err)
+				}
+			}()
+		}
+
+		stopped := make(chan error, 1)
+		go func() {
+			stopped <- executor.Stop(context.Background())
+		}()
+		close(release)
+		submitters.Wait()
+		if err := <-stopped; err != nil {
+			t.Fatalf("Stop() error = %v", err)
+		}
 	}
 }
