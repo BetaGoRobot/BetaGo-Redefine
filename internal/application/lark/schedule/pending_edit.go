@@ -18,10 +18,12 @@ type PendingEdit struct {
 }
 
 var (
-	pendingEdits      = make(map[string]*PendingEdit)
-	pendingEditTimers = make(map[string]*time.Timer)
-	pendingEditsMu    sync.RWMutex
-	pendingEditTTL    = 10 * time.Minute
+	pendingEdits              = make(map[string]*PendingEdit)
+	pendingEditTimers         = make(map[string]*time.Timer)
+	pendingEditGenerations    = make(map[string]uint64)
+	pendingEditGenerationNext uint64
+	pendingEditsMu            sync.RWMutex
+	pendingEditTTL            = 10 * time.Minute
 )
 
 func generateEditToken() string {
@@ -58,16 +60,31 @@ func storeLegacyPendingEdit(token string, edit *PendingEdit) error {
 	if timer := pendingEditTimers[token]; timer != nil {
 		timer.Stop()
 	}
+	pendingEditGenerationNext++
+	generation := pendingEditGenerationNext
 	pendingEdits[token] = edit
+	pendingEditGenerations[token] = generation
 
-	// Expire stale edit confirmations without blocking the card callback path.
+	// Publish the new generation and timer while holding the same lock. Even an
+	// immediate callback cannot observe partially published state.
 	pendingEditTimers[token] = time.AfterFunc(pendingEditTTL, func() {
-		pendingEditsMu.Lock()
-		delete(pendingEdits, token)
-		delete(pendingEditTimers, token)
-		pendingEditsMu.Unlock()
+		expireLegacyPendingEdit(token, generation)
 	})
 	return nil
+}
+
+func expireLegacyPendingEdit(token string, generation uint64) {
+	pendingEditsMu.Lock()
+	defer pendingEditsMu.Unlock()
+	if pendingEditGenerations[token] != generation {
+		return
+	}
+	if timer := pendingEditTimers[token]; timer != nil {
+		timer.Stop()
+	}
+	delete(pendingEdits, token)
+	delete(pendingEditTimers, token)
+	delete(pendingEditGenerations, token)
 }
 
 func GetPendingEdit(token string) (*PendingEdit, bool) {
@@ -85,4 +102,5 @@ func DeletePendingEdit(token string) {
 	}
 	delete(pendingEditTimers, token)
 	delete(pendingEdits, token)
+	delete(pendingEditGenerations, token)
 }

@@ -27,7 +27,11 @@ func TestBuildRuntimeEditConfirmCardUsesOnlyTrustedEnvelopeFields(t *testing.T) 
 	if err != nil {
 		t.Fatalf("buildRuntimeEditConfirmCard() error = %v", err)
 	}
-	payloads := collectActionPayloads(card)
+	actionPayloads := collectActionPayloadList(card)
+	if len(actionPayloads) != 2 {
+		t.Fatalf("runtime callback action count = %d, want exactly 2", len(actionPayloads))
+	}
+	payloads := indexActionPayloads(actionPayloads)
 	wantConfirm := map[string]any{
 		cardactionproto.ActionField:          cardactionproto.ActionScheduleEditConfirm,
 		cardactionproto.RunIDField:           "run-1",
@@ -53,6 +57,12 @@ func TestBuildRuntimeEditConfirmCardUsesOnlyTrustedEnvelopeFields(t *testing.T) 
 	}
 	if got := payloads[cardactionproto.ActionScheduleEditCancel]; !reflect.DeepEqual(got, wantCancel) {
 		t.Fatal("runtime cancel payload does not contain exactly the trusted envelope fields")
+	}
+	for action := range payloads {
+		if action != cardactionproto.ActionScheduleEditConfirm &&
+			action != cardactionproto.ActionScheduleEditCancel {
+			t.Fatalf("runtime card contains unexpected callback action %q", action)
+		}
 	}
 }
 
@@ -84,16 +94,33 @@ func TestBuildEditConfirmCardKeepsLegacyPayloadFields(t *testing.T) {
 	if got := payloads[editCancelAction]; !reflect.DeepEqual(got, wantCancel) {
 		t.Fatal("legacy cancel payload fields changed")
 	}
+	if payloads[cardactionproto.ActionCardWithdraw] == nil {
+		t.Fatal("legacy edit card lost the standard footer withdraw action")
+	}
 }
 
 func collectActionPayloads(value any) map[string]map[string]any {
+	return indexActionPayloads(collectActionPayloadList(value))
+}
+
+func indexActionPayloads(payloads []map[string]any) map[string]map[string]any {
 	result := make(map[string]map[string]any)
+	for _, payload := range payloads {
+		if action, ok := payload[cardactionproto.ActionField].(string); ok {
+			result[action] = payload
+		}
+	}
+	return result
+}
+
+func collectActionPayloadList(value any) []map[string]any {
+	var result []map[string]any
 	var visit func(any)
 	visit = func(current any) {
 		switch typed := current.(type) {
 		case map[string]any:
-			if action, ok := typed[cardactionproto.ActionField].(string); ok {
-				result[action] = typed
+			if _, ok := typed[cardactionproto.ActionField].(string); ok {
+				result = append(result, typed)
 			}
 			for _, child := range typed {
 				visit(child)

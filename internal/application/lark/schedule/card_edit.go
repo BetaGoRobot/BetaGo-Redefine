@@ -17,6 +17,7 @@ const (
 	editConfirmAction = "schedule.edit_confirm"
 	editCancelAction  = "schedule.edit_cancel"
 	editTokenField    = "edit_token"
+	editConfirmTitle  = "📝 Schedule 修改确认"
 )
 
 // Field keys for edit NewValues map
@@ -83,19 +84,14 @@ func buildEditConfirmCard(ctx context.Context, task *model.ScheduledTask, newVal
 		WithValue(editTokenField, editToken).
 		Payload()
 
-	return buildEditConfirmCardWithPayloads(
-		ctx,
-		task,
-		newValues,
-		confirmPayload,
-		cancelPayload,
-		larkmsg.StandardCardFooterOptions{
-			RefreshPayload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(TaskCardViewState{
-				Mode: TaskCardViewModeQuery,
-				ID:   task.ID,
-			})),
-		},
-	)
+	elements := buildEditConfirmElements(task, newValues, confirmPayload, cancelPayload)
+	card := larkmsg.NewStandardPanelCard(ctx, editConfirmTitle, elements, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(TaskCardViewState{
+			Mode: TaskCardViewModeQuery,
+			ID:   task.ID,
+		})),
+	})
+	return map[string]any(card), nil
 }
 
 func buildRuntimeEditConfirmCard(
@@ -113,14 +109,9 @@ func buildRuntimeEditConfirmCard(
 
 	confirmPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditConfirm, envelope)
 	cancelPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditCancel, envelope)
-	return buildEditConfirmCardWithPayloads(
-		ctx,
-		task,
-		newValues,
-		confirmPayload,
-		cancelPayload,
-		larkmsg.StandardCardFooterOptions{},
-	)
+	elements := buildEditConfirmElements(task, newValues, confirmPayload, cancelPayload)
+	card := larkmsg.NewCardV2(editConfirmTitle, elements, larkmsg.StandardPanelCardV2Options())
+	return map[string]any(card), nil
 }
 
 func buildRuntimeEditPayload(action string, envelope agentruntime.RuntimeEnvelope) map[string]string {
@@ -135,14 +126,12 @@ func buildRuntimeEditPayload(action string, envelope agentruntime.RuntimeEnvelop
 		Payload()
 }
 
-func buildEditConfirmCardWithPayloads(
-	ctx context.Context,
+func buildEditConfirmElements(
 	task *model.ScheduledTask,
 	newValues map[string]any,
 	confirmPayload map[string]string,
 	cancelPayload map[string]string,
-	footer larkmsg.StandardCardFooterOptions,
-) (map[string]any, error) {
+) []any {
 	loc, err := resolveLocation(task.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -171,6 +160,5 @@ func buildEditConfirmCardWithPayloads(
 		}),
 	))
 
-	card := larkmsg.NewStandardPanelCard(ctx, "📝 Schedule 修改确认", elements, footer)
-	return map[string]any(card), nil
+	return elements
 }
