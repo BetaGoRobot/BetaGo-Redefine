@@ -246,6 +246,8 @@ func TestCardActionHandlerStartsNewRootTracePerCall(t *testing.T) {
 }
 
 func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
+	installHandlerTestConfig(t)
+
 	prevMetaBuilder := buildCardActionMetaData
 	prevRecorder := recordCardAction
 	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
@@ -276,9 +278,12 @@ func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
 	if !strings.Contains(resp.Toast.Content, "卡片操作失败") {
 		t.Fatalf("toast content = %q, want contain 卡片操作失败", resp.Toast.Content)
 	}
+	if !strings.Contains(resp.Toast.Content, "resume dispatcher unavailable") {
+		t.Fatalf("legacy toast content = %q, want original V1 error", resp.Toast.Content)
+	}
 }
 
-func TestCardActionHandlerReturnsExistingErrorToastForContinuationFailure(t *testing.T) {
+func TestCardActionHandlerReturnsSafeToastForContinuationFailure(t *testing.T) {
 	installHandlerTestConfig(t)
 
 	prevMetaBuilder := buildCardActionMetaData
@@ -293,7 +298,7 @@ func TestCardActionHandlerReturnsExistingErrorToastForContinuationFailure(t *tes
 	})
 
 	actionName := "test.continuation.error." + strconv.FormatInt(time.Now().UnixNano(), 10)
-	dispatcher := &handlerContinuationFake{err: errors.New("continuation dispatcher unavailable")}
+	dispatcher := &handlerContinuationFake{err: errors.New("token=top-secret; SELECT * FROM credentials")}
 	handlerSet := NewHandlerSet(HandlerSetOptions{ContinuationDispatcher: dispatcher})
 	event := newCardActionEvent("card-msg-continuation-error", actionName)
 	event.Event.Action.Value[cardaction.RunIDField] = "run-1"
@@ -314,8 +319,41 @@ func TestCardActionHandlerReturnsExistingErrorToastForContinuationFailure(t *tes
 	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
 		t.Fatalf("expected error toast response, got %+v", resp)
 	}
-	if !strings.Contains(resp.Toast.Content, "卡片操作失败: continuation dispatcher unavailable") {
-		t.Fatalf("toast content = %q, want existing card operation error message", resp.Toast.Content)
+	if resp.Toast.Content != "卡片操作失败，请稍后重试" {
+		t.Fatalf("toast content = %q, want fixed continuation error message", resp.Toast.Content)
+	}
+	if strings.Contains(resp.Toast.Content, "top-secret") || strings.Contains(resp.Toast.Content, "SELECT") {
+		t.Fatalf("toast leaked continuation cause: %q", resp.Toast.Content)
+	}
+}
+
+func TestNilHandlerSetCardActionHandlerDoesNotPanic(t *testing.T) {
+	installHandlerTestConfig(t)
+
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	var handlerSet *HandlerSet
+	resp, err := handlerSet.CardActionHandler(
+		context.Background(),
+		newCardActionEvent("card-msg-nil-handler", "test.nil.handler.unregistered"),
+	)
+	if err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
+		t.Fatalf("expected legacy error toast, got %+v", resp)
+	}
+	if !strings.Contains(resp.Toast.Content, "unhandled card action") {
+		t.Fatalf("toast content = %q, want legacy unhandled error", resp.Toast.Content)
 	}
 }
 

@@ -210,10 +210,18 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 	defer func() { go recordCardAction(ctx, cardAction) }()
 	appcardaction.RegisterBuiltins()
 	luckinaction.Register()
+	var continuation appcardaction.ContinuationDispatcher
+	if h != nil {
+		continuation = h.continuationDispatcher
+	}
 	resp, dispatchErr := appcardaction.DispatchWithOptions(ctx, cardAction, metaData, appcardaction.DispatchOptions{
-		Continuation: h.continuationDispatcher,
+		Continuation: continuation,
 	})
 	if dispatchErr != nil {
+		if appcardaction.IsContinuationDispatchError(dispatchErr) {
+			logs.L().Ctx(ctx).Warn("dispatch card continuation failed", zap.String("error", dispatchErr.Error()))
+			return appcardaction.ErrorToast("卡片操作失败，请稍后重试"), nil
+		}
 		logs.L().Ctx(ctx).Warn("dispatch card action failed", zap.Error(dispatchErr))
 		return appcardaction.ErrorToast("卡片操作失败: " + dispatchErr.Error()), nil
 	}

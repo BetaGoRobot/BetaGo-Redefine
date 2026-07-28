@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -313,6 +314,10 @@ func (b *Builder) WithStepID(stepID string) *Builder {
 	return b.WithValue(StepIDField, stepID)
 }
 
+func (b *Builder) WithInteractionID(interactionID string) *Builder {
+	return b.WithValue(InteractionIDField, interactionID)
+}
+
 func (b *Builder) WithRevision(revision string) *Builder {
 	return b.WithValue(RevisionField, revision)
 }
@@ -323,6 +328,14 @@ func (b *Builder) WithSource(source string) *Builder {
 
 func (b *Builder) WithToken(token string) *Builder {
 	return b.WithValue(TokenField, token)
+}
+
+func (b *Builder) WithInteractionKind(interactionKind string) *Builder {
+	return b.WithValue(InteractionKindField, interactionKind)
+}
+
+func (b *Builder) WithContinueAgent(continueAgent bool) *Builder {
+	return b.WithValue(ContinueAgentField, strconv.FormatBool(continueAgent))
 }
 
 func (b *Builder) WithCommand(command string) *Builder {

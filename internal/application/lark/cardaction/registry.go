@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -11,7 +12,38 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
 
-var ErrUnhandledAction = errors.New("unhandled card action")
+var (
+	ErrUnhandledAction = errors.New("unhandled card action")
+	// ErrContinuationDispatcherPanic identifies a recovered continuation panic
+	// without retaining or exposing the panic payload.
+	ErrContinuationDispatcherPanic = errors.New("card continuation dispatcher panic")
+)
+
+const continuationDispatchErrorMessage = "card continuation dispatch failed"
+
+// ContinuationDispatchError marks failures originating from a continuation
+// dispatcher while exposing only a fixed safe message.
+type ContinuationDispatchError struct {
+	cause error
+}
+
+func (e *ContinuationDispatchError) Error() string {
+	return continuationDispatchErrorMessage
+}
+
+func (e *ContinuationDispatchError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+// IsContinuationDispatchError reports whether err originated from continuation
+// dispatch, including safely recovered dispatcher panics.
+func IsContinuationDispatchError(err error) bool {
+	var continuationErr *ContinuationDispatchError
+	return errors.As(err, &continuationErr)
+}
 
 type Mode string
 
@@ -32,6 +64,9 @@ type Context struct {
 	Action   *cardactionproto.Parsed
 }
 
+// ContinuationRequest borrows its pointer fields for the duration of Dispatch.
+// Dispatchers must treat them as read-only and must not retain, mutate, or use
+// them asynchronously after Dispatch returns.
 type ContinuationRequest struct {
 	Event  *callback.CardActionTriggerEvent
 	Meta   *xhandler.BaseMetaData
@@ -105,12 +140,15 @@ func DispatchWithOptions(
 		return nil, err
 	}
 
-	if options.Continuation != nil && options.Continuation.CanHandle(action) {
-		return options.Continuation.Dispatch(ctx, ContinuationRequest{
+	if !isNilContinuationDispatcher(options.Continuation) {
+		handled, response, continuationErr := tryContinuation(ctx, options.Continuation, ContinuationRequest{
 			Event:  event,
 			Meta:   metaData,
 			Action: action,
 		})
+		if handled {
+			return response, continuationErr
+		}
 	}
 
 	actionCtx := &Context{
@@ -139,6 +177,44 @@ func DispatchWithOptions(
 	default:
 		return nil, fmt.Errorf("unsupported card action mode: %s", handler.mode)
 	}
+}
+
+func isNilContinuationDispatcher(dispatcher ContinuationDispatcher) bool {
+	if dispatcher == nil {
+		return true
+	}
+	value := reflect.ValueOf(dispatcher)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func tryContinuation(
+	ctx context.Context,
+	dispatcher ContinuationDispatcher,
+	request ContinuationRequest,
+) (handled bool, response *callback.CardActionTriggerResponse, err error) {
+	handled = true
+	defer func() {
+		if recover() != nil {
+			handled = true
+			response = nil
+			err = &ContinuationDispatchError{cause: ErrContinuationDispatcherPanic}
+		}
+	}()
+
+	if !dispatcher.CanHandle(request.Action) {
+		return false, nil, nil
+	}
+
+	response, err = dispatcher.Dispatch(ctx, request)
+	if err != nil {
+		err = &ContinuationDispatchError{cause: err}
+	}
+	return handled, response, err
 }
 
 func (c *Context) MessageID() string {

@@ -189,6 +189,29 @@ func TestBuilderUsesActionField(t *testing.T) {
 	}
 }
 
+func TestBuilderAddsContinuationEnvelopeFields(t *testing.T) {
+	payload := New(ActionAgentRuntimeResume).
+		WithInteractionID("interaction-1").
+		WithInteractionKind("capability_confirm").
+		WithContinueAgent(true).
+		Payload()
+
+	if payload[InteractionIDField] != "interaction-1" {
+		t.Fatalf("interaction ID = %q, want %q", payload[InteractionIDField], "interaction-1")
+	}
+	if payload[InteractionKindField] != "capability_confirm" {
+		t.Fatalf("interaction kind = %q, want %q", payload[InteractionKindField], "capability_confirm")
+	}
+	if payload[ContinueAgentField] != "true" {
+		t.Fatalf("continue agent = %q, want %q", payload[ContinueAgentField], "true")
+	}
+
+	payload = New(ActionAgentRuntimeReject).WithContinueAgent(false).Payload()
+	if payload[ContinueAgentField] != "false" {
+		t.Fatalf("continue agent = %q, want %q", payload[ContinueAgentField], "false")
+	}
+}
+
 func newCardActionEvent(value, formValue map[string]any) *callback.CardActionTriggerEvent {
 	return &callback.CardActionTriggerEvent{
 		Event: &callback.CardActionTriggerRequest{

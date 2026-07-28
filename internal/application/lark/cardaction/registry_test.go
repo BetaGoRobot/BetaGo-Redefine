@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,9 +15,11 @@ import (
 )
 
 type continuationDispatcherFake struct {
-	canHandle bool
-	response  *callback.CardActionTriggerResponse
-	err       error
+	canHandle      bool
+	response       *callback.CardActionTriggerResponse
+	err            error
+	panicCanHandle any
+	panicDispatch  any
 
 	mu            sync.Mutex
 	canHandleCall int
@@ -25,6 +28,9 @@ type continuationDispatcherFake struct {
 }
 
 func (f *continuationDispatcherFake) CanHandle(action *cardactionproto.Parsed) bool {
+	if f.panicCanHandle != nil {
+		panic(f.panicCanHandle)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.canHandleCall++
@@ -32,6 +38,9 @@ func (f *continuationDispatcherFake) CanHandle(action *cardactionproto.Parsed) b
 }
 
 func (f *continuationDispatcherFake) Dispatch(_ context.Context, request ContinuationRequest) (*callback.CardActionTriggerResponse, error) {
+	if f.panicDispatch != nil {
+		panic(f.panicDispatch)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.dispatchCall++
@@ -144,6 +153,25 @@ func TestDispatchWithOptionsFallsBackToV1WhenContinuationCannotHandle(t *testing
 	}
 }
 
+func TestDispatchWithOptionsTreatsTypedNilContinuationAsUnconfigured(t *testing.T) {
+	actionName := uniqueActionName("typed_nil")
+	want := InfoToast("legacy")
+	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+		return want, nil
+	})
+	var continuation *continuationDispatcherFake
+
+	got, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
+		Continuation: continuation,
+	})
+	if err != nil {
+		t.Fatalf("DispatchWithOptions() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("DispatchWithOptions() response = %#v, want V1 response %#v", got, want)
+	}
+}
+
 func TestDispatchWithOptionsLegacyPayloadUsesV1(t *testing.T) {
 	actionName := uniqueActionName("legacy")
 	want := InfoToast("legacy")
@@ -162,13 +190,13 @@ func TestDispatchWithOptionsLegacyPayloadUsesV1(t *testing.T) {
 	}
 }
 
-func TestDispatchWithOptionsReturnsContinuationErrorUnchanged(t *testing.T) {
+func TestDispatchWithOptionsWrapsContinuationErrorWithoutExposingCause(t *testing.T) {
 	actionName := uniqueActionName("runtime_error")
 	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
 		t.Fatal("V1 handler must not run after continuation error")
 		return nil, nil
 	})
-	wantErr := errors.New("continuation unavailable")
+	wantErr := errors.New("token=top-secret; SELECT * FROM credentials")
 	continuation := &continuationDispatcherFake{canHandle: true, err: wantErr}
 
 	_, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
@@ -176,6 +204,66 @@ func TestDispatchWithOptionsReturnsContinuationErrorUnchanged(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("DispatchWithOptions() error = %v, want %v", err, wantErr)
+	}
+	if !IsContinuationDispatchError(err) {
+		t.Fatalf("IsContinuationDispatchError(%v) = false, want true", err)
+	}
+	if err.Error() != "card continuation dispatch failed" {
+		t.Fatalf("continuation error = %q, want fixed safe message", err.Error())
+	}
+	if strings.Contains(err.Error(), "top-secret") || strings.Contains(err.Error(), "SELECT") {
+		t.Fatalf("continuation error leaked cause: %q", err.Error())
+	}
+}
+
+func TestDispatchWithOptionsRecoversContinuationPanicWithoutV1Fallback(t *testing.T) {
+	tests := []struct {
+		name         string
+		panicPayload string
+		dispatcher   *continuationDispatcherFake
+	}{
+		{
+			name:         "CanHandle",
+			panicPayload: "token=can-handle-secret",
+			dispatcher: &continuationDispatcherFake{
+				panicCanHandle: "token=can-handle-secret",
+			},
+		},
+		{
+			name:         "Dispatch",
+			panicPayload: "SELECT password FROM secret_table",
+			dispatcher: &continuationDispatcherFake{
+				canHandle:     true,
+				panicDispatch: "SELECT password FROM secret_table",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actionName := uniqueActionName("panic_" + tt.name)
+			v1Called := false
+			registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+				v1Called = true
+				return InfoToast("legacy"), nil
+			})
+
+			_, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
+				Continuation: tt.dispatcher,
+			})
+			if !errors.Is(err, ErrContinuationDispatcherPanic) {
+				t.Fatalf("DispatchWithOptions() error = %v, want panic sentinel", err)
+			}
+			if !IsContinuationDispatchError(err) {
+				t.Fatalf("IsContinuationDispatchError(%v) = false, want true", err)
+			}
+			if strings.Contains(err.Error(), tt.panicPayload) {
+				t.Fatalf("panic error leaked payload: %q", err.Error())
+			}
+			if v1Called {
+				t.Fatal("V1 handler ran after continuation panic")
+			}
+		})
 	}
 }
 
