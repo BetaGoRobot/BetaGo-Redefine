@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -180,37 +181,37 @@ func (r *Repository) ClaimScheduleInteraction(
 	return result, err
 }
 
-func (r *Repository) CompleteScheduleInteraction(
+func (r *Repository) ExecuteScheduleInteraction(
 	ctx context.Context,
-	req agentruntime.CompleteScheduleInteractionRequest,
+	req agentruntime.ScheduleInteractionRequest,
+	executor agentruntime.ScheduleInteractionExecutor,
 ) (agentruntime.ScheduleInteractionOutcome, error) {
-	if err := req.Request.Validate(); err != nil {
+	if err := req.Validate(); err != nil {
 		return agentruntime.ScheduleInteractionOutcome{}, err
 	}
-	var outcomeJSON []byte
+	if executor == nil {
+		return agentruntime.ScheduleInteractionOutcome{}, errors.New("schedule interaction executor is required")
+	}
 	var stored agentruntime.ScheduleInteractionOutcome
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		run, _, payload, err := lockScheduleInteraction(tx, req.Request)
+		run, _, payload, err := lockScheduleInteraction(tx, req)
 		if err != nil {
 			return err
 		}
 		var execution model.AgentCapabilityExecution
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&execution, "idempotency_key = ?", scheduleInteractionKey(req.Request)).Error; err != nil {
+			First(&execution, "idempotency_key = ?", scheduleInteractionKey(req)).Error; err != nil {
 			return mapNotFound(err)
 		}
 		claimInput, err := decodeScheduleClaimInput(execution.InputJSON, payload.TrustedInput)
 		if err != nil {
 			return err
 		}
-		if !scheduleClaimMatches(claimInput, req.Request) {
+		if !scheduleClaimMatches(claimInput, req) {
 			return agentruntime.ErrScheduleInteractionClaimLost
 		}
 		trusted, err := agentruntime.DecodeScheduleEditTrustedInput(payload.TrustedInput)
 		if err != nil {
-			return err
-		}
-		if err := validateScheduleOutcome(req.Outcome, req.Request, trusted); err != nil {
 			return err
 		}
 		if execution.Status == "completed" {
@@ -221,122 +222,149 @@ func (r *Repository) CompleteScheduleInteraction(
 			return validateScheduleOutcomeValues(
 				stored,
 				agentruntime.ScheduleInteractionAction(claimInput.Action),
-				req.Request.InteractionID,
+				req.InteractionID,
 				trusted,
 			)
 		}
 		if execution.Status != "running" {
 			return agentruntime.ErrScheduleInteractionClaimLost
 		}
-		if err := validateUnresolvedScheduleRun(run, payload, req.Request); err != nil {
+		if err := validateUnresolvedScheduleRun(run, payload, req); err != nil {
 			return err
 		}
-		outcomeJSON, err = json.Marshal(req.Outcome)
-		if err != nil {
-			return agentruntime.ErrInteractionConflict
-		}
-		firstIndex, err := nextStepIndex(tx, run)
-		if err != nil {
+		var outcome agentruntime.ScheduleInteractionOutcome
+		if err := infraDB.WithTransactionContext(ctx, tx, func(boundCtx context.Context) error {
+			outcome, err = executor(boundCtx, trusted)
+			return err
+		}); err != nil {
 			return err
 		}
-		event := agentruntime.ConversationEvent{
-			ID: req.Request.EventID, Type: agentruntime.EventTypeCardAction,
-			ChatID: trusted.ChatID, ActorOpenID: req.Request.ActorOpenID, RunID: req.Request.RunID,
-			InteractionID: req.Request.InteractionID, Revision: req.Request.Revision,
-			Action: string(req.Request.Action), SourceRef: req.Request.SourceRef,
-			OccurredAt: req.Request.ResolvedAt, Payload: outcomeJSON,
-		}
-		eventJSON, err := json.Marshal(event)
-		if err != nil {
+		if err := validateScheduleOutcome(outcome, req, trusted); err != nil {
 			return err
 		}
-		cardStep := &agentruntime.AgentStep{
-			ID:    stableScheduleStepID(req.Request.RunID, scheduleInteractionKey(req.Request), "card_action"),
-			RunID: req.Request.RunID, Index: firstIndex, Kind: agentruntime.StepKindCardAction,
-			Status: agentruntime.StepStatusCompleted, InputJSON: string(eventJSON),
-			OutputJSON: string(outcomeJSON), ExternalRef: req.Request.InteractionID,
-			StartedAt: req.Request.ResolvedAt, FinishedAt: req.Request.ResolvedAt,
-			CreatedAt: req.Request.ResolvedAt, DedupeKey: scheduleInteractionKey(req.Request) + ":card_action",
-		}
-		if err := tx.Create(toDBStep(cardStep)).Error; err != nil {
+		if err := finalizeScheduleInteractionTx(
+			tx, run, payload, execution, req, trusted, outcome,
+		); err != nil {
 			return err
 		}
-		resultStep := &agentruntime.AgentStep{
-			ID:    stableScheduleStepID(req.Request.RunID, scheduleInteractionKey(req.Request), "capability_result"),
-			RunID: req.Request.RunID, Index: firstIndex + 1, Kind: agentruntime.StepKindCapabilityResult,
-			Status: agentruntime.StepStatusCompleted, CapabilityName: "edit_schedule",
-			InputJSON: string(payload.TrustedInput), OutputJSON: string(outcomeJSON),
-			ExternalRef: req.Request.InteractionID, StartedAt: req.Request.ResolvedAt,
-			FinishedAt: req.Request.ResolvedAt, CreatedAt: req.Request.ResolvedAt,
-			DedupeKey: scheduleInteractionKey(req.Request) + ":capability_result",
-		}
-		if err := tx.Create(toDBStep(resultStep)).Error; err != nil {
-			return err
-		}
-		cardProjection, err := scheduleFactProjection(
-			req.Request.Projection,
-			cardStep.ID,
-			string(agentruntime.StepKindCardAction),
-			map[string]any{
-				"run_id": req.Request.RunID, "interaction_id": req.Request.InteractionID,
-				"revision": req.Request.Revision, "chat_id": trusted.ChatID,
-				"actor_open_id": req.Request.ActorOpenID, "action": req.Request.Action,
-				"status": req.Outcome.Status, "occurred_at": req.Request.ResolvedAt,
-				"structured_payload": req.Outcome,
-			},
-		)
-		if err != nil {
-			return err
-		}
-		if err := insertProjectionOutbox(tx, cardStep.ID, cardProjection, req.Request.ResolvedAt); err != nil {
-			return err
-		}
-		resultProjection, err := scheduleFactProjection(
-			req.Request.Projection,
-			resultStep.ID,
-			string(agentruntime.StepKindCapabilityResult),
-			map[string]any{
-				"run_id": req.Request.RunID, "interaction_id": req.Request.InteractionID,
-				"revision": req.Request.Revision, "chat_id": trusted.ChatID,
-				"actor_open_id": req.Request.ActorOpenID, "action": req.Request.Action,
-				"status": req.Outcome.Status, "occurred_at": req.Request.ResolvedAt,
-				"capability_name": "edit_schedule", "structured_payload": req.Outcome,
-			},
-		)
-		if err != nil {
-			return err
-		}
-		if err := insertProjectionOutbox(tx, resultStep.ID, resultProjection, req.Request.ResolvedAt); err != nil {
-			return err
-		}
-		runUpdate := tx.Model(&model.AgentRun{}).Where("id = ?", req.Request.RunID).Updates(map[string]any{
-			"status": string(agentruntime.RunStatusQueued), "waiting_reason": "", "waiting_token": "",
-			"revision": req.Request.Revision + 1, "current_step_index": firstIndex + 1,
-			"updated_at": req.Request.ResolvedAt,
-		})
-		if runUpdate.Error != nil {
-			return runUpdate.Error
-		}
-		if runUpdate.RowsAffected != 1 {
-			return agentruntime.ErrNotFound
-		}
-		finishedAt := req.Request.ResolvedAt
-		executionUpdate := tx.Model(&model.AgentCapabilityExecution{}).
-			Where("idempotency_key = ? AND status = ?", execution.IdempotencyKey, "running").
-			Updates(map[string]any{
-				"step_id": resultStep.ID, "status": "completed", "output_json": string(outcomeJSON),
-				"error_text": "", "finished_at": finishedAt, "updated_at": finishedAt,
-			})
-		if executionUpdate.Error != nil {
-			return executionUpdate.Error
-		}
-		if executionUpdate.RowsAffected != 1 {
-			return agentruntime.ErrScheduleInteractionClaimLost
-		}
-		stored = req.Outcome
+		stored = outcome
 		return nil
 	})
 	return stored, err
+}
+
+func finalizeScheduleInteractionTx(
+	tx *gorm.DB,
+	run *model.AgentRun,
+	payload *interactionWaitPayload,
+	execution model.AgentCapabilityExecution,
+	req agentruntime.ScheduleInteractionRequest,
+	trusted agentruntime.ScheduleEditTrustedInput,
+	outcome agentruntime.ScheduleInteractionOutcome,
+) error {
+	outcomeJSON, err := json.Marshal(outcome)
+	if err != nil {
+		return agentruntime.ErrInteractionConflict
+	}
+	firstIndex, err := nextStepIndex(tx, run)
+	if err != nil {
+		return err
+	}
+	event := agentruntime.ConversationEvent{
+		ID: req.EventID, Type: agentruntime.EventTypeCardAction,
+		ChatID: trusted.ChatID, ActorOpenID: req.ActorOpenID, RunID: req.RunID,
+		InteractionID: req.InteractionID, Revision: req.Revision,
+		Action: string(req.Action), SourceRef: req.SourceRef,
+		OccurredAt: req.ResolvedAt, Payload: outcomeJSON,
+	}
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	cardStep := &agentruntime.AgentStep{
+		ID:    stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "card_action"),
+		RunID: req.RunID, Index: firstIndex, Kind: agentruntime.StepKindCardAction,
+		Status: agentruntime.StepStatusCompleted, InputJSON: string(eventJSON),
+		OutputJSON: string(outcomeJSON), ExternalRef: req.InteractionID,
+		StartedAt: req.ResolvedAt, FinishedAt: req.ResolvedAt,
+		CreatedAt: req.ResolvedAt, DedupeKey: scheduleInteractionKey(req) + ":card_action",
+	}
+	if err := tx.Create(toDBStep(cardStep)).Error; err != nil {
+		return err
+	}
+	resultStep := &agentruntime.AgentStep{
+		ID:    stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "capability_result"),
+		RunID: req.RunID, Index: firstIndex + 1, Kind: agentruntime.StepKindCapabilityResult,
+		Status: agentruntime.StepStatusCompleted, CapabilityName: "edit_schedule",
+		InputJSON: string(payload.TrustedInput), OutputJSON: string(outcomeJSON),
+		ExternalRef: req.InteractionID, StartedAt: req.ResolvedAt,
+		FinishedAt: req.ResolvedAt, CreatedAt: req.ResolvedAt,
+		DedupeKey: scheduleInteractionKey(req) + ":capability_result",
+	}
+	if err := tx.Create(toDBStep(resultStep)).Error; err != nil {
+		return err
+	}
+	cardProjection, err := scheduleFactProjection(
+		req.Projection,
+		cardStep.ID,
+		string(agentruntime.StepKindCardAction),
+		map[string]any{
+			"run_id": req.RunID, "interaction_id": req.InteractionID,
+			"revision": req.Revision, "chat_id": trusted.ChatID,
+			"actor_open_id": req.ActorOpenID, "action": req.Action,
+			"status": outcome.Status, "occurred_at": req.ResolvedAt,
+			"structured_payload": outcome,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if err := insertProjectionOutbox(tx, cardStep.ID, cardProjection, req.ResolvedAt); err != nil {
+		return err
+	}
+	resultProjection, err := scheduleFactProjection(
+		req.Projection,
+		resultStep.ID,
+		string(agentruntime.StepKindCapabilityResult),
+		map[string]any{
+			"run_id": req.RunID, "interaction_id": req.InteractionID,
+			"revision": req.Revision, "chat_id": trusted.ChatID,
+			"actor_open_id": req.ActorOpenID, "action": req.Action,
+			"status": outcome.Status, "occurred_at": req.ResolvedAt,
+			"capability_name": "edit_schedule", "structured_payload": outcome,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if err := insertProjectionOutbox(tx, resultStep.ID, resultProjection, req.ResolvedAt); err != nil {
+		return err
+	}
+	runUpdate := tx.Model(&model.AgentRun{}).Where("id = ?", req.RunID).Updates(map[string]any{
+		"status": string(agentruntime.RunStatusQueued), "waiting_reason": "", "waiting_token": "",
+		"revision": req.Revision + 1, "current_step_index": firstIndex + 1,
+		"updated_at": req.ResolvedAt,
+	})
+	if runUpdate.Error != nil {
+		return runUpdate.Error
+	}
+	if runUpdate.RowsAffected != 1 {
+		return agentruntime.ErrNotFound
+	}
+	finishedAt := req.ResolvedAt
+	executionUpdate := tx.Model(&model.AgentCapabilityExecution{}).
+		Where("idempotency_key = ? AND status = ?", execution.IdempotencyKey, "running").
+		Updates(map[string]any{
+			"step_id": resultStep.ID, "status": "completed", "output_json": string(outcomeJSON),
+			"error_text": "", "finished_at": finishedAt, "updated_at": finishedAt,
+		})
+	if executionUpdate.Error != nil {
+		return executionUpdate.Error
+	}
+	if executionUpdate.RowsAffected != 1 {
+		return agentruntime.ErrScheduleInteractionClaimLost
+	}
+	return nil
 }
 
 func (r *Repository) FailScheduleInteraction(

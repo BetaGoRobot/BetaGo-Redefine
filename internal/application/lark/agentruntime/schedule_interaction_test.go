@@ -138,17 +138,30 @@ func (s *scheduleInteractionStoreFake) ClaimScheduleInteraction(
 	}
 }
 
-func (s *scheduleInteractionStoreFake) CompleteScheduleInteraction(
-	_ context.Context,
-	req CompleteScheduleInteractionRequest,
+func (s *scheduleInteractionStoreFake) ExecuteScheduleInteraction(
+	ctx context.Context,
+	req ScheduleInteractionRequest,
+	executor ScheduleInteractionExecutor,
 ) (ScheduleInteractionOutcome, error) {
+	s.mu.Lock()
+	trustedRaw := append(json.RawMessage(nil), s.trusted...)
+	s.mu.Unlock()
+	trusted, err := DecodeScheduleEditTrustedInput(trustedRaw)
+	if err != nil {
+		return ScheduleInteractionOutcome{}, err
+	}
+	outcome, err := executor(ctx, trusted)
+	if err != nil {
+		return ScheduleInteractionOutcome{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.completeCalls++
 	s.completed = true
 	s.claimed = false
-	s.outcome = req.Outcome
-	return req.Outcome, nil
+	s.resolvedActor = req.ActorOpenID
+	s.outcome = outcome
+	return outcome, nil
 }
 
 func (s *scheduleInteractionStoreFake) FailScheduleInteraction(

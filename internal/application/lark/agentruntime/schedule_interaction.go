@@ -114,20 +114,27 @@ type ScheduleInteractionInspection struct {
 	ResolvedActorOpenID string
 }
 
-type CompleteScheduleInteractionRequest struct {
-	Request ScheduleInteractionRequest
-	Outcome ScheduleInteractionOutcome
-}
-
 type FailScheduleInteractionRequest struct {
 	Request   ScheduleInteractionRequest
 	ErrorText string
 }
 
+// ScheduleInteractionExecutor runs while the store holds the durable
+// interaction execution window. The context and trusted input are borrowed for
+// this synchronous call only and must not be retained or used asynchronously.
+type ScheduleInteractionExecutor func(
+	context.Context,
+	ScheduleEditTrustedInput,
+) (ScheduleInteractionOutcome, error)
+
 type ScheduleInteractionStore interface {
 	InspectScheduleInteraction(context.Context, ScheduleInteractionRequest) (ScheduleInteractionInspection, error)
 	ClaimScheduleInteraction(context.Context, ScheduleInteractionRequest) (ScheduleInteractionClaim, error)
-	CompleteScheduleInteraction(context.Context, CompleteScheduleInteractionRequest) (ScheduleInteractionOutcome, error)
+	ExecuteScheduleInteraction(
+		context.Context,
+		ScheduleInteractionRequest,
+		ScheduleInteractionExecutor,
+	) (ScheduleInteractionOutcome, error)
 	FailScheduleInteraction(context.Context, FailScheduleInteractionRequest) error
 }
 
@@ -203,30 +210,37 @@ func (s *ScheduleInteractionService) Resolve(
 		return ScheduleInteractionOutcome{}, errors.New("schedule interaction store returned an invalid claim state")
 	}
 
-	outcome := ScheduleInteractionOutcome{
-		TaskID: trusted.TaskID, InteractionID: req.InteractionID, Action: req.Action,
-		Result: json.RawMessage(`{}`),
-	}
-	if req.Action == ScheduleInteractionCancel {
-		outcome.Status = "cancelled_by_user"
-	} else {
-		result, executeErr := s.capability.ExecuteScheduleEdit(ctx, req.ActorOpenID, trusted)
-		if executeErr != nil {
-			_ = s.store.FailScheduleInteraction(ctx, FailScheduleInteractionRequest{
-				Request: req, ErrorText: "schedule edit capability execution failed",
-			})
-			return ScheduleInteractionOutcome{}, executeErr
-		}
-		outcome.Status = scheduleResultStatus(result)
-		outcome.Result = append(json.RawMessage(nil), result...)
-	}
-	completed, err := s.store.CompleteScheduleInteraction(ctx, CompleteScheduleInteractionRequest{
-		Request: req, Outcome: outcome,
-	})
+	completed, err := s.store.ExecuteScheduleInteraction(
+		ctx,
+		req,
+		func(executionCtx context.Context, lockedTrusted ScheduleEditTrustedInput) (ScheduleInteractionOutcome, error) {
+			outcome := ScheduleInteractionOutcome{
+				TaskID: lockedTrusted.TaskID, InteractionID: req.InteractionID, Action: req.Action,
+				Result: json.RawMessage(`{}`),
+			}
+			if req.Action == ScheduleInteractionCancel {
+				outcome.Status = "cancelled_by_user"
+				return outcome, nil
+			}
+			result, executeErr := s.capability.ExecuteScheduleEdit(
+				executionCtx,
+				req.ActorOpenID,
+				lockedTrusted,
+			)
+			if executeErr != nil {
+				return ScheduleInteractionOutcome{}, executeErr
+			}
+			outcome.Status = scheduleResultStatus(result)
+			outcome.Result = append(json.RawMessage(nil), result...)
+			return outcome, nil
+		},
+	)
 	if err != nil {
-		_ = s.store.FailScheduleInteraction(ctx, FailScheduleInteractionRequest{
-			Request: req, ErrorText: "schedule interaction finalization failed",
-		})
+		if !errors.Is(err, ErrScheduleInteractionClaimLost) {
+			_ = s.store.FailScheduleInteraction(ctx, FailScheduleInteractionRequest{
+				Request: req, ErrorText: "schedule interaction execution failed",
+			})
+		}
 		return ScheduleInteractionOutcome{}, err
 	}
 	if err := s.submit(ctx, req.RunID); err != nil {

@@ -65,6 +65,7 @@ func newRepositoryFixture(t *testing.T, status agentruntime.RunStatus) *reposito
 		fmt.Sprintf(`ALTER TABLE %q.agent_capability_executions ADD FOREIGN KEY (step_id) REFERENCES %q.agent_steps(id) ON DELETE CASCADE`, schema, schema),
 		fmt.Sprintf(`CREATE TABLE %q.agent_projection_outbox (LIKE betago.agent_projection_outbox INCLUDING ALL)`, schema),
 		fmt.Sprintf(`ALTER TABLE %q.agent_projection_outbox ADD FOREIGN KEY (step_id) REFERENCES %q.agent_steps(id) ON DELETE CASCADE`, schema, schema),
+		fmt.Sprintf(`CREATE TABLE %q.scheduled_tasks (LIKE betago.scheduled_tasks INCLUDING ALL)`, schema),
 	}
 	for _, statement := range ddl {
 		if err := db.Exec(statement).Error; err != nil {

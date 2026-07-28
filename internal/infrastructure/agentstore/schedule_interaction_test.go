@@ -5,13 +5,206 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	scheduleinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schedule"
 	uuid "github.com/satori/go.uuid"
 )
+
+type completeScheduleInteractionRequest struct {
+	Request agentruntime.ScheduleInteractionRequest
+	Outcome agentruntime.ScheduleInteractionOutcome
+}
+
+func (r *Repository) CompleteScheduleInteraction(
+	ctx context.Context,
+	req completeScheduleInteractionRequest,
+) (agentruntime.ScheduleInteractionOutcome, error) {
+	return r.ExecuteScheduleInteraction(
+		ctx,
+		req.Request,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			return req.Outcome, nil
+		},
+	)
+}
+
+func TestScheduleInteractionAtomicExecuteRejectsStaleClaimerBeforeExecutor(t *testing.T) {
+	f, _, first := newScheduleInteractionFixture(t)
+	first.RunningTTL = time.Second
+	if claim, err := f.repo.ClaimScheduleInteraction(context.Background(), first); err != nil ||
+		claim.State != agentruntime.ScheduleClaimAcquired {
+		t.Fatalf("first claim = %#v, %v", claim, err)
+	}
+
+	reclaimed := first
+	reclaimed.ClaimID = "claim-reclaimed-" + uuid.NewV4().String()
+	reclaimed.EventID = "event-reclaimed-" + uuid.NewV4().String()
+	reclaimed.ResolvedAt = first.ResolvedAt.Add(first.RunningTTL + time.Second)
+	if claim, err := f.repo.ClaimScheduleInteraction(context.Background(), reclaimed); err != nil ||
+		claim.State != agentruntime.ScheduleClaimAcquired {
+		t.Fatalf("reclaimed claim = %#v, %v", claim, err)
+	}
+
+	var executions atomic.Int32
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(),
+		first,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			executions.Add(1)
+			return validScheduleOutcome(first, "task-1", "new-name"), nil
+		},
+	); !errors.Is(err, agentruntime.ErrScheduleInteractionClaimLost) {
+		t.Fatalf("stale ExecuteScheduleInteraction() error = %v, want claim lost", err)
+	}
+	if executions.Load() != 0 {
+		t.Fatalf("stale executor calls = %d, want 0", executions.Load())
+	}
+
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(),
+		reclaimed,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			executions.Add(1)
+			return validScheduleOutcome(reclaimed, "task-1", "new-name"), nil
+		},
+	); err != nil {
+		t.Fatalf("reclaimed ExecuteScheduleInteraction() error = %v", err)
+	}
+	if executions.Load() != 1 {
+		t.Fatalf("total executor calls = %d, want 1", executions.Load())
+	}
+}
+
+func TestScheduleInteractionAtomicExecuteSerializesClaimBehindExecution(t *testing.T) {
+	f, _, request := newScheduleInteractionFixture(t)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	executeDone := make(chan error, 1)
+	go func() {
+		_, err := f.repo.ExecuteScheduleInteraction(
+			context.Background(),
+			request,
+			func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+				close(entered)
+				<-release
+				return validScheduleOutcome(request, "task-1", "new-name"), nil
+			},
+		)
+		executeDone <- err
+	}()
+	<-entered
+
+	replay := request
+	replay.ClaimID = "claim-blocked-" + uuid.NewV4().String()
+	replay.EventID = "event-blocked-" + uuid.NewV4().String()
+	claimDone := make(chan struct {
+		claim agentruntime.ScheduleInteractionClaim
+		err   error
+	}, 1)
+	go func() {
+		claim, err := f.repo.ClaimScheduleInteraction(context.Background(), replay)
+		claimDone <- struct {
+			claim agentruntime.ScheduleInteractionClaim
+			err   error
+		}{claim: claim, err: err}
+	}()
+
+	select {
+	case result := <-claimDone:
+		t.Fatalf("claim returned while execution lock was held: %#v, %v", result.claim, result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-executeDone; err != nil {
+		t.Fatalf("atomic execution error = %v", err)
+	}
+	result := <-claimDone
+	if result.err != nil || result.claim.State != agentruntime.ScheduleClaimCompleted {
+		t.Fatalf("claim after commit = %#v, %v; want completed", result.claim, result.err)
+	}
+}
+
+func TestScheduleInteractionAtomicExecuteRollsBackScheduleAndCanRetry(t *testing.T) {
+	f, _, request := newScheduleInteractionFixture(t)
+	service := createScheduleServiceFixture(t, f, "task-1", "old-name")
+	capability := scheduleapp.NewRuntimeScheduleEditCapability(service)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(),
+		request,
+		func(
+			ctx context.Context,
+			trusted agentruntime.ScheduleEditTrustedInput,
+		) (agentruntime.ScheduleInteractionOutcome, error) {
+			if _, executeErr := capability.ExecuteScheduleEdit(ctx, request.ActorOpenID, trusted); executeErr != nil {
+				return agentruntime.ScheduleInteractionOutcome{}, executeErr
+			}
+			outcome := validScheduleOutcome(request, trusted.TaskID, "new-name")
+			outcome.Result = json.RawMessage(`{"status":"updated","task_id":"task-1"}`)
+			return outcome, nil
+		},
+	)
+	if !errors.Is(err, agentruntime.ErrInteractionConflict) {
+		t.Fatalf("forced finalization failure = %v, want conflict", err)
+	}
+	assertScheduledTaskName(t, f, "task-1", "old-name")
+	assertScheduleInteractionStillWaiting(t, f)
+
+	if err := f.repo.FailScheduleInteraction(context.Background(), agentruntime.FailScheduleInteractionRequest{
+		Request: request, ErrorText: "forced rollback",
+	}); err != nil {
+		t.Fatalf("FailScheduleInteraction() error = %v", err)
+	}
+	retry := request
+	retry.ClaimID = "claim-retry-" + uuid.NewV4().String()
+	retry.EventID = "event-retry-" + uuid.NewV4().String()
+	retry.ResolvedAt = request.ResolvedAt.Add(time.Second)
+	if claim, claimErr := f.repo.ClaimScheduleInteraction(context.Background(), retry); claimErr != nil ||
+		claim.State != agentruntime.ScheduleClaimAcquired {
+		t.Fatalf("retry claim = %#v, %v", claim, claimErr)
+	}
+	if _, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(),
+		retry,
+		func(
+			ctx context.Context,
+			trusted agentruntime.ScheduleEditTrustedInput,
+		) (agentruntime.ScheduleInteractionOutcome, error) {
+			result, executeErr := capability.ExecuteScheduleEdit(ctx, retry.ActorOpenID, trusted)
+			if executeErr != nil {
+				return agentruntime.ScheduleInteractionOutcome{}, executeErr
+			}
+			outcome := validScheduleOutcome(retry, trusted.TaskID, "new-name")
+			outcome.Result = result
+			return outcome, nil
+		},
+	); err != nil {
+		t.Fatalf("retry ExecuteScheduleInteraction() error = %v", err)
+	}
+	assertScheduledTaskName(t, f, "task-1", "new-name")
+
+	ordinaryName := "ordinary-name"
+	if _, err := service.UpdateTask(context.Background(), &scheduleapp.UpdateTaskRequest{
+		ID: "task-1", ActorOpenID: request.ActorOpenID, Name: &ordinaryName,
+	}); err != nil {
+		t.Fatalf("ordinary UpdateTask() error = %v", err)
+	}
+	assertScheduledTaskName(t, f, "task-1", ordinaryName)
+}
 
 func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 	f, start, request := newScheduleInteractionFixture(t)
@@ -43,7 +236,7 @@ func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 		Action: agentruntime.ScheduleInteractionConfirm,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	completed, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	completed, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request,
 		Outcome: outcome,
 	})
@@ -243,12 +436,12 @@ func TestScheduleInteractionStaleRunningClaimIsReclaimedAndFenced(t *testing.T) 
 		Action: agentruntime.ScheduleInteractionConfirm,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: first, Outcome: outcome,
 	}); !errors.Is(err, agentruntime.ErrScheduleInteractionClaimLost) {
 		t.Fatalf("old claim completion error = %v, want claim lost", err)
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: reclaimed, Outcome: outcome,
 	}); err != nil {
 		t.Fatalf("reclaimed completion error = %v", err)
@@ -346,7 +539,7 @@ func TestScheduleInteractionFinalizeFencesClaimActionAndActor(t *testing.T) {
 				if fenced.Action == agentruntime.ScheduleInteractionCancel {
 					status = "cancelled_by_user"
 				}
-				_, err = f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+				_, err = f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 					Request: fenced,
 					Outcome: agentruntime.ScheduleInteractionOutcome{
 						Status: status, TaskID: "task-1", InteractionID: start.InteractionID,
@@ -393,7 +586,7 @@ func TestScheduleInteractionRejectsMismatchedOutcomeWithoutResolving(t *testing.
 			}
 			tt.mutate(&outcome)
 
-			if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+			if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 				Request: request, Outcome: outcome,
 			}); !errors.Is(err, agentruntime.ErrInteractionConflict) {
 				t.Fatalf("mismatched outcome error = %v, want interaction conflict", err)
@@ -481,7 +674,7 @@ func TestScheduleInteractionRejectsInvalidResultContractWithoutResolving(t *test
 				Action: tt.action, Result: tt.result,
 			}
 
-			if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+			if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 				Request: request, Outcome: outcome,
 			}); !errors.Is(err, agentruntime.ErrInteractionConflict) {
 				t.Fatalf("invalid result contract error = %v, want interaction conflict", err)
@@ -509,14 +702,14 @@ func TestScheduleInteractionAllowsCurrentNameWhenEditingDifferentField(t *testin
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"existing-name"}`),
 	}
 
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatalf("CompleteScheduleInteraction(non-name edit) error = %v", err)
 	}
 }
 
-func TestScheduleInteractionCompletedFinalizeRejectsMismatchedOutcome(t *testing.T) {
+func TestScheduleInteractionCompletedAtomicReplayReturnsStoredWithoutExecutor(t *testing.T) {
 	f, start, request := newScheduleInteractionFixture(t)
 	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
 		t.Fatal(err)
@@ -526,18 +719,32 @@ func TestScheduleInteractionCompletedFinalizeRejectsMismatchedOutcome(t *testing
 		Action: request.Action,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	forged := outcome
-	forged.TaskID = "task-forged"
-
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
-		Request: request, Outcome: forged,
-	}); !errors.Is(err, agentruntime.ErrInteractionConflict) {
-		t.Fatalf("completed forged outcome error = %v, want interaction conflict", err)
+	var executorCalls atomic.Int32
+	replayed, err := f.repo.ExecuteScheduleInteraction(
+		context.Background(),
+		request,
+		func(context.Context, agentruntime.ScheduleEditTrustedInput) (agentruntime.ScheduleInteractionOutcome, error) {
+			executorCalls.Add(1)
+			return agentruntime.ScheduleInteractionOutcome{}, errors.New("must not execute")
+		},
+	)
+	if err != nil {
+		t.Fatalf("completed ExecuteScheduleInteraction() error = %v", err)
+	}
+	if executorCalls.Load() != 0 {
+		t.Fatalf("completed executor calls = %d, want 0", executorCalls.Load())
+	}
+	if replayed.Status != outcome.Status ||
+		replayed.TaskID != outcome.TaskID ||
+		replayed.InteractionID != outcome.InteractionID ||
+		replayed.Action != outcome.Action ||
+		!equalJSONDocument(replayed.Result, outcome.Result) {
+		t.Fatalf("completed outcome = %#v, want stored %#v", replayed, outcome)
 	}
 }
 
@@ -551,7 +758,7 @@ func TestScheduleInteractionCompletedInspectionFailsClosedOnCorruptClaimInput(t 
 		Action: request.Action,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatal(err)
@@ -578,7 +785,7 @@ func TestScheduleInteractionCompletedReplayStillRejectsWrongToken(t *testing.T) 
 		Action: agentruntime.ScheduleInteractionConfirm,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatal(err)
@@ -603,7 +810,7 @@ func TestScheduleInteractionCompletedInspectionFailsClosedOnCorruptOutcome(t *te
 		Action: request.Action,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatal(err)
@@ -637,7 +844,7 @@ func TestScheduleInteractionCompletedReplayFailsClosedOnCorruptInnerResult(t *te
 		Action: request.Action,
 		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
 	}); err != nil {
 		t.Fatal(err)
@@ -674,7 +881,7 @@ func TestScheduleInteractionConfirmAfterCancelReturnsCancelledOutcome(t *testing
 		Status: "cancelled_by_user", TaskID: "task-1", InteractionID: start.InteractionID,
 		Action: agentruntime.ScheduleInteractionCancel, Result: json.RawMessage(`{}`),
 	}
-	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), completeScheduleInteractionRequest{
 		Request: request, Outcome: cancelled,
 	}); err != nil {
 		t.Fatal(err)
@@ -745,5 +952,67 @@ func assertScheduleInteractionStillWaiting(t *testing.T, f *repositoryFixture) {
 		run.WaitingToken == "" || run.WaitingReason == "" {
 		t.Fatalf("run unexpectedly resolved: status=%q reason=%q token_empty=%v",
 			run.Status, run.WaitingReason, run.WaitingToken == "")
+	}
+}
+
+func validScheduleOutcome(
+	request agentruntime.ScheduleInteractionRequest,
+	taskID string,
+	name string,
+) agentruntime.ScheduleInteractionOutcome {
+	result, _ := json.Marshal(map[string]any{
+		"status":  "updated",
+		"task_id": taskID,
+		"name":    name,
+	})
+	return agentruntime.ScheduleInteractionOutcome{
+		Status:        "updated",
+		TaskID:        taskID,
+		InteractionID: request.InteractionID,
+		Action:        request.Action,
+		Result:        result,
+	}
+}
+
+func createScheduleServiceFixture(
+	t *testing.T,
+	f *repositoryFixture,
+	taskID string,
+	name string,
+) *scheduleapp.Service {
+	t.Helper()
+	identity := botidentity.Identity{
+		AppID:     "app-schedule-" + uuid.NewV4().String(),
+		BotOpenID: "bot-schedule-" + uuid.NewV4().String(),
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	task := &model.ScheduledTask{
+		ID: taskID, Name: name, Type: model.ScheduleTaskTypeCron,
+		ChatID: "oc-chat", CreatorID: "ou-actor", ToolName: "send_message",
+		ToolArgs: "{}", CronExpr: "0 10 * * *", Timezone: "Asia/Shanghai",
+		Status: model.ScheduleTaskStatusEnabled, NextRunAt: now.Add(time.Hour),
+		CreatedAt: now, UpdatedAt: now, AppID: identity.AppID, BotOpenID: identity.BotOpenID,
+		SourceMessageID: "om-source",
+	}
+	if err := f.db.Create(task).Error; err != nil {
+		t.Fatalf("create scheduled task fixture: %v", err)
+	}
+	repo := scheduleinfra.NewRepository(f.db, identity)
+	return scheduleapp.NewService(repo, scheduleapp.NewToolExecutor(nil, identity), identity)
+}
+
+func assertScheduledTaskName(
+	t *testing.T,
+	f *repositoryFixture,
+	taskID string,
+	want string,
+) {
+	t.Helper()
+	var task model.ScheduledTask
+	if err := f.db.First(&task, "id = ?", taskID).Error; err != nil {
+		t.Fatalf("read scheduled task: %v", err)
+	}
+	if task.Name != want {
+		t.Fatalf("scheduled task name = %q, want %q", task.Name, want)
 	}
 }
