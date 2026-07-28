@@ -1,12 +1,14 @@
 package agentstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -185,12 +187,9 @@ func (r *Repository) CompleteScheduleInteraction(
 	if err := req.Request.Validate(); err != nil {
 		return agentruntime.ScheduleInteractionOutcome{}, err
 	}
-	outcomeJSON, err := json.Marshal(req.Outcome)
-	if err != nil {
-		return agentruntime.ScheduleInteractionOutcome{}, err
-	}
+	var outcomeJSON []byte
 	var stored agentruntime.ScheduleInteractionOutcome
-	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		run, _, payload, err := lockScheduleInteraction(tx, req.Request)
 		if err != nil {
 			return err
@@ -231,6 +230,10 @@ func (r *Repository) CompleteScheduleInteraction(
 		}
 		if err := validateUnresolvedScheduleRun(run, payload, req.Request); err != nil {
 			return err
+		}
+		outcomeJSON, err = json.Marshal(req.Outcome)
+		if err != nil {
+			return agentruntime.ErrInteractionConflict
 		}
 		firstIndex, err := nextStepIndex(tx, run)
 		if err != nil {
@@ -486,8 +489,7 @@ func validateScheduleOutcomeValues(
 ) error {
 	if outcome.TaskID != trusted.TaskID ||
 		outcome.InteractionID != expectedInteractionID ||
-		outcome.Action != expectedAction ||
-		!json.Valid(outcome.Result) {
+		outcome.Action != expectedAction {
 		return agentruntime.ErrInteractionConflict
 	}
 	switch expectedAction {
@@ -495,11 +497,49 @@ func validateScheduleOutcomeValues(
 		if outcome.Status != "updated" {
 			return agentruntime.ErrInteractionConflict
 		}
+		var result struct {
+			Status string          `json:"status"`
+			TaskID string          `json:"task_id"`
+			Name   json.RawMessage `json:"name,omitempty"`
+		}
+		if err := decodeStrictScheduleResultObject(outcome.Result, &result); err != nil ||
+			result.Status != outcome.Status ||
+			result.TaskID != outcome.TaskID {
+			return agentruntime.ErrInteractionConflict
+		}
+		if len(result.Name) > 0 {
+			var name string
+			if bytes.Equal(bytes.TrimSpace(result.Name), []byte("null")) ||
+				json.Unmarshal(result.Name, &name) != nil {
+				return agentruntime.ErrInteractionConflict
+			}
+		}
 	case agentruntime.ScheduleInteractionCancel:
 		if outcome.Status != "cancelled_by_user" {
 			return agentruntime.ErrInteractionConflict
 		}
+		var result map[string]json.RawMessage
+		if err := decodeStrictScheduleResultObject(outcome.Result, &result); err != nil ||
+			len(result) != 0 {
+			return agentruntime.ErrInteractionConflict
+		}
 	default:
+		return agentruntime.ErrInteractionConflict
+	}
+	return nil
+}
+
+func decodeStrictScheduleResultObject(raw json.RawMessage, destination any) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return agentruntime.ErrInteractionConflict
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return agentruntime.ErrInteractionConflict
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return agentruntime.ErrInteractionConflict
 	}
 	return nil

@@ -40,7 +40,8 @@ func TestScheduleInteractionClaimCompleteAndReplay(t *testing.T) {
 
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: agentruntime.ScheduleInteractionConfirm, Result: json.RawMessage(`{"name":"new-name"}`),
+		Action: agentruntime.ScheduleInteractionConfirm,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	completed, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: request,
@@ -239,7 +240,8 @@ func TestScheduleInteractionStaleRunningClaimIsReclaimedAndFenced(t *testing.T) 
 	}
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: agentruntime.ScheduleInteractionConfirm, Result: json.RawMessage(`{"status":"updated"}`),
+		Action: agentruntime.ScheduleInteractionConfirm,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: first, Outcome: outcome,
@@ -386,7 +388,8 @@ func TestScheduleInteractionRejectsMismatchedOutcomeWithoutResolving(t *testing.
 			}
 			outcome := agentruntime.ScheduleInteractionOutcome{
 				Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-				Action: request.Action, Result: json.RawMessage(`{"status":"updated"}`),
+				Action: request.Action,
+				Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 			}
 			tt.mutate(&outcome)
 
@@ -411,6 +414,71 @@ func TestScheduleInteractionRejectsMismatchedOutcomeWithoutResolving(t *testing.
 	}
 }
 
+func TestScheduleInteractionRejectsInvalidResultContractWithoutResolving(t *testing.T) {
+	tests := []struct {
+		name   string
+		action agentruntime.ScheduleInteractionAction
+		result json.RawMessage
+	}{
+		{
+			name: "confirm forged inner status", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"cancelled_by_user","task_id":"task-1","name":"new-name"}`),
+		},
+		{
+			name: "confirm forged inner task", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-forged","name":"new-name"}`),
+		},
+		{
+			name: "confirm unknown field", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name","hidden":true}`),
+		},
+		{
+			name: "confirm non object", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`["updated","task-1"]`),
+		},
+		{
+			name: "confirm trailing json", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1"}{"hidden":true}`),
+		},
+		{
+			name: "confirm null name", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":null}`),
+		},
+		{
+			name: "cancel arbitrary result", action: agentruntime.ScheduleInteractionCancel,
+			result: json.RawMessage(`{"status":"cancelled_by_user","task_id":"task-1"}`),
+		},
+		{
+			name: "cancel null result", action: agentruntime.ScheduleInteractionCancel,
+			result: json.RawMessage(`null`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, start, request := newScheduleInteractionFixture(t)
+			request.Action = tt.action
+			if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+			status := "updated"
+			if tt.action == agentruntime.ScheduleInteractionCancel {
+				status = "cancelled_by_user"
+			}
+			outcome := agentruntime.ScheduleInteractionOutcome{
+				Status: status, TaskID: "task-1", InteractionID: start.InteractionID,
+				Action: tt.action, Result: tt.result,
+			}
+
+			if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+				Request: request, Outcome: outcome,
+			}); !errors.Is(err, agentruntime.ErrInteractionConflict) {
+				t.Fatalf("invalid result contract error = %v, want interaction conflict", err)
+			}
+			assertScheduleInteractionStillWaiting(t, f)
+		})
+	}
+}
+
 func TestScheduleInteractionCompletedFinalizeRejectsMismatchedOutcome(t *testing.T) {
 	f, start, request := newScheduleInteractionFixture(t)
 	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
@@ -418,7 +486,8 @@ func TestScheduleInteractionCompletedFinalizeRejectsMismatchedOutcome(t *testing
 	}
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: request.Action, Result: json.RawMessage(`{"status":"updated"}`),
+		Action: request.Action,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
@@ -442,7 +511,8 @@ func TestScheduleInteractionCompletedInspectionFailsClosedOnCorruptClaimInput(t 
 	}
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: request.Action, Result: json.RawMessage(`{"status":"updated"}`),
+		Action: request.Action,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
@@ -468,7 +538,8 @@ func TestScheduleInteractionCompletedReplayStillRejectsWrongToken(t *testing.T) 
 	}
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: agentruntime.ScheduleInteractionConfirm, Result: json.RawMessage(`{"status":"updated"}`),
+		Action: agentruntime.ScheduleInteractionConfirm,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
@@ -492,7 +563,8 @@ func TestScheduleInteractionCompletedInspectionFailsClosedOnCorruptOutcome(t *te
 	}
 	outcome := agentruntime.ScheduleInteractionOutcome{
 		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
-		Action: request.Action, Result: json.RawMessage(`{"status":"updated"}`),
+		Action: request.Action,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
 	}
 	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
 		Request: request, Outcome: outcome,
@@ -515,6 +587,43 @@ func TestScheduleInteractionCompletedInspectionFailsClosedOnCorruptOutcome(t *te
 		err, agentruntime.ErrInteractionConflict,
 	) {
 		t.Fatalf("InspectScheduleInteraction(corrupt outcome) error = %v, want conflict", err)
+	}
+}
+
+func TestScheduleInteractionCompletedReplayFailsClosedOnCorruptInnerResult(t *testing.T) {
+	f, start, request := newScheduleInteractionFixture(t)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	outcome := agentruntime.ScheduleInteractionOutcome{
+		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
+		Action: request.Action,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"new-name"}`),
+	}
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+		Request: request, Outcome: outcome,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outcome.Result = json.RawMessage(`{"status":"updated","task_id":"task-forged","name":"new-name"}`)
+	raw, err := json.Marshal(outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Model(&model.AgentCapabilityExecution{}).
+		Where("run_id = ?", f.runID).Update("output_json", string(raw)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.repo.InspectScheduleInteraction(context.Background(), request); !errors.Is(
+		err, agentruntime.ErrInteractionConflict,
+	) {
+		t.Errorf("InspectScheduleInteraction(corrupt inner result) error = %v, want conflict", err)
+	}
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); !errors.Is(
+		err, agentruntime.ErrInteractionConflict,
+	) {
+		t.Errorf("ClaimScheduleInteraction(corrupt inner result) error = %v, want conflict", err)
 	}
 }
 
