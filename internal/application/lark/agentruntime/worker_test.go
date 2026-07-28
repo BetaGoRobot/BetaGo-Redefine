@@ -310,6 +310,91 @@ func TestConversationWorkerStartDuringStopCannotCreateSecondLoop(t *testing.T) {
 	}
 }
 
+func TestConversationWorkerStopTimeoutEventuallyCleansUpAndAllowsRestart(t *testing.T) {
+	runtime := &blockingConversationRuntime{
+		entered: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	worker, err := NewConversationWorker(runtime, ConversationWorkerOptions{
+		Interval: time.Hour, BatchSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-runtime.entered
+
+	stopCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := worker.Stop(stopCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("timed-out Stop() error = %v, want context cancellation", err)
+	}
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("Start() while timed-out generation is still running error = %v", err)
+	}
+	select {
+	case <-runtime.entered:
+		t.Fatal("Start() after timed-out Stop launched a second loop before cleanup")
+	default:
+	}
+
+	close(runtime.release)
+	waitForWorkerStat(t, worker.Stats, "running", false)
+	waitForWorkerStat(t, worker.Stats, "stopping", false)
+
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("restart after eventual cleanup error = %v", err)
+	}
+	select {
+	case <-runtime.entered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not restart after timed-out generation exited")
+	}
+	finalStopCtx, finalCancel := context.WithTimeout(context.Background(), time.Second)
+	defer finalCancel()
+	if err := worker.Stop(finalStopCtx); err != nil {
+		t.Fatalf("final Stop() error = %v", err)
+	}
+	if runtime.max.Load() != 1 {
+		t.Fatalf("maximum concurrent loops = %d, want 1", runtime.max.Load())
+	}
+}
+
+func TestWorkerStateRejectsStartInStopFinalizationWindow(t *testing.T) {
+	done := make(chan struct{})
+	_, cancel := context.WithCancel(context.Background())
+	state := workerState{
+		running:  true,
+		stopping: true,
+		cancel:   cancel,
+		done:     done,
+	}
+
+	state.finish(done, nil)
+	if state.running || !state.stopping || state.done != done {
+		t.Fatalf(
+			"finish released stopping generation before done close: running=%t stopping=%t same_done=%t",
+			state.running,
+			state.stopping,
+			state.done == done,
+		)
+	}
+	if err := state.start(context.Background(), func(context.Context) {}); err != nil {
+		t.Fatalf("overlapping Start() error = %v", err)
+	}
+	if !state.stopping || state.done != done {
+		t.Fatal("overlapping Start replaced the generation awaiting Stop finalization")
+	}
+
+	close(done)
+	state.completeStop(done)
+	if state.running || state.stopping || state.done != nil || state.cancel != nil {
+		t.Fatalf("completed Stop did not release generation: %#v", state.stats(1, time.Second))
+	}
+}
+
 func waitForWorkerStat(
 	t *testing.T,
 	stats func() map[string]any,

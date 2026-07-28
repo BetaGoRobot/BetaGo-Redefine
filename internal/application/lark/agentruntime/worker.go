@@ -346,8 +346,10 @@ func (s *workerState) stop(ctx context.Context) error {
 	s.mu.Unlock()
 	select {
 	case <-done:
+		s.completeStop(done)
 		return nil
 	case <-ctx.Done():
+		s.abortStop(done)
 		return ctx.Err()
 	}
 }
@@ -359,13 +361,38 @@ func (s *workerState) finish(done chan struct{}, terminalErr error) {
 		return
 	}
 	s.running = false
-	s.stopping = false
-	s.cancel = nil
-	s.done = nil
 	if terminalErr != nil {
 		s.failures++
 		s.lastError = terminalErr.Error()
 		s.terminalError = terminalErr.Error()
+	}
+	if !s.stopping {
+		s.cancel = nil
+		s.done = nil
+	}
+}
+
+func (s *workerState) completeStop(done chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done != done {
+		return
+	}
+	s.stopping = false
+	s.cancel = nil
+	s.done = nil
+}
+
+func (s *workerState) abortStop(done chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done != done {
+		return
+	}
+	s.stopping = false
+	if !s.running {
+		s.cancel = nil
+		s.done = nil
 	}
 }
 
