@@ -17,10 +17,12 @@ import (
 )
 
 var (
-	ErrActiveRunConflict        = errors.New("session already has a different active run")
-	ErrInteractionConflict      = errors.New("interaction state conflicts with the request")
-	ErrInteractionExpired       = errors.New("interaction has expired")
-	ErrInteractionTokenMismatch = errors.New("interaction token does not match")
+	ErrLeaseLost                = agentruntime.ErrLeaseLost
+	ErrActiveRunConflict        = agentruntime.ErrActiveRunConflict
+	ErrInteractionConflict      = agentruntime.ErrInteractionConflict
+	ErrInteractionExpired       = agentruntime.ErrInteractionExpired
+	ErrInteractionTokenMismatch = agentruntime.ErrInteractionTokenMismatch
+	ErrTerminalRun              = agentruntime.ErrTerminalRun
 )
 
 type interactionWaitPayload struct {
@@ -36,20 +38,25 @@ func (r *Repository) FindActiveRun(ctx context.Context, sessionID string) (*agen
 	if err := validateCanonicalValue("session id", sessionID, false); err != nil {
 		return nil, err
 	}
-	var session model.AgentSession
-	if err := r.db.WithContext(ctx).First(&session, "id = ?", sessionID).Error; err != nil {
-		return nil, mapNotFound(err)
-	}
-	if session.ActiveRunID == "" {
-		return nil, agentruntime.ErrNotFound
-	}
 	var run model.AgentRun
-	if err := r.db.WithContext(ctx).
-		Where("id = ? AND session_id = ?", session.ActiveRunID, sessionID).
-		First(&run).Error; err != nil {
-		return nil, mapNotFound(err)
+	result := r.db.WithContext(ctx).
+		Table("agent_runs AS runs").
+		Select("runs.*").
+		Joins(`JOIN agent_sessions AS sessions
+			ON sessions.active_run_id = runs.id
+			AND runs.session_id = sessions.id`).
+		Where("sessions.id = ?", sessionID).
+		Where("runs.status NOT IN ?", []string{
+			string(agentruntime.RunStatusCompleted),
+			string(agentruntime.RunStatusFailed),
+			string(agentruntime.RunStatusCancelled),
+		}).
+		Limit(1).
+		Scan(&run)
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	if terminalRunStatus(agentruntime.RunStatus(run.Status)) {
+	if result.RowsAffected == 0 {
 		return nil, agentruntime.ErrNotFound
 	}
 	return toRuntimeRun(&run), nil
@@ -62,12 +69,24 @@ func (r *Repository) StartInteraction(ctx context.Context, req agentruntime.Star
 	var storedRun *agentruntime.AgentRun
 	var storedStep *agentruntime.AgentStep
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var run model.AgentRun
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, "id = ?", req.RunID).Error; err != nil {
+		var runReference struct {
+			SessionID string
+		}
+		if err := tx.Model(&model.AgentRun{}).
+			Select("session_id").
+			Where("id = ?", req.RunID).
+			Take(&runReference).Error; err != nil {
 			return mapNotFound(err)
 		}
 		var session model.AgentSession
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&session, "id = ?", run.SessionID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&session, "id = ?", runReference.SessionID).Error; err != nil {
+			return mapNotFound(err)
+		}
+		var run model.AgentRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND session_id = ?", req.RunID, runReference.SessionID).
+			First(&run).Error; err != nil {
 			return mapNotFound(err)
 		}
 		if session.ActiveRunID != "" && session.ActiveRunID != req.RunID {

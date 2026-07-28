@@ -2,6 +2,7 @@ package agentstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,8 +14,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrTerminalRun = errors.New("agent run is terminal")
-
 func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentStep, projection agentruntime.ProjectionDocument) (*agentruntime.AgentStep, error) {
 	if err := validateAppendEvent(step, projection); err != nil {
 		return nil, err
@@ -24,6 +23,18 @@ func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentSt
 		var run model.AgentRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, "id = ?", step.RunID).Error; err != nil {
 			return mapNotFound(err)
+		}
+		if step.DedupeKey != "" {
+			var existing model.AgentStep
+			err := tx.Where("run_id = ? AND dedupe_key = ?", step.RunID, step.DedupeKey).
+				First(&existing).Error
+			if err == nil {
+				stored = toRuntimeStep(&existing)
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
 		}
 		if step.Status == agentruntime.StepStatusQueued &&
 			terminalRunStatus(agentruntime.RunStatus(run.Status)) {
@@ -104,14 +115,24 @@ func (r *Repository) ClaimQueuedStep(ctx context.Context, claim agentruntime.Ste
 	var claimed model.AgentStep
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Raw(`
-			SELECT *
-			FROM agent_steps
-			WHERE status = ?
-			  AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
-			ORDER BY created_at, id
-			FOR UPDATE SKIP LOCKED
+			SELECT steps.*
+			FROM agent_steps AS steps
+			JOIN agent_runs AS runs ON runs.id = steps.run_id
+			WHERE steps.status = ?
+			  AND (steps.lease_expires_at IS NULL OR steps.lease_expires_at <= ?)
+			  AND runs.status IN (?, ?)
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM agent_steps AS active
+				  WHERE active.run_id = steps.run_id
+				    AND active.status = ?
+			  )
+			ORDER BY steps.created_at, steps.id
+			FOR UPDATE OF runs, steps SKIP LOCKED
 			LIMIT 1`,
 			string(agentruntime.StepStatusQueued), claim.Now,
+			string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
+			string(agentruntime.StepStatusRunning),
 		).Scan(&claimed)
 		if result.Error != nil {
 			return result.Error
@@ -153,10 +174,12 @@ func (r *Repository) CompleteStep(ctx context.Context, req agentruntime.Complete
 		return err
 	}
 	result := r.db.WithContext(ctx).Model(&model.AgentStep{}).
-		Where("id = ? AND status = ?", req.StepID, string(agentruntime.StepStatusRunning)).
+		Where("id = ? AND status = ? AND worker_id = ? AND attempt_count = ?",
+			req.StepID, string(agentruntime.StepStatusRunning), req.WorkerID, req.AttemptCount).
 		Updates(map[string]any{
 			"status":           string(agentruntime.StepStatusCompleted),
 			"output_json":      string(req.Output),
+			"error_text":       "",
 			"finished_at":      req.FinishedAt,
 			"worker_id":        "",
 			"lease_expires_at": nil,
@@ -165,7 +188,7 @@ func (r *Repository) CompleteStep(ctx context.Context, req agentruntime.Complete
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return agentruntime.ErrNotFound
+		return agentruntime.ErrLeaseLost
 	}
 	return nil
 }
@@ -175,7 +198,8 @@ func (r *Repository) RetryStep(ctx context.Context, req agentruntime.RetryStepRe
 		return err
 	}
 	result := r.db.WithContext(ctx).Model(&model.AgentStep{}).
-		Where("id = ? AND status = ?", req.StepID, string(agentruntime.StepStatusRunning)).
+		Where("id = ? AND status = ? AND worker_id = ? AND attempt_count = ?",
+			req.StepID, string(agentruntime.StepStatusRunning), req.WorkerID, req.AttemptCount).
 		Updates(map[string]any{
 			"status":           string(agentruntime.StepStatusQueued),
 			"error_text":       req.ErrorText,
@@ -186,7 +210,7 @@ func (r *Repository) RetryStep(ctx context.Context, req agentruntime.RetryStepRe
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return agentruntime.ErrNotFound
+		return agentruntime.ErrLeaseLost
 	}
 	return nil
 }
@@ -235,6 +259,24 @@ func validateAppendEvent(step *agentruntime.AgentStep, projection agentruntime.P
 	}
 	if err := validateCanonicalValue("dedupe key", step.DedupeKey, true); err != nil {
 		return err
+	}
+	if step.Kind != agentruntime.StepKindObserve {
+		return invalidContract("step kind must be observe")
+	}
+	if step.Status != agentruntime.StepStatusQueued &&
+		step.Status != agentruntime.StepStatusCompleted {
+		return invalidContract("step status must be queued or completed")
+	}
+	if step.InputJSON == "" || !json.Valid([]byte(step.InputJSON)) {
+		return invalidContract("step input_json must be valid JSON")
+	}
+	if step.OutputJSON == "" || !json.Valid([]byte(step.OutputJSON)) {
+		return invalidContract("step output_json must be valid JSON")
+	}
+	if step.Status == agentruntime.StepStatusQueued &&
+		(step.AttemptCount != 0 || step.WorkerID != "" || !step.LeaseExpiresAt.IsZero() ||
+			step.RetryOfStepID != "" || !step.StartedAt.IsZero() || !step.FinishedAt.IsZero()) {
+		return invalidContract("queued observation must not contain execution state")
 	}
 	return projection.Validate()
 }

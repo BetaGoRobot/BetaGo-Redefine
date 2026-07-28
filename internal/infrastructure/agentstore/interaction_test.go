@@ -6,12 +6,15 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	uuid "github.com/satori/go.uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func TestStartInteractionIsIdempotentAndDoesNotPersistPlaintextToken(t *testing.T) {
@@ -73,6 +76,45 @@ func TestFindActiveRunUsesSessionPointerAndRejectsTerminalRun(t *testing.T) {
 	}
 }
 
+func TestFindActiveRunUsesOneJoinedSnapshotAndReturnsOnlyCurrentPointer(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	secondRunID := createAdditionalRunInSession(t, f, f.sessionID, agentruntime.RunStatusRunning, now)
+	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
+		Update("active_run_id", secondRunID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var queries atomic.Int32
+	callbackName := "agentstore_test_count_" + uuid.NewV4().String()
+	if err := f.db.Callback().Query().After("gorm:query").Register(callbackName, func(*gorm.DB) {
+		queries.Add(1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Callback().Raw().After("gorm:raw").Register(callbackName, func(*gorm.DB) {
+		queries.Add(1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Callback().Row().After("gorm:row").Register(callbackName, func(*gorm.DB) {
+		queries.Add(1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := f.repo.FindActiveRun(context.Background(), f.sessionID)
+	if err != nil {
+		t.Fatalf("FindActiveRun(): %v", err)
+	}
+	if run.ID != secondRunID {
+		t.Fatalf("active run = %q, want current pointer %q", run.ID, secondRunID)
+	}
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("FindActiveRun() queries = %d, want one joined snapshot", got)
+	}
+}
+
 func TestConcurrentStartInteractionAllowsOneActiveRunPerSession(t *testing.T) {
 	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -128,6 +170,79 @@ func TestConcurrentStartInteractionAllowsOneActiveRunPerSession(t *testing.T) {
 	}
 	if session.ActiveRunID != winner {
 		t.Fatalf("active run = %q, want winner %q", session.ActiveRunID, winner)
+	}
+}
+
+func TestStartInteractionConvergesWithSessionFirstMutationWithoutDeadlock(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sessionFirst := f.db.WithContext(ctx).Begin()
+	if sessionFirst.Error != nil {
+		t.Fatal(sessionFirst.Error)
+	}
+	defer sessionFirst.Rollback()
+	var session model.AgentSession
+	if err := sessionFirst.Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&session, "id = ?", f.sessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	runRead := make(chan struct{}, 1)
+	var once sync.Once
+	callbackName := "agentstore_test_run_read_" + uuid.NewV4().String()
+	if err := f.db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == model.TableNameAgentRun {
+			once.Do(func() { runRead <- struct{}{} })
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := startInteractionRequest(f.runID, "lock-order-token", time.Now().UTC())
+	type startResult struct {
+		err error
+	}
+	started := make(chan startResult, 1)
+	go func() {
+		_, _, err := f.repo.StartInteraction(ctx, req)
+		started <- startResult{err: err}
+	}()
+
+	select {
+	case <-runRead:
+	case <-ctx.Done():
+		t.Fatalf("StartInteraction did not read run before deadline: %v", ctx.Err())
+	}
+
+	var run model.AgentRun
+	if err := sessionFirst.Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatalf("session-first run lock: %v", err)
+	}
+	if err := sessionFirst.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
+		Update("active_run_id", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := sessionFirst.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-started:
+		if result.err != nil {
+			t.Fatalf("StartInteraction() error = %v", result.err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("StartInteraction did not converge before deadline: %v", ctx.Err())
+	}
+	var stored model.AgentSession
+	if err := f.db.First(&stored, "id = ?", f.sessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ActiveRunID != f.runID {
+		t.Fatalf("active run = %q, want %q", stored.ActiveRunID, f.runID)
 	}
 }
 
@@ -394,4 +509,24 @@ func resolveInteractionRequest(start agentruntime.StartInteractionRequest, token
 		ResolvedAt:     resolvedAt,
 		Projection:     testProjection(start.RunID),
 	}
+}
+
+func createAdditionalRunInSession(
+	t *testing.T,
+	f *repositoryFixture,
+	sessionID string,
+	status agentruntime.RunStatus,
+	now time.Time,
+) string {
+	t.Helper()
+	suffix := uuid.NewV4().String()
+	runID := "run_test_" + suffix
+	if err := f.db.Create(&model.AgentRun{
+		ID: runID, SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		TriggerMessageID: "message_" + suffix, Status: string(status), Revision: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	return runID
 }

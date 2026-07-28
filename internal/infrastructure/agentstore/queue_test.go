@@ -280,6 +280,115 @@ func TestAppendEventDedupeHitDoesNotRefreshRun(t *testing.T) {
 	}
 }
 
+func TestAppendEventReplayReturnsExistingAcrossRunStateChanges(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        agentruntime.RunStatus
+		waitingReason agentruntime.WaitingReason
+		waitingToken  string
+	}{
+		{
+			name: "waiting", status: agentruntime.RunStatusWaitingApproval,
+			waitingReason: agentruntime.WaitingReasonApproval,
+			waitingToken:  agentruntime.HashInteractionToken("waiting-token"),
+		},
+		{name: "terminal", status: agentruntime.RunStatusCompleted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+			firstAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
+			first := appendEventStep(f.runID, "event:cross-state-replay", agentruntime.StepStatusQueued, firstAt)
+			stored, err := f.repo.AppendEvent(context.Background(), first, testProjection(f.runID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sentinelRelevantAt := firstAt.Add(time.Hour)
+			if err := f.db.Model(&model.AgentRun{}).Where("id = ?", f.runID).Updates(map[string]any{
+				"status":           string(tt.status),
+				"waiting_reason":   string(tt.waitingReason),
+				"waiting_token":    tt.waitingToken,
+				"last_relevant_at": sentinelRelevantAt,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			replay := appendEventStep(
+				f.runID, first.DedupeKey, agentruntime.StepStatusQueued, sentinelRelevantAt.Add(time.Hour),
+			)
+			again, err := f.repo.AppendEvent(context.Background(), replay, testProjection(f.runID))
+			if err != nil {
+				t.Fatalf("AppendEvent(replay): %v", err)
+			}
+			if again.ID != stored.ID || again.Index != stored.Index {
+				t.Fatalf("replay returned %#v, want %#v", again, stored)
+			}
+			var run model.AgentRun
+			if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != string(tt.status) || run.WaitingReason != string(tt.waitingReason) ||
+				run.WaitingToken != tt.waitingToken || !run.LastRelevantAt.Equal(sentinelRelevantAt) {
+				t.Fatalf("replay changed run: %#v", run)
+			}
+			requireRunStepAndOutboxCounts(t, f, stored.Index, 1, 1)
+		})
+	}
+}
+
+func TestAppendEventValidatesObservationShapeBeforePersistence(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name   string
+		mutate func(*agentruntime.AgentStep)
+	}{
+		{name: "empty kind", mutate: func(s *agentruntime.AgentStep) { s.Kind = "" }},
+		{name: "wrong kind", mutate: func(s *agentruntime.AgentStep) { s.Kind = agentruntime.StepKindPlan }},
+		{name: "empty status", mutate: func(s *agentruntime.AgentStep) { s.Status = "" }},
+		{name: "running status", mutate: func(s *agentruntime.AgentStep) { s.Status = agentruntime.StepStatusRunning }},
+		{name: "failed status", mutate: func(s *agentruntime.AgentStep) { s.Status = agentruntime.StepStatusFailed }},
+		{name: "empty input", mutate: func(s *agentruntime.AgentStep) { s.InputJSON = "" }},
+		{name: "invalid input", mutate: func(s *agentruntime.AgentStep) { s.InputJSON = `{"bad":` }},
+		{name: "empty output", mutate: func(s *agentruntime.AgentStep) { s.OutputJSON = "" }},
+		{name: "invalid output", mutate: func(s *agentruntime.AgentStep) { s.OutputJSON = `{"bad":` }},
+		{name: "queued attempt", mutate: func(s *agentruntime.AgentStep) { s.AttemptCount = 1 }},
+		{name: "queued worker", mutate: func(s *agentruntime.AgentStep) { s.WorkerID = "worker-a" }},
+		{name: "queued lease", mutate: func(s *agentruntime.AgentStep) { s.LeaseExpiresAt = now }},
+		{name: "queued retry source", mutate: func(s *agentruntime.AgentStep) { s.RetryOfStepID = "step-old" }},
+		{name: "queued started", mutate: func(s *agentruntime.AgentStep) { s.StartedAt = now }},
+		{name: "queued finished", mutate: func(s *agentruntime.AgentStep) { s.FinishedAt = now }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+			step := appendEventStep(
+				f.runID, "event:invalid-shape-"+tt.name, agentruntime.StepStatusQueued, now,
+			)
+			tt.mutate(step)
+			_, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+			if !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
+				t.Fatalf("AppendEvent() error = %v, want ErrInvalidRuntimeContract", err)
+			}
+			requireRunStepAndOutboxCounts(t, f, 0, 0, 0)
+		})
+	}
+}
+
+func TestAppendEventCompletedObservationAllowsAuditTimes(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	step := appendEventStep(f.runID, "event:audit-times", agentruntime.StepStatusCompleted, now)
+	step.StartedAt = now.Add(-time.Second)
+	step.FinishedAt = now
+	stored, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+	if err != nil {
+		t.Fatalf("AppendEvent(): %v", err)
+	}
+	if !stored.StartedAt.Equal(step.StartedAt) || !stored.FinishedAt.Equal(step.FinishedAt) {
+		t.Fatalf("audit times changed: %#v", stored)
+	}
+	requireRunStepAndOutboxCounts(t, f, stored.Index, 1, 1)
+}
+
 func TestConcurrentAppendEventSameDedupeCreatesOneStepAndOutbox(t *testing.T) {
 	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
 	createdAt := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
@@ -313,6 +422,105 @@ func TestConcurrentAppendEventDifferentDedupeCreatesContinuousIndexes(t *testing
 		t.Fatalf("concurrent indexes = %d / %d, want 1 / 2", results[0].step.Index, results[1].step.Index)
 	}
 	requireRunStepAndOutboxCounts(t, f, 2, 2, 2)
+}
+
+func TestConcurrentClaimAllowsOnlyOneRunningStepPerRun(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusQueued)
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 1, Kind: agentruntime.StepKindCapabilityCall,
+		Status: agentruntime.StepStatusQueued, CreatedAt: createdAt,
+	})
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 2, Kind: agentruntime.StepKindCapabilityCall,
+		Status: agentruntime.StepStatusQueued, CreatedAt: createdAt.Add(time.Microsecond),
+	})
+	results := claimConcurrently(f.db, time.Now().UTC())
+	var claimed, empty int
+	for _, result := range results {
+		switch {
+		case result.err == nil:
+			claimed++
+		case errors.Is(result.err, agentruntime.ErrNotFound):
+			empty++
+		default:
+			t.Fatalf("ClaimQueuedStep() error = %v", result.err)
+		}
+	}
+	if claimed != 1 || empty != 1 {
+		t.Fatalf("claimed=%d empty=%d, want 1/1", claimed, empty)
+	}
+	var running, queued int64
+	if err := f.db.Model(&model.AgentStep{}).
+		Where("run_id = ? AND status = ?", f.runID, string(agentruntime.StepStatusRunning)).
+		Count(&running).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Model(&model.AgentStep{}).
+		Where("run_id = ? AND status = ?", f.runID, string(agentruntime.StepStatusQueued)).
+		Count(&queued).Error; err != nil {
+		t.Fatal(err)
+	}
+	if running != 1 || queued != 1 {
+		t.Fatalf("running=%d queued=%d, want 1/1", running, queued)
+	}
+}
+
+func TestConcurrentClaimCanClaimStepsFromDifferentRuns(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusQueued)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	f.createStep(t, &agentruntime.AgentStep{
+		Index: 1, Kind: agentruntime.StepKindCapabilityCall,
+		Status: agentruntime.StepStatusQueued, CreatedAt: now,
+	})
+	secondSessionID, secondRunID := createAdditionalRunFixture(t, f, agentruntime.RunStatusQueued, now)
+	t.Cleanup(func() { _ = f.db.Exec("DELETE FROM agent_sessions WHERE id = ?", secondSessionID).Error })
+	f.createStep(t, &agentruntime.AgentStep{
+		ID: "step_test_" + uuid.NewV4().String(), RunID: secondRunID, Index: 1,
+		Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusQueued,
+		CreatedAt: now.Add(time.Microsecond),
+	})
+	results := claimConcurrently(f.db, now.Add(time.Second))
+	if results[0].err != nil || results[1].err != nil {
+		t.Fatalf("different-run claim errors = %v / %v", results[0].err, results[1].err)
+	}
+	runIDs := map[string]bool{results[0].step.RunID: true, results[1].step.RunID: true}
+	if !runIDs[f.runID] || !runIDs[secondRunID] || len(runIDs) != 2 {
+		t.Fatalf("claimed run IDs = %q / %q", results[0].step.RunID, results[1].step.RunID)
+	}
+}
+
+func TestClaimQueuedStepFiltersWaitingAndTerminalRuns(t *testing.T) {
+	statuses := []agentruntime.RunStatus{
+		agentruntime.RunStatusWaitingApproval,
+		agentruntime.RunStatusWaitingCallback,
+		agentruntime.RunStatusWaitingSchedule,
+		agentruntime.RunStatusCompleted,
+		agentruntime.RunStatusFailed,
+		agentruntime.RunStatusCancelled,
+	}
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			f := newRepositoryFixture(t, status)
+			step := &agentruntime.AgentStep{
+				Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusQueued,
+			}
+			f.createStep(t, step)
+			_, err := f.repo.ClaimQueuedStep(context.Background(), agentruntime.StepClaim{
+				WorkerID: "worker-a", LeaseTTL: time.Minute, Now: time.Now().UTC(),
+			})
+			if !errors.Is(err, agentruntime.ErrNotFound) {
+				t.Fatalf("ClaimQueuedStep() error = %v, want ErrNotFound", err)
+			}
+			var stored model.AgentStep
+			if err := f.db.First(&stored, "id = ?", step.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != string(agentruntime.StepStatusQueued) || stored.AttemptCount != 0 {
+				t.Fatalf("filtered step changed: %#v", stored)
+			}
+		})
+	}
 }
 
 func TestClaimQueuedStepAllowsOnlyOneCompetingWorker(t *testing.T) {
@@ -364,12 +572,13 @@ func TestRetryStepHonorsRetryAt(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	step := &agentruntime.AgentStep{
 		Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusRunning,
-		WorkerID: "worker-a", LeaseExpiresAt: now.Add(time.Minute),
+		AttemptCount: 1, WorkerID: "worker-a", LeaseExpiresAt: now.Add(time.Minute),
 	}
 	f.createStep(t, step)
 	retryAt := now.Add(10 * time.Minute)
 	if err := f.repo.RetryStep(context.Background(), agentruntime.RetryStepRequest{
-		StepID: step.ID, ErrorText: "temporary", RetryAt: retryAt,
+		StepID: step.ID, WorkerID: step.WorkerID, AttemptCount: step.AttemptCount,
+		ErrorText: "temporary", RetryAt: retryAt,
 	}); err != nil {
 		t.Fatalf("RetryStep(): %v", err)
 	}
@@ -385,7 +594,7 @@ func TestRetryStepHonorsRetryAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("due claim: %v", err)
 	}
-	if claimed.ID != step.ID || claimed.AttemptCount != 1 {
+	if claimed.ID != step.ID || claimed.AttemptCount != 2 {
 		t.Fatalf("claimed = %#v", claimed)
 	}
 }
@@ -395,12 +604,13 @@ func TestCompleteStepRequiresRunningAndClearsLease(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	step := &agentruntime.AgentStep{
 		Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusRunning,
-		WorkerID: "worker-a", LeaseExpiresAt: now.Add(time.Minute),
+		AttemptCount: 1, WorkerID: "worker-a", LeaseExpiresAt: now.Add(time.Minute),
 	}
 	f.createStep(t, step)
 	output := []byte(`{"message_id":"om_done"}`)
 	if err := f.repo.CompleteStep(context.Background(), agentruntime.CompleteStepRequest{
-		StepID: step.ID, Output: output, FinishedAt: now,
+		StepID: step.ID, WorkerID: step.WorkerID, AttemptCount: step.AttemptCount,
+		Output: output, FinishedAt: now,
 	}); err != nil {
 		t.Fatalf("CompleteStep(): %v", err)
 	}
@@ -413,10 +623,77 @@ func TestCompleteStepRequiresRunningAndClearsLease(t *testing.T) {
 		t.Fatalf("completed step = %#v", stored)
 	}
 	err := f.repo.CompleteStep(context.Background(), agentruntime.CompleteStepRequest{
-		StepID: step.ID, Output: output, FinishedAt: now,
+		StepID: step.ID, WorkerID: step.WorkerID, AttemptCount: step.AttemptCount,
+		Output: output, FinishedAt: now,
 	})
-	if !errors.Is(err, agentruntime.ErrNotFound) {
-		t.Fatalf("second CompleteStep() error = %v, want ErrNotFound", err)
+	if !errors.Is(err, agentruntime.ErrLeaseLost) {
+		t.Fatalf("second CompleteStep() error = %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestStepCompletionAndRetryAreFencedByWorkerAndAttempt(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusQueued)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	step := &agentruntime.AgentStep{
+		Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusQueued,
+		ErrorText: "stale failure",
+	}
+	f.createStep(t, step)
+	claimedByA, err := f.repo.ClaimQueuedStep(context.Background(), agentruntime.StepClaim{
+		WorkerID: "worker-a", LeaseTTL: time.Minute, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaimAt := now.Add(2 * time.Minute)
+	if count, err := f.repo.ReclaimStaleSteps(context.Background(), agentruntime.ReclaimStaleStepsRequest{
+		Now: reclaimAt, Limit: 1,
+	}); err != nil || count != 1 {
+		t.Fatalf("ReclaimStaleSteps() = %d, %v; want 1, nil", count, err)
+	}
+	claimedByB, err := f.repo.ClaimQueuedStep(context.Background(), agentruntime.StepClaim{
+		WorkerID: "worker-b", LeaseTTL: time.Minute, Now: reclaimAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimedByA.AttemptCount != 1 || claimedByB.AttemptCount != 2 {
+		t.Fatalf("attempts A/B = %d/%d, want 1/2", claimedByA.AttemptCount, claimedByB.AttemptCount)
+	}
+
+	staleComplete := agentruntime.CompleteStepRequest{
+		StepID: step.ID, WorkerID: claimedByA.WorkerID, AttemptCount: claimedByA.AttemptCount,
+		Output: json.RawMessage(`{"owner":"a"}`), FinishedAt: reclaimAt,
+	}
+	if err := f.repo.CompleteStep(context.Background(), staleComplete); !errors.Is(err, agentruntime.ErrLeaseLost) {
+		t.Fatalf("stale CompleteStep() error = %v, want ErrLeaseLost", err)
+	}
+	requireRunningLeaseUnchanged(t, f, claimedByB, "stale failure")
+
+	staleRetry := agentruntime.RetryStepRequest{
+		StepID: step.ID, WorkerID: claimedByA.WorkerID, AttemptCount: claimedByA.AttemptCount,
+		ErrorText: "worker a retry", RetryAt: reclaimAt.Add(time.Minute),
+	}
+	if err := f.repo.RetryStep(context.Background(), staleRetry); !errors.Is(err, agentruntime.ErrLeaseLost) {
+		t.Fatalf("stale RetryStep() error = %v, want ErrLeaseLost", err)
+	}
+	requireRunningLeaseUnchanged(t, f, claimedByB, "stale failure")
+
+	finishedAt := reclaimAt.Add(30 * time.Second)
+	if err := f.repo.CompleteStep(context.Background(), agentruntime.CompleteStepRequest{
+		StepID: step.ID, WorkerID: claimedByB.WorkerID, AttemptCount: claimedByB.AttemptCount,
+		Output: json.RawMessage(`{"owner":"b"}`), FinishedAt: finishedAt,
+	}); err != nil {
+		t.Fatalf("owner CompleteStep(): %v", err)
+	}
+	var stored model.AgentStep
+	if err := f.db.First(&stored, "id = ?", step.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != string(agentruntime.StepStatusCompleted) ||
+		!equalJSON(stored.OutputJSON, `{"owner":"b"}`) || stored.ErrorText != "" ||
+		stored.WorkerID != "" || !stored.LeaseExpiresAt.IsZero() {
+		t.Fatalf("completed owner step = %#v", stored)
 	}
 }
 
@@ -426,6 +703,25 @@ func equalJSON(left, right string) bool {
 		return false
 	}
 	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+func requireRunningLeaseUnchanged(
+	t *testing.T,
+	f *repositoryFixture,
+	claimed *agentruntime.AgentStep,
+	wantError string,
+) {
+	t.Helper()
+	var stored model.AgentStep
+	if err := f.db.First(&stored, "id = ?", claimed.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != string(agentruntime.StepStatusRunning) ||
+		stored.WorkerID != claimed.WorkerID || stored.AttemptCount != claimed.AttemptCount ||
+		!stored.LeaseExpiresAt.Equal(claimed.LeaseExpiresAt) ||
+		!equalJSON(stored.OutputJSON, claimed.OutputJSON) || stored.ErrorText != wantError {
+		t.Fatalf("running lease changed: %#v", stored)
+	}
 }
 
 func TestQueueMethodsPreserveRequestValidationErrors(t *testing.T) {
@@ -447,6 +743,65 @@ func TestQueueMethodsPreserveRequestValidationErrors(t *testing.T) {
 type appendResult struct {
 	step *agentruntime.AgentStep
 	err  error
+}
+
+type claimResult struct {
+	step *agentruntime.AgentStep
+	err  error
+}
+
+func claimConcurrently(db *gorm.DB, now time.Time) []claimResult {
+	results := make(chan claimResult, 2)
+	var wg sync.WaitGroup
+	for worker := range 2 {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			step, err := NewRepository(db.Session(&gorm.Session{})).ClaimQueuedStep(
+				context.Background(),
+				agentruntime.StepClaim{
+					WorkerID: "worker-" + string(rune('a'+worker)),
+					LeaseTTL: time.Minute,
+					Now:      now,
+				},
+			)
+			results <- claimResult{step: step, err: err}
+		}(worker)
+	}
+	wg.Wait()
+	close(results)
+	collected := make([]claimResult, 0, 2)
+	for result := range results {
+		collected = append(collected, result)
+	}
+	return collected
+}
+
+func createAdditionalRunFixture(
+	t *testing.T,
+	f *repositoryFixture,
+	status agentruntime.RunStatus,
+	now time.Time,
+) (string, string) {
+	t.Helper()
+	suffix := uuid.NewV4().String()
+	sessionID := "session_test_" + suffix
+	runID := "run_test_" + suffix
+	if err := f.db.Create(&model.AgentSession{
+		ID: sessionID, AppID: "app_" + suffix, BotOpenID: "bot_" + suffix,
+		ChatID: "chat_" + suffix, ScopeType: "chat", ScopeID: "scope_" + suffix,
+		Status: "active", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Create(&model.AgentRun{
+		ID: runID, SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		TriggerMessageID: "message_" + suffix, Status: string(status), Revision: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	return sessionID, runID
 }
 
 func appendEventStep(runID, dedupeKey string, status agentruntime.StepStatus, createdAt time.Time) *agentruntime.AgentStep {
