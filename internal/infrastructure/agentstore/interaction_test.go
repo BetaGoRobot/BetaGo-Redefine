@@ -145,6 +145,42 @@ func TestStartInteractionRejectsASecondDifferentInteractionOnWaitingRun(t *testi
 	}
 }
 
+func TestStartInteractionRequiresNextRevisionForNewWait(t *testing.T) {
+	tests := []struct {
+		name     string
+		revision int64
+		wantErr  bool
+	}{
+		{name: "equal current is stale", revision: 1, wantErr: true},
+		{name: "exactly next", revision: 2},
+		{name: "future jump", revision: 3, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+			req := startInteractionRequest(f.runID, "revision-token", time.Now().UTC())
+			req.Revision = tt.revision
+			_, _, err := f.repo.StartInteraction(context.Background(), req)
+			if tt.wantErr {
+				if !errors.Is(err, ErrInteractionConflict) {
+					t.Fatalf("StartInteraction(revision=%d) error = %v, want ErrInteractionConflict", tt.revision, err)
+				}
+				var count int64
+				if err := f.db.Model(&model.AgentStep{}).Where("run_id = ?", f.runID).Count(&count).Error; err != nil {
+					t.Fatal(err)
+				}
+				if count != 0 {
+					t.Fatalf("persisted steps = %d, want 0", count)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("StartInteraction(revision=%d): %v", tt.revision, err)
+			}
+		})
+	}
+}
+
 func TestResolveInteractionRejectsWrongTokenAndExpiry(t *testing.T) {
 	t.Run("wrong token", func(t *testing.T) {
 		f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
@@ -186,6 +222,7 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolve := resolveInteractionRequest(start, "correct-token", now.Add(time.Minute))
+	resolve.SourceRef = "idempotent-source-ref"
 	run, resume, err := f.repo.ResolveInteraction(context.Background(), resolve)
 	if err != nil {
 		t.Fatalf("ResolveInteraction(first): %v", err)
@@ -198,14 +235,17 @@ func TestResolveInteractionResumesOnceAndIsIdempotent(t *testing.T) {
 		resume.OutputJSON != string(resolve.Outcome) {
 		t.Fatalf("resume step = %#v", resume)
 	}
-	againRun, againResume, err := f.repo.ResolveInteraction(context.Background(), resolve)
+	retry := resolve
+	retry.EventID = "retry-event-with-different-id"
+	retry.Outcome = json.RawMessage(`{"approved":true,"retry_payload_changed":true}`)
+	againRun, againResume, err := f.repo.ResolveInteraction(context.Background(), retry)
 	if err != nil {
 		t.Fatalf("ResolveInteraction(duplicate): %v", err)
 	}
 	if againRun.ID != run.ID || againResume.ID != resume.ID {
 		t.Fatalf("duplicate returned run=%q step=%q, want run=%q step=%q", againRun.ID, againResume.ID, run.ID, resume.ID)
 	}
-	wrongToken := resolve
+	wrongToken := retry
 	wrongToken.PresentedToken = "wrong-token"
 	_, _, err = f.repo.ResolveInteraction(context.Background(), wrongToken)
 	if !errors.Is(err, ErrInteractionTokenMismatch) {
@@ -279,6 +319,52 @@ func TestResolveInteractionScopesSharedSourceRefByRun(t *testing.T) {
 	}
 	if firstResume.ID == secondResume.ID {
 		t.Fatalf("shared source ref produced colliding step ID %q", firstResume.ID)
+	}
+}
+
+func TestResolveInteractionRejectsOldSourceRefFromAnotherInteractionOnSameRun(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	firstStart := startInteractionRequest(f.runID, "token-one", now)
+	if _, _, err := f.repo.StartInteraction(context.Background(), firstStart); err != nil {
+		t.Fatal(err)
+	}
+	firstResolve := resolveInteractionRequest(firstStart, "token-one", now.Add(time.Minute))
+	firstResolve.EventID = ""
+	firstResolve.SourceRef = "shared-source-ref"
+	if _, _, err := f.repo.ResolveInteraction(context.Background(), firstResolve); err != nil {
+		t.Fatal(err)
+	}
+
+	secondStart := startInteractionRequest(f.runID, "token-two", now.Add(2*time.Minute))
+	secondStart.Revision = 4
+	if _, _, err := f.repo.StartInteraction(context.Background(), secondStart); err != nil {
+		t.Fatal(err)
+	}
+	secondResolve := resolveInteractionRequest(secondStart, "token-two", now.Add(3*time.Minute))
+	secondResolve.EventID = ""
+	secondResolve.SourceRef = firstResolve.SourceRef
+	_, _, err := f.repo.ResolveInteraction(context.Background(), secondResolve)
+	if !errors.Is(err, ErrInteractionConflict) {
+		t.Fatalf("ResolveInteraction(reused source) error = %v, want ErrInteractionConflict", err)
+	}
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusWaitingApproval) ||
+		run.Revision != secondStart.Revision || run.WaitingToken == "" {
+		t.Fatalf("second interaction run changed: status=%q revision=%d token_empty=%v",
+			run.Status, run.Revision, run.WaitingToken == "")
+	}
+	var resumes int64
+	if err := f.db.Model(&model.AgentStep{}).
+		Where("run_id = ? AND kind = ?", f.runID, string(agentruntime.StepKindResume)).
+		Count(&resumes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resumes != 1 {
+		t.Fatalf("resume steps = %d, want 1", resumes)
 	}
 }
 

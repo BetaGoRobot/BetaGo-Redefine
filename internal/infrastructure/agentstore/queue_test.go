@@ -12,6 +12,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	uuid "github.com/satori/go.uuid"
+	"gorm.io/gorm"
 )
 
 func TestAppendEventDeduplicatesAndAdvancesIndex(t *testing.T) {
@@ -99,6 +100,143 @@ func TestAppendEventRejectsInvalidProjectionWithoutPersistingStep(t *testing.T) 
 	if count != 0 {
 		t.Fatalf("persisted steps = %d, want 0", count)
 	}
+}
+
+func TestAppendEventQueuedStepWakesRunAndRefreshesRelevance(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	createdAt := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
+	step := appendEventStep(f.runID, "event:wake", agentruntime.StepStatusQueued, createdAt)
+	stored, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+	if err != nil {
+		t.Fatalf("AppendEvent(): %v", err)
+	}
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusQueued) {
+		t.Fatalf("run status = %q, want queued", run.Status)
+	}
+	if !run.LastRelevantAt.Equal(createdAt) {
+		t.Fatalf("last relevant = %v, want %v", run.LastRelevantAt, createdAt)
+	}
+	if run.CurrentStepIndex != stored.Index {
+		t.Fatalf("current index = %d, want %d", run.CurrentStepIndex, stored.Index)
+	}
+}
+
+func TestAppendEventCompletedStepDoesNotRefreshRunRelevance(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	lastRelevantAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
+	if err := f.db.Model(&model.AgentRun{}).Where("id = ?", f.runID).
+		Update("last_relevant_at", lastRelevantAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	step := appendEventStep(
+		f.runID, "event:unrelated", agentruntime.StepStatusCompleted, lastRelevantAt.Add(time.Hour),
+	)
+	stored, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+	if err != nil {
+		t.Fatalf("AppendEvent(): %v", err)
+	}
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusRunning) {
+		t.Fatalf("run status = %q, want running", run.Status)
+	}
+	if !run.LastRelevantAt.Equal(lastRelevantAt) {
+		t.Fatalf("last relevant = %v, want unchanged %v", run.LastRelevantAt, lastRelevantAt)
+	}
+	if run.CurrentStepIndex != stored.Index {
+		t.Fatalf("current index = %d, want %d", run.CurrentStepIndex, stored.Index)
+	}
+}
+
+func TestAppendEventRejectsQueuedStepForTerminalRun(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusCompleted)
+	step := appendEventStep(f.runID, "event:terminal", agentruntime.StepStatusQueued, time.Now().UTC())
+	_, err := f.repo.AppendEvent(context.Background(), step, testProjection(f.runID))
+	if err == nil {
+		t.Fatal("AppendEvent() error = nil, want terminal run rejection")
+	}
+	var count int64
+	if err := f.db.Model(&model.AgentStep{}).Where("id = ?", step.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("persisted terminal-run steps = %d, want 0", count)
+	}
+}
+
+func TestAppendEventDedupeHitDoesNotRefreshRun(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	firstAt := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
+	first := appendEventStep(f.runID, "event:dedupe-no-refresh", agentruntime.StepStatusQueued, firstAt)
+	stored, err := f.repo.AppendEvent(context.Background(), first, testProjection(f.runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinelRelevantAt := firstAt.Add(time.Hour)
+	if err := f.db.Model(&model.AgentRun{}).Where("id = ?", f.runID).Updates(map[string]any{
+		"status":           string(agentruntime.RunStatusRunning),
+		"last_relevant_at": sentinelRelevantAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	duplicate := appendEventStep(
+		f.runID, first.DedupeKey, agentruntime.StepStatusQueued, sentinelRelevantAt.Add(time.Hour),
+	)
+	again, err := f.repo.AppendEvent(context.Background(), duplicate, testProjection(f.runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != stored.ID {
+		t.Fatalf("duplicate returned %q, want %q", again.ID, stored.ID)
+	}
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != string(agentruntime.RunStatusRunning) || !run.LastRelevantAt.Equal(sentinelRelevantAt) {
+		t.Fatalf("dedupe refreshed run: status=%q last_relevant_at=%v", run.Status, run.LastRelevantAt)
+	}
+}
+
+func TestConcurrentAppendEventSameDedupeCreatesOneStepAndOutbox(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	createdAt := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
+	steps := []*agentruntime.AgentStep{
+		appendEventStep(f.runID, "event:concurrent-same", agentruntime.StepStatusQueued, createdAt),
+		appendEventStep(f.runID, "event:concurrent-same", agentruntime.StepStatusQueued, createdAt),
+	}
+	results := appendConcurrently(t, f.db, steps, testProjection(f.runID))
+	if results[0].err != nil || results[1].err != nil {
+		t.Fatalf("concurrent append errors = %v / %v", results[0].err, results[1].err)
+	}
+	if results[0].step.ID != results[1].step.ID {
+		t.Fatalf("returned step IDs = %q / %q, want same", results[0].step.ID, results[1].step.ID)
+	}
+	requireRunStepAndOutboxCounts(t, f, 1, 1, 1)
+}
+
+func TestConcurrentAppendEventDifferentDedupeCreatesContinuousIndexes(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	createdAt := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
+	steps := []*agentruntime.AgentStep{
+		appendEventStep(f.runID, "event:concurrent-one", agentruntime.StepStatusQueued, createdAt),
+		appendEventStep(f.runID, "event:concurrent-two", agentruntime.StepStatusQueued, createdAt),
+	}
+	results := appendConcurrently(t, f.db, steps, testProjection(f.runID))
+	if results[0].err != nil || results[1].err != nil {
+		t.Fatalf("concurrent append errors = %v / %v", results[0].err, results[1].err)
+	}
+	indexes := map[int32]bool{results[0].step.Index: true, results[1].step.Index: true}
+	if !indexes[1] || !indexes[2] || len(indexes) != 2 {
+		t.Fatalf("concurrent indexes = %d / %d, want 1 / 2", results[0].step.Index, results[1].step.Index)
+	}
+	requireRunStepAndOutboxCounts(t, f, 2, 2, 2)
 }
 
 func TestClaimQueuedStepAllowsOnlyOneCompetingWorker(t *testing.T) {
@@ -217,7 +355,7 @@ func equalJSON(left, right string) bool {
 func TestQueueMethodsPreserveRequestValidationErrors(t *testing.T) {
 	repo := &Repository{}
 	if _, err := repo.ClaimQueuedStep(context.Background(), agentruntime.StepClaim{}); !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
-		t.Fatalf("ClaimQueuedStep() error = %v", err)
+		t.Fatalf("ClaimQueuedStep(invalid) error = %v", err)
 	}
 	if err := repo.CompleteStep(context.Background(), agentruntime.CompleteStepRequest{}); !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
 		t.Fatalf("CompleteStep() error = %v", err)
@@ -227,6 +365,81 @@ func TestQueueMethodsPreserveRequestValidationErrors(t *testing.T) {
 	}
 	if _, err := repo.ReclaimStaleSteps(context.Background(), agentruntime.ReclaimStaleStepsRequest{}); !errors.Is(err, agentruntime.ErrInvalidRuntimeContract) {
 		t.Fatalf("ReclaimStaleSteps() error = %v", err)
+	}
+}
+
+type appendResult struct {
+	step *agentruntime.AgentStep
+	err  error
+}
+
+func appendEventStep(runID, dedupeKey string, status agentruntime.StepStatus, createdAt time.Time) *agentruntime.AgentStep {
+	return &agentruntime.AgentStep{
+		ID: "step_" + uuid.NewV4().String(), RunID: runID,
+		Kind: agentruntime.StepKindObserve, Status: status,
+		InputJSON: "{}", OutputJSON: "{}", DedupeKey: dedupeKey, CreatedAt: createdAt,
+	}
+}
+
+func appendConcurrently(
+	t *testing.T,
+	db *gorm.DB,
+	steps []*agentruntime.AgentStep,
+	projection agentruntime.ProjectionDocument,
+) []appendResult {
+	t.Helper()
+	results := make(chan appendResult, len(steps))
+	var wg sync.WaitGroup
+	for _, step := range steps {
+		step := step
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stored, err := NewRepository(db.Session(&gorm.Session{})).AppendEvent(
+				context.Background(), step, projection,
+			)
+			results <- appendResult{step: stored, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	collected := make([]appendResult, 0, len(steps))
+	for result := range results {
+		collected = append(collected, result)
+	}
+	return collected
+}
+
+func requireRunStepAndOutboxCounts(
+	t *testing.T,
+	f *repositoryFixture,
+	wantCurrentIndex int32,
+	wantSteps,
+	wantOutboxes int64,
+) {
+	t.Helper()
+	var run model.AgentRun
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.CurrentStepIndex != wantCurrentIndex {
+		t.Fatalf("current index = %d, want %d", run.CurrentStepIndex, wantCurrentIndex)
+	}
+	var steps int64
+	if err := f.db.Model(&model.AgentStep{}).Where("run_id = ?", f.runID).Count(&steps).Error; err != nil {
+		t.Fatal(err)
+	}
+	if steps != wantSteps {
+		t.Fatalf("steps = %d, want %d", steps, wantSteps)
+	}
+	var outboxes int64
+	if err := f.db.Model(&model.AgentProjectionOutbox{}).
+		Joins("JOIN agent_steps ON agent_steps.id = agent_projection_outbox.step_id").
+		Where("agent_steps.run_id = ?", f.runID).Count(&outboxes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if outboxes != wantOutboxes {
+		t.Fatalf("outboxes = %d, want %d", outboxes, wantOutboxes)
 	}
 }
 

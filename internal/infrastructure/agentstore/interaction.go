@@ -101,7 +101,7 @@ func (r *Repository) StartInteraction(ctx context.Context, req agentruntime.Star
 		if !errors.Is(interactionErr, gorm.ErrRecordNotFound) {
 			return interactionErr
 		}
-		if terminalRunStatus(agentruntime.RunStatus(run.Status)) || run.Revision > req.Revision {
+		if terminalRunStatus(agentruntime.RunStatus(run.Status)) || req.Revision != run.Revision+1 {
 			return ErrInteractionConflict
 		}
 
@@ -201,7 +201,7 @@ func (r *Repository) ResolveInteraction(ctx context.Context, req agentruntime.Re
 		var existing model.AgentStep
 		existingErr := tx.Where("run_id = ? AND dedupe_key = ?", req.RunID, dedupeKey).First(&existing).Error
 		if existingErr == nil {
-			if existing.Kind != string(agentruntime.StepKindResume) {
+			if !resumeMatchesResolveRequest(&existing, req) {
 				return ErrInteractionConflict
 			}
 			storedRun = toRuntimeRun(&run)
@@ -270,6 +270,23 @@ func (r *Repository) ResolveInteraction(ctx context.Context, req agentruntime.Re
 		return nil
 	})
 	return storedRun, storedStep, err
+}
+
+func resumeMatchesResolveRequest(existing *model.AgentStep, req agentruntime.ResolveInteractionRequest) bool {
+	if existing.Kind != string(agentruntime.StepKindResume) ||
+		existing.ExternalRef != req.InteractionID {
+		return false
+	}
+	var event agentruntime.ConversationEvent
+	if err := json.Unmarshal([]byte(existing.InputJSON), &event); err != nil {
+		return false
+	}
+	return event.Type == agentruntime.EventTypeCardAction &&
+		event.RunID == req.RunID &&
+		event.InteractionID == req.InteractionID &&
+		event.Revision == req.Revision &&
+		event.Action == req.Action &&
+		event.SourceRef == req.SourceRef
 }
 
 func sameInteractionStart(run *model.AgentRun, wait *model.AgentStep, req agentruntime.StartInteractionRequest) bool {

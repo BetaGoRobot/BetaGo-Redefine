@@ -13,6 +13,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var ErrTerminalRun = errors.New("agent run is terminal")
+
 func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentStep, projection agentruntime.ProjectionDocument) (*agentruntime.AgentStep, error) {
 	if err := validateAppendEvent(step, projection); err != nil {
 		return nil, err
@@ -22,6 +24,10 @@ func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentSt
 		var run model.AgentRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, "id = ?", step.RunID).Error; err != nil {
 			return mapNotFound(err)
+		}
+		if step.Status == agentruntime.StepStatusQueued &&
+			terminalRunStatus(agentruntime.RunStatus(run.Status)) {
+			return ErrTerminalRun
 		}
 
 		var maxIndex int32
@@ -69,8 +75,12 @@ func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentSt
 		if err := insertProjectionOutbox(tx, candidate.ID, projection, now); err != nil {
 			return err
 		}
-		result = tx.Model(&model.AgentRun{}).Where("id = ?", candidate.RunID).
-			Updates(map[string]any{"current_step_index": candidate.Index, "updated_at": now})
+		runUpdates := map[string]any{"current_step_index": candidate.Index, "updated_at": now}
+		if candidate.Status == agentruntime.StepStatusQueued {
+			runUpdates["status"] = string(agentruntime.RunStatusQueued)
+			runUpdates["last_relevant_at"] = candidate.CreatedAt
+		}
+		result = tx.Model(&model.AgentRun{}).Where("id = ?", candidate.RunID).Updates(runUpdates)
 		if result.Error != nil {
 			return result.Error
 		}
