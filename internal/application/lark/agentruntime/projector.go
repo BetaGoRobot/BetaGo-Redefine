@@ -19,9 +19,10 @@ type ProjectionExecutor interface {
 }
 
 type ProjectorConfig struct {
-	WorkerID string
-	LeaseTTL time.Duration
-	Now      func() time.Time
+	WorkerID     string
+	LeaseTTL     time.Duration
+	WriteTimeout time.Duration
+	Now          func() time.Time
 }
 
 type Projector struct {
@@ -37,12 +38,17 @@ func NewProjector(
 	executor ProjectionExecutor,
 	config ProjectorConfig,
 ) *Projector {
+	if config.WriteTimeout == 0 && config.LeaseTTL > 0 {
+		config.WriteTimeout = config.LeaseTTL / 2
+	}
 	return &Projector{store: store, writer: writer, executor: executor, config: config}
 }
 
 func (p *Projector) SubmitNext(ctx context.Context) error {
 	if p == nil || p.store == nil || p.writer == nil || p.executor == nil ||
-		p.config.WorkerID == "" || p.config.LeaseTTL <= 0 || p.config.Now == nil {
+		p.config.WorkerID == "" || p.config.LeaseTTL <= 0 ||
+		p.config.WriteTimeout <= 0 || p.config.WriteTimeout >= p.config.LeaseTTL ||
+		p.config.Now == nil {
 		return ErrInvalidRuntimeContract
 	}
 	claimTime := p.config.Now()
@@ -94,7 +100,7 @@ func (p *Projector) project(ctx context.Context, outbox *ProjectionOutbox) error
 	if outbox.ID == "" || projection.Validate() != nil {
 		err = ErrInvalidRuntimeContract
 	} else {
-		writeCtx, cancel := context.WithTimeout(ctx, p.config.LeaseTTL)
+		writeCtx, cancel := context.WithTimeout(ctx, p.config.WriteTimeout)
 		err = p.writer.Upsert(writeCtx, outbox.IndexAlias, outbox.DocumentID, outbox.Payload)
 		cancel()
 	}

@@ -16,6 +16,9 @@ func TestProjectorUpsertsExactDocumentAndCompletes(t *testing.T) {
 	projector := NewProjector(store, writer, executor, ProjectorConfig{
 		WorkerID: "projector-1", LeaseTTL: time.Minute, Now: func() time.Time { return now },
 	})
+	if projector.config.WriteTimeout != 30*time.Second {
+		t.Fatalf("default WriteTimeout = %v", projector.config.WriteTimeout)
+	}
 
 	if err := projector.SubmitNext(context.Background()); err != nil {
 		t.Fatal(err)
@@ -23,7 +26,7 @@ func TestProjectorUpsertsExactDocumentAndCompletes(t *testing.T) {
 	if writer.index != "agent_conversation_events" || writer.documentID != "step-1" {
 		t.Fatalf("upsert target = %q/%q", writer.index, writer.documentID)
 	}
-	if !writer.hasDeadline || writer.deadlineRemaining <= 0 || writer.deadlineRemaining > time.Minute {
+	if !writer.hasDeadline || writer.deadlineRemaining <= 0 || writer.deadlineRemaining > 30*time.Second {
 		t.Fatalf("writer deadline remaining = %v, present=%v", writer.deadlineRemaining, writer.hasDeadline)
 	}
 	if store.renewed.OutboxID != "outbox-1" || !store.renewed.Now.Equal(now) ||
@@ -39,6 +42,51 @@ func TestProjectorUpsertsExactDocumentAndCompletes(t *testing.T) {
 	}
 	if store.retried.OutboxID != "" {
 		t.Fatalf("unexpected retry = %#v", store.retried)
+	}
+}
+
+func TestProjectorWriterFailureAtWriteTimeoutRetainsFinalizationLease(t *testing.T) {
+	executionTime := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	clock := executionTime
+	writeErr := errors.New("write deadline exceeded")
+	store := &projectionStoreFake{claimed: projectionOutboxFixture(1, executionTime)}
+	writer := &projectionWriterFake{
+		err: writeErr,
+		onUpsert: func() {
+			clock = executionTime.Add(20 * time.Second)
+		},
+	}
+	projector := NewProjector(store, writer, &projectionExecutorFake{}, ProjectorConfig{
+		WorkerID: "projector-1", LeaseTTL: time.Minute, WriteTimeout: 20 * time.Second,
+		Now: func() time.Time { return clock },
+	})
+	err := projector.SubmitNext(context.Background())
+	if !errors.Is(err, writeErr) || errors.Is(err, ErrProjectionLeaseLost) {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if !store.retried.FailedAt.Equal(executionTime.Add(20*time.Second)) ||
+		!store.retried.RetryAt.Equal(executionTime.Add(25*time.Second)) {
+		t.Fatalf("retry = %#v", store.retried)
+	}
+	if !writer.hasDeadline || writer.deadlineRemaining <= 0 ||
+		writer.deadlineRemaining > 20*time.Second {
+		t.Fatalf("writer deadline remaining = %v, present=%v", writer.deadlineRemaining, writer.hasDeadline)
+	}
+}
+
+func TestProjectorRejectsWriteTimeoutWithoutFinalizationMargin(t *testing.T) {
+	now := time.Now().UTC()
+	store := &projectionStoreFake{claimed: projectionOutboxFixture(1, now)}
+	writer := &projectionWriterFake{}
+	projector := NewProjector(store, writer, &projectionExecutorFake{}, ProjectorConfig{
+		WorkerID: "projector-1", LeaseTTL: time.Minute, WriteTimeout: time.Minute,
+		Now: func() time.Time { return now },
+	})
+	if err := projector.SubmitNext(context.Background()); !errors.Is(err, ErrInvalidRuntimeContract) {
+		t.Fatalf("SubmitNext() error = %v", err)
+	}
+	if writer.calls != 0 || store.renewed.OutboxID != "" {
+		t.Fatalf("invalid config performed work: writer=%d renewed=%#v", writer.calls, store.renewed)
 	}
 }
 
@@ -238,6 +286,11 @@ func (f *projectionStoreFake) CompleteProjection(_ context.Context, req Complete
 
 func (f *projectionStoreFake) RetryProjection(_ context.Context, req RetryProjectionRequest) error {
 	f.retried = req
+	if f.claimed == nil || !f.claimed.LeaseExpiresAt.After(req.FailedAt) ||
+		f.claimed.ID != req.OutboxID || f.claimed.WorkerID != req.WorkerID ||
+		f.claimed.AttemptCount != req.AttemptCount {
+		return ErrProjectionLeaseLost
+	}
 	return nil
 }
 
@@ -250,6 +303,7 @@ type projectionWriterFake struct {
 	calls             int
 	hasDeadline       bool
 	deadlineRemaining time.Duration
+	onUpsert          func()
 }
 
 func (f *projectionWriterFake) Upsert(
@@ -263,6 +317,9 @@ func (f *projectionWriterFake) Upsert(
 	f.hasDeadline = ok
 	if ok {
 		f.deadlineRemaining = time.Until(deadline)
+	}
+	if f.onUpsert != nil {
+		f.onUpsert()
 	}
 	f.index = index
 	f.documentID = documentID
