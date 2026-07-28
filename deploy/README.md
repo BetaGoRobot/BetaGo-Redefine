@@ -85,3 +85,28 @@ curl -fsS -X POST \
     ]
   }'
 ```
+
+后续升级到新物理版本并完成数据回填后，在同一次请求中移除旧指向、增加新写索引，避免 alias 出现中间态：
+
+```bash
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "remove": {
+          "index": "agent_conversation_events_v1",
+          "alias": "agent_conversation_events"
+        }
+      },
+      {
+        "add": {
+          "index": "agent_conversation_events_v2",
+          "alias": "agent_conversation_events",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```
