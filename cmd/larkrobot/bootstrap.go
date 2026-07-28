@@ -83,9 +83,6 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 	if cfg.LarkConfig == nil {
 		return nil, errors.New("lark config is nil")
 	}
-	if cfg.ArkConfig == nil {
-		return nil, errors.New("ark config is nil")
-	}
 
 	appcardaction.RegisterBuiltins()
 
@@ -110,9 +107,6 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	}
 	if cfg.LarkConfig == nil {
 		return nil, errors.New("lark config is nil")
-	}
-	if cfg.ArkConfig == nil {
-		return nil, errors.New("ark config is nil")
 	}
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
 	if err := validateConversationRuntimeBudgets(executorConfigs); err != nil {

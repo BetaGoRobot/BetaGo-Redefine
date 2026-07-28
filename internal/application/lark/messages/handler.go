@@ -21,12 +21,12 @@ import (
 type MessageHandler struct {
 	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	interactionStarter agentruntime.InteractionStarter
-	runtimeEnabled     func(context.Context, string, string) bool
+	runtimeEnabled     func(context.Context, string) bool
 }
 
 type MessageHandlerOptions struct {
 	InteractionStarter agentruntime.InteractionStarter
-	RuntimeEnabled     func(context.Context, string, string) bool
+	RuntimeEnabled     func(context.Context, string) bool
 }
 
 // Handler 消息处理入口。
@@ -52,12 +52,12 @@ func NewMessageProcessorWithOptions(
 		cfgManager = appconfig.GetManager()
 	}
 	if options.RuntimeEnabled == nil {
-		options.RuntimeEnabled = func(ctx context.Context, chatID, openID string) bool {
+		options.RuntimeEnabled = func(ctx context.Context, chatID string) bool {
 			return cfgManager.GetBool(
 				ctx,
 				appconfig.KeyConversationRuntimeEnabled,
 				chatID,
-				openID,
+				"",
 			)
 		}
 	}
@@ -102,13 +102,7 @@ func (h *MessageHandler) contextForEvent(
 	if event.Event.Message != nil && event.Event.Message.ChatId != nil {
 		chatID = *event.Event.Message.ChatId
 	}
-	openID := ""
-	if event.Event.Sender != nil &&
-		event.Event.Sender.SenderId != nil &&
-		event.Event.Sender.SenderId.OpenId != nil {
-		openID = *event.Event.Sender.SenderId.OpenId
-	}
-	if !h.runtimeEnabled(ctx, chatID, openID) {
+	if !h.runtimeEnabled(ctx, chatID) {
 		return ctx
 	}
 	return agentruntime.WithInteractionStarter(ctx, h.interactionStarter)

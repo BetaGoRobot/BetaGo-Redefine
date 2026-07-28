@@ -136,12 +136,12 @@ func TestMessageProcessorInjectsInteractionStarterOnlyWhenChatRuntimeEnabled(t *
 		},
 	}
 	enabled := false
-	var gateChatID, gateOpenID string
+	var gateChatID string
 	starter := messageInteractionStarterStub{}
 	handler := NewMessageProcessorWithOptions(config.NewManager(), MessageHandlerOptions{
 		InteractionStarter: starter,
-		RuntimeEnabled: func(_ context.Context, gotChatID, gotOpenID string) bool {
-			gateChatID, gateOpenID = gotChatID, gotOpenID
+		RuntimeEnabled: func(_ context.Context, gotChatID string) bool {
+			gateChatID = gotChatID
 			return enabled
 		},
 	})
@@ -150,9 +150,8 @@ func TestMessageProcessorInjectsInteractionStarterOnlyWhenChatRuntimeEnabled(t *
 	if _, ok := agentruntime.InteractionStarterFromContext(disabledCtx); ok {
 		t.Fatal("disabled chat received an interaction starter")
 	}
-	if gateChatID != chatID || gateOpenID != openID {
-		t.Fatalf("runtime gate identity = %q/%q, want %q/%q",
-			gateChatID, gateOpenID, chatID, openID)
+	if gateChatID != chatID {
+		t.Fatalf("runtime gate chat identity = %q, want %q", gateChatID, chatID)
 	}
 
 	enabled = true

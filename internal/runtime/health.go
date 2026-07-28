@@ -55,6 +55,7 @@ type Registry struct {
 	updatedAt time.Time
 	items     map[string]ComponentStatus
 	providers map[string]StatsProvider
+	health    map[string]DynamicHealthProvider
 }
 
 // NewRegistry 创建一个空注册表，并初始化时间戳，避免第一份快照出现零值时间。
@@ -62,6 +63,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		items:     make(map[string]ComponentStatus),
 		providers: make(map[string]StatsProvider),
+		health:    make(map[string]DynamicHealthProvider),
 		updatedAt: time.Now(),
 	}
 }
@@ -110,6 +112,15 @@ func (r *Registry) RegisterProvider(name string, provider StatsProvider) {
 	r.providers[name] = provider
 }
 
+func (r *Registry) RegisterDynamicHealth(name string, provider DynamicHealthProvider) {
+	if r == nil || name == "" || provider == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.health[name] = provider
+}
+
 // Update 更新组件当前状态，并复制一份 stats，避免模块后续继续修改 map
 // 时和读取方发生数据竞争。
 func (r *Registry) Update(name string, state State, message string, stats map[string]any) {
@@ -147,6 +158,10 @@ func (r *Registry) Snapshot() Snapshot {
 	for name, provider := range r.providers {
 		providers[name] = provider
 	}
+	healthProviders := make(map[string]DynamicHealthProvider, len(r.health))
+	for name, provider := range r.health {
+		healthProviders[name] = provider
+	}
 	r.mu.RUnlock()
 
 	components := make([]ComponentStatus, 0, len(items))
@@ -159,11 +174,17 @@ func (r *Registry) Snapshot() Snapshot {
 		} else {
 			copied.Stats = cloneStats(item.Stats)
 		}
+		if provider := healthProviders[name]; provider != nil && item.State == StateReady {
+			copied.State, copied.Message = safeDynamicHealth(provider)
+			if copied.State != item.State || copied.Message != item.Message {
+				copied.UpdatedAt = time.Now()
+			}
+		}
 		components = append(components, copied)
-		if item.Critical && item.State != StateReady {
+		if copied.Critical && copied.State != StateReady {
 			ready = false
 		}
-		if item.State == StateDegraded || item.State == StateFailed {
+		if copied.State == StateDegraded || copied.State == StateFailed {
 			degraded = true
 		}
 	}
@@ -194,6 +215,20 @@ func safeProviderStats(provider StatsProvider) (stats map[string]any) {
 		}
 	}()
 	return cloneStats(provider.Stats())
+}
+
+func safeDynamicHealth(provider DynamicHealthProvider) (state State, message string) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			state = StateDegraded
+			message = "dynamic health provider panicked"
+		}
+	}()
+	state, message = provider.DynamicHealth()
+	if state != StateReady && state != StateDegraded {
+		return StateDegraded, "dynamic health provider returned an invalid state"
+	}
+	return state, message
 }
 
 // cloneStats 对 stats map 做一次防御性复制，因为模块可能在快照生成后

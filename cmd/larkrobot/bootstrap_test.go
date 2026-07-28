@@ -58,6 +58,14 @@ func TestNewAppComponentsRejectsUnsafeConversationBudgets(t *testing.T) {
 	}
 }
 
+func TestBuildAppAllowsMissingArkConfigWhenRuntimeIsDisabledByDefault(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	cfg.ArkConfig = nil
+	if _, err := buildApp(cfg); err != nil {
+		t.Fatalf("buildApp() with disabled-by-default runtime and nil Ark config error = %v", err)
+	}
+}
+
 func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	app, err := buildApp(cfg)
@@ -75,6 +83,13 @@ func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 			t.Fatalf("missing runtime component %q: %+v", name, snapshot.Components)
 		}
 	}
+	names := app.ModuleNames()
+	assertModuleBefore(t, names, "conversation_executor", "application_services")
+	assertModuleBefore(t, names, "conversation_projection_executor", "application_services")
+	assertModuleBefore(t, names, "application_services", "conversation_runtime_worker")
+	assertModuleBefore(t, names, "application_services", "conversation_projection_worker")
+	assertModuleBefore(t, names, "conversation_runtime_worker", "lark_ws")
+	assertModuleBefore(t, names, "conversation_projection_worker", "lark_ws")
 }
 
 func testConversationRuntimeConfig() *infraConfig.BaseConfig {
@@ -99,4 +114,20 @@ func hasComponent(items []appruntime.ComponentStatus, name string) bool {
 		}
 	}
 	return false
+}
+
+func assertModuleBefore(t *testing.T, names []string, first, second string) {
+	t.Helper()
+	firstIndex, secondIndex := -1, -1
+	for index, name := range names {
+		switch name {
+		case first:
+			firstIndex = index
+		case second:
+			secondIndex = index
+		}
+	}
+	if firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex {
+		t.Fatalf("module order %q before %q not satisfied: %v", first, second, names)
+	}
 }

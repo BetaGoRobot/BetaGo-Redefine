@@ -35,6 +35,13 @@ type StatsProvider interface {
 	Stats() map[string]any
 }
 
+// DynamicHealthProvider lets long-running modules refine their ready state
+// after startup. Implementations are invoked outside Registry locks and may
+// report only ready or degraded; lifecycle states remain owned by App.
+type DynamicHealthProvider interface {
+	DynamicHealth() (State, string)
+}
+
 // FuncModule 是这轮改造里最轻量的适配器，用闭包把现有包裹进 Module
 // 契约，而不要求旧代码立刻重写成完整结构体。
 type FuncModule struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -260,6 +261,31 @@ func TestContinuationProcessorRetriesOnlyFailedStage(t *testing.T) {
 	}
 	if store.retries != 1 || store.step.Kind != StepKindDecide {
 		t.Fatalf("retries=%d step=%#v", store.retries, store.step)
+	}
+}
+
+func TestContinuationProcessorWithMissingModelFailsOnlyWhenEnabledWorkExecutes(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{ID: "step-model", RunID: "run-1", Kind: StepKindDecide, Status: StepStatusQueued},
+		context: ContinuationContext{
+			RunID:         "run-1",
+			LatestOutcome: ConversationEvent{Type: EventTypeCapabilityResult, Payload: []byte(`{}`)},
+		},
+	}
+	processor := NewContinuationProcessor(
+		store,
+		NewContinuationGenerator(""),
+		&replyDelivererFake{},
+		ContinuationProcessorConfig{
+			WorkerID: "worker-1", LeaseTTL: time.Minute, RetryDelay: time.Second,
+		},
+	)
+	err := processor.ProcessRun(context.Background(), "run-1")
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("ProcessRun() error = %v, want missing model configuration", err)
+	}
+	if store.retries != 1 || store.step.Status != StepStatusQueued {
+		t.Fatalf("missing model retry state retries=%d step=%#v", store.retries, store.step)
 	}
 }
 

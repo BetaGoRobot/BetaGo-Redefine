@@ -226,6 +226,25 @@ func TestConversationRuntimeGlobalHelpersDefaultOff(t *testing.T) {
 	}
 }
 
+func TestConversationRuntimeChatActivationIgnoresUserOnlyOverride(t *testing.T) {
+	manager := NewManager()
+	manager.cache[buildConfigKey(
+		ScopeUser,
+		"chat-user-only",
+		"user-enabled",
+		KeyConversationRuntimeEnabled,
+	)] = "true"
+
+	if manager.GetBool(
+		context.Background(),
+		KeyConversationRuntimeEnabled,
+		"chat-user-only",
+		"",
+	) {
+		t.Fatal("user-only runtime override enabled a chat-level activation lookup")
+	}
+}
+
 func TestConfigDefaultDisplayValueSupportsStringDefaults(t *testing.T) {
 	oldConfig := currentBaseConfig
 	currentBaseConfig = func() *infraConfig.BaseConfig {

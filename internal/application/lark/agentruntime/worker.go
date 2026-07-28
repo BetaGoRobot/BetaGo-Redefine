@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 )
+
+const workerDegradedFailureThreshold = 3
 
 type conversationWorkerRuntime interface {
 	SubmitDueContinuations(context.Context, int) (int, error)
@@ -39,12 +43,14 @@ type workerState struct {
 	done   chan struct{}
 
 	running       bool
+	stopping      bool
 	iterations    int64
 	failures      int64
 	lastSubmitted int
 	lastExpired   int
 	lastSuccessAt time.Time
 	lastError     string
+	terminalError string
 }
 
 type ConversationWorker struct {
@@ -124,6 +130,13 @@ func (w *ConversationWorker) Stats() map[string]any {
 		return nil
 	}
 	return w.state.stats(w.options.BatchSize, w.options.Interval)
+}
+
+func (w *ConversationWorker) DynamicHealth() (appruntime.State, string) {
+	if w == nil {
+		return appruntime.StateDegraded, "conversation worker is nil"
+	}
+	return w.state.dynamicHealth()
 }
 
 type ProjectionWorker struct {
@@ -212,6 +225,13 @@ func (w *ProjectionWorker) Stats() map[string]any {
 	return w.state.stats(w.options.BatchSize, w.options.Interval)
 }
 
+func (w *ProjectionWorker) DynamicHealth() (appruntime.State, string) {
+	if w == nil {
+		return appruntime.StateDegraded, "projection worker is nil"
+	}
+	return w.state.dynamicHealth()
+}
+
 func normalizeWorkerTiming(
 	maxBackoff *time.Duration,
 	interval time.Duration,
@@ -276,7 +296,7 @@ func waitWorker(ctx context.Context, delay time.Duration) bool {
 func (s *workerState) start(parent context.Context, loop func(context.Context)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running {
+	if s.running || s.stopping {
 		return nil
 	}
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(parent))
@@ -284,6 +304,8 @@ func (s *workerState) start(parent context.Context, loop func(context.Context)) 
 	s.cancel = cancel
 	s.done = done
 	s.running = true
+	s.stopping = false
+	s.terminalError = ""
 	go s.executeLoop(loopCtx, done, loop)
 	return nil
 }
@@ -293,33 +315,57 @@ func (s *workerState) executeLoop(
 	done chan struct{},
 	loop func(context.Context),
 ) {
-	defer close(done)
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			s.record(fmt.Errorf("worker panic: %v", recovered), 0, 0, time.Now().UTC())
-		}
+	var terminalErr error
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				terminalErr = fmt.Errorf("worker panic: %v", recovered)
+			}
+		}()
+		loop(ctx)
 	}()
-	loop(ctx)
+	if terminalErr == nil && ctx.Err() == nil {
+		terminalErr = errors.New("worker loop exited unexpectedly")
+	}
+	s.finish(done, terminalErr)
+	close(done)
 }
 
 func (s *workerState) stop(ctx context.Context) error {
 	s.mu.Lock()
-	if !s.running {
+	if !s.running && !s.stopping {
 		s.mu.Unlock()
 		return nil
 	}
 	cancel := s.cancel
 	done := s.done
-	s.running = false
-	s.cancel = nil
-	s.done = nil
+	if !s.stopping {
+		s.stopping = true
+		cancel()
+	}
 	s.mu.Unlock()
-	cancel()
 	select {
 	case <-done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (s *workerState) finish(done chan struct{}, terminalErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done != done {
+		return
+	}
+	s.running = false
+	s.stopping = false
+	s.cancel = nil
+	s.done = nil
+	if terminalErr != nil {
+		s.failures++
+		s.lastError = terminalErr.Error()
+		s.terminalError = terminalErr.Error()
 	}
 }
 
@@ -349,6 +395,7 @@ func (s *workerState) stats(batchSize int, interval time.Duration) map[string]an
 	defer s.mu.RUnlock()
 	stats := map[string]any{
 		"running":            s.running,
+		"stopping":           s.stopping,
 		"iterations":         s.iterations,
 		"consecutive_errors": s.failures,
 		"last_submitted":     s.lastSubmitted,
@@ -362,5 +409,24 @@ func (s *workerState) stats(batchSize int, interval time.Duration) map[string]an
 	if s.lastError != "" {
 		stats["last_error"] = s.lastError
 	}
+	if s.terminalError != "" {
+		stats["terminal_error"] = s.terminalError
+	}
 	return stats
+}
+
+func (s *workerState) dynamicHealth() (appruntime.State, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.terminalError != "" {
+		return appruntime.StateDegraded, s.terminalError
+	}
+	if s.failures >= workerDegradedFailureThreshold {
+		return appruntime.StateDegraded, fmt.Sprintf(
+			"%d consecutive worker errors: %s",
+			s.failures,
+			s.lastError,
+		)
+	}
+	return appruntime.StateReady, ""
 }
