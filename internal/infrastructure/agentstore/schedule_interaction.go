@@ -507,12 +507,16 @@ func validateScheduleOutcomeValues(
 			result.TaskID != outcome.TaskID {
 			return agentruntime.ErrInteractionConflict
 		}
-		if len(result.Name) > 0 {
-			var name string
-			if bytes.Equal(bytes.TrimSpace(result.Name), []byte("null")) ||
-				json.Unmarshal(result.Name, &name) != nil {
-				return agentruntime.ErrInteractionConflict
-			}
+		if len(result.Name) == 0 ||
+			bytes.Equal(bytes.TrimSpace(result.Name), []byte("null")) {
+			return agentruntime.ErrInteractionConflict
+		}
+		var name string
+		if json.Unmarshal(result.Name, &name) != nil {
+			return agentruntime.ErrInteractionConflict
+		}
+		if trusted.NewValues.Name != nil && name != *trusted.NewValues.Name {
+			return agentruntime.ErrInteractionConflict
 		}
 	case agentruntime.ScheduleInteractionCancel:
 		if outcome.Status != "cancelled_by_user" {

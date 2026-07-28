@@ -445,6 +445,18 @@ func TestScheduleInteractionRejectsInvalidResultContractWithoutResolving(t *test
 			result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":null}`),
 		},
 		{
+			name: "confirm missing name", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1"}`),
+		},
+		{
+			name: "confirm nonstring name", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":42}`),
+		},
+		{
+			name: "confirm forged edited name", action: agentruntime.ScheduleInteractionConfirm,
+			result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"forged-name"}`),
+		},
+		{
 			name: "cancel arbitrary result", action: agentruntime.ScheduleInteractionCancel,
 			result: json.RawMessage(`{"status":"cancelled_by_user","task_id":"task-1"}`),
 		},
@@ -476,6 +488,31 @@ func TestScheduleInteractionRejectsInvalidResultContractWithoutResolving(t *test
 			}
 			assertScheduleInteractionStillWaiting(t, f)
 		})
+	}
+}
+
+func TestScheduleInteractionAllowsCurrentNameWhenEditingDifferentField(t *testing.T) {
+	trusted := json.RawMessage(`{
+		"version":1,
+		"task_id":"task-1",
+		"initiator_open_id":"ou-actor",
+		"chat_id":"oc-chat",
+		"new_values":{"message":"new-message"}
+	}`)
+	f, start, request := newScheduleInteractionFixtureWithTrustedInput(t, trusted)
+	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	outcome := agentruntime.ScheduleInteractionOutcome{
+		Status: "updated", TaskID: "task-1", InteractionID: start.InteractionID,
+		Action: request.Action,
+		Result: json.RawMessage(`{"status":"updated","task_id":"task-1","name":"existing-name"}`),
+	}
+
+	if _, err := f.repo.CompleteScheduleInteraction(context.Background(), agentruntime.CompleteScheduleInteractionRequest{
+		Request: request, Outcome: outcome,
+	}); err != nil {
+		t.Fatalf("CompleteScheduleInteraction(non-name edit) error = %v", err)
 	}
 }
 
@@ -661,17 +698,25 @@ func newScheduleInteractionFixture(
 	t *testing.T,
 ) (*repositoryFixture, agentruntime.StartInteractionRequest, agentruntime.ScheduleInteractionRequest) {
 	t.Helper()
-	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	start := startInteractionRequest(f.runID, "correct-token", now)
-	start.InteractionKind = "schedule_edit"
-	start.TrustedInput = json.RawMessage(`{
+	return newScheduleInteractionFixtureWithTrustedInput(t, json.RawMessage(`{
 		"version":1,
 		"task_id":"task-1",
 		"initiator_open_id":"ou-actor",
 		"chat_id":"oc-chat",
 		"new_values":{"name":"new-name"}
-	}`)
+	}`))
+}
+
+func newScheduleInteractionFixtureWithTrustedInput(
+	t *testing.T,
+	trustedInput json.RawMessage,
+) (*repositoryFixture, agentruntime.StartInteractionRequest, agentruntime.ScheduleInteractionRequest) {
+	t.Helper()
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	start := startInteractionRequest(f.runID, "correct-token", now)
+	start.InteractionKind = "schedule_edit"
+	start.TrustedInput = append(json.RawMessage(nil), trustedInput...)
 	run, _, err := f.repo.StartInteraction(context.Background(), start)
 	if err != nil {
 		t.Fatalf("StartInteraction() error = %v", err)
