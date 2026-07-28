@@ -1,12 +1,81 @@
 package agentruntime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+type testInteractionStarter struct{}
+
+func (*testInteractionStarter) StartScheduleEdit(context.Context, StartScheduleEditRequest) (*RuntimeEnvelope, error) {
+	return nil, nil
+}
+
+func TestInteractionStarterContextRoundTrip(t *testing.T) {
+	starter := &testInteractionStarter{}
+	ctx := WithInteractionStarter(context.Background(), starter)
+
+	got, ok := InteractionStarterFromContext(ctx)
+	if !ok || got != starter {
+		t.Fatalf("InteractionStarterFromContext() = (%v, %v), want original starter", got, ok)
+	}
+}
+
+func TestInteractionStarterContextRejectsNilAndTypedNil(t *testing.T) {
+	var typedNil *testInteractionStarter
+	parent := WithInteractionStarter(context.Background(), &testInteractionStarter{})
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		starter InteractionStarter
+	}{
+		{name: "nil", ctx: context.Background(), starter: nil},
+		{name: "typed nil", ctx: context.Background(), starter: typedNil},
+		{name: "nil overrides parent", ctx: parent, starter: nil},
+		{name: "typed nil overrides parent", ctx: parent, starter: typedNil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := WithInteractionStarter(tt.ctx, tt.starter)
+			if got, ok := InteractionStarterFromContext(ctx); ok || got != nil {
+				t.Fatalf("InteractionStarterFromContext() = (%v, %v), want unavailable", got, ok)
+			}
+		})
+	}
+}
+
+func TestStartScheduleEditRequestCloneDefensivelyCopiesNewValues(t *testing.T) {
+	original := StartScheduleEditRequest{
+		TaskID:          "task-1",
+		ActorOpenID:     "ou-1",
+		ChatID:          "oc-1",
+		SourceMessageID: "om-1",
+		NewValues:       map[string]any{"name": "before"},
+	}
+
+	cloned := original.Clone()
+	original.NewValues["name"] = "after"
+	cloned.NewValues["timezone"] = "Asia/Shanghai"
+
+	if got := cloned.NewValues["name"]; got != "before" {
+		t.Fatalf("cloned name = %v, want before", got)
+	}
+	if _, ok := original.NewValues["timezone"]; ok {
+		t.Fatal("clone mutation changed original NewValues")
+	}
+	if !reflect.DeepEqual(cloned.NewValues, map[string]any{
+		"name":     "before",
+		"timezone": "Asia/Shanghai",
+	}) {
+		t.Fatalf("unexpected cloned NewValues: %#v", cloned.NewValues)
+	}
+}
 
 func TestHashInteractionTokenTrimsBeforeHashing(t *testing.T) {
 	plain := HashInteractionToken("secret-token")

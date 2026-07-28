@@ -1,12 +1,308 @@
 package schedule
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	"github.com/bytedance/mockey"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type editHandleTestService struct {
+	noopService
+	task *model.ScheduledTask
+}
+
+func (s editHandleTestService) GetTask(context.Context, string) (*model.ScheduledTask, error) {
+	return s.task, nil
+}
+
+type recordingInteractionStarter struct {
+	request  agentruntime.StartScheduleEditRequest
+	envelope *agentruntime.RuntimeEnvelope
+	err      error
+	mutate   bool
+	calls    int
+}
+
+func (s *recordingInteractionStarter) StartScheduleEdit(
+	_ context.Context,
+	req agentruntime.StartScheduleEditRequest,
+) (*agentruntime.RuntimeEnvelope, error) {
+	s.calls++
+	s.request = req.Clone()
+	if s.mutate {
+		req.NewValues[editFieldName] = "starter-mutated-value"
+	}
+	return s.envelope, s.err
+}
+
+func TestEditScheduleHandleUsesDurableRuntimeWait(t *testing.T) {
+	resetPendingEditsForTest(t)
+	envelope := validScheduleEditEnvelope()
+	starter := &recordingInteractionStarter{envelope: &envelope, mutate: true}
+	var sentCard any
+	sendCalls := 0
+	patchEditHandleDependencies(t, func(_ context.Context, _, _ string, card any) (string, error) {
+		sendCalls++
+		sentCard = card
+		return "om-card", nil
+	})
+
+	ctx := agentruntime.WithInteractionStarter(context.Background(), starter)
+	meta := &xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"}
+	name := "可信的新名称"
+	err := EditSchedule.Handle(ctx, editScheduleEvent("om-source"), meta, editScheduleArgs{
+		ID:   "task-1",
+		Name: &name,
+	})
+	if err != nil {
+		t.Fatalf("EditSchedule.Handle() error = %v", err)
+	}
+	if starter.calls != 1 || sendCalls != 1 {
+		t.Fatalf("calls = starter:%d send:%d, want 1 each", starter.calls, sendCalls)
+	}
+	if starter.request.TaskID != "task-1" ||
+		starter.request.ActorOpenID != "ou-creator" ||
+		starter.request.ChatID != "oc-chat" ||
+		starter.request.SourceMessageID != "om-source" ||
+		starter.request.NewValues[editFieldName] != name {
+		t.Fatalf("unexpected trusted start request: %#v", starter.request)
+	}
+	assertNoPendingEdits(t)
+
+	payloads := collectActionPayloads(sentCard)
+	if payloads["agent.runtime.resume"] == nil || payloads["agent.runtime.reject"] == nil {
+		t.Fatal("runtime card missing continuation actions")
+	}
+	cardJSON, err := json.Marshal(sentCard)
+	if err != nil {
+		t.Fatalf("json.Marshal(card) error = %v", err)
+	}
+	if !strings.Contains(string(cardJSON), name) || strings.Contains(string(cardJSON), "starter-mutated-value") {
+		t.Fatal("starter mutation leaked back into rendered card")
+	}
+	result, ok := meta.GetExtra(scheduleToolResultKey)
+	if !ok ||
+		!strings.Contains(result, envelope.RunID) ||
+		!strings.Contains(result, envelope.StepID) ||
+		!strings.Contains(result, envelope.InteractionID) ||
+		strings.Contains(result, envelope.Token) {
+		t.Fatal("runtime result metadata is incomplete or exposes the interaction token")
+	}
+}
+
+func TestEditScheduleHandleKeepsLegacyPendingEditFallback(t *testing.T) {
+	resetPendingEditsForTest(t)
+	var sentCard any
+	patchEditHandleDependencies(t, func(_ context.Context, _, _ string, card any) (string, error) {
+		sentCard = card
+		return "om-card", nil
+	})
+
+	meta := &xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"}
+	name := "legacy-name"
+	err := EditSchedule.Handle(context.Background(), editScheduleEvent("om-source"), meta, editScheduleArgs{
+		ID:   "task-1",
+		Name: &name,
+	})
+	if err != nil {
+		t.Fatalf("EditSchedule.Handle() error = %v", err)
+	}
+
+	payload := collectActionPayloads(sentCard)[editConfirmAction]
+	token, _ := payload[editTokenField].(string)
+	if token == "" {
+		t.Fatal("legacy confirm card missing edit token")
+	}
+	pending, ok := GetPendingEdit(token)
+	if !ok || pending.TaskID != "task-1" || pending.ActorOpenID != "ou-creator" ||
+		pending.NewValues[editFieldName] != name {
+		t.Fatalf("unexpected legacy pending edit: %#v, %v", pending, ok)
+	}
+	if _, ok := payload["run_id"]; ok {
+		t.Fatal("legacy payload unexpectedly contains runtime fields")
+	}
+}
+
+func TestEditScheduleHandleStarterFailureDoesNotSendOrFallback(t *testing.T) {
+	resetPendingEditsForTest(t)
+	starterErr := errors.New("durable wait unavailable")
+	starter := &recordingInteractionStarter{err: starterErr}
+	sendCalls := 0
+	patchEditHandleDependencies(t, func(context.Context, string, string, any) (string, error) {
+		sendCalls++
+		return "", nil
+	})
+
+	name := "new-name"
+	err := EditSchedule.Handle(
+		agentruntime.WithInteractionStarter(context.Background(), starter),
+		editScheduleEvent("om-source"),
+		&xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"},
+		editScheduleArgs{ID: "task-1", Name: &name},
+	)
+	if !errors.Is(err, starterErr) {
+		t.Fatalf("EditSchedule.Handle() error = %v, want starter error", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send calls = %d, want 0", sendCalls)
+	}
+	assertNoPendingEdits(t)
+}
+
+func TestEditScheduleHandleRejectsInvalidRuntimeEnvelopeBeforeSend(t *testing.T) {
+	resetPendingEditsForTest(t)
+	envelope := validScheduleEditEnvelope()
+	envelope.InteractionKind = "other"
+	starter := &recordingInteractionStarter{envelope: &envelope}
+	sendCalls := 0
+	patchEditHandleDependencies(t, func(context.Context, string, string, any) (string, error) {
+		sendCalls++
+		return "", nil
+	})
+
+	name := "new-name"
+	err := EditSchedule.Handle(
+		agentruntime.WithInteractionStarter(context.Background(), starter),
+		editScheduleEvent("om-source"),
+		&xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"},
+		editScheduleArgs{ID: "task-1", Name: &name},
+	)
+	if err == nil || !strings.Contains(err.Error(), "schedule_edit") {
+		t.Fatalf("EditSchedule.Handle() error = %v, want invalid schedule_edit envelope", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send calls = %d, want 0", sendCalls)
+	}
+	assertNoPendingEdits(t)
+}
+
+func TestEditScheduleHandleCleansLegacyPendingEditWhenSendFails(t *testing.T) {
+	resetPendingEditsForTest(t)
+	sendErr := errors.New("send failed")
+	patchEditHandleDependencies(t, func(context.Context, string, string, any) (string, error) {
+		return "", sendErr
+	})
+
+	name := "new-name"
+	err := EditSchedule.Handle(
+		context.Background(),
+		editScheduleEvent("om-source"),
+		&xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"},
+		editScheduleArgs{ID: "task-1", Name: &name},
+	)
+	if !errors.Is(err, sendErr) {
+		t.Fatalf("EditSchedule.Handle() error = %v, want send error", err)
+	}
+	assertNoPendingEdits(t)
+}
+
+func TestEditScheduleHandleRuntimeSendFailureDoesNotFallback(t *testing.T) {
+	resetPendingEditsForTest(t)
+	envelope := validScheduleEditEnvelope()
+	starter := &recordingInteractionStarter{envelope: &envelope}
+	sendErr := errors.New("send failed")
+	patchEditHandleDependencies(t, func(context.Context, string, string, any) (string, error) {
+		return "", sendErr
+	})
+
+	name := "new-name"
+	err := EditSchedule.Handle(
+		agentruntime.WithInteractionStarter(context.Background(), starter),
+		editScheduleEvent("om-source"),
+		&xhandler.BaseMetaData{ChatID: "oc-chat", OpenID: "ou-creator"},
+		editScheduleArgs{ID: "task-1", Name: &name},
+	)
+	if !errors.Is(err, sendErr) {
+		t.Fatalf("EditSchedule.Handle() error = %v, want send error", err)
+	}
+	if starter.calls != 1 {
+		t.Fatalf("starter calls = %d, want 1", starter.calls)
+	}
+	assertNoPendingEdits(t)
+}
+
+func validScheduleEditEnvelope() agentruntime.RuntimeEnvelope {
+	return agentruntime.RuntimeEnvelope{
+		RunID:           "run-1",
+		StepID:          "step-1",
+		InteractionID:   "interaction-1",
+		Revision:        4,
+		Token:           "opaque-runtime-token",
+		InteractionKind: "schedule_edit",
+		ContinueAgent:   true,
+	}
+}
+
+func editScheduleEvent(messageID string) *larkim.P2MessageReceiveV1 {
+	return &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{MessageId: &messageID},
+		},
+	}
+}
+
+func patchEditHandleDependencies(
+	t *testing.T,
+	send func(context.Context, string, string, any) (string, error),
+) {
+	t.Helper()
+	task := &model.ScheduledTask{
+		ID:        "task-1",
+		Name:      "original-name",
+		Timezone:  "Asia/Shanghai",
+		CreatorID: "ou-creator",
+		ChatID:    "oc-chat",
+	}
+	service := TaskService(editHandleTestService{
+		noopService: noopService{reason: "unused test methods"},
+		task:        task,
+	})
+	servicePatch := mockey.Mock(GetService).Return(service).Build()
+	sendPatch := mockey.Mock(larkmsg.SendEphemeralCard).To(send).Build()
+	t.Cleanup(func() {
+		sendPatch.UnPatch()
+		servicePatch.UnPatch()
+	})
+}
+
+func resetPendingEditsForTest(t *testing.T) {
+	t.Helper()
+	deleteAll := func() {
+		pendingEditsMu.RLock()
+		tokens := make([]string, 0, len(pendingEdits))
+		for token := range pendingEdits {
+			tokens = append(tokens, token)
+		}
+		pendingEditsMu.RUnlock()
+		for _, token := range tokens {
+			DeletePendingEdit(token)
+		}
+	}
+	deleteAll()
+	t.Cleanup(deleteAll)
+}
+
+func assertNoPendingEdits(t *testing.T) {
+	t.Helper()
+	pendingEditsMu.RLock()
+	defer pendingEditsMu.RUnlock()
+	if len(pendingEdits) != 0 {
+		t.Fatalf("pending edit count = %d, want 0", len(pendingEdits))
+	}
+	if len(pendingEditTimers) != 0 {
+		t.Fatalf("pending edit timer count = %d, want 0", len(pendingEditTimers))
+	}
+}
 
 func TestFilterQueriedSchedules(t *testing.T) {
 	tasks := []*model.ScheduledTask{

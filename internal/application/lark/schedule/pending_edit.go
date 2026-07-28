@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// PendingEdit represents a pending edit operation waiting for user confirmation
+// PendingEdit represents an in-memory legacy edit confirmation. It is used only
+// when the request has no Conversation Runtime envelope; durable runtime waits
+// persist their trusted capability inputs outside this fallback map.
 type PendingEdit struct {
 	TaskID      string
 	ActorOpenID string
@@ -16,9 +18,10 @@ type PendingEdit struct {
 }
 
 var (
-	pendingEdits   = make(map[string]*PendingEdit)
-	pendingEditsMu sync.RWMutex
-	pendingEditTTL = 10 * time.Minute
+	pendingEdits      = make(map[string]*PendingEdit)
+	pendingEditTimers = make(map[string]*time.Timer)
+	pendingEditsMu    sync.RWMutex
+	pendingEditTTL    = 10 * time.Minute
 )
 
 func generateEditToken() string {
@@ -44,14 +47,24 @@ func formatNanoTime(t int64) string {
 }
 
 func storePendingEdit(token string, edit *PendingEdit) error {
+	return storeLegacyPendingEdit(token, edit)
+}
+
+// storeLegacyPendingEdit preserves the old token callback path for cards that
+// were created without a Conversation Runtime envelope.
+func storeLegacyPendingEdit(token string, edit *PendingEdit) error {
 	pendingEditsMu.Lock()
 	defer pendingEditsMu.Unlock()
+	if timer := pendingEditTimers[token]; timer != nil {
+		timer.Stop()
+	}
 	pendingEdits[token] = edit
 
 	// Expire stale edit confirmations without blocking the card callback path.
-	time.AfterFunc(pendingEditTTL, func() {
+	pendingEditTimers[token] = time.AfterFunc(pendingEditTTL, func() {
 		pendingEditsMu.Lock()
 		delete(pendingEdits, token)
+		delete(pendingEditTimers, token)
 		pendingEditsMu.Unlock()
 	})
 	return nil
@@ -67,5 +80,9 @@ func GetPendingEdit(token string) (*PendingEdit, bool) {
 func DeletePendingEdit(token string) {
 	pendingEditsMu.Lock()
 	defer pendingEditsMu.Unlock()
+	if timer := pendingEditTimers[token]; timer != nil {
+		timer.Stop()
+	}
+	delete(pendingEditTimers, token)
 	delete(pendingEdits, token)
 }
