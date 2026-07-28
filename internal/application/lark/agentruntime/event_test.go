@@ -2,6 +2,7 @@ package agentruntime
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -54,19 +55,32 @@ func TestRuntimeEnvelopeValidateRejectsInvalidFields(t *testing.T) {
 		mutate func(*RuntimeEnvelope)
 	}{
 		{name: "missing run id", mutate: func(e *RuntimeEnvelope) { e.RunID = "" }},
+		{name: "non-canonical run id", mutate: func(e *RuntimeEnvelope) { e.RunID = " run_1" }},
 		{name: "missing step id", mutate: func(e *RuntimeEnvelope) { e.StepID = "" }},
+		{name: "non-canonical step id", mutate: func(e *RuntimeEnvelope) { e.StepID = "step_1 " }},
 		{name: "missing interaction id", mutate: func(e *RuntimeEnvelope) { e.InteractionID = "" }},
+		{name: "non-canonical interaction id", mutate: func(e *RuntimeEnvelope) { e.InteractionID = "\tix_1" }},
 		{name: "zero revision", mutate: func(e *RuntimeEnvelope) { e.Revision = 0 }},
 		{name: "negative revision", mutate: func(e *RuntimeEnvelope) { e.Revision = -1 }},
 		{name: "missing token", mutate: func(e *RuntimeEnvelope) { e.Token = "" }},
+		{name: "non-canonical token", mutate: func(e *RuntimeEnvelope) { e.Token = " secret" }},
+		{name: "missing interaction kind", mutate: func(e *RuntimeEnvelope) { e.InteractionKind = "" }},
+		{name: "non-canonical interaction kind", mutate: func(e *RuntimeEnvelope) { e.InteractionKind = "approval " }},
 		{name: "continue agent false", mutate: func(e *RuntimeEnvelope) { e.ContinueAgent = false }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			envelope := valid
 			tt.mutate(&envelope)
-			if err := envelope.Validate(); err == nil {
+			err := envelope.Validate()
+			if err == nil {
 				t.Fatal("Validate() error = nil, want rejection")
+			}
+			if !errors.Is(err, ErrInvalidRuntimeContract) {
+				t.Fatalf("Validate() error = %v, want ErrInvalidRuntimeContract", err)
+			}
+			if strings.Contains(err.Error(), valid.Token) {
+				t.Fatalf("Validate() error leaked token: %v", err)
 			}
 		})
 	}
@@ -156,8 +170,72 @@ func TestConversationEventDedupeKeyForCardAction(t *testing.T) {
 		Revision:      3,
 		Action:        "confirm",
 	}
-	if got, want := event.DedupeKey(), "card_action:ix_1:3:confirm"; got != want {
+	got, err := event.DedupeKey()
+	if err != nil {
+		t.Fatalf("DedupeKey() error = %v", err)
+	}
+	if want := "card_action:ix_1:3:confirm"; got != want {
 		t.Fatalf("DedupeKey() = %q, want %q", got, want)
+	}
+}
+
+func TestConversationEventDedupeKeyNormalizesCardAction(t *testing.T) {
+	event := ConversationEvent{
+		Type:          EventTypeCardAction,
+		InteractionID: " ix_1 ",
+		Revision:      3,
+		Action:        "\tconfirm\n",
+	}
+	got, err := event.DedupeKey()
+	if err != nil {
+		t.Fatalf("DedupeKey() error = %v", err)
+	}
+	if want := "card_action:ix_1:3:confirm"; got != want {
+		t.Fatalf("DedupeKey() = %q, want %q", got, want)
+	}
+}
+
+func TestConversationEventDedupeKeyRejectsInvalidCardAction(t *testing.T) {
+	tests := []struct {
+		name  string
+		event ConversationEvent
+	}{
+		{
+			name:  "zero value",
+			event: ConversationEvent{Type: EventTypeCardAction},
+		},
+		{
+			name: "missing interaction id",
+			event: ConversationEvent{
+				Type: EventTypeCardAction, Revision: 1, Action: "confirm",
+			},
+		},
+		{
+			name: "invalid revision",
+			event: ConversationEvent{
+				Type: EventTypeCardAction, InteractionID: "ix_1", Action: "confirm",
+			},
+		},
+		{
+			name: "missing action",
+			event: ConversationEvent{
+				Type: EventTypeCardAction, InteractionID: "ix_1", Revision: 1,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, err := tt.event.DedupeKey()
+			if err == nil {
+				t.Fatalf("DedupeKey() = %q, want error", key)
+			}
+			if !errors.Is(err, ErrInvalidRuntimeContract) {
+				t.Fatalf("DedupeKey() error = %v, want ErrInvalidRuntimeContract", err)
+			}
+			if key != "" {
+				t.Fatalf("DedupeKey() key = %q on error, want empty", key)
+			}
+		})
 	}
 }
 
@@ -174,11 +252,62 @@ func TestConversationEventDedupeKeyPrefersStableSourceRef(t *testing.T) {
 		SourceRef: "om_42",
 		Payload:   json.RawMessage(`{"attempt":2}`),
 	}
-	if got, want := first.DedupeKey(), "source:om_42"; got != want {
+	firstKey, err := first.DedupeKey()
+	if err != nil {
+		t.Fatalf("first DedupeKey() error = %v", err)
+	}
+	if want := "source:om_42"; firstKey != want {
+		got := firstKey
 		t.Fatalf("first DedupeKey() = %q, want %q", got, want)
 	}
-	if got, want := retry.DedupeKey(), first.DedupeKey(); got != want {
+	retryKey, err := retry.DedupeKey()
+	if err != nil {
+		t.Fatalf("retry DedupeKey() error = %v", err)
+	}
+	if got, want := retryKey, firstKey; got != want {
 		t.Fatalf("retry DedupeKey() = %q, want stable key %q", got, want)
+	}
+}
+
+func TestConversationEventDedupeKeyRejectsUnknownType(t *testing.T) {
+	key, err := (ConversationEvent{ID: "evt_1", Type: EventType("unknown")}).DedupeKey()
+	if err == nil {
+		t.Fatalf("DedupeKey() = %q, want error", key)
+	}
+	if !errors.Is(err, ErrInvalidRuntimeContract) {
+		t.Fatalf("DedupeKey() error = %v, want ErrInvalidRuntimeContract", err)
+	}
+}
+
+func TestConversationEventDedupeKeyRejectsUnidentifiableEvent(t *testing.T) {
+	key, err := (ConversationEvent{Type: EventTypeMessage}).DedupeKey()
+	if err == nil {
+		t.Fatalf("DedupeKey() = %q, want error", key)
+	}
+	if !errors.Is(err, ErrInvalidRuntimeContract) {
+		t.Fatalf("DedupeKey() error = %v, want ErrInvalidRuntimeContract", err)
+	}
+}
+
+func TestConversationEventDedupeKeyNormalizesIdentityFields(t *testing.T) {
+	first := ConversationEvent{
+		Type:        EventTypeSchedule,
+		ChatID:      " oc_1 ",
+		ActorOpenID: " ou_1 ",
+		RunID:       " run_1 ",
+		OccurredAt:  time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
+	}
+	second := first
+	second.ChatID = "oc_1"
+	second.ActorOpenID = "ou_1"
+	second.RunID = "run_1"
+	firstKey, firstErr := first.DedupeKey()
+	secondKey, secondErr := second.DedupeKey()
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("DedupeKey() errors = (%v, %v)", firstErr, secondErr)
+	}
+	if firstKey != secondKey {
+		t.Fatalf("normalized identity keys differ: %q != %q", firstKey, secondKey)
 	}
 }
 
@@ -221,8 +350,11 @@ func TestConversationEventDedupeKeysAreStableAndDoNotEmptyCollide(t *testing.T) 
 	seen := make(map[string]string, len(tests))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			first := tt.event.DedupeKey()
-			second := tt.event.DedupeKey()
+			first, firstErr := tt.event.DedupeKey()
+			second, secondErr := tt.event.DedupeKey()
+			if firstErr != nil || secondErr != nil {
+				t.Fatalf("DedupeKey() errors = (%v, %v)", firstErr, secondErr)
+			}
 			if first == "" {
 				t.Fatal("DedupeKey() = empty")
 			}

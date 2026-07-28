@@ -1,8 +1,10 @@
 package agentruntime
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"strconv"
@@ -21,6 +23,8 @@ const (
 	EventTypeTimeout          EventType = "timeout"
 )
 
+var ErrInvalidRuntimeContract = errors.New("invalid conversation runtime contract")
+
 type RuntimeEnvelope struct {
 	RunID           string `json:"run_id"`
 	StepID          string `json:"step_id"`
@@ -32,22 +36,28 @@ type RuntimeEnvelope struct {
 }
 
 func (e RuntimeEnvelope) Validate() error {
-	switch {
-	case strings.TrimSpace(e.RunID) == "":
-		return fmt.Errorf("runtime envelope run_id is required")
-	case strings.TrimSpace(e.StepID) == "":
-		return fmt.Errorf("runtime envelope step_id is required")
-	case strings.TrimSpace(e.InteractionID) == "":
-		return fmt.Errorf("runtime envelope interaction_id is required")
-	case e.Revision <= 0:
-		return fmt.Errorf("runtime envelope revision must be positive")
-	case strings.TrimSpace(e.Token) == "":
-		return fmt.Errorf("runtime envelope token is required")
-	case !e.ContinueAgent:
-		return fmt.Errorf("runtime envelope continue_agent must be true")
-	default:
-		return nil
+	if err := validateCanonical("run_id", e.RunID); err != nil {
+		return err
 	}
+	if err := validateCanonical("step_id", e.StepID); err != nil {
+		return err
+	}
+	if err := validateCanonical("interaction_id", e.InteractionID); err != nil {
+		return err
+	}
+	if err := validateCanonical("interaction_kind", e.InteractionKind); err != nil {
+		return err
+	}
+	if err := validateCanonical("token", e.Token); err != nil {
+		return err
+	}
+	if e.Revision <= 0 {
+		return invalidRuntimeContract("revision must be positive")
+	}
+	if !e.ContinueAgent {
+		return invalidRuntimeContract("continue_agent must be true")
+	}
+	return nil
 }
 
 type ConversationEvent struct {
@@ -64,37 +74,84 @@ type ConversationEvent struct {
 	Payload       json.RawMessage `json:"payload"`
 }
 
-func (e ConversationEvent) DedupeKey() string {
+func (e ConversationEvent) DedupeKey() (string, error) {
 	if sourceRef := strings.TrimSpace(e.SourceRef); sourceRef != "" {
-		return "source:" + sourceRef
+		return "source:" + sourceRef, nil
 	}
 	if e.Type == EventTypeCardAction {
-		return fmt.Sprintf("card_action:%s:%d:%s", e.InteractionID, e.Revision, e.Action)
+		interactionID := strings.TrimSpace(e.InteractionID)
+		action := strings.TrimSpace(e.Action)
+		if interactionID == "" || action == "" || e.Revision <= 0 {
+			return "", invalidRuntimeContract("card action dedupe fields are invalid")
+		}
+		return fmt.Sprintf("card_action:%s:%d:%s", interactionID, e.Revision, action), nil
+	}
+	if !isKnownEventType(e.Type) {
+		return "", invalidRuntimeContract("event type is invalid")
 	}
 
 	eventType := string(e.Type)
-	if eventType == "" {
-		eventType = "event"
-	}
 	if id := strings.TrimSpace(e.ID); id != "" {
-		return eventType + ":" + id
+		return eventType + ":" + id, nil
+	}
+	if !e.hasDedupeMaterial() {
+		return "", invalidRuntimeContract("event has no dedupe material")
 	}
 
 	digest := sha256.New()
 	writeDedupePart(digest, string(e.Type))
-	writeDedupePart(digest, e.ChatID)
-	writeDedupePart(digest, e.ActorOpenID)
-	writeDedupePart(digest, e.RunID)
-	writeDedupePart(digest, e.InteractionID)
+	writeDedupePart(digest, strings.TrimSpace(e.ChatID))
+	writeDedupePart(digest, strings.TrimSpace(e.ActorOpenID))
+	writeDedupePart(digest, strings.TrimSpace(e.RunID))
+	writeDedupePart(digest, strings.TrimSpace(e.InteractionID))
 	writeDedupePart(digest, strconv.FormatInt(e.Revision, 10))
-	writeDedupePart(digest, e.Action)
+	writeDedupePart(digest, strings.TrimSpace(e.Action))
 	writeDedupePart(digest, e.OccurredAt.UTC().Format(time.RFC3339Nano))
 	writeDedupePart(digest, string(e.Payload))
-	return fmt.Sprintf("%s:%x", eventType, digest.Sum(nil))
+	return fmt.Sprintf("%s:%x", eventType, digest.Sum(nil)), nil
+}
+
+func (e ConversationEvent) hasDedupeMaterial() bool {
+	return strings.TrimSpace(e.ChatID) != "" ||
+		strings.TrimSpace(e.ActorOpenID) != "" ||
+		strings.TrimSpace(e.RunID) != "" ||
+		strings.TrimSpace(e.InteractionID) != "" ||
+		e.Revision != 0 ||
+		strings.TrimSpace(e.Action) != "" ||
+		!e.OccurredAt.IsZero() ||
+		len(bytes.TrimSpace(e.Payload)) > 0
+}
+
+func isKnownEventType(eventType EventType) bool {
+	switch eventType {
+	case EventTypeMessage,
+		EventTypeCardAction,
+		EventTypeCapabilityResult,
+		EventTypeSchedule,
+		EventTypeAsyncResult,
+		EventTypeTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func writeDedupePart(digest hash.Hash, value string) {
 	_, _ = fmt.Fprintf(digest, "%d:", len(value))
 	_, _ = digest.Write([]byte(value))
 	_, _ = digest.Write([]byte{0})
+}
+
+func validateCanonical(field, value string) error {
+	if value == "" {
+		return invalidRuntimeContract(field + " is required")
+	}
+	if strings.TrimSpace(value) != value {
+		return invalidRuntimeContract(field + " must not have surrounding whitespace")
+	}
+	return nil
+}
+
+func invalidRuntimeContract(reason string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidRuntimeContract, reason)
 }

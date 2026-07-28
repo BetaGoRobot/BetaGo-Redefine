@@ -18,7 +18,7 @@ const (
 )
 
 type RunCoordinator struct {
-	store Store
+	store CoordinatorStore
 }
 
 type StartRunRequest struct {
@@ -41,7 +41,7 @@ type StartRunResult struct {
 	Run     *AgentRun
 }
 
-func NewRunCoordinator(store Store) *RunCoordinator {
+func NewRunCoordinator(store CoordinatorStore) *RunCoordinator {
 	return &RunCoordinator{store: store}
 }
 
