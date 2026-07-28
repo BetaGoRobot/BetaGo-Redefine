@@ -45,10 +45,48 @@ func (f *continuationDispatcherFake) snapshot() (int, int, ContinuationRequest) 
 	return f.canHandleCall, f.dispatchCall, f.request
 }
 
+func registerSyncForTest(t *testing.T, action string, handler SyncHandler) {
+	t.Helper()
+	RegisterSync(action, handler)
+	cleanupRegisteredAction(t, action)
+}
+
+func registerAsyncForTest(t *testing.T, action string, handler AsyncHandler) {
+	t.Helper()
+	RegisterAsync(action, handler)
+	cleanupRegisteredAction(t, action)
+}
+
+func cleanupRegisteredAction(t *testing.T, action string) {
+	t.Helper()
+	t.Cleanup(func() {
+		defaultRegistry.mu.Lock()
+		defer defaultRegistry.mu.Unlock()
+		delete(defaultRegistry.handlers, action)
+	})
+}
+
+func TestRegistryTestRegistrationCleanup(t *testing.T) {
+	actionName := uniqueActionName("cleanup")
+
+	t.Run("registered during test", func(t *testing.T) {
+		registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+			return nil, nil
+		})
+		if _, ok := defaultRegistry.handler(actionName); !ok {
+			t.Fatalf("handler %q is not registered", actionName)
+		}
+	})
+
+	if _, ok := defaultRegistry.handler(actionName); ok {
+		t.Fatalf("handler %q leaked after test cleanup", actionName)
+	}
+}
+
 func TestDispatchWithOptionsPrefersRuntimeContinuationOverV1(t *testing.T) {
 	actionName := uniqueActionName("runtime_precedence")
 	v1Called := false
-	RegisterSync(actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
 		v1Called = true
 		return InfoToast("legacy"), nil
 	})
@@ -86,7 +124,7 @@ func TestDispatchWithOptionsPrefersRuntimeContinuationOverV1(t *testing.T) {
 func TestDispatchWithOptionsFallsBackToV1WhenContinuationCannotHandle(t *testing.T) {
 	actionName := uniqueActionName("runtime_fallback")
 	want := InfoToast("legacy")
-	RegisterSync(actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
 		return want, nil
 	})
 	continuation := &continuationDispatcherFake{canHandle: false}
@@ -109,7 +147,7 @@ func TestDispatchWithOptionsFallsBackToV1WhenContinuationCannotHandle(t *testing
 func TestDispatchWithOptionsLegacyPayloadUsesV1(t *testing.T) {
 	actionName := uniqueActionName("legacy")
 	want := InfoToast("legacy")
-	RegisterSync(actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
 		return want, nil
 	})
 
@@ -126,7 +164,7 @@ func TestDispatchWithOptionsLegacyPayloadUsesV1(t *testing.T) {
 
 func TestDispatchWithOptionsReturnsContinuationErrorUnchanged(t *testing.T) {
 	actionName := uniqueActionName("runtime_error")
-	RegisterSync(actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
+	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
 		t.Fatal("V1 handler must not run after continuation error")
 		return nil, nil
 	})
@@ -144,7 +182,7 @@ func TestDispatchWithOptionsReturnsContinuationErrorUnchanged(t *testing.T) {
 func TestDispatchPreservesAsyncV1Behavior(t *testing.T) {
 	actionName := uniqueActionName("async")
 	taskStarted := make(chan struct{}, 1)
-	RegisterAsync(actionName, func(context.Context, *Context) (AsyncTask, error) {
+	registerAsyncForTest(t, actionName, func(context.Context, *Context) (AsyncTask, error) {
 		return func(context.Context) {
 			taskStarted <- struct{}{}
 		}, nil
