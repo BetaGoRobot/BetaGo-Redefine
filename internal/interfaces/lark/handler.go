@@ -41,10 +41,11 @@ type messageRunner interface {
 // 起 goroutine，而是可以挂到有界执行器上，在入口边界统一施加队列上限
 // 和超时约束。
 type HandlerSet struct {
-	messageProcessor  messageRunner
-	reactionProcessor *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
-	messageExecutor   taskSubmitter
-	reactionExecutor  taskSubmitter
+	messageProcessor       messageRunner
+	reactionProcessor      *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
+	messageExecutor        taskSubmitter
+	reactionExecutor       taskSubmitter
+	continuationDispatcher appcardaction.ContinuationDispatcher
 }
 
 var (
@@ -55,20 +56,22 @@ var (
 // HandlerSetOptions 允许测试代码和运行时装配代码注入实际要使用的
 // processor / executor 组合。
 type HandlerSetOptions struct {
-	MessageProcessor  messageRunner
-	ReactionProcessor *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
-	MessageExecutor   taskSubmitter
-	ReactionExecutor  taskSubmitter
+	MessageProcessor       messageRunner
+	ReactionProcessor      *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
+	MessageExecutor        taskSubmitter
+	ReactionExecutor       taskSubmitter
+	ContinuationDispatcher appcardaction.ContinuationDispatcher
 }
 
 // NewHandlerSet 构造一个 handler 集合。某个 processor 如果没有显式传入，
 // 就回退到包级默认 handler，以兼容旧调用路径。
 func NewHandlerSet(options HandlerSetOptions) *HandlerSet {
 	handlerSet := &HandlerSet{
-		messageProcessor:  messages.Handler,
-		reactionProcessor: reaction.Handler,
-		messageExecutor:   options.MessageExecutor,
-		reactionExecutor:  options.ReactionExecutor,
+		messageProcessor:       messages.Handler,
+		reactionProcessor:      reaction.Handler,
+		messageExecutor:        options.MessageExecutor,
+		reactionExecutor:       options.ReactionExecutor,
+		continuationDispatcher: options.ContinuationDispatcher,
 	}
 	if options.MessageProcessor != nil {
 		handlerSet.messageProcessor = options.MessageProcessor
@@ -207,7 +210,9 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 	defer func() { go recordCardAction(ctx, cardAction) }()
 	appcardaction.RegisterBuiltins()
 	luckinaction.Register()
-	resp, dispatchErr := appcardaction.Dispatch(ctx, cardAction, metaData)
+	resp, dispatchErr := appcardaction.DispatchWithOptions(ctx, cardAction, metaData, appcardaction.DispatchOptions{
+		Continuation: h.continuationDispatcher,
+	})
 	if dispatchErr != nil {
 		logs.L().Ctx(ctx).Warn("dispatch card action failed", zap.Error(dispatchErr))
 		return appcardaction.ErrorToast("卡片操作失败: " + dispatchErr.Error()), nil

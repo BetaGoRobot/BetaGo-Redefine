@@ -29,6 +29,20 @@ type traceCaptureSubmitter struct {
 	traceIDs []oteltrace.TraceID
 }
 
+type handlerContinuationFake struct {
+	err   error
+	calls int
+}
+
+func (f *handlerContinuationFake) CanHandle(action *cardaction.Parsed) bool {
+	return action != nil
+}
+
+func (f *handlerContinuationFake) Dispatch(context.Context, appcardaction.ContinuationRequest) (*callback.CardActionTriggerResponse, error) {
+	f.calls++
+	return nil, f.err
+}
+
 func (s *traceCaptureSubmitter) Submit(ctx context.Context, _ string, _ func(context.Context) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -261,6 +275,47 @@ func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
 	}
 	if !strings.Contains(resp.Toast.Content, "卡片操作失败") {
 		t.Fatalf("toast content = %q, want contain 卡片操作失败", resp.Toast.Content)
+	}
+}
+
+func TestCardActionHandlerReturnsExistingErrorToastForContinuationFailure(t *testing.T) {
+	installHandlerTestConfig(t)
+
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	actionName := "test.continuation.error." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	dispatcher := &handlerContinuationFake{err: errors.New("continuation dispatcher unavailable")}
+	handlerSet := NewHandlerSet(HandlerSetOptions{ContinuationDispatcher: dispatcher})
+	event := newCardActionEvent("card-msg-continuation-error", actionName)
+	event.Event.Action.Value[cardaction.RunIDField] = "run-1"
+	event.Event.Action.Value[cardaction.StepIDField] = "step-1"
+	event.Event.Action.Value[cardaction.InteractionIDField] = "interaction-1"
+	event.Event.Action.Value[cardaction.RevisionField] = "1"
+	event.Event.Action.Value[cardaction.TokenField] = "opaque-token"
+	event.Event.Action.Value[cardaction.InteractionKindField] = "capability_confirm"
+	event.Event.Action.Value[cardaction.ContinueAgentField] = "true"
+
+	resp, err := handlerSet.CardActionHandler(context.Background(), event)
+	if err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if dispatcher.calls != 1 {
+		t.Fatalf("continuation Dispatch() calls = %d, want 1", dispatcher.calls)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
+		t.Fatalf("expected error toast response, got %+v", resp)
+	}
+	if !strings.Contains(resp.Toast.Content, "卡片操作失败: continuation dispatcher unavailable") {
+		t.Fatalf("toast content = %q, want existing card operation error message", resp.Toast.Content)
 	}
 }
 

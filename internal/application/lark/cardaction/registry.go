@@ -32,6 +32,21 @@ type Context struct {
 	Action   *cardactionproto.Parsed
 }
 
+type ContinuationRequest struct {
+	Event  *callback.CardActionTriggerEvent
+	Meta   *xhandler.BaseMetaData
+	Action *cardactionproto.Parsed
+}
+
+type ContinuationDispatcher interface {
+	CanHandle(*cardactionproto.Parsed) bool
+	Dispatch(context.Context, ContinuationRequest) (*callback.CardActionTriggerResponse, error)
+}
+
+type DispatchOptions struct {
+	Continuation ContinuationDispatcher
+}
+
 type entry struct {
 	mode  Mode
 	sync  SyncHandler
@@ -76,9 +91,26 @@ func RegisterAsyncIfAbsent(action string, handler AsyncHandler) {
 }
 
 func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaData *xhandler.BaseMetaData) (*callback.CardActionTriggerResponse, error) {
+	return DispatchWithOptions(ctx, event, metaData, DispatchOptions{})
+}
+
+func DispatchWithOptions(
+	ctx context.Context,
+	event *callback.CardActionTriggerEvent,
+	metaData *xhandler.BaseMetaData,
+	options DispatchOptions,
+) (*callback.CardActionTriggerResponse, error) {
 	action, err := cardactionproto.Parse(event)
 	if err != nil {
 		return nil, err
+	}
+
+	if options.Continuation != nil && options.Continuation.CanHandle(action) {
+		return options.Continuation.Dispatch(ctx, ContinuationRequest{
+			Event:  event,
+			Meta:   metaData,
+			Action: action,
+		})
 	}
 
 	actionCtx := &Context{

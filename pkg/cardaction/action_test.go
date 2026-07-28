@@ -1,10 +1,72 @@
 package cardaction
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
+
+func TestRuntimeEnvelopeFieldNamesAndValues(t *testing.T) {
+	value := map[string]any{
+		ActionField:          "test.runtime.resume",
+		RunIDField:           "run-1",
+		StepIDField:          "step-1",
+		InteractionIDField:   "interaction-1",
+		RevisionField:        "3",
+		TokenField:           "opaque-token",
+		InteractionKindField: "capability_confirm",
+		ContinueAgentField:   "true",
+	}
+
+	parsed, err := Parse(newCardActionEvent(value, nil))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !reflect.DeepEqual(parsed.Value, value) {
+		t.Fatalf("Parse() value = %#v, want %#v", parsed.Value, value)
+	}
+
+	wantFields := map[string]string{
+		"run":              RunIDField,
+		"step":             StepIDField,
+		"interaction":      InteractionIDField,
+		"revision":         RevisionField,
+		"token":            TokenField,
+		"interaction_kind": InteractionKindField,
+		"continue_agent":   ContinueAgentField,
+	}
+	wantValues := map[string]string{
+		"run":              "run_id",
+		"step":             "step_id",
+		"interaction":      "interaction_id",
+		"revision":         "revision",
+		"token":            "token",
+		"interaction_kind": "interaction_kind",
+		"continue_agent":   "continue_agent",
+	}
+	if !reflect.DeepEqual(wantFields, wantValues) {
+		t.Fatalf("runtime field constants = %#v, want %#v", wantFields, wantValues)
+	}
+}
+
+func TestParseLegacyPayloadWithoutRuntimeEnvelope(t *testing.T) {
+	value := map[string]any{
+		LegacyTypeField: "song",
+		IDField:         "legacy-song",
+	}
+
+	parsed, err := Parse(newCardActionEvent(value, nil))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if parsed.Name != ActionMusicPlay {
+		t.Fatalf("Parse() name = %q, want %q", parsed.Name, ActionMusicPlay)
+	}
+	if _, ok := parsed.String(RunIDField); ok {
+		t.Fatalf("legacy payload unexpectedly contains %q", RunIDField)
+	}
+}
 
 func TestParsePrefersStandardActionField(t *testing.T) {
 	parsed, err := Parse(newCardActionEvent(
