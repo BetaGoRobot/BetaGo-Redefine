@@ -90,11 +90,11 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 两个开关代码默认值都是 `false`。部署前还应确认全局值为 false，且没有遗留 chat=true override。可用现有配置命令设置全局值：
 
 ```text
-/config set key=conversation_runtime_enabled value=false scope=global
-/config set key=conversation_callback_continuation_enabled value=false scope=global
+/config set --key=conversation_runtime_enabled --value=false --scope=global
+/config set --key=conversation_callback_continuation_enabled --value=false --scope=global
 ```
 
-通过 `/config list scope=chat` 检查测试群和历史灰度群；不要用 user scope 启用这两个开关。
+通过 `/config list --scope=chat` 检查测试群和历史灰度群；不要用 user scope 启用这两个开关。
 
 部署后验证：
 
@@ -108,7 +108,7 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 在目标测试群执行：
 
 ```text
-/config set key=conversation_runtime_enabled value=true scope=chat
+/config set --key=conversation_runtime_enabled --value=true --scope=chat
 ```
 
 保持 `conversation_callback_continuation_enabled=false`。发起一次 Schedule 编辑，确认新卡片包含 runtime envelope，并在 PostgreSQL 中出现 `waiting_approval` run、completed wait step 和 pending projection outbox。
@@ -120,7 +120,7 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 在同一目标群执行：
 
 ```text
-/config set key=conversation_callback_continuation_enabled value=true scope=chat
+/config set --key=conversation_callback_continuation_enabled --value=true --scope=chat
 ```
 
 这一步只改变 callback mutation 完成后的续接策略。确认按钮的鉴权、幂等 mutation 和 durable event 写入不依赖 LLM 开关。
@@ -199,13 +199,13 @@ worker 连续三次执行错误会显示为 `degraded`，成功一轮后恢复�
 在所有已灰度群先关闭新 interaction 创建：
 
 ```text
-/config set key=conversation_runtime_enabled value=false scope=chat
+/config set --key=conversation_runtime_enabled --value=false --scope=chat
 ```
 
 随后关闭 LLM continuation：
 
 ```text
-/config set key=conversation_callback_continuation_enabled value=false scope=chat
+/config set --key=conversation_callback_continuation_enabled --value=false --scope=chat
 ```
 
 这一顺序的效果是：

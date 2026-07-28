@@ -35,21 +35,25 @@ func TestConversationCallbackRuntimeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse(confirm card envelope) error = %v", err)
 	}
+	if !harness.dispatcher.CanHandle(parsed) {
+		t.Fatal("parsed confirm card envelope was not handled by runtime dispatcher")
+	}
 	for range 2 {
-		if _, err := harness.dispatcher.Dispatch(context.Background(), appcardaction.ContinuationRequest{
-			Event: event, Action: parsed,
-		}); err != nil {
+		if _, err := harness.dispatch(event); err != nil {
 			t.Fatalf("Dispatch(confirm) error = %v", err)
 		}
 	}
 	if got := harness.updater.calls(); got != 1 {
 		t.Fatalf("schedule updater calls = %d, want 1", got)
 	}
-
-	if submitted, err := harness.runtime.SubmitDueContinuations(context.Background(), 8); err != nil {
-		t.Fatalf("SubmitDueContinuations() error = %v", err)
-	} else if submitted != 1 {
-		t.Fatalf("submitted continuations = %d, want 1", submitted)
+	if harness.generator.calls() != 0 || harness.deliverer.calls() != 0 {
+		t.Fatal("callback synchronously executed LLM continuation")
+	}
+	if queued := harness.conversationExecutor.queued(); queued != 1 {
+		t.Fatalf("queued continuation tasks = %d, want one deduplicated wake", queued)
+	}
+	if err := harness.conversationExecutor.drainOne(context.Background()); err != nil {
+		t.Fatalf("drain callback continuation: %v", err)
 	}
 	if got := harness.deliverer.calls(); got != 1 {
 		t.Fatalf("reply deliveries = %d, want 1", got)
@@ -58,8 +62,8 @@ func TestConversationCallbackRuntimeEndToEnd(t *testing.T) {
 	if completed.runStatus != agentruntime.RunStatusCompleted {
 		t.Fatalf("run status after continuation = %q, want completed", completed.runStatus)
 	}
-	if completed.outboxCount == 0 {
-		t.Fatal("completed run has no durable projection outbox")
+	if completed.outboxCount != 5 {
+		t.Fatalf("durable projection events = %d, want wait+callback+decision+reply events", completed.outboxCount)
 	}
 }
 
@@ -130,8 +134,8 @@ func TestConversationCallbackRuntimeGeneratorFailureRemainsRetryable(t *testing.
 		t.Fatalf("Dispatch(confirm) error = %v", err)
 	}
 
-	if _, err := harness.runtime.SubmitDueContinuations(context.Background(), 8); !errors.Is(err, generatorErr) {
-		t.Fatalf("SubmitDueContinuations() error = %v, want generator failure", err)
+	if err := harness.conversationExecutor.drainOne(context.Background()); !errors.Is(err, generatorErr) {
+		t.Fatalf("continuation task error = %v, want generator failure", err)
 	}
 	snapshot := harness.store.snapshot()
 	if harness.updater.calls() != 1 || harness.deliverer.calls() != 0 ||
@@ -139,6 +143,9 @@ func TestConversationCallbackRuntimeGeneratorFailureRemainsRetryable(t *testing.
 		snapshot.continuationRetries != 1 ||
 		snapshot.continuationStatus != agentruntime.StepStatusQueued ||
 		!snapshot.continuationRetryAt.After(harness.now) ||
+		snapshot.continuationError != generatorErr.Error() ||
+		snapshot.continuationWorker != "" ||
+		!snapshot.continuationLease.IsZero() ||
 		snapshot.outboxCount != 3 {
 		t.Fatalf("generator failure state = %#v", snapshot)
 	}
@@ -148,16 +155,36 @@ func TestConversationCallbackRuntimeOpenSearchFailureDoesNotBlockContinuation(t 
 	harness := newCallbackE2EHarness(t)
 	openSearchErr := errors.New("opensearch unavailable")
 	harness.writer.err = openSearchErr
+	harness.writer.entered = make(chan struct{})
+	harness.writer.release = make(chan struct{})
 	envelope := harness.startScheduleEdit(t)
 
-	if err := harness.runtime.SubmitNextProjection(context.Background()); !errors.Is(err, openSearchErr) {
-		t.Fatalf("SubmitNextProjection() error = %v, want OpenSearch failure", err)
+	if err := harness.runtime.SubmitNextProjection(context.Background()); err != nil {
+		t.Fatalf("SubmitNextProjection() queue error = %v", err)
 	}
+	projectionDone := make(chan error, 1)
+	go func() {
+		projectionDone <- harness.projectionExecutor.drainOne(context.Background())
+	}()
+	select {
+	case <-harness.writer.entered:
+	case <-time.After(time.Second):
+		t.Fatal("projection writer did not enter blocked OpenSearch call")
+	}
+
 	if _, err := harness.dispatch(harness.confirmEvent(envelope, "event-opensearch")); err != nil {
 		t.Fatalf("Dispatch(confirm) error = %v", err)
 	}
-	if _, err := harness.runtime.SubmitDueContinuations(context.Background(), 8); err != nil {
-		t.Fatalf("SubmitDueContinuations() error = %v", err)
+	if harness.updater.calls() != 1 || harness.generator.calls() != 0 ||
+		harness.conversationExecutor.queued() != 1 {
+		t.Fatal("blocked OpenSearch delayed callback mutation or started LLM work")
+	}
+	close(harness.writer.release)
+	if err := <-projectionDone; !errors.Is(err, openSearchErr) {
+		t.Fatalf("projection task error = %v, want OpenSearch failure", err)
+	}
+	if err := harness.conversationExecutor.drainOne(context.Background()); err != nil {
+		t.Fatalf("drain callback continuation: %v", err)
 	}
 	snapshot := harness.store.snapshot()
 	if harness.updater.calls() != 1 || harness.deliverer.calls() != 1 ||
@@ -165,7 +192,10 @@ func TestConversationCallbackRuntimeOpenSearchFailureDoesNotBlockContinuation(t 
 		snapshot.projectionRetries != 1 ||
 		snapshot.projectionStatus != agentruntime.ProjectionStatusPending ||
 		!snapshot.projectionRetryAt.After(harness.now) ||
-		snapshot.outboxCount < 4 {
+		snapshot.projectionError != openSearchErr.Error() ||
+		snapshot.projectionWorker != "" ||
+		!snapshot.projectionLease.IsZero() ||
+		snapshot.outboxCount != 5 {
 		t.Fatalf("OpenSearch failure blocked durable continuation: %#v", snapshot)
 	}
 }
@@ -186,6 +216,9 @@ func TestConversationCallbackRuntimeFreshRuntimeConsumesDurableContinuation(t *t
 	} else if submitted != 1 {
 		t.Fatalf("restarted submitted continuations = %d, want 1", submitted)
 	}
+	if err := restarted.conversationExecutor.drainOne(context.Background()); err != nil {
+		t.Fatalf("drain restarted continuation: %v", err)
+	}
 	snapshot := restarted.store.snapshot()
 	if first.updater.calls() != 1 || restarted.deliverer.calls() != 1 ||
 		snapshot.runStatus != agentruntime.RunStatusCompleted ||
@@ -195,14 +228,16 @@ func TestConversationCallbackRuntimeFreshRuntimeConsumesDurableContinuation(t *t
 }
 
 type callbackE2EHarness struct {
-	now        time.Time
-	store      *callbackE2EStore
-	updater    *callbackE2EUpdater
-	generator  *callbackE2EGenerator
-	deliverer  *callbackE2EDeliverer
-	writer     *callbackE2EProjectionWriter
-	runtime    *agentruntime.Runtime
-	dispatcher *appcardaction.ScheduleInteractionDispatcher
+	now                  time.Time
+	store                *callbackE2EStore
+	updater              *callbackE2EUpdater
+	generator            *callbackE2EGenerator
+	deliverer            *callbackE2EDeliverer
+	writer               *callbackE2EProjectionWriter
+	conversationExecutor *callbackE2EQueuedExecutor
+	projectionExecutor   *callbackE2EQueuedExecutor
+	runtime              *agentruntime.Runtime
+	dispatcher           *appcardaction.ScheduleInteractionDispatcher
 }
 
 func newCallbackE2EHarness(t *testing.T) *callbackE2EHarness {
@@ -223,9 +258,10 @@ func newCallbackE2EHarnessWithStore(
 		deliverer: &callbackE2EDeliverer{},
 		writer:    &callbackE2EProjectionWriter{},
 	}
-	executor := callbackE2EInlineExecutor{}
+	conversationExecutor := &callbackE2EQueuedExecutor{}
+	projectionExecutor := &callbackE2EQueuedExecutor{}
 	runtime, err := agentruntime.NewRuntime(agentruntime.RuntimeOptions{
-		ConversationExecutor: executor,
+		ConversationExecutor: conversationExecutor,
 		CallbackContinuationEnabled: func(context.Context, string) bool {
 			return true
 		},
@@ -243,7 +279,7 @@ func newCallbackE2EHarnessWithStore(
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := agentruntime.NewScheduleInteractionService(harness.store, harness.updater, nil)
+	resolver := agentruntime.NewScheduleInteractionService(harness.store, harness.updater, runtime)
 	enabled := agentruntime.NewContinuationProcessor(
 		harness.store,
 		harness.generator,
@@ -263,7 +299,7 @@ func newCallbackE2EHarnessWithStore(
 	projector := agentruntime.NewProjector(
 		harness.store,
 		harness.writer,
-		executor,
+		projectionExecutor,
 		agentruntime.ProjectorConfig{
 			WorkerID: "projection-worker-e2e", LeaseTTL: time.Minute,
 			WriteTimeout: 10 * time.Second,
@@ -295,18 +331,16 @@ func newCallbackE2EHarnessWithStore(
 	}
 	harness.runtime = runtime
 	harness.dispatcher = dispatcher
+	harness.conversationExecutor = conversationExecutor
+	harness.projectionExecutor = projectionExecutor
 	return harness
 }
 
 func (h *callbackE2EHarness) dispatch(
 	event *callback.CardActionTriggerEvent,
 ) (*callback.CardActionTriggerResponse, error) {
-	parsed, err := cardactionproto.Parse(event)
-	if err != nil {
-		return nil, err
-	}
-	return h.dispatcher.Dispatch(context.Background(), appcardaction.ContinuationRequest{
-		Event: event, Action: parsed,
+	return appcardaction.DispatchWithOptions(context.Background(), event, nil, appcardaction.DispatchOptions{
+		Continuation: h.dispatcher,
 	})
 }
 
@@ -359,9 +393,15 @@ type callbackE2ESnapshot struct {
 	continuationRetries int
 	continuationStatus  agentruntime.StepStatus
 	continuationRetryAt time.Time
+	continuationError   string
+	continuationWorker  string
+	continuationLease   time.Time
 	projectionRetries   int
 	projectionStatus    agentruntime.ProjectionStatus
 	projectionRetryAt   time.Time
+	projectionError     string
+	projectionWorker    string
+	projectionLease     time.Time
 }
 
 type callbackE2EStore struct {
@@ -405,10 +445,16 @@ func (s *callbackE2EStore) snapshot() callbackE2ESnapshot {
 	}
 	if s.continuation != nil {
 		snapshot.continuationStatus = s.continuation.Status
+		snapshot.continuationError = s.continuation.ErrorText
+		snapshot.continuationWorker = s.continuation.WorkerID
+		snapshot.continuationLease = s.continuation.LeaseExpiresAt
 	}
 	if s.projection != nil {
 		snapshot.projectionStatus = s.projection.Status
 		snapshot.projectionRetryAt = s.projection.NextAttemptAt
+		snapshot.projectionError = s.projection.LastError
+		snapshot.projectionWorker = s.projection.WorkerID
+		snapshot.projectionLease = s.projection.LeaseExpiresAt
 	}
 	return snapshot
 }
@@ -613,6 +659,7 @@ func (s *callbackE2EStore) ClaimContinuationStep(
 	s.continuation.Status = agentruntime.StepStatusRunning
 	s.continuation.WorkerID = claim.WorkerID
 	s.continuation.AttemptCount++
+	s.continuation.LeaseExpiresAt = claim.Now.Add(claim.LeaseTTL)
 	s.runStatus = agentruntime.RunStatusRunning
 	return cloneCallbackE2EStep(s.continuation), nil
 }
@@ -686,6 +733,8 @@ func (s *callbackE2EStore) RetryContinuationStep(
 	}
 	s.continuation.Status = agentruntime.StepStatusQueued
 	s.continuation.WorkerID = ""
+	s.continuation.LeaseExpiresAt = time.Time{}
+	s.continuation.ErrorText = req.ErrorText
 	s.retryAt = req.RetryAt
 	s.runStatus = agentruntime.RunStatusQueued
 	s.continuationRetries++
@@ -884,6 +933,8 @@ func (g *callbackE2EGenerator) Generate(
 	}, nil
 }
 
+func (g *callbackE2EGenerator) calls() int { return int(g.count.Load()) }
+
 type callbackE2EDeliverer struct{ count atomic.Int32 }
 
 func (d *callbackE2EDeliverer) Deliver(
@@ -896,27 +947,64 @@ func (d *callbackE2EDeliverer) Deliver(
 
 func (d *callbackE2EDeliverer) calls() int { return int(d.count.Load()) }
 
-type callbackE2EInlineExecutor struct{}
+type callbackE2EQueuedExecutor struct {
+	mu    sync.Mutex
+	tasks []func(context.Context) error
+}
 
-func (callbackE2EInlineExecutor) Submit(
-	ctx context.Context,
+func (e *callbackE2EQueuedExecutor) Submit(
+	_ context.Context,
 	_ string,
 	task func(context.Context) error,
 ) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.tasks = append(e.tasks, task)
+	return nil
+}
+
+func (e *callbackE2EQueuedExecutor) queued() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.tasks)
+}
+
+func (e *callbackE2EQueuedExecutor) drainOne(ctx context.Context) error {
+	e.mu.Lock()
+	if len(e.tasks) == 0 {
+		e.mu.Unlock()
+		return errors.New("callback E2E executor has no queued task")
+	}
+	task := e.tasks[0]
+	e.tasks = e.tasks[1:]
+	e.mu.Unlock()
 	return task(ctx)
 }
 
 type callbackE2EProjectionWriter struct {
-	count atomic.Int32
-	err   error
+	count       atomic.Int32
+	err         error
+	entered     chan struct{}
+	release     chan struct{}
+	enteredOnce sync.Once
 }
 
 func (w *callbackE2EProjectionWriter) Upsert(
-	context.Context,
-	string,
-	string,
-	json.RawMessage,
+	ctx context.Context,
+	_ string,
+	_ string,
+	_ json.RawMessage,
 ) error {
 	w.count.Add(1)
+	if w.entered != nil {
+		w.enteredOnce.Do(func() { close(w.entered) })
+	}
+	if w.release != nil {
+		select {
+		case <-w.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return w.err
 }
