@@ -27,7 +27,7 @@ require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 	github.com/lib/pq v1.12.3
 	github.com/minio/minio-go/v7 v7.2.1
-	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/olivere/elastic/v7 v7.0.32
 	github.com/opensearch-project/opensearch-go v1.1.0
 	github.com/opensearch-project/opensearch-go/v4 v4.7.2
@@ -76,6 +76,7 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )
 
