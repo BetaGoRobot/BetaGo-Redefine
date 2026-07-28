@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 type testInteractionStarter struct{}
@@ -15,6 +16,8 @@ type testInteractionStarter struct{}
 func (*testInteractionStarter) StartScheduleEdit(context.Context, StartScheduleEditRequest) (*RuntimeEnvelope, error) {
 	return nil, nil
 }
+
+type namedUnsafePointer unsafe.Pointer
 
 func TestInteractionStarterContextRoundTrip(t *testing.T) {
 	starter := &testInteractionStarter{}
@@ -47,6 +50,13 @@ func TestInteractionStarterContextRejectsNilAndTypedNil(t *testing.T) {
 				t.Fatalf("InteractionStarterFromContext() = (%v, %v), want unavailable", got, ok)
 			}
 		})
+	}
+}
+
+func TestIsNilInteractionStarterHandlesNamedUnsafePointer(t *testing.T) {
+	var typedNil namedUnsafePointer
+	if !isNilInteractionStarter(typedNil) {
+		t.Fatal("named unsafe-pointer typed nil was treated as available")
 	}
 }
 

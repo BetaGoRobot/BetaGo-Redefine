@@ -524,7 +524,7 @@ func (editScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 		envelope, err := starter.StartScheduleEdit(ctx, agentruntime.StartScheduleEditRequest{
 			TaskID:          task.ID,
 			ActorOpenID:     metaData.OpenID,
-			ChatID:          metaData.ChatID,
+			ChatID:          targetChatID,
 			SourceMessageID: scheduleSourceMessageID(data),
 			NewValues:       newValues,
 		}.Clone())

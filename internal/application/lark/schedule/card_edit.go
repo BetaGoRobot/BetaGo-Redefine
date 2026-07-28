@@ -111,8 +111,8 @@ func buildRuntimeEditConfirmCard(
 		return nil, fmt.Errorf("invalid schedule edit runtime envelope: interaction_kind must be schedule_edit")
 	}
 
-	confirmPayload := buildRuntimeEditPayload(cardactionproto.ActionAgentRuntimeResume, envelope)
-	cancelPayload := buildRuntimeEditPayload(cardactionproto.ActionAgentRuntimeReject, envelope)
+	confirmPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditConfirm, envelope)
+	cancelPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditCancel, envelope)
 	return buildEditConfirmCardWithPayloads(
 		ctx,
 		task,

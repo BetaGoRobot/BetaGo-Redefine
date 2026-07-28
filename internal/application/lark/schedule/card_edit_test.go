@@ -29,7 +29,7 @@ func TestBuildRuntimeEditConfirmCardUsesOnlyTrustedEnvelopeFields(t *testing.T) 
 	}
 	payloads := collectActionPayloads(card)
 	wantConfirm := map[string]any{
-		cardactionproto.ActionField:          cardactionproto.ActionAgentRuntimeResume,
+		cardactionproto.ActionField:          cardactionproto.ActionScheduleEditConfirm,
 		cardactionproto.RunIDField:           "run-1",
 		cardactionproto.StepIDField:          "step-1",
 		cardactionproto.InteractionIDField:   "interaction-1",
@@ -39,7 +39,7 @@ func TestBuildRuntimeEditConfirmCardUsesOnlyTrustedEnvelopeFields(t *testing.T) 
 		cardactionproto.ContinueAgentField:   "true",
 	}
 	wantCancel := map[string]any{
-		cardactionproto.ActionField:          cardactionproto.ActionAgentRuntimeReject,
+		cardactionproto.ActionField:          cardactionproto.ActionScheduleEditCancel,
 		cardactionproto.RunIDField:           "run-1",
 		cardactionproto.StepIDField:          "step-1",
 		cardactionproto.InteractionIDField:   "interaction-1",
@@ -48,10 +48,10 @@ func TestBuildRuntimeEditConfirmCardUsesOnlyTrustedEnvelopeFields(t *testing.T) 
 		cardactionproto.InteractionKindField: "schedule_edit",
 		cardactionproto.ContinueAgentField:   "true",
 	}
-	if got := payloads[cardactionproto.ActionAgentRuntimeResume]; !reflect.DeepEqual(got, wantConfirm) {
+	if got := payloads[cardactionproto.ActionScheduleEditConfirm]; !reflect.DeepEqual(got, wantConfirm) {
 		t.Fatal("runtime confirm payload does not contain exactly the trusted envelope fields")
 	}
-	if got := payloads[cardactionproto.ActionAgentRuntimeReject]; !reflect.DeepEqual(got, wantCancel) {
+	if got := payloads[cardactionproto.ActionScheduleEditCancel]; !reflect.DeepEqual(got, wantCancel) {
 		t.Fatal("runtime cancel payload does not contain exactly the trusted envelope fields")
 	}
 }

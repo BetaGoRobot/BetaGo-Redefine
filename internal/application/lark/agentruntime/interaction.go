@@ -53,13 +53,13 @@ func InteractionStarterFromContext(ctx context.Context) (InteractionStarter, boo
 	return value.starter, true
 }
 
-func isNilInteractionStarter(starter InteractionStarter) bool {
+func isNilInteractionStarter(starter any) bool {
 	if starter == nil {
 		return true
 	}
 	value := reflect.ValueOf(starter)
 	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
 		return value.IsNil()
 	default:
 		return false

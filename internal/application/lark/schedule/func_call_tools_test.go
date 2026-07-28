@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/mockey"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -80,7 +81,8 @@ func TestEditScheduleHandleUsesDurableRuntimeWait(t *testing.T) {
 	assertNoPendingEdits(t)
 
 	payloads := collectActionPayloads(sentCard)
-	if payloads["agent.runtime.resume"] == nil || payloads["agent.runtime.reject"] == nil {
+	if payloads[cardactionproto.ActionScheduleEditConfirm] == nil ||
+		payloads[cardactionproto.ActionScheduleEditCancel] == nil {
 		t.Fatal("runtime card missing continuation actions")
 	}
 	cardJSON, err := json.Marshal(sentCard)
@@ -97,6 +99,33 @@ func TestEditScheduleHandleUsesDurableRuntimeWait(t *testing.T) {
 		!strings.Contains(result, envelope.InteractionID) ||
 		strings.Contains(result, envelope.Token) {
 		t.Fatal("runtime result metadata is incomplete or exposes the interaction token")
+	}
+}
+
+func TestEditScheduleHandlePassesResolvedTargetChatToRuntimeStarter(t *testing.T) {
+	resetPendingEditsForTest(t)
+	envelope := validScheduleEditEnvelope()
+	starter := &recordingInteractionStarter{envelope: &envelope}
+	patchEditHandleDependenciesForChat(t, "oc-target", func(context.Context, string, string, any) (string, error) {
+		return "om-card", nil
+	})
+	resolverPatch := mockey.Mock(resolveToolScheduleTargetChatID).Return("oc-target").Build()
+	t.Cleanup(func() {
+		resolverPatch.UnPatch()
+	})
+
+	name := "new-name"
+	err := EditSchedule.Handle(
+		agentruntime.WithInteractionStarter(context.Background(), starter),
+		editScheduleEvent("om-source"),
+		&xhandler.BaseMetaData{ChatID: "oc-origin", OpenID: "ou-creator"},
+		editScheduleArgs{ID: "task-1", Name: &name},
+	)
+	if err != nil {
+		t.Fatalf("EditSchedule.Handle() error = %v", err)
+	}
+	if starter.request.ChatID != "oc-target" {
+		t.Fatalf("starter request chat ID = %q, want resolved target chat", starter.request.ChatID)
 	}
 }
 
@@ -255,13 +284,21 @@ func patchEditHandleDependencies(
 	t *testing.T,
 	send func(context.Context, string, string, any) (string, error),
 ) {
+	patchEditHandleDependenciesForChat(t, "oc-chat", send)
+}
+
+func patchEditHandleDependenciesForChat(
+	t *testing.T,
+	taskChatID string,
+	send func(context.Context, string, string, any) (string, error),
+) {
 	t.Helper()
 	task := &model.ScheduledTask{
 		ID:        "task-1",
 		Name:      "original-name",
 		Timezone:  "Asia/Shanghai",
 		CreatorID: "ou-creator",
-		ChatID:    "oc-chat",
+		ChatID:    taskChatID,
 	}
 	service := TaskService(editHandleTestService{
 		noopService: noopService{reason: "unused test methods"},
