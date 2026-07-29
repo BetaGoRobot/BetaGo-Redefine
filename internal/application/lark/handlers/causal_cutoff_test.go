@@ -95,16 +95,6 @@ func TestCausalQueryWithoutConfiguredCutoffStillAppliesAnchor(t *testing.T) {
 	}
 }
 
-func TestRetrievalEndRemainsEmptyForLegacyAndCapture(t *testing.T) {
-	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
-	if got := retrievalEndTime(anchor, true); got != "" {
-		t.Fatalf("capture retrieval end = %q, want empty", got)
-	}
-	if got := retrievalEndTime(anchor, false); got != "" {
-		t.Fatalf("legacy retrieval end = %q, want empty", got)
-	}
-}
-
 func TestContextAtAnchorValidatesAndContextAfterAnchorFails(t *testing.T) {
 	anchor := time.UnixMilli(1785301200123)
 	item := newContextItem(

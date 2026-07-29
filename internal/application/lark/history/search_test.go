@@ -1,12 +1,15 @@
 package history
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/tmc/langchaingo/schema"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
 
 func TestBuildHybridSearchQueryRequiresChatID(t *testing.T) {
@@ -94,6 +97,24 @@ func TestBuildHybridSearchQueryIncludesMetadataFilters(t *testing.T) {
 	}
 }
 
+func TestBuildHybridSearchFiltersPreservesRFC3339NanoEnd(t *testing.T) {
+	const end = "2026-07-29T15:00:00.123456789+08:00"
+	filters, err := buildHybridSearchFilters(
+		HybridSearchRequest{
+			QueryText: []string{"机器人"},
+			ChatID:    "oc_test_chat",
+			EndTime:   end,
+		},
+		time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("buildHybridSearchFilters() error = %v", err)
+	}
+	if got, ok := rangeFilterValue(filters, "create_time_v2", "lte"); !ok || got != end {
+		t.Fatalf("end range = %#v, %v; want %q, true", got, ok, end)
+	}
+}
+
 func TestBuildVectorQueryClausesUsesV2MessageField(t *testing.T) {
 	clauses := buildVectorQueryClauses(messageVectorFieldV2, [][]float32{{0.1, 0.2}}, 7)
 	if len(clauses) != 1 {
@@ -105,6 +126,89 @@ func TestBuildVectorQueryClausesUsesV2MessageField(t *testing.T) {
 	}
 	if _, ok := knn["message_v2"]; !ok {
 		t.Fatalf("knn fields = %#v, want message_v2", knn)
+	}
+}
+
+func TestHybridSearchMessageIndexOnlySkipsRetrieverAndReturnsMessageResults(t *testing.T) {
+	useHistorySearchConfigPath(t)
+	oldSearch := hybridSearchMessageIndexFn
+	oldRecall := hybridSearchRecallDocsFn
+	defer func() {
+		hybridSearchMessageIndexFn = oldSearch
+		hybridSearchRecallDocsFn = oldRecall
+	}()
+
+	want := []*SearchResult{
+		{MessageID: "om_1", RawMessage: "before"},
+		{MessageID: "om_2", RawMessage: "at anchor"},
+	}
+	hybridSearchMessageIndexFn = func(context.Context, string, map[string]any) ([]*SearchResult, error) {
+		return want, nil
+	}
+	retrieverCalled := false
+	hybridSearchRecallDocsFn = func(context.Context, string, string, int, string, string) ([]schema.Document, error) {
+		retrieverCalled = true
+		return []schema.Document{{PageContent: "must not merge"}}, nil
+	}
+
+	got, err := HybridSearch(
+		context.Background(),
+		HybridSearchRequest{
+			QueryText:        []string{"机器人"},
+			TopK:             2,
+			ChatID:           "oc_test_chat",
+			MessageIndexOnly: true,
+		},
+		func(context.Context, string) ([]float32, model.Usage, error) {
+			return []float32{0.1, 0.2}, model.Usage{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("HybridSearch() error = %v", err)
+	}
+	if retrieverCalled {
+		t.Fatal("message-index-only search called retriever")
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("HybridSearch() = %#v, want direct message-index results %#v", got, want)
+	}
+}
+
+func TestHybridSearchDefaultStillMergesRetrieverResults(t *testing.T) {
+	useHistorySearchConfigPath(t)
+	oldSearch := hybridSearchMessageIndexFn
+	oldRecall := hybridSearchRecallDocsFn
+	defer func() {
+		hybridSearchMessageIndexFn = oldSearch
+		hybridSearchRecallDocsFn = oldRecall
+	}()
+
+	hybridSearchMessageIndexFn = func(context.Context, string, map[string]any) ([]*SearchResult, error) {
+		return []*SearchResult{{MessageID: "om_index"}}, nil
+	}
+	hybridSearchRecallDocsFn = func(context.Context, string, string, int, string, string) ([]schema.Document, error) {
+		return []schema.Document{{
+			PageContent: "retriever",
+			Metadata:    map[string]any{"msg_id": "om_retriever"},
+		}}, nil
+	}
+
+	got, err := HybridSearch(
+		context.Background(),
+		HybridSearchRequest{
+			QueryText: []string{"机器人"},
+			TopK:      2,
+			ChatID:    "oc_test_chat",
+		},
+		func(context.Context, string) ([]float32, model.Usage, error) {
+			return []float32{0.1, 0.2}, model.Usage{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("HybridSearch() error = %v", err)
+	}
+	if len(got) != 2 || got[0].MessageID != "om_index" || got[1].MessageID != "om_retriever" {
+		t.Fatalf("HybridSearch() = %#v, want default merged index/retriever results", got)
 	}
 }
 
@@ -214,4 +318,20 @@ func containsRangeFilter(filters []map[string]any, field, operator string) bool 
 		}
 	}
 	return false
+}
+
+func rangeFilterValue(filters []map[string]any, field, operator string) (any, bool) {
+	for _, filter := range filters {
+		ranges, ok := filter["range"].(map[string]any)
+		if !ok {
+			continue
+		}
+		fieldRange, ok := ranges[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		value, ok := fieldRange[operator]
+		return value, ok
+	}
+	return nil, false
 }

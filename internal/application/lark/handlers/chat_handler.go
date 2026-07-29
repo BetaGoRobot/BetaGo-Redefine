@@ -22,7 +22,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -823,7 +822,21 @@ func buildStandardChatPlan(
 	// 从chunking中拉取话题（应用 cutoff time 过滤）
 	topicLines := make([]string, 0)
 	retrievedItems := make([]conversationeval.ContextItem, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalEndTime(anchorAt, captureEnabled))
+	var topicEmbedding history.EmbeddingFunc
+	if captureEnabled {
+		topicEmbedding = topicRecallEmbedding(buildUserLLMUsageScope(
+			ctx,
+			chatID,
+			metaChatName(metaData),
+			currentOpenID(event, metaData),
+			userName,
+			"topic_recall",
+			llmusage.SourceTypeUser,
+		))
+	}
+	docs, err := recallTopicDocsForMode(
+		ctx, chatID, currentInput, 10, cutoffTime, anchorAt, captureEnabled, topicEmbedding,
+	)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
 		if captureEnabled {

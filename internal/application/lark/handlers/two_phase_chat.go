@@ -22,7 +22,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -126,8 +125,20 @@ func GenerateChatSeqTwoPhase(
 	})
 
 	// 话题召回
+	var topicEmbedding history.EmbeddingFunc
+	if captureEnabled {
+		topicEmbedding = topicRecallEmbedding(buildUserLLMUsageScope(
+			ctx,
+			chatID,
+			metaChatName(metaData),
+			currentOpenID(event, metaData),
+			userName,
+			"topic_recall",
+			llmusage.SourceTypeUser,
+		))
+	}
 	topicLines, retrievedItems, retrievedExcluded, degradedSources := buildTwoPhaseTopicContext(
-		ctx, accessor, chatID, currentInput, cutoffTime, anchorAt, captureEnabled,
+		ctx, accessor, chatID, currentInput, cutoffTime, anchorAt, captureEnabled, topicEmbedding,
 	)
 	excludedItems = append(excludedItems, retrievedExcluded...)
 	degradedSources = append(historyDegradedSources, degradedSources...)
@@ -313,7 +324,7 @@ func singleSkipSeq(reason string) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
 
 // buildTwoPhaseTopicLines 构建话题行（从向量检索 + chunk 索引中获取）
 func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, chatID, currentInput, cutoffTime string) []string {
-	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime, time.Now(), false)
+	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime, time.Now(), false, nil)
 	return lines
 }
 
@@ -323,6 +334,7 @@ func buildTwoPhaseTopicContext(
 	chatID, currentInput, cutoffTime string,
 	anchorAt time.Time,
 	captureEnabled bool,
+	embeddingFunc history.EmbeddingFunc,
 ) (
 	[]string,
 	[]conversationeval.ContextItem,
@@ -333,7 +345,9 @@ func buildTwoPhaseTopicContext(
 	retrievedItems := make([]conversationeval.ContextItem, 0)
 	excludedItems := make([]conversationeval.ExcludedContextItem, 0)
 	degradedSources := make([]string, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalEndTime(anchorAt, captureEnabled))
+	docs, err := recallTopicDocsForMode(
+		ctx, chatID, currentInput, 10, cutoffTime, anchorAt, captureEnabled, embeddingFunc,
+	)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
 		if captureEnabled {

@@ -44,18 +44,32 @@ type SearchResult struct {
 
 // HybridSearchRequest 定义了搜索的输入参数
 type HybridSearchRequest struct {
-	QueryText   []string `json:"query"`
-	TopK        int      `json:"top_k"`
-	OpenID      string   `json:"user_id,omitempty"`
-	UserName    string   `json:"user_name,omitempty"`
-	ChatID      string   `json:"chat_id,omitempty"`
-	MessageType string   `json:"message_type,omitempty"`
-	StartTime   string   `json:"start_time,omitempty"`
-	EndTime     string   `json:"end_time,omitempty"`
-	CutoffTime  string   `json:"cutoff_time,omitempty"` // RFC3339, messages before this time are excluded
+	QueryText        []string `json:"query"`
+	TopK             int      `json:"top_k"`
+	OpenID           string   `json:"user_id,omitempty"`
+	UserName         string   `json:"user_name,omitempty"`
+	ChatID           string   `json:"chat_id,omitempty"`
+	MessageType      string   `json:"message_type,omitempty"`
+	StartTime        string   `json:"start_time,omitempty"`
+	EndTime          string   `json:"end_time,omitempty"`
+	CutoffTime       string   `json:"cutoff_time,omitempty"` // RFC3339, messages before this time are excluded
+	MessageIndexOnly bool     `json:"-"`                     // internal mode: query message_v2 only and skip Retriever
 }
 
 type EmbeddingFunc func(ctx context.Context, text string) (vector []float32, tokenUsage model.Usage, err error)
+
+var (
+	hybridSearchMessageIndexFn = func(ctx context.Context, index string, query map[string]any) ([]*SearchResult, error) {
+		res, err := opensearch.SearchData(ctx, index, query)
+		if err != nil {
+			return nil, err
+		}
+		return parseSearchHits(ctx, res), nil
+	}
+	hybridSearchRecallDocsFn = func(ctx context.Context, suffix, query string, k int, startTime, endTime string) ([]schema.Document, error) {
+		return retriever.Cli().RecallDocs(ctx, suffix, query, k, startTime, endTime)
+	}
+)
 
 // HybridSearch 执行混合搜索，同时查询 OpenSearch message_v2 和 Retriever contentVector 两个路径。
 func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc EmbeddingFunc) (searchResults []*SearchResult, err error) {
@@ -100,6 +114,14 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 	searchIndex := appconfig.GetLarkMsgIndex(ctx, req.ChatID, req.OpenID)
 	queryText := strings.Join(req.QueryText, " ")
 
+	if req.MessageIndexOnly {
+		results, searchErr := hybridSearchMessageIndexFn(ctx, searchIndex, queryV2)
+		if searchErr != nil {
+			return nil, fmt.Errorf("message_v2 搜索失败: %w", searchErr)
+		}
+		return results, nil
+	}
+
 	var (
 		osV2Results []*SearchResult
 		retResults  []*SearchResult
@@ -110,17 +132,17 @@ func HybridSearch(ctx context.Context, req HybridSearchRequest, embeddingFunc Em
 
 	// goroutine 1: OpenSearch message_v2 字段 (2048-dim)
 	wg.Go(func() {
-		res, err := opensearch.SearchData(ctx, searchIndex, queryV2)
+		results, err := hybridSearchMessageIndexFn(ctx, searchIndex, queryV2)
 		if err != nil {
 			osV2Err = fmt.Errorf("message_v2 搜索失败: %w", err)
 			return
 		}
-		osV2Results = parseSearchHits(ctx, res)
+		osV2Results = results
 	})
 
 	if len(queryText) > 0 {
 		wg.Go(func() {
-			docs, err := retriever.Cli().RecallDocs(ctx, req.ChatID, queryText, req.TopK, req.CutoffTime, req.EndTime)
+			docs, err := hybridSearchRecallDocsFn(ctx, req.ChatID, queryText, req.TopK, req.CutoffTime, req.EndTime)
 			if err != nil {
 				retErr = fmt.Errorf("retriever 召回失败: %w", err)
 				return
@@ -291,7 +313,9 @@ func buildHybridSearchFilters(req HybridSearchRequest, now time.Time) ([]map[str
 		}
 	}
 	if req.EndTime != "" {
-		if parseEndTime := parseTimeFormat(req.EndTime, time.DateTime); !parseEndTime.IsErr() {
+		if parseEndTime := parseTimeFormat(req.EndTime, time.RFC3339Nano); !parseEndTime.IsErr() {
+			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": parseEndTime.Value().Format(time.RFC3339Nano)}}})
+		} else if parseEndTime := parseTimeFormat(req.EndTime, time.DateTime); !parseEndTime.IsErr() {
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": parseEndTime.Value().Format(time.RFC3339)}}})
 		} else {
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": now.Add(-7 * 24 * time.Hour).Format(time.RFC3339)}}})

@@ -135,12 +135,6 @@ func causalTimeRange(field, cutoffTime string, anchor time.Time) *osquery.RangeQ
 	return value
 }
 
-func retrievalEndTime(_ time.Time, _ bool) string {
-	// The current vector index has no filterable top-level timestamp field.
-	// Capture mode enforces causality at the chunk query and post-filter layers.
-	return ""
-}
-
 type droppedHistoryMessage struct {
 	Message *history.OpensearchMsgLog
 	Reason  string
