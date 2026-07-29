@@ -11,9 +11,43 @@ import (
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+func BuildCandidateRunnerForTask(
+	_ context.Context,
+	task conversationeval.CandidateTask,
+) (conversationeval.CandidateRunner, error) {
+	if err := task.Validate(); err != nil {
+		return nil, err
+	}
+	engine, err := conversationeval.NewArkCandidateStageEngine(
+		conversationeval.ArkCandidateEngineConfig{
+			ModelID: task.Cohort.CandidateVersion,
+			Scope: llmusage.Scope{
+				ChatID: task.Message.ChatID, OpenID: task.Message.SenderOpenID,
+				SourceType: llmusage.SourceTypeBackground,
+				Source:     "conversation_evaluation_candidate",
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := BuildCandidateShadowRegistry(
+		conversationeval.NewObservationCache(),
+		nil,
+		task.Message.ChatID,
+		task.Message.SenderOpenID,
+		task.Episode.AnchorAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return conversationeval.NewCandidateRunner(engine, registry), nil
+}
 
 func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := buildTools(true, true, true, true)

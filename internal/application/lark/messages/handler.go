@@ -2,31 +2,40 @@ package messages
 
 import (
 	"context"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/ops"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.uber.org/zap"
 )
 
 type MessageHandler struct {
 	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	interactionStarter agentruntime.InteractionStarter
 	runtimeEnabled     func(context.Context, string) bool
+	evaluationService  atomic.Pointer[conversationeval.Service]
 }
 
 type MessageHandlerOptions struct {
 	InteractionStarter agentruntime.InteractionStarter
 	RuntimeEnabled     func(context.Context, string) bool
+	EvaluationService  *conversationeval.Service
 }
 
 // Handler 消息处理入口。
@@ -69,6 +78,7 @@ func NewMessageProcessorWithOptions(
 			AddAsync(&ops.CommandOperator{}).
 			AddAsync(&ops.ChatMsgOperator{}),
 	}
+	handler.evaluationService.Store(options.EvaluationService)
 	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
 		return collectMessageFeatures(handler.processor)
 	})
@@ -84,7 +94,82 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 		return
 	}
 	ctx = h.contextForEvent(ctx, event)
+	var evaluationSession *conversationeval.MessageSession
+	evaluationService := h.evaluationService.Load()
+	if evaluationService != nil {
+		input, err := evaluationMessageInput(ctx, event)
+		if err != nil {
+			logs.L().Ctx(ctx).Warn("build evaluation message input failed", zap.Error(err))
+		} else {
+			evaluationSession, err = evaluationService.BeginMessage(ctx, input)
+			if err != nil {
+				logs.L().Ctx(ctx).Warn("begin conversation evaluation failed", zap.Error(err))
+			} else if evaluationSession.Enabled() {
+				ctx = conversationeval.WithCapture(ctx, evaluationSession.Capture())
+			}
+		}
+	}
 	processor.NewExecution().WithCtx(ctx).WithData(event).Run()
+	if evaluationSession != nil {
+		if err := evaluationService.CompleteMessage(ctx, evaluationSession); err != nil {
+			logs.L().Ctx(ctx).Warn("complete conversation evaluation failed", zap.Error(err))
+		}
+	}
+}
+
+func (h *MessageHandler) SetEvaluationService(service *conversationeval.Service) {
+	if h != nil {
+		h.evaluationService.Store(service)
+	}
+}
+
+func evaluationMessageInput(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+) (conversationeval.MessageInput, error) {
+	if event == nil || event.Event == nil || event.Event.Message == nil {
+		return conversationeval.MessageInput{}, conversationeval.ErrInvalidContract
+	}
+	message := event.Event.Message
+	occurredMillis, err := strconv.ParseInt(
+		strings.TrimSpace(utils.AddrOrNil(message.CreateTime)),
+		10,
+		64,
+	)
+	if err != nil || occurredMillis <= 0 {
+		return conversationeval.MessageInput{}, conversationeval.ErrInvalidContract
+	}
+	messageID := strings.TrimSpace(utils.AddrOrNil(message.MessageId))
+	identity := botidentity.Current()
+	content := strings.TrimSpace(utils.AddrOrNil(message.Content))
+	if parsed := safelyParseEvaluationContent(ctx, event); parsed != "" {
+		content = parsed
+	}
+	return conversationeval.MessageInput{
+		AppID: identity.AppID, BotOpenID: identity.BotOpenID,
+		ChatID:  strings.TrimSpace(utils.AddrOrNil(message.ChatId)),
+		EventID: messageID, MessageID: messageID,
+		TopicID:          strings.TrimSpace(utils.AddrOrNil(message.ThreadId)),
+		SenderOpenID:     botidentity.MessageSenderOpenID(event),
+		ReplyToMessageID: strings.TrimSpace(utils.AddrOrNil(message.ParentId)),
+		Content:          content, OccurredAt: time.UnixMilli(occurredMillis),
+	}, nil
+}
+
+func safelyParseEvaluationContent(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+) (content string) {
+	defer func() {
+		if recover() != nil {
+			content = ""
+		}
+	}()
+	result := larkmsg.PreGetTextMsg(ctx, event)
+	if result == nil {
+		return ""
+	}
+	return strings.TrimSpace(result.GetText())
 }
 
 func (h *MessageHandler) contextForEvent(

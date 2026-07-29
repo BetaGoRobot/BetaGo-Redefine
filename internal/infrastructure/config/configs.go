@@ -71,6 +71,11 @@ type RuntimeConfig struct {
 	ConversationProjectionQueueSize      int    `json:"conversation_projection_queue_size" yaml:"conversation_projection_queue_size" toml:"conversation_projection_queue_size"`
 	ConversationProjectionTimeoutSeconds int    `json:"conversation_projection_timeout_seconds" yaml:"conversation_projection_timeout_seconds" toml:"conversation_projection_timeout_seconds"`
 	ConversationEventIndex               string `json:"conversation_event_index" yaml:"conversation_event_index" toml:"conversation_event_index"`
+	EvaluationCandidateWorkers           int    `json:"evaluation_candidate_workers" yaml:"evaluation_candidate_workers" toml:"evaluation_candidate_workers"`
+	EvaluationCandidateLeaseSeconds      int    `json:"evaluation_candidate_lease_seconds" yaml:"evaluation_candidate_lease_seconds" toml:"evaluation_candidate_lease_seconds"`
+	EvaluationCandidateRetrySeconds      int    `json:"evaluation_candidate_retry_seconds" yaml:"evaluation_candidate_retry_seconds" toml:"evaluation_candidate_retry_seconds"`
+	EvaluationCandidatePollMillis        int    `json:"evaluation_candidate_poll_millis" yaml:"evaluation_candidate_poll_millis" toml:"evaluation_candidate_poll_millis"`
+	EvaluationWindowSweepSeconds         int    `json:"evaluation_window_sweep_seconds" yaml:"evaluation_window_sweep_seconds" toml:"evaluation_window_sweep_seconds"`
 }
 
 type ManagementHTTPConfig struct {

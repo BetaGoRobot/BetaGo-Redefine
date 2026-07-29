@@ -170,6 +170,40 @@ func TestLegacyMessageProcessorNeverInjectsRuntimeStarter(t *testing.T) {
 	}
 }
 
+func TestEvaluationMessageInputUsesStableMessageAnchorAndParsedContent(t *testing.T) {
+	chatID := "chat-evaluation"
+	chatType := "group"
+	messageID := "message-evaluation"
+	messageType := larkim.MsgTypeText
+	content := `{"text":"hello evaluation"}`
+	createTime := "1785290400123"
+	threadID := "thread-evaluation"
+	parentID := "parent-evaluation"
+	openID := "actor-evaluation"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatId: &chatID, ChatType: &chatType, MessageId: &messageID,
+				MessageType: &messageType, Content: &content, CreateTime: &createTime,
+				ThreadId: &threadID, ParentId: &parentID,
+			},
+			Sender: &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+
+	got, err := evaluationMessageInput(context.Background(), event)
+	if err != nil {
+		t.Fatalf("evaluationMessageInput() error = %v", err)
+	}
+	if got.EventID != messageID || got.MessageID != messageID ||
+		got.ChatID != chatID || got.TopicID != threadID ||
+		got.ReplyToMessageID != parentID || got.SenderOpenID != openID ||
+		got.Content != "hello evaluation" ||
+		got.OccurredAt.UnixMilli() != 1785290400123 {
+		t.Fatalf("evaluation message input = %#v", got)
+	}
+}
+
 func asyncStageTypes(processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []string {
 	if processor == nil {
 		return nil

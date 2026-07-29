@@ -88,6 +88,8 @@ func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 	assertModuleBefore(t, names, "conversation_projection_executor", "application_services")
 	assertModuleBefore(t, names, "application_services", "conversation_runtime_worker")
 	assertModuleBefore(t, names, "application_services", "conversation_projection_worker")
+	assertModuleBefore(t, names, "conversation_projection_worker", "conversation_evaluation")
+	assertModuleBefore(t, names, "conversation_evaluation", "lark_ws")
 	assertModuleBefore(t, names, "conversation_runtime_worker", "lark_ws")
 	assertModuleBefore(t, names, "conversation_projection_worker", "lark_ws")
 }

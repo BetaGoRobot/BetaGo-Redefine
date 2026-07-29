@@ -13,6 +13,7 @@ import (
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	chatmetrics "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chatmetrics"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckinaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
@@ -26,6 +27,8 @@ import (
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/conversationindex"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/evaluationstore"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/evaluationwindow"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
@@ -57,6 +60,7 @@ type appComponents struct {
 	conversationWorker           *agentruntime.ConversationWorker
 	conversationProjectionWorker *agentruntime.ProjectionWorker
 	continuationDispatcher       *appcardaction.ScheduleInteractionDispatcher
+	messageProcessor             *messages.MessageHandler
 	handlerSet                   *larkiface.HandlerSet
 	eventDispatcher              *dispatcher.EventDispatcher
 }
@@ -179,6 +183,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		conversationRuntime: conversationRuntime, conversationWorker: conversationWorker,
 		conversationProjectionWorker: conversationProjectionWorker,
 		continuationDispatcher:       continuationDispatcher,
+		messageProcessor:             messageProcessor,
 		handlerSet:                   handlerSet,
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
 	}, nil
@@ -427,6 +432,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 	}))
 	app.AddModule(components.conversationWorker)
 	app.AddModule(components.conversationProjectionWorker)
+	addConversationEvaluationModule(app, cfg, components)
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "chunking",
 		Critical: false,
@@ -524,6 +530,123 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		cfg.LarkConfig.AppSecret,
 		components.eventDispatcher,
 	))
+}
+
+func addConversationEvaluationModule(
+	app *appruntime.App,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) {
+	var worker *conversationeval.CandidateWorker
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "conversation_evaluation",
+		Critical: false,
+		Init: func(ctx context.Context) error {
+			var installed bool
+			if err := db.DB().WithContext(ctx).Raw(`
+				SELECT
+					to_regclass('betago.evaluation_episode_messages') IS NOT NULL
+					AND to_regclass('betago.evaluation_candidate_tasks') IS NOT NULL
+					AND EXISTS (
+						SELECT 1
+						FROM information_schema.columns
+						WHERE table_schema = 'betago'
+						  AND table_name = 'evaluation_episodes'
+						  AND column_name = 'post_window_reason'
+					)`,
+			).Scan(&installed).Error; err != nil {
+				return err
+			}
+			if !installed {
+				return errors.New(
+					"conversation evaluation runtime migration 20260729 is not installed",
+				)
+			}
+			return nil
+		},
+		Start: func(ctx context.Context) error {
+			repository := evaluationstore.NewRepository(db.DB())
+			service, err := conversationeval.NewService(conversationeval.ServiceOptions{
+				Repository: repository, PreWindowSource: evaluationwindow.OpenSearchPreWindowSource{},
+				CandidateSubmitter: repository,
+			})
+			if err != nil {
+				return err
+			}
+			runtimeConfig := cfg.RuntimeConfig
+			if runtimeConfig == nil {
+				runtimeConfig = &infraConfig.RuntimeConfig{}
+			}
+			processor, err := conversationeval.NewCandidateProcessor(
+				repository,
+				service,
+				handlers.BuildCandidateRunnerForTask,
+				conversationeval.CandidateProcessorConfig{
+					WorkerID: "evaluation-candidate-" + uuid.NewV4().String(),
+					LeaseTTL: durationSeconds(
+						runtimeConfig.EvaluationCandidateLeaseSeconds,
+						10*time.Minute,
+					),
+					RetryDelay: durationSeconds(
+						runtimeConfig.EvaluationCandidateRetrySeconds,
+						15*time.Second,
+					),
+				},
+			)
+			if err != nil {
+				return err
+			}
+			pollInterval := time.Second
+			if runtimeConfig.EvaluationCandidatePollMillis > 0 {
+				pollInterval = time.Duration(runtimeConfig.EvaluationCandidatePollMillis) *
+					time.Millisecond
+			}
+			worker, err = conversationeval.NewCandidateWorker(
+				processor,
+				conversationeval.CandidateWorkerOptions{
+					Workers:  runtimeConfig.EvaluationCandidateWorkers,
+					Interval: pollInterval,
+					WindowSweepInterval: durationSeconds(
+						runtimeConfig.EvaluationWindowSweepSeconds,
+						5*time.Second,
+					),
+				},
+			)
+			if err != nil {
+				return err
+			}
+			components.messageProcessor.SetEvaluationService(service)
+			return worker.Start(ctx)
+		},
+		Ready: func(context.Context) error {
+			if worker == nil {
+				return errors.New("conversation evaluation worker is not running")
+			}
+			return nil
+		},
+		Stop: func(ctx context.Context) error {
+			components.messageProcessor.SetEvaluationService(nil)
+			if worker == nil {
+				return nil
+			}
+			return worker.Stop(ctx)
+		},
+		Stats: func() map[string]any {
+			if worker == nil {
+				return map[string]any{"running": false}
+			}
+			stats := worker.Stats()
+			stats["running"] = true
+			return stats
+		},
+	}))
+}
+
+func durationSeconds(value int, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return time.Duration(value) * time.Second
 }
 
 // newEventDispatcher 负责把运行时管理的 HandlerSet 绑定到当前订阅的

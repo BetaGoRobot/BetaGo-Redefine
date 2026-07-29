@@ -276,6 +276,13 @@ func (r *serviceRepositoryFake) CloseExpiredPostWindows(
 	}
 	return closed, nil
 }
+func (r *serviceRepositoryFake) CloseExpiredPostWindowsAll(
+	ctx context.Context,
+	now time.Time,
+	_ int,
+) (int, error) {
+	return r.CloseExpiredPostWindows(ctx, "", now)
+}
 func (r *serviceRepositoryFake) MarkReadyIfComplete(context.Context, string, time.Time) (bool, error) {
 	r.readyCalls++
 	return true, nil

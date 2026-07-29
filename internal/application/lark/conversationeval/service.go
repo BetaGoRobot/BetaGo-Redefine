@@ -62,6 +62,7 @@ type EpisodeArtifacts interface {
 		bool,
 	) (PostWindowMutation, error)
 	CloseExpiredPostWindows(context.Context, string, time.Time) (int, error)
+	CloseExpiredPostWindowsAll(context.Context, time.Time, int) (int, error)
 	MarkReadyIfComplete(context.Context, string, time.Time) (bool, error)
 }
 
@@ -242,6 +243,14 @@ func (s *Service) AdvanceOpenWindows(
 	now time.Time,
 ) (int, error) {
 	return s.repository.CloseExpiredPostWindows(ctx, chatID, now)
+}
+
+func (s *Service) AdvanceAllOpenWindows(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) (int, error) {
+	return s.repository.CloseExpiredPostWindowsAll(ctx, now, limit)
 }
 
 func (s *Service) CompleteMessage(ctx context.Context, session *MessageSession) error {

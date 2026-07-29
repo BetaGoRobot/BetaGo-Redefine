@@ -191,6 +191,29 @@ func (r *Repository) CloseExpiredPostWindows(
 	if now.IsZero() {
 		return 0, fmt.Errorf("%w: window sweep timestamp must not be zero", conversationeval.ErrInvalidContract)
 	}
+	return r.closeExpiredPostWindows(ctx, chatID, now, 1000)
+}
+
+func (r *Repository) CloseExpiredPostWindowsAll(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) (int, error) {
+	if now.IsZero() || limit <= 0 || limit > 10000 {
+		return 0, fmt.Errorf(
+			"%w: global window sweep requires timestamp and limit within 1..10000",
+			conversationeval.ErrInvalidContract,
+		)
+	}
+	return r.closeExpiredPostWindows(ctx, "", now, limit)
+}
+
+func (r *Repository) closeExpiredPostWindows(
+	ctx context.Context,
+	chatID string,
+	now time.Time,
+	limit int,
+) (int, error) {
 	db, err := r.database()
 	if err != nil {
 		return 0, err
@@ -199,17 +222,25 @@ func (r *Repository) CloseExpiredPostWindows(
 		ID       string
 		AnchorAt time.Time
 	}
-	if err := db.WithContext(ctx).Raw(`
+	query := `
 		SELECT id, anchor_at
 		FROM evaluation_episodes
-		WHERE chat_id = ?
-		  AND status = ?
+		WHERE status = ?
 		  AND post_window_end IS NULL
 		  AND anchor_at + (? * interval '1 second') <= ?
-		ORDER BY anchor_at, id`,
-		chatID, string(conversationeval.EpisodeStatusCollecting),
-		int64(conversationeval.PostWindowMaxAge/time.Second), now,
-	).Scan(&candidates).Error; err != nil {
+	`
+	args := []any{
+		string(conversationeval.EpisodeStatusCollecting),
+		int64(conversationeval.PostWindowMaxAge / time.Second),
+		now,
+	}
+	if chatID != "" {
+		query += " AND chat_id = ?"
+		args = append(args, chatID)
+	}
+	query += " ORDER BY anchor_at, id LIMIT ?"
+	args = append(args, limit)
+	if err := db.WithContext(ctx).Raw(query, args...).Scan(&candidates).Error; err != nil {
 		return 0, err
 	}
 	closed := 0
