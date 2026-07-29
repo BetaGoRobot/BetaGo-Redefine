@@ -32,6 +32,9 @@ create table if not exists betago.evaluation_candidate_tasks (
 create index if not exists idx_eval_episode_message_timeline
     on betago.evaluation_episode_messages (episode_id, position, occurred_at, event_id);
 
+create index if not exists idx_eval_cohort_chat_ids
+    on betago.evaluation_cohorts using gin (chat_ids jsonb_path_ops);
+
 create index if not exists idx_eval_candidate_task_claim
     on betago.evaluation_candidate_tasks (next_attempt_at, id)
     where status = 'queued';

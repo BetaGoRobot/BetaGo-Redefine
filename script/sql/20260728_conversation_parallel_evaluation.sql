@@ -122,6 +122,9 @@ create table if not exists betago.evaluation_judgments (
 create index if not exists idx_eval_cohort_time
     on betago.evaluation_cohorts (start_at, end_at);
 
+create index if not exists idx_eval_cohort_chat_ids
+    on betago.evaluation_cohorts using gin (chat_ids jsonb_path_ops);
+
 create index if not exists idx_eval_episode_filter
     on betago.evaluation_episodes (cohort_id, chat_id, anchor_at desc);
 
