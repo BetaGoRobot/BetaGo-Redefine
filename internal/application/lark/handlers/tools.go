@@ -1,8 +1,15 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -25,6 +32,76 @@ func BuildRuntimeCapabilityTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := BuildLarkTools()
 	registerInjectableFinanceTools(ins)
 	return ins
+}
+
+func BuildCandidateShadowTools() (*tools.Impl[larkim.P2MessageReceiveV1], error) {
+	production := BuildRuntimeCapabilityTools()
+	shadow := tools.New[larkim.P2MessageReceiveV1]()
+	for _, name := range conversationeval.CandidateShadowToolNames() {
+		behavior, explicit := toolmeta.LookupRuntimeBehavior(name)
+		if !explicit {
+			return nil, fmt.Errorf("candidate shadow tool %q has no explicit runtime behavior", name)
+		}
+		if behavior.SideEffectLevel != toolmeta.SideEffectLevelNone {
+			return nil, fmt.Errorf(
+				"candidate shadow tool %q has side effect level %q",
+				name,
+				behavior.SideEffectLevel,
+			)
+		}
+		unit, registered := production.Get(name)
+		if !registered {
+			return nil, fmt.Errorf("candidate shadow tool %q is not registered", name)
+		}
+		shadow.Add(unit)
+	}
+	return shadow, nil
+}
+
+func BuildCandidateShadowRegistry(
+	cache *conversationeval.ObservationCache,
+	event *larkim.P2MessageReceiveV1,
+	chatID, openID string,
+	anchorAt time.Time,
+) (*conversationeval.ShadowToolRegistry, error) {
+	if anchorAt.IsZero() {
+		return nil, fmt.Errorf("candidate shadow tool anchor is required")
+	}
+	larkTools, err := BuildCandidateShadowTools()
+	if err != nil {
+		return nil, err
+	}
+	registry := conversationeval.NewAnchoredShadowToolRegistry(cache, anchorAt)
+	for _, name := range conversationeval.CandidateShadowToolNames() {
+		unit, ok := larkTools.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("candidate shadow tool %q disappeared during adapter build", name)
+		}
+		if err := registry.Register(name, func(ctx context.Context, arguments json.RawMessage) (string, error) {
+			if name == "search_history" {
+				clampedArguments, clampErr := conversationeval.ClampCandidateSearchHistoryArguments(
+					arguments,
+					anchorAt,
+				)
+				if clampErr != nil {
+					return "", clampErr
+				}
+				arguments = clampedArguments
+			}
+			result := unit.Function(ctx, string(arguments), tools.FCMeta[larkim.P2MessageReceiveV1]{
+				ChatID: chatID,
+				OpenID: openID,
+				Data:   event,
+			})
+			if result.IsErr() {
+				return "", result.Err()
+			}
+			return result.Value(), nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return registry, nil
 }
 
 func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
