@@ -87,6 +87,7 @@ func BuildCandidateShadowRegistry(
 					return "", clampErr
 				}
 				arguments = clampedArguments
+				ctx = withCandidateHistoryAnchor(ctx, anchorAt)
 			}
 			result := unit.Function(ctx, string(arguments), tools.FCMeta[larkim.P2MessageReceiveV1]{
 				ChatID: chatID,
