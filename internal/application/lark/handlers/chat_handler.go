@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
@@ -55,6 +56,22 @@ type ChatArgs struct {
 type (
 	chatHandler struct{}
 )
+
+type StandardChatPlan struct {
+	ModelID         string
+	SystemPrompt    string
+	UserPrompt      string
+	HistoryItems    []conversationeval.ContextItem
+	RetrievedItems  []conversationeval.ContextItem
+	ExcludedItems   []conversationeval.ExcludedContextItem
+	DegradedSources []string
+	Files           []string
+
+	chatID      string
+	openID      string
+	userName    string
+	messageList history.OpensearchMsgLogList
+}
 
 var Chat = chatHandler{}
 
@@ -499,6 +516,7 @@ func pointerString(value *string) string {
 }
 
 func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
+	startedAt := time.Now()
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -551,7 +569,13 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		if seqErr != nil {
 			return seqErr
 		}
-		return larkmsg.SendAndUpdateStreamingCard(ctx, event.Event.Message, msgSeq)
+		messageID, sendErr := larkmsg.SendAndUpdateStreamingCardReturning(
+			ctx,
+			event.Event.Message,
+			captureControlStream(ctx, msgSeq, startedAt),
+		)
+		recordDeliveryMessageID(ctx, messageID)
+		return sendErr
 	}
 
 	genFunc := GenerateChatSeq
@@ -562,6 +586,7 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	if err != nil {
 		return err
 	}
+	msgSeq = captureControlStream(ctx, msgSeq, startedAt)
 	lastData := &ark_dal.ModelStreamRespReasoning{}
 	for data := range msgSeq {
 		span.SetAttributes(attribute.String("lastData", data.Content))
@@ -588,10 +613,107 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	if !resp.Success() {
 		return errors.New(resp.Error())
 	}
+	recordTextDelivery(ctx, lastData.ContentStruct.Reply, resp)
 	return nil
 }
 
-func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
+func GenerateChatSeq(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	modelID string,
+	size *int,
+	files []string,
+	input ...string,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	plan, err := buildStandardChatPlan(ctx, event, metaData, modelID, size, files, input...)
+	if err != nil {
+		return nil, err
+	}
+	recordStandardChatPlan(ctx, event, plan)
+	return executeStandardChatPlan(ctx, event, metaData, plan)
+}
+
+func executeStandardChatPlan(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	plan StandardChatPlan,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	dal := ark_dal.
+		New(plan.chatID, plan.openID, event).
+		WithTools(larktools()).
+		WithHandlersOnly(BuildInjectableFinanceTools())
+	if intent, ok := metaData.GetIntentAnalysis(); ok {
+		dal = dal.Effort(intent.ReasoningEffort)
+	}
+	logs.L().Ctx(ctx).Info(
+		"calling chat dal",
+		zap.String("sys_prompt", plan.SystemPrompt),
+		zap.String("user_prompt", plan.UserPrompt),
+	)
+	scope := buildUserLLMUsageScope(
+		ctx,
+		plan.chatID,
+		metaChatName(metaData),
+		plan.openID,
+		plan.userName,
+		"chat",
+		llmusage.SourceTypeUser,
+	)
+	iterSeq, err := dal.Do(ctx, scope, plan.SystemPrompt, plan.UserPrompt, plan.Files...)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
+		contentBuilder := &strings.Builder{}
+		reasonBuilder := &strings.Builder{}
+		lastData := &ark_dal.ModelStreamRespReasoning{}
+		for data := range iterSeq {
+			lastData = data
+			contentBuilder.WriteString(data.Content)
+			reasonBuilder.WriteString(data.ReasoningContent)
+
+			if !yield(data) {
+				return
+			}
+		}
+
+		fullContent := contentBuilder.String()
+		parseErr := sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
+		if parseErr != nil {
+			fullContent, parseErr = jsonrepair.RepairJSON(fullContent)
+			if parseErr != nil {
+				return
+			}
+			parseErr = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
+			if parseErr != nil {
+				return
+			}
+		}
+		if normalizedReply, normalizeErr := mention.NormalizeReplyText(
+			ctx,
+			plan.chatID,
+			plan.messageList,
+			lastData.ContentStruct.Reply,
+		); normalizeErr == nil {
+			lastData.ContentStruct.Reply = normalizedReply
+		}
+		lastData.ReasoningContent = reasonBuilder.String()
+		yield(lastData)
+	}, nil
+}
+
+func buildStandardChatPlan(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	modelID string,
+	size *int,
+	files []string,
+	input ...string,
+) (plan StandardChatPlan, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
@@ -654,16 +776,21 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	} else if len(historyLines) > historyLimit {
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
+	historyItems, excludedItems := captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
 	systemPrompt := buildStandardChatSystemPrompt(ctx, promptMode, chatID)
 	// 从chunking中拉取话题（应用 cutoff time 过滤）
 	topicLines := make([]string, 0)
+	retrievedItems := make([]conversationeval.ContextItem, 0)
 	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
+	degradedSources := make([]string, 0)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
+		degradedSources = append(degradedSources, conversationeval.ContextSourceRetrieved)
 	}
-	for _, doc := range docs {
-		msgID, ok := doc.Metadata["msg_id"]
-		if ok {
+	for docIndex, doc := range docs {
+		rawMsgID, ok := doc.Metadata["msg_id"]
+		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
+		if ok && msgID != "" {
 			// 构建 chunk 查询（应用 cutoff time 过滤）
 			chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
 			if cutoffTime != "" {
@@ -678,13 +805,23 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 				Size(1),
 			)
 			if searchErr != nil {
-				return nil, searchErr
+				return StandardChatPlan{}, searchErr
 			}
 			chunk := &xmodel.MessageChunkLogV3{}
 			if len(resp.Hits.Hits) > 0 {
 				err = sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
 				if err != nil {
 					logs.L().Ctx(ctx).Error("got invalid chunk", zap.Error(err), zap.String("raw", string(resp.Hits.Hits[0].Source)))
+					item := newContextItem(
+						conversationeval.ContextSourceRetrieved,
+						fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+						conversationeval.ContextKindChunk,
+						doc.PageContent,
+						docIndex+1,
+						time.UnixMilli(1).UTC(),
+						map[string]string{"message_id": msgID},
+					)
+					excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkInvalid))
 					continue
 				}
 				t := ""
@@ -693,11 +830,67 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 				} else {
 					t = chunk.Timestamp
 				}
-				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", t, chunk.Summary))
+				topicLine := fmt.Sprintf("[%s]%s", t, chunk.Summary)
+				sourceID := strings.TrimSpace(chunk.ID)
+				if sourceID == "" {
+					sourceID = msgID
+				}
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					sourceID,
+					conversationeval.ContextKindChunk,
+					topicLine,
+					docIndex+1,
+					parseContextTime(t),
+					map[string]string{"message_id": msgID},
+				)
+				item.Score = float64(doc.Score)
+				topicLines = append(topicLines, topicLine)
+				retrievedItems = append(retrievedItems, item)
+			} else {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					map[string]string{"message_id": msgID},
+				)
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
 			}
+		} else {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("document-%d", docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				nil,
+			)
+			item.Score = float64(doc.Score)
+			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonMissingMsgID))
 		}
 	}
-	topicLines = utils.Dedup(topicLines)
+	deduplicatedTopicLines := utils.Dedup(topicLines)
+	if len(deduplicatedTopicLines) != len(topicLines) {
+		selectedRetrieved := make([]conversationeval.ContextItem, 0, len(deduplicatedTopicLines))
+		seenTopic := make(map[string]struct{}, len(deduplicatedTopicLines))
+		for index, item := range retrievedItems {
+			if _, exists := seenTopic[item.Content]; exists {
+				item.SourceID = fmt.Sprintf("%s-duplicate-%d", item.SourceID, index+1)
+				item.ID = item.Source + ":" + item.SourceID
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonDeduplicated))
+				continue
+			}
+			seenTopic[item.Content] = struct{}{}
+			item.Rank = len(selectedRetrieved) + 1
+			selectedRetrieved = append(selectedRetrieved, item)
+		}
+		retrievedItems = selectedRetrieved
+	}
+	topicLines = deduplicatedTopicLines
 
 	userPrompt := buildStandardChatUserPrompt(
 		standardChatBotProfileLoader(ctx),
@@ -716,51 +909,19 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		userPrompt += correctionsCtx
 	}
 
-	dal := ark_dal.
-		New(chatID, currentOpenID(event, metaData), event).
-		WithTools(larktools()).
-		WithHandlersOnly(BuildInjectableFinanceTools())
-	if intent, ok := metaData.GetIntentAnalysis(); ok {
-		dal = dal.Effort(intent.ReasoningEffort)
-	}
-	logs.L().Ctx(ctx).Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
-	scope := buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(event, metaData), userName, "chat", llmusage.SourceTypeUser)
-	iterSeq, err := dal.Do(ctx, scope, systemPrompt, userPrompt, files...)
-	if err != nil {
-		return nil, err
-	}
-
-	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
-		contentBuilder := &strings.Builder{}
-		reasonBuilder := &strings.Builder{}
-		lastData := &ark_dal.ModelStreamRespReasoning{}
-		for data := range iterSeq {
-			lastData = data
-			contentBuilder.WriteString(data.Content)
-			reasonBuilder.WriteString(data.ReasoningContent)
-
-			if !yield(data) {
-				return
-			}
-		}
-
-		fullContent := contentBuilder.String()
-		parseErr := sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
-		if parseErr != nil {
-			fullContent, parseErr = jsonrepair.RepairJSON(fullContent)
-			if parseErr != nil {
-				return
-			}
-			parseErr = sonic.UnmarshalString(fullContent, &lastData.ContentStruct)
-			if parseErr != nil {
-				return
-			}
-		}
-		if normalizedReply, normalizeErr := mention.NormalizeReplyText(ctx, chatID, messageList, lastData.ContentStruct.Reply); normalizeErr == nil {
-			lastData.ContentStruct.Reply = normalizedReply
-		}
-		lastData.ReasoningContent = reasonBuilder.String()
-		yield(lastData)
+	return StandardChatPlan{
+		ModelID:         modelID,
+		SystemPrompt:    systemPrompt,
+		UserPrompt:      userPrompt,
+		HistoryItems:    historyItems,
+		RetrievedItems:  retrievedItems,
+		ExcludedItems:   excludedItems,
+		DegradedSources: degradedSources,
+		Files:           append([]string(nil), files...),
+		chatID:          chatID,
+		openID:          currentOpenID(event, metaData),
+		userName:        userName,
+		messageList:     messageList,
 	}, nil
 }
 

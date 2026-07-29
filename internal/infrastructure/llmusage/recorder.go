@@ -27,8 +27,8 @@ type BotIDProvider func() string
 // defaultBotIDProvider 由 SetDefaultBotIDProvider 配置；未配置时所有记录的 bot_id
 // 写入空字符串（与回刷前的旧行为一致）。
 var (
-	botIDMu        sync.RWMutex
-	botIDProvider  BotIDProvider
+	botIDMu       sync.RWMutex
+	botIDProvider BotIDProvider
 )
 
 // SetDefaultBotIDProvider 注入一个返回当前 bot 标识的函数；建议在 db 模块初始化
@@ -101,6 +101,7 @@ func DefaultRecorder() *Recorder {
 }
 
 func RecordUsage(ctx context.Context, record Record) error {
+	observerFromContext(ctx).ObserveUsage(ctx, record)
 	return DefaultRecorder().Record(ctx, record)
 }
 

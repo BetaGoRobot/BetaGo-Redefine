@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers/twophase"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
@@ -60,6 +62,10 @@ func GenerateChatSeqTwoPhase(
 	// 复用 intent 阶段产出的决策与工具线索
 	intent, hasIntent := metaData.GetIntentAnalysis()
 	if hasIntent && !intent.NeedReply {
+		recordStandardChatPlan(ctx, event, StandardChatPlan{
+			ModelID: modelID,
+			Files:   append([]string(nil), files...),
+		})
 		return singleSkipSeq("intent: need_reply=false"), nil
 	}
 
@@ -91,7 +97,6 @@ func GenerateChatSeqTwoPhase(
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
-
 	userName, err := larkuser.GetUserNameCache(ctx, chatID, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
@@ -108,9 +113,13 @@ func GenerateChatSeqTwoPhase(
 	} else if len(historyLines) > historyLimit {
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
+	historyItems, excludedItems := captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
 
 	// 话题召回
-	topicLines := buildTwoPhaseTopicLines(ctx, accessor, chatID, currentInput, cutoffTime)
+	topicLines, retrievedItems, retrievedExcluded, degradedSources := buildTwoPhaseTopicContext(
+		ctx, accessor, chatID, currentInput, cutoffTime,
+	)
+	excludedItems = append(excludedItems, retrievedExcluded...)
 
 	extraCtx := getChatExtraContext(ctx, chatID)
 	correctionsCtx := buildCorrectionsContext(ctx, chatID)
@@ -145,6 +154,7 @@ func GenerateChatSeqTwoPhase(
 			logs.L().Ctx(ctx).Warn("tool planner failed, fallback to no hints", zap.Error(planErr))
 		} else {
 			toolHints = hints
+			recordTwoPhaseToolHints(ctx, toolHints)
 		}
 	}
 
@@ -173,6 +183,20 @@ func GenerateChatSeqTwoPhase(
 		extraCtx,
 		correctionsCtx,
 	)
+	recordStandardChatPlan(ctx, event, StandardChatPlan{
+		ModelID:         modelID,
+		SystemPrompt:    genSysPrompt,
+		UserPrompt:      genUserPrompt,
+		HistoryItems:    historyItems,
+		RetrievedItems:  retrievedItems,
+		ExcludedItems:   excludedItems,
+		DegradedSources: degradedSources,
+		Files:           append([]string(nil), files...),
+		chatID:          chatID,
+		openID:          currentOpenID(event, metaData),
+		userName:        userName,
+		messageList:     messageList,
+	})
 
 	genScope := twophase.BuildGeneratorScope(baseScope)
 	dal := ark_dal.
@@ -189,6 +213,16 @@ func GenerateChatSeqTwoPhase(
 	}
 
 	return wrapTwoPhaseStream(ctx, genStream, intentReason, messageList, chatID), nil
+}
+
+func recordTwoPhaseToolHints(ctx context.Context, hints []intentmeta.ToolHint) {
+	capture := conversationeval.FromContext(ctx)
+	for _, hint := range hints {
+		capture.RecordToolPlan(ctx, conversationeval.ToolTrace{
+			Name:         string(hint),
+			OutputSource: conversationeval.ToolOutputSourcePlanner,
+		})
+	}
 }
 
 // wrapTwoPhaseStream 包装 Reply Generator 流式输出，在流结束时组装完整 FinalResult
@@ -260,15 +294,43 @@ func singleSkipSeq(reason string) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
 
 // buildTwoPhaseTopicLines 构建话题行（从向量检索 + chunk 索引中获取）
 func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, chatID, currentInput, cutoffTime string) []string {
+	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime)
+	return lines
+}
+
+func buildTwoPhaseTopicContext(
+	ctx context.Context,
+	accessor *appconfig.Accessor,
+	chatID, currentInput, cutoffTime string,
+) (
+	[]string,
+	[]conversationeval.ContextItem,
+	[]conversationeval.ExcludedContextItem,
+	[]string,
+) {
 	topicLines := make([]string, 0)
+	retrievedItems := make([]conversationeval.ContextItem, 0)
+	excludedItems := make([]conversationeval.ExcludedContextItem, 0)
 	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
-		return topicLines
+		return topicLines, retrievedItems, excludedItems, []string{conversationeval.ContextSourceRetrieved}
 	}
-	for _, doc := range docs {
-		msgID, ok := doc.Metadata["msg_id"]
-		if !ok {
+	for docIndex, doc := range docs {
+		rawMsgID, ok := doc.Metadata["msg_id"]
+		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
+		if !ok || msgID == "" {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("document-%d", docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				nil,
+			)
+			item.Score = float64(doc.Score)
+			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonMissingMsgID))
 			continue
 		}
 		chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
@@ -284,11 +346,31 @@ func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, 
 			Size(1),
 		)
 		if searchErr != nil {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				map[string]string{"message_id": msgID},
+			)
+			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
 			continue
 		}
 		chunk := &xmodel.MessageChunkLogV3{}
 		if len(resp.Hits.Hits) > 0 {
 			if err := sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk); err != nil {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					map[string]string{"message_id": msgID},
+				)
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkInvalid))
 				continue
 			}
 			t := ""
@@ -297,10 +379,54 @@ func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, 
 			} else {
 				t = chunk.Timestamp
 			}
-			topicLines = append(topicLines, "["+t+"]"+chunk.Summary)
+			topicLine := "[" + t + "]" + chunk.Summary
+			sourceID := strings.TrimSpace(chunk.ID)
+			if sourceID == "" {
+				sourceID = msgID
+			}
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				sourceID,
+				conversationeval.ContextKindChunk,
+				topicLine,
+				docIndex+1,
+				parseContextTime(t),
+				map[string]string{"message_id": msgID},
+			)
+			item.Score = float64(doc.Score)
+			topicLines = append(topicLines, topicLine)
+			retrievedItems = append(retrievedItems, item)
+		} else {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				map[string]string{"message_id": msgID},
+			)
+			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
 		}
 	}
-	return utils.Dedup(topicLines)
+	deduplicated := utils.Dedup(topicLines)
+	if len(deduplicated) != len(topicLines) {
+		selected := make([]conversationeval.ContextItem, 0, len(deduplicated))
+		seen := make(map[string]struct{}, len(deduplicated))
+		for index, item := range retrievedItems {
+			if _, exists := seen[item.Content]; exists {
+				item.SourceID = fmt.Sprintf("%s-duplicate-%d", item.SourceID, index+1)
+				item.ID = item.Source + ":" + item.SourceID
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonDeduplicated))
+				continue
+			}
+			seen[item.Content] = struct{}{}
+			item.Rank = len(selected) + 1
+			selected = append(selected, item)
+		}
+		retrievedItems = selected
+	}
+	return deduplicated, retrievedItems, excludedItems, nil
 }
 
 // fmtTwoPhaseInput 格式化当前输入消息

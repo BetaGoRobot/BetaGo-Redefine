@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -117,6 +118,7 @@ func (r *IntentRecognizeOperator) Run(ctx context.Context, event *larkim.P2Messa
 	}
 
 	analysis.Sanitize()
+	conversationeval.FromContext(ctx).RecordIntent(ctx, analysis)
 	if meta != nil {
 		meta.SetIntentAnalysis(analysis)
 	}
