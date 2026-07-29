@@ -105,7 +105,8 @@ func TestServiceObserveMessageClosesAtTopicBoundary(t *testing.T) {
 	episode := newEpisode(serviceCohort(input), input, nil, input.OccurredAt)
 	window, _ := NewPostWindow(input.OccurredAt, "topic-old")
 	repository := &serviceRepositoryFake{
-		openWindows: []EpisodeWindow{{Episode: episode, Window: *window}},
+		openEpisodes: []Episode{episode},
+		postWindows:  map[string]PostWindow{episode.ID: *window},
 	}
 	service := newServiceForTest(
 		t,
@@ -181,7 +182,8 @@ type serviceRepositoryFake struct {
 	episodes     []Episode
 	outputs      []LaneOutput
 	savedWindows [][]WindowMessage
-	openWindows  []EpisodeWindow
+	openEpisodes []Episode
+	postWindows  map[string]PostWindow
 	postMessages []WindowMessage
 	closed       []struct {
 		id     string
@@ -223,29 +225,56 @@ func (r *serviceRepositoryFake) SaveWindowMessages(_ context.Context, _ string, 
 	r.savedWindows = append(r.savedWindows, cloneCaptureValue(messages))
 	return nil
 }
-func (r *serviceRepositoryFake) OpenEpisodeWindows(context.Context, string, time.Time) ([]EpisodeWindow, error) {
-	return cloneCaptureValue(r.openWindows), nil
+func (r *serviceRepositoryFake) OpenEpisodesForMessage(context.Context, string, time.Time) ([]Episode, error) {
+	return cloneCaptureValue(r.openEpisodes), nil
 }
-func (r *serviceRepositoryFake) AppendPostWindowMessage(
+func (r *serviceRepositoryFake) ApplyPostWindowObservation(
+	_ context.Context,
+	episodeID string,
+	message WindowMessage,
+	boundary bool,
+) (PostWindowMutation, error) {
+	window := r.postWindows[episodeID]
+	added, err := window.Append(message, boundary)
+	if err != nil {
+		return PostWindowMutation{}, err
+	}
+	r.postWindows[episodeID] = window
+	if added {
+		r.postMessages = append(r.postMessages, window.Messages[len(window.Messages)-1])
+	}
+	mutation := PostWindowMutation{Added: added}
+	if window.ClosedAt != nil {
+		mutation.Closed = true
+		mutation.ClosedAt = window.ClosedAt
+		mutation.CloseReason = window.CloseReason
+		mutation.Ready = true
+		r.closed = append(r.closed, struct {
+			id     string
+			at     time.Time
+			reason PostWindowCloseReason
+		}{id: episodeID, at: *window.ClosedAt, reason: window.CloseReason})
+		r.readyCalls++
+	}
+	return mutation, nil
+}
+func (r *serviceRepositoryFake) CloseExpiredPostWindows(
 	_ context.Context,
 	_ string,
-	message WindowMessage,
-) error {
-	r.postMessages = append(r.postMessages, cloneCaptureValue(message))
-	return nil
-}
-func (r *serviceRepositoryFake) ClosePostWindow(
-	_ context.Context,
-	id string,
-	at time.Time,
-	reason PostWindowCloseReason,
-) error {
-	r.closed = append(r.closed, struct {
-		id     string
-		at     time.Time
-		reason PostWindowCloseReason
-	}{id: id, at: at, reason: reason})
-	return nil
+	now time.Time,
+) (int, error) {
+	closed := 0
+	for episodeID, window := range r.postWindows {
+		advanced, err := window.Advance(now)
+		if err != nil {
+			return closed, err
+		}
+		if advanced {
+			r.postWindows[episodeID] = window
+			closed++
+		}
+	}
+	return closed, nil
 }
 func (r *serviceRepositoryFake) MarkReadyIfComplete(context.Context, string, time.Time) (bool, error) {
 	r.readyCalls++

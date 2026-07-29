@@ -52,22 +52,25 @@ func (m MessageInput) WindowMessage(position WindowPosition) WindowMessage {
 	}
 }
 
-type EpisodeWindow struct {
-	Episode Episode
-	Window  PostWindow
-}
-
 type EpisodeArtifacts interface {
 	SaveWindowMessages(context.Context, string, []WindowMessage) error
-	OpenEpisodeWindows(context.Context, string, time.Time) ([]EpisodeWindow, error)
-	AppendPostWindowMessage(context.Context, string, WindowMessage) error
-	ClosePostWindow(
+	OpenEpisodesForMessage(context.Context, string, time.Time) ([]Episode, error)
+	ApplyPostWindowObservation(
 		context.Context,
 		string,
-		time.Time,
-		PostWindowCloseReason,
-	) error
+		WindowMessage,
+		bool,
+	) (PostWindowMutation, error)
+	CloseExpiredPostWindows(context.Context, string, time.Time) (int, error)
 	MarkReadyIfComplete(context.Context, string, time.Time) (bool, error)
+}
+
+type PostWindowMutation struct {
+	Added       bool
+	Closed      bool
+	ClosedAt    *time.Time
+	CloseReason PostWindowCloseReason
+	Ready       bool
 }
 
 type EvaluationRepository interface {
@@ -201,57 +204,33 @@ func (s *Service) BeginMessage(
 }
 
 func (s *Service) ObserveMessage(ctx context.Context, input MessageInput) error {
-	windows, err := s.repository.OpenEpisodeWindows(ctx, input.ChatID, input.OccurredAt)
+	episodes, err := s.repository.OpenEpisodesForMessage(ctx, input.ChatID, input.OccurredAt)
 	if err != nil {
 		return fmt.Errorf("load open evaluation windows: %w", err)
 	}
 	message := input.WindowMessage(WindowPositionPost)
-	for _, episodeWindow := range windows {
-		window := episodeWindow.Window
-		boundary := defaultTopicBoundary(episodeWindow.Episode, message)
+	for _, episode := range episodes {
+		boundary := defaultTopicBoundary(episode, message)
 		if s.boundaryDetector != nil {
 			boundary, err = s.boundaryDetector.IsTopicBoundary(
 				ctx,
-				episodeWindow.Episode,
+				episode,
 				message,
 			)
 			if err != nil {
 				return fmt.Errorf("detect evaluation topic boundary: %w", err)
 			}
 		}
-		added, appendErr := window.Append(message, boundary)
-		if appendErr != nil {
-			if errors.Is(appendErr, ErrInvalidTransition) {
+		if _, applyErr := s.repository.ApplyPostWindowObservation(
+			ctx,
+			episode.ID,
+			message,
+			boundary,
+		); applyErr != nil {
+			if errors.Is(applyErr, ErrInvalidTransition) {
 				continue
 			}
-			return appendErr
-		}
-		if added {
-			stored := window.Messages[len(window.Messages)-1]
-			if err := s.repository.AppendPostWindowMessage(
-				ctx,
-				episodeWindow.Episode.ID,
-				stored,
-			); err != nil {
-				return fmt.Errorf("append evaluation post-window message: %w", err)
-			}
-		}
-		if window.ClosedAt != nil {
-			if err := s.repository.ClosePostWindow(
-				ctx,
-				episodeWindow.Episode.ID,
-				*window.ClosedAt,
-				window.CloseReason,
-			); err != nil {
-				return fmt.Errorf("close evaluation post-window: %w", err)
-			}
-			if _, err := s.repository.MarkReadyIfComplete(
-				ctx,
-				episodeWindow.Episode.ID,
-				*window.ClosedAt,
-			); err != nil {
-				return fmt.Errorf("mark evaluation episode ready: %w", err)
-			}
+			return fmt.Errorf("apply evaluation post-window observation: %w", applyErr)
 		}
 	}
 	return nil
@@ -262,38 +241,7 @@ func (s *Service) AdvanceOpenWindows(
 	chatID string,
 	now time.Time,
 ) (int, error) {
-	windows, err := s.repository.OpenEpisodeWindows(ctx, chatID, now)
-	if err != nil {
-		return 0, err
-	}
-	closed := 0
-	for _, episodeWindow := range windows {
-		window := episodeWindow.Window
-		advanced, advanceErr := window.Advance(now)
-		if advanceErr != nil {
-			return closed, advanceErr
-		}
-		if !advanced || window.ClosedAt == nil {
-			continue
-		}
-		if err := s.repository.ClosePostWindow(
-			ctx,
-			episodeWindow.Episode.ID,
-			*window.ClosedAt,
-			window.CloseReason,
-		); err != nil {
-			return closed, err
-		}
-		if _, err := s.repository.MarkReadyIfComplete(
-			ctx,
-			episodeWindow.Episode.ID,
-			*window.ClosedAt,
-		); err != nil {
-			return closed, err
-		}
-		closed++
-	}
-	return closed, nil
+	return s.repository.CloseExpiredPostWindows(ctx, chatID, now)
 }
 
 func (s *Service) CompleteMessage(ctx context.Context, session *MessageSession) error {
