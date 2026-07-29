@@ -289,7 +289,8 @@ func TestCaptureDroppedHistoryMarksInvalidTimeDegradedWithoutFutureContext(t *te
 
 	if len(excluded) != 2 ||
 		excluded[0].SourceID != "om_invalid" ||
-		excluded[0].ExcludeReason != excludeReasonInvalidTimestamp {
+		excluded[0].ExcludeReason != excludeReasonInvalidTimestamp ||
+		excluded[0].OriginalBucket != conversationeval.ContextBucketMessages {
 		t.Fatalf("excluded history = %+v", excluded)
 	}
 	if excluded[1].SourceID != "om_future" ||
@@ -300,6 +301,23 @@ func TestCaptureDroppedHistoryMarksInvalidTimeDegradedWithoutFutureContext(t *te
 	if !containsString(degraded, "history_time") ||
 		!containsString(degraded, "history_causal_filter") {
 		t.Fatalf("degraded sources = %#v", degraded)
+	}
+}
+
+func TestCaptureDroppedRetrievedRecordsOriginalBucket(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.Local)
+	excluded, _ := captureDroppedRetrieved(
+		"chunk-1",
+		"om-1",
+		"future",
+		"2026-07-29 15:00:01",
+		excludeReasonAfterAnchor,
+		1,
+		0.8,
+		anchor,
+	)
+	if excluded.OriginalBucket != conversationeval.ContextBucketRetrieved {
+		t.Fatalf("retrieved original bucket = %q", excluded.OriginalBucket)
 	}
 }
 

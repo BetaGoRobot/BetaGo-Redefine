@@ -186,6 +186,37 @@ func TestClampCandidateSearchHistoryArgumentsToAnchor(t *testing.T) {
 	}
 }
 
+func TestClampCandidateSearchHistoryTopK(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 15, 0, 0, 123, time.UTC)
+	tests := []struct {
+		name      string
+		arguments json.RawMessage
+		wantTopK  int
+	}{
+		{name: "missing uses bounded default", arguments: json.RawMessage(`{}`), wantTopK: 20},
+		{name: "below minimum", arguments: json.RawMessage(`{"top_k":0}`), wantTopK: 1},
+		{name: "within range", arguments: json.RawMessage(`{"top_k":7}`), wantTopK: 7},
+		{name: "above maximum", arguments: json.RawMessage(`{"top_k":200}`), wantTopK: 20},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := conversationeval.ClampCandidateSearchHistoryArguments(test.arguments, anchor)
+			if err != nil {
+				t.Fatalf("ClampCandidateSearchHistoryArguments() error = %v", err)
+			}
+			var object struct {
+				TopK int `json:"top_k"`
+			}
+			if err := json.Unmarshal(got, &object); err != nil {
+				t.Fatalf("arguments = %s: %v", got, err)
+			}
+			if object.TopK != test.wantTopK {
+				t.Fatalf("top_k = %d, want %d", object.TopK, test.wantTopK)
+			}
+		})
+	}
+}
+
 func TestBuildSchedulableToolsRestrictsSendMessageChatOverride(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	schedulable := BuildSchedulableTools()

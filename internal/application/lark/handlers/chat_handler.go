@@ -59,6 +59,7 @@ type StandardChatPlan struct {
 	ModelID         string
 	SystemPrompt    string
 	UserPrompt      string
+	CurrentInput    string
 	HistoryItems    []conversationeval.ContextItem
 	RetrievedItems  []conversationeval.ContextItem
 	ExcludedItems   []conversationeval.ExcludedContextItem
@@ -872,7 +873,11 @@ func buildStandardChatPlan(
 							time.UnixMilli(1).UTC(),
 							map[string]string{"message_id": msgID},
 						)
-						excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkInvalid))
+						excludedItems = append(excludedItems, excludedContextItem(
+							item,
+							excludeReasonChunkInvalid,
+							conversationeval.ContextBucketRetrieved,
+						))
 					}
 					continue
 				}
@@ -925,7 +930,11 @@ func buildStandardChatPlan(
 					time.UnixMilli(1).UTC(),
 					map[string]string{"message_id": msgID},
 				)
-				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonChunkMissing,
+					conversationeval.ContextBucketRetrieved,
+				))
 			}
 		} else if captureEnabled {
 			item := newContextItem(
@@ -938,7 +947,11 @@ func buildStandardChatPlan(
 				nil,
 			)
 			item.Score = float64(doc.Score)
-			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonMissingMsgID))
+			excludedItems = append(excludedItems, excludedContextItem(
+				item,
+				excludeReasonMissingMsgID,
+				conversationeval.ContextBucketRetrieved,
+			))
 		}
 	}
 	deduplicatedTopicLines := utils.Dedup(topicLines)
@@ -949,7 +962,11 @@ func buildStandardChatPlan(
 			if _, exists := seenTopic[item.Content]; exists {
 				item.SourceID = fmt.Sprintf("%s-duplicate-%d", item.SourceID, index+1)
 				item.ID = item.Source + ":" + item.SourceID
-				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonDeduplicated))
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonDeduplicated,
+					conversationeval.ContextBucketRetrieved,
+				))
 				continue
 			}
 			seenTopic[item.Content] = struct{}{}
@@ -981,6 +998,7 @@ func buildStandardChatPlan(
 		ModelID:         modelID,
 		SystemPrompt:    systemPrompt,
 		UserPrompt:      userPrompt,
+		CurrentInput:    currentInput,
 		HistoryItems:    historyItems,
 		RetrievedItems:  retrievedItems,
 		ExcludedItems:   excludedItems,

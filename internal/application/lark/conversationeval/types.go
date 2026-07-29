@@ -253,8 +253,26 @@ type ContextItem struct {
 	Metadata      json.RawMessage `json:"metadata,omitempty"`
 }
 
+type ContextBucket string
+
+const (
+	ContextBucketMessages  ContextBucket = "messages"
+	ContextBucketRetrieved ContextBucket = "retrieved"
+	ContextBucketEvents    ContextBucket = "events"
+)
+
+func (b ContextBucket) Valid() bool {
+	switch b {
+	case ContextBucketMessages, ContextBucketRetrieved, ContextBucketEvents:
+		return true
+	default:
+		return false
+	}
+}
+
 type ExcludedContextItem struct {
 	ContextItem
+	OriginalBucket ContextBucket `json:"original_bucket,omitempty"`
 }
 
 type ContextSnapshot struct {
@@ -266,6 +284,7 @@ type ContextSnapshot struct {
 	Events          []ContextItem `json:"events"`
 	SystemPrompt    string        `json:"system_prompt"`
 	UserPrompt      string        `json:"user_prompt"`
+	CurrentInput    string        `json:"current_input,omitempty"`
 	TokenEstimate   int           `json:"token_estimate"`
 	TokenBudget     int           `json:"token_budget"`
 	Truncated       bool          `json:"truncated"`
@@ -406,6 +425,13 @@ func (o LaneOutput) Validate() error {
 	for _, excluded := range o.ExcludedContext {
 		if excluded.Selected {
 			return contractError("excluded context item %q must not be selected", excluded.ID)
+		}
+		if excluded.OriginalBucket != "" && !excluded.OriginalBucket.Valid() {
+			return contractError(
+				"excluded context item %q has invalid original_bucket %q",
+				excluded.ID,
+				excluded.OriginalBucket,
+			)
 		}
 		if err := excluded.ContextItem.validate(o.ContextSnapshot.AnchorAt); err != nil {
 			return err

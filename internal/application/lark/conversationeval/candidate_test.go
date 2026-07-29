@@ -441,7 +441,7 @@ func candidateTestSnapshot() ContextSnapshot {
 			Rank: 1, TokenCount: 3, Selected: true, OccurredAt: anchor.Add(-time.Minute),
 			Metadata: json.RawMessage(`{"safe":true}`),
 		}},
-		SystemPrompt: "system", UserPrompt: "user",
+		SystemPrompt: "system", UserPrompt: "user", CurrentInput: "current user input",
 		TokenEstimate: 3, TokenBudget: 100,
 	}
 }

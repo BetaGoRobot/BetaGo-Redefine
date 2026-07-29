@@ -254,6 +254,26 @@ func ClampCandidateSearchHistoryArguments(
 	if parsed, ok := parseCandidateSearchHistoryEndTime(endTime); !ok || parsed.After(anchorAt) {
 		object["end_time"] = anchorAt.Format(time.RFC3339Nano)
 	}
+	if value, exists := object["top_k"]; !exists {
+		object["top_k"] = 20
+	} else {
+		number, ok := value.(json.Number)
+		if !ok {
+			return nil, fmt.Errorf("candidate search_history top_k must be an integer")
+		}
+		topK, err := number.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("candidate search_history top_k must be an integer: %w", err)
+		}
+		switch {
+		case topK < 1:
+			object["top_k"] = 1
+		case topK > 20:
+			object["top_k"] = 20
+		default:
+			object["top_k"] = topK
+		}
+	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, fmt.Errorf("encode candidate search_history arguments: %w", err)

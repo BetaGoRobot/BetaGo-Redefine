@@ -50,6 +50,7 @@ func recordStandardChatPlan(
 		Events:          []conversationeval.ContextItem{},
 		SystemPrompt:    plan.SystemPrompt,
 		UserPrompt:      plan.UserPrompt,
+		CurrentInput:    plan.CurrentInput,
 		TokenEstimate:   tokenEstimate,
 		TokenBudget:     tokenEstimate,
 		Truncated:       len(excludedItems) > 0,
@@ -172,10 +173,18 @@ func newContextItem(
 	}
 }
 
-func excludedContextItem(item conversationeval.ContextItem, reason string) conversationeval.ExcludedContextItem {
+func excludedContextItem(
+	item conversationeval.ContextItem,
+	reason string,
+	buckets ...conversationeval.ContextBucket,
+) conversationeval.ExcludedContextItem {
 	item.Selected = false
 	item.ExcludeReason = reason
-	return conversationeval.ExcludedContextItem{ContextItem: item}
+	excluded := conversationeval.ExcludedContextItem{ContextItem: item}
+	if len(buckets) == 1 {
+		excluded.OriginalBucket = buckets[0]
+	}
+	return excluded
 }
 
 func parseContextTime(value string) time.Time {
@@ -279,6 +288,7 @@ func captureHistoryPrompt(
 		excluded = append(excluded, excludedContextItem(
 			historyMessageContextItem(message, 0, message.ToLine()),
 			reason,
+			conversationeval.ContextBucketMessages,
 		))
 	}
 	return selected, excluded
@@ -299,6 +309,7 @@ func captureDroppedHistory(
 			excluded = append(excluded, excludedContextItem(
 				historyMessageContextItem(droppedItem.Message, 0, droppedItem.Message.ToLine()),
 				excludeReasonInvalidTimestamp,
+				conversationeval.ContextBucketMessages,
 			))
 			degraded = append(degraded, "history_time")
 		case excludeReasonAfterAnchor:
@@ -311,7 +322,11 @@ func captureDroppedHistory(
 			}
 			metadata["actual_occurred_at"] = droppedItem.Message.CreateTimeV2
 			item.Metadata = conversationeval.SafeMetadata(metadata)
-			excluded = append(excluded, excludedContextItem(item, excludeReasonAfterAnchor))
+			excluded = append(excluded, excludedContextItem(
+				item,
+				excludeReasonAfterAnchor,
+				conversationeval.ContextBucketMessages,
+			))
 			degraded = append(degraded, "history_causal_filter")
 		}
 	}
@@ -345,7 +360,11 @@ func captureDroppedRetrieved(
 		},
 	)
 	item.Score = score
-	return excludedContextItem(item, reason), degraded
+	return excludedContextItem(
+		item,
+		reason,
+		conversationeval.ContextBucketRetrieved,
+	), degraded
 }
 
 func historyMessageContextItem(

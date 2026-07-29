@@ -256,10 +256,11 @@ func TestRecordStandardChatPlanCapturesExactContext(t *testing.T) {
 		conversationeval.ContextSourceHistory, "om_old",
 		conversationeval.ContextKindMessage, "[08:00] <B>: old", 0, historyAt,
 		nil,
-	), excludeReasonHistoryLimit)
+	), excludeReasonHistoryLimit, conversationeval.ContextBucketMessages)
 	plan := StandardChatPlan{
 		SystemPrompt:   "system exact",
 		UserPrompt:     "user exact",
+		CurrentInput:   "current exact",
 		HistoryItems:   []conversationeval.ContextItem{history},
 		RetrievedItems: []conversationeval.ContextItem{retrieved},
 		ExcludedItems:  []conversationeval.ExcludedContextItem{excluded},
@@ -288,9 +289,13 @@ func TestRecordStandardChatPlanCapturesExactContext(t *testing.T) {
 	if snapshot.Context.SystemPrompt != "system exact" || snapshot.Context.UserPrompt != "user exact" {
 		t.Fatalf("prompts = %q/%q", snapshot.Context.SystemPrompt, snapshot.Context.UserPrompt)
 	}
+	if snapshot.Context.CurrentInput != "current exact" {
+		t.Fatalf("current input = %q", snapshot.Context.CurrentInput)
+	}
 	if len(snapshot.ExcludedContext) != 1 ||
 		snapshot.ExcludedContext[0].SourceID != "om_old" ||
-		snapshot.ExcludedContext[0].ExcludeReason != excludeReasonHistoryLimit {
+		snapshot.ExcludedContext[0].ExcludeReason != excludeReasonHistoryLimit ||
+		snapshot.ExcludedContext[0].OriginalBucket != conversationeval.ContextBucketMessages {
 		t.Fatalf("excluded = %+v", snapshot.ExcludedContext)
 	}
 }
@@ -533,7 +538,7 @@ func TestGenerateChatSeqTwoPhaseNeedReplyFalseCapturesEmptyPlanAndSkip(t *testin
 	meta := &xhandler.BaseMetaData{ChatID: chatID, OpenID: "ou_actor"}
 	meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{NeedReply: false})
 
-	stream, err := GenerateChatSeqTwoPhase(ctx, event, meta, "model", nil, nil)
+	stream, err := GenerateChatSeqTwoPhase(ctx, event, meta, "model", nil, nil, "candidate should evaluate this")
 	if err != nil {
 		t.Fatalf("GenerateChatSeqTwoPhase() error = %v", err)
 	}
@@ -545,7 +550,8 @@ func TestGenerateChatSeqTwoPhaseNeedReplyFalseCapturesEmptyPlanAndSkip(t *testin
 	if snapshot.Context == nil ||
 		snapshot.Context.AnchorEventID != messageID ||
 		snapshot.Context.SystemPrompt != "" ||
-		snapshot.Context.UserPrompt != "" {
+		snapshot.Context.UserPrompt != "" ||
+		snapshot.Context.CurrentInput != "candidate should evaluate this" {
 		t.Fatalf("early skip context = %+v", snapshot.Context)
 	}
 	if snapshot.Output == nil || snapshot.Output.Decision != conversationeval.OutputDecisionSkip {

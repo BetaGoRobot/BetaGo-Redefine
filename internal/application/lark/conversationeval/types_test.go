@@ -122,6 +122,51 @@ func TestContextSnapshotValidate(t *testing.T) {
 	}
 }
 
+func TestExcludedContextOriginalBucketRoundTripAndValidation(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	excluded := ExcludedContextItem{
+		ContextItem: ContextItem{
+			ID: "excluded_1", Source: ContextSourceRetrieved, SourceID: "chunk_1",
+			Kind: ContextKindChunk, Content: "candidate", ContentHash: ContentSHA256("candidate"),
+			Rank: 1, TokenCount: 2, Selected: false, ExcludeReason: "control_budget",
+			OccurredAt: anchor.Add(-time.Minute),
+		},
+		OriginalBucket: ContextBucketRetrieved,
+	}
+	encoded, err := json.Marshal(excluded)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var roundTrip ExcludedContextItem
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if roundTrip.OriginalBucket != ContextBucketRetrieved {
+		t.Fatalf("original bucket = %q", roundTrip.OriginalBucket)
+	}
+
+	snapshot := candidateTestSnapshot()
+	output := LaneOutput{
+		ID: "output-1", EpisodeID: "episode-1", Lane: LaneCandidate, OutputMode: OutputModeShadow,
+		ActivationJSON: json.RawMessage(`{}`), RelevanceJSON: json.RawMessage(`{}`),
+		JoinDecision: JoinDecisionSkip, TopicRelation: TopicRelationUnrelated,
+		ContextSnapshot: snapshot, ExcludedContext: []ExcludedContextItem{excluded},
+		ToolPlanJSON: json.RawMessage(`{}`), TokenUsageJSON: json.RawMessage(`{}`),
+		ErrorJSON: json.RawMessage(`{}`), CreatedAt: anchor, UpdatedAt: anchor,
+	}
+	if err := output.Validate(); err != nil {
+		t.Fatalf("LaneOutput.Validate() valid bucket error = %v", err)
+	}
+	output.ExcludedContext[0].OriginalBucket = ContextBucket("guessed")
+	if err := output.Validate(); err == nil {
+		t.Fatal("LaneOutput.Validate() accepted invalid original bucket")
+	}
+	output.ExcludedContext[0].OriginalBucket = ""
+	if err := output.Validate(); err != nil {
+		t.Fatalf("LaneOutput.Validate() rejected legacy empty bucket: %v", err)
+	}
+}
+
 func TestDomainValidationRejectsInvalidEnumsJSONIDsTimesAndRanges(t *testing.T) {
 	now := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
 	validCohort := Cohort{

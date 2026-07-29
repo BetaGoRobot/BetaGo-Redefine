@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 )
 
 type CandidateRequest struct {
@@ -103,6 +105,8 @@ func (r *candidateRunner) Run(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	usageCollector := llmusage.NewCollector()
+	ctx = llmusage.WithObserver(ctx, usageCollector)
 	ctx, invocationRecorder := withShadowInvocationRecorder(ctx)
 	startedAt := time.Now()
 	if r != nil && r.now != nil {
@@ -125,6 +129,9 @@ func (r *candidateRunner) Run(
 		output.ErrorJSON = candidateErrorJSON(stage, err)
 		output.JoinDecision = JoinDecisionSkip
 		output.TopicRelation = TopicRelationUnrelated
+		if usageJSON, ok := candidateCollectedUsageJSON(usageCollector); ok {
+			output.TokenUsageJSON = usageJSON
+		}
 		if observations := invocationRecorder.Snapshot(); len(observations) != 0 {
 			if toolPlanJSON, marshalErr := candidateToolPlanJSON(nil, observations); marshalErr == nil {
 				output.ToolPlanJSON = toolPlanJSON
@@ -228,6 +235,9 @@ func (r *candidateRunner) Run(
 	output.ReplyText = draft.ReplyText
 	output.ToolPlanJSON = encodedToolPlan
 	output.TokenUsageJSON = tokenUsageJSON
+	if usageJSON, ok := candidateCollectedUsageJSON(usageCollector); ok {
+		output.TokenUsageJSON = usageJSON
+	}
 
 	finishedAt := time.Now()
 	if r.now != nil {
@@ -242,6 +252,23 @@ func (r *candidateRunner) Run(
 		return fail("output", err)
 	}
 	return output, nil
+}
+
+func candidateCollectedUsageJSON(
+	collector *llmusage.Collector,
+) (json.RawMessage, bool) {
+	totals := collector.Totals()
+	if totals.Records == 0 {
+		return nil, false
+	}
+	encoded, err := json.Marshal(TokenUsage{
+		PromptTokens: totals.PromptTokens, CompletionTokens: totals.CompletionTokens,
+		TotalTokens: totals.TotalTokens, Records: totals.Records,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(encoded), true
 }
 
 func validateCandidateRequest(request CandidateRequest, snapshot ContextSnapshot) error {
