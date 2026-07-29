@@ -248,6 +248,18 @@ func FromContext(ctx context.Context) Capture {
 	return noopCapture{}
 }
 
+func CaptureEnabled(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	capture, ok := ctx.Value(captureContextKey{}).(Capture)
+	if !ok || capture == nil {
+		return false
+	}
+	_, noop := capture.(noopCapture)
+	return !noop
+}
+
 type noopCapture struct{}
 
 func (noopCapture) RecordIntent(context.Context, any)                                     {}
@@ -267,11 +279,13 @@ func encodeCaptureValue(value any) (json.RawMessage, bool) {
 func cloneCaptureValue[T any](value T) T {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return value
+		var zero T
+		return zero
 	}
 	var cloned T
 	if err := json.Unmarshal(encoded, &cloned); err != nil {
-		return value
+		var zero T
+		return zero
 	}
 	return cloned
 }

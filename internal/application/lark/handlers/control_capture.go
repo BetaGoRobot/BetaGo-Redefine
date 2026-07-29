@@ -16,13 +16,21 @@ import (
 )
 
 const (
-	excludeReasonHistoryLimit = "history_limit"
-	excludeReasonNoContext    = "no_context"
-	excludeReasonMissingMsgID = "missing_message_id"
-	excludeReasonChunkMissing = "chunk_missing"
-	excludeReasonChunkInvalid = "chunk_invalid"
-	excludeReasonDeduplicated = "deduplicated"
+	excludeReasonHistoryLimit     = "history_limit"
+	excludeReasonNoContext        = "no_context"
+	excludeReasonMissingMsgID     = "missing_message_id"
+	excludeReasonChunkMissing     = "chunk_missing"
+	excludeReasonChunkInvalid     = "chunk_invalid"
+	excludeReasonDeduplicated     = "deduplicated"
+	excludeReasonAfterAnchor      = "after_anchor"
+	excludeReasonInvalidTimestamp = "invalid_timestamp"
 )
+
+func runCaptureBuild(ctx context.Context, build func()) {
+	if conversationeval.CaptureEnabled(ctx) && build != nil {
+		build()
+	}
+}
 
 func recordStandardChatPlan(
 	ctx context.Context,
@@ -171,9 +179,17 @@ func excludedContextItem(item conversationeval.ContextItem, reason string) conve
 }
 
 func parseContextTime(value string) time.Time {
+	parsed, ok := parseContextTimeValue(value)
+	if ok {
+		return parsed
+	}
+	return time.UnixMilli(1).UTC()
+}
+
+func parseContextTimeValue(value string) (time.Time, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.UnixMilli(1).UTC()
+		return time.Time{}, false
 	}
 	for _, layout := range []string{
 		time.RFC3339Nano,
@@ -181,13 +197,13 @@ func parseContextTime(value string) time.Time {
 		"2006-01-02T15:04:05",
 	} {
 		if parsed, err := time.ParseInLocation(layout, value, time.Local); err == nil {
-			return parsed
+			return parsed, true
 		}
 	}
 	if milliseconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return time.UnixMilli(milliseconds)
+		return time.UnixMilli(milliseconds), true
 	}
-	return time.UnixMilli(1).UTC()
+	return time.Time{}, false
 }
 
 func captureHistoryPrompt(
@@ -266,6 +282,70 @@ func captureHistoryPrompt(
 		))
 	}
 	return selected, excluded
+}
+
+func captureDroppedHistory(
+	dropped []droppedHistoryMessage,
+	anchor time.Time,
+) ([]conversationeval.ExcludedContextItem, []string) {
+	excluded := make([]conversationeval.ExcludedContextItem, 0)
+	degraded := make([]string, 0)
+	for _, droppedItem := range dropped {
+		if droppedItem.Message == nil {
+			continue
+		}
+		switch droppedItem.Reason {
+		case excludeReasonInvalidTimestamp:
+			excluded = append(excluded, excludedContextItem(
+				historyMessageContextItem(droppedItem.Message, 0, droppedItem.Message.ToLine()),
+				excludeReasonInvalidTimestamp,
+			))
+			degraded = append(degraded, "history_time")
+		case excludeReasonAfterAnchor:
+			item := historyMessageContextItem(droppedItem.Message, 0, droppedItem.Message.ToLine())
+			item.OccurredAt = anchor
+			var metadata map[string]string
+			_ = json.Unmarshal(item.Metadata, &metadata)
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata["actual_occurred_at"] = droppedItem.Message.CreateTimeV2
+			item.Metadata = conversationeval.SafeMetadata(metadata)
+			excluded = append(excluded, excludedContextItem(item, excludeReasonAfterAnchor))
+			degraded = append(degraded, "history_causal_filter")
+		}
+	}
+	return excluded, uniqueNonEmptyStrings(degraded)
+}
+
+func captureDroppedRetrieved(
+	sourceID, messageID, content, rawTimestamp, reason string,
+	rank int,
+	score float64,
+	anchor time.Time,
+) (conversationeval.ExcludedContextItem, string) {
+	occurredAt, ok := parseContextTimeValue(rawTimestamp)
+	degraded := "retrieved_causal_filter"
+	if !ok || reason == excludeReasonInvalidTimestamp {
+		occurredAt = time.UnixMilli(1).UTC()
+		degraded = "retrieved_time"
+	} else if occurredAt.After(anchor) {
+		occurredAt = anchor
+	}
+	item := newContextItem(
+		conversationeval.ContextSourceRetrieved,
+		sourceID,
+		conversationeval.ContextKindChunk,
+		content,
+		rank,
+		occurredAt,
+		map[string]string{
+			"message_id":         messageID,
+			"actual_occurred_at": rawTimestamp,
+		},
+	)
+	item.Score = score
+	return excludedContextItem(item, reason), degraded
 }
 
 func historyMessageContextItem(

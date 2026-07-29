@@ -457,6 +457,24 @@ func TestCaptureControlStreamPreservesNoCaptureSequence(t *testing.T) {
 	}
 }
 
+func TestRunCaptureBuildSkipsConstructionWithoutCapture(t *testing.T) {
+	calls := 0
+	runCaptureBuild(context.Background(), func() {
+		calls++
+	})
+	if calls != 0 {
+		t.Fatalf("capture builder calls without capture = %d, want 0", calls)
+	}
+
+	ctx := conversationeval.WithCapture(context.Background(), conversationeval.NewCaptureRecorder())
+	runCaptureBuild(ctx, func() {
+		calls++
+	})
+	if calls != 1 {
+		t.Fatalf("capture builder calls with capture = %d, want 1", calls)
+	}
+}
+
 func TestCaptureControlStreamRecordsSkipBeforeConsumerStops(t *testing.T) {
 	recorder := conversationeval.NewCaptureRecorder()
 	ctx := conversationeval.WithCapture(context.Background(), recorder)

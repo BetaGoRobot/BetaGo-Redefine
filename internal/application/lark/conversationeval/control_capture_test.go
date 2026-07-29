@@ -22,6 +22,18 @@ func TestCaptureFromContextIsNilSafeNoOp(t *testing.T) {
 	FromContext(ctx).RecordDelivery(ctx, "message_ignored")
 }
 
+func TestCaptureEnabledDistinguishesRecorderFromNoOp(t *testing.T) {
+	if CaptureEnabled(context.Background()) {
+		t.Fatal("background context unexpectedly has capture enabled")
+	}
+	if CaptureEnabled(WithCapture(context.Background(), nil)) {
+		t.Fatal("nil capture unexpectedly enabled")
+	}
+	if !CaptureEnabled(WithCapture(context.Background(), NewCaptureRecorder())) {
+		t.Fatal("recorder capture is not enabled")
+	}
+}
+
 func TestRecorderCapturesConcurrentArtifactsAndReturnsDeepSnapshot(t *testing.T) {
 	recorder := NewCaptureRecorder()
 	ctx := WithCapture(context.Background(), recorder)
@@ -156,5 +168,24 @@ func TestCaptureRecorderAggregatesUsageAcrossRequestStages(t *testing.T) {
 	if got := *output.TokenUsage; got.PromptTokens != 16 ||
 		got.CompletionTokens != 5 || got.TotalTokens != 21 || got.Records != 2 {
 		t.Fatalf("captured token usage = %+v", got)
+	}
+}
+
+func TestCaptureRecorderCloneFailureDoesNotRetainMutableInput(t *testing.T) {
+	recorder := NewCaptureRecorder()
+	messages := []ContextItem{{
+		ID: "message_1", Source: ContextSourceHistory, SourceID: "message_1",
+		Kind: ContextKindMessage, Content: "original", ContentHash: ContentSHA256("original"),
+		Selected: true, OccurredAt: time.UnixMilli(1), Metadata: json.RawMessage(`{`),
+	}}
+	recorder.RecordContext(context.Background(), ContextSnapshot{Messages: messages}, nil)
+	messages[0].Content = "mutated"
+
+	snapshot := recorder.Snapshot()
+	if snapshot.Context == nil {
+		t.Fatal("Snapshot().Context is nil")
+	}
+	if len(snapshot.Context.Messages) > 0 && snapshot.Context.Messages[0].Content == "mutated" {
+		t.Fatal("clone failure retained caller-owned mutable slice")
 	}
 }

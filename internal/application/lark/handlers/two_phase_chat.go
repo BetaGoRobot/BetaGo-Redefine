@@ -56,16 +56,23 @@ func GenerateChatSeqTwoPhase(
 		*size = 20
 	}
 	chatID := *event.Event.Message.ChatId
+	anchorAt, err := eventAnchorTime(event)
+	if err != nil {
+		return nil, err
+	}
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, metaData))
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 
 	// 复用 intent 阶段产出的决策与工具线索
 	intent, hasIntent := metaData.GetIntentAnalysis()
 	if hasIntent && !intent.NeedReply {
-		recordStandardChatPlan(ctx, event, StandardChatPlan{
-			ModelID: modelID,
-			Files:   append([]string(nil), files...),
-		})
+		if captureEnabled {
+			recordStandardChatPlan(ctx, event, StandardChatPlan{
+				ModelID: modelID,
+				Files:   append([]string(nil), files...),
+			})
+		}
 		return singleSkipSeq("intent: need_reply=false"), nil
 	}
 
@@ -73,18 +80,7 @@ func GenerateChatSeqTwoPhase(
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
-	var query *osquery.BoolQuery
-	if cutoffTime != "" {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Gte(cutoffTime),
-		)
-	} else {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Lte(time.Now()),
-		)
-	}
+	query := buildHistoryQuery(chatID, cutoffTime, anchorAt)
 	messageList, err := history.New(ctx).
 		Query(query).
 		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
@@ -93,10 +89,11 @@ func GenerateChatSeqTwoPhase(
 		return
 	}
 
-	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, currentMsgThreadID, currentMsgParentID)
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, currentMsgThreadID, currentMsgParentID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
+	messageList, droppedHistory := filterHistoryAtAnchor(messageList, anchorAt)
 	userName, err := larkuser.GetUserNameCache(ctx, chatID, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
@@ -113,13 +110,24 @@ func GenerateChatSeqTwoPhase(
 	} else if len(historyLines) > historyLimit {
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
-	historyItems, excludedItems := captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
+	var (
+		historyItems           []conversationeval.ContextItem
+		excludedItems          []conversationeval.ExcludedContextItem
+		historyDegradedSources []string
+	)
+	runCaptureBuild(ctx, func() {
+		historyItems, excludedItems = captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
+		causalExcluded, causalDegraded := captureDroppedHistory(droppedHistory, anchorAt)
+		excludedItems = append(excludedItems, causalExcluded...)
+		historyDegradedSources = append(historyDegradedSources, causalDegraded...)
+	})
 
 	// 话题召回
 	topicLines, retrievedItems, retrievedExcluded, degradedSources := buildTwoPhaseTopicContext(
-		ctx, accessor, chatID, currentInput, cutoffTime,
+		ctx, accessor, chatID, currentInput, cutoffTime, anchorAt, captureEnabled,
 	)
 	excludedItems = append(excludedItems, retrievedExcluded...)
+	degradedSources = append(historyDegradedSources, degradedSources...)
 
 	extraCtx := getChatExtraContext(ctx, chatID)
 	correctionsCtx := buildCorrectionsContext(ctx, chatID)
@@ -183,20 +191,22 @@ func GenerateChatSeqTwoPhase(
 		extraCtx,
 		correctionsCtx,
 	)
-	recordStandardChatPlan(ctx, event, StandardChatPlan{
-		ModelID:         modelID,
-		SystemPrompt:    genSysPrompt,
-		UserPrompt:      genUserPrompt,
-		HistoryItems:    historyItems,
-		RetrievedItems:  retrievedItems,
-		ExcludedItems:   excludedItems,
-		DegradedSources: degradedSources,
-		Files:           append([]string(nil), files...),
-		chatID:          chatID,
-		openID:          currentOpenID(event, metaData),
-		userName:        userName,
-		messageList:     messageList,
-	})
+	if captureEnabled {
+		recordStandardChatPlan(ctx, event, StandardChatPlan{
+			ModelID:         modelID,
+			SystemPrompt:    genSysPrompt,
+			UserPrompt:      genUserPrompt,
+			HistoryItems:    historyItems,
+			RetrievedItems:  retrievedItems,
+			ExcludedItems:   excludedItems,
+			DegradedSources: degradedSources,
+			Files:           append([]string(nil), files...),
+			chatID:          chatID,
+			openID:          currentOpenID(event, metaData),
+			userName:        userName,
+			messageList:     messageList,
+		})
+	}
 
 	genScope := twophase.BuildGeneratorScope(baseScope)
 	dal := ark_dal.
@@ -216,6 +226,9 @@ func GenerateChatSeqTwoPhase(
 }
 
 func recordTwoPhaseToolHints(ctx context.Context, hints []intentmeta.ToolHint) {
+	if !conversationeval.CaptureEnabled(ctx) {
+		return
+	}
 	capture := conversationeval.FromContext(ctx)
 	for _, hint := range hints {
 		capture.RecordToolPlan(ctx, conversationeval.ToolTrace{
@@ -294,7 +307,7 @@ func singleSkipSeq(reason string) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
 
 // buildTwoPhaseTopicLines 构建话题行（从向量检索 + chunk 索引中获取）
 func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, chatID, currentInput, cutoffTime string) []string {
-	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime)
+	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime, time.Now(), false)
 	return lines
 }
 
@@ -302,6 +315,8 @@ func buildTwoPhaseTopicContext(
 	ctx context.Context,
 	accessor *appconfig.Accessor,
 	chatID, currentInput, cutoffTime string,
+	anchorAt time.Time,
+	captureEnabled bool,
 ) (
 	[]string,
 	[]conversationeval.ContextItem,
@@ -311,66 +326,70 @@ func buildTwoPhaseTopicContext(
 	topicLines := make([]string, 0)
 	retrievedItems := make([]conversationeval.ContextItem, 0)
 	excludedItems := make([]conversationeval.ExcludedContextItem, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
+	degradedSources := make([]string, 0)
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalAnchorEnd(anchorAt))
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
-		return topicLines, retrievedItems, excludedItems, []string{conversationeval.ContextSourceRetrieved}
+		if captureEnabled {
+			return topicLines, retrievedItems, excludedItems, []string{conversationeval.ContextSourceRetrieved}
+		}
+		return topicLines, nil, nil, nil
 	}
 	for docIndex, doc := range docs {
 		rawMsgID, ok := doc.Metadata["msg_id"]
 		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
 		if !ok || msgID == "" {
-			item := newContextItem(
-				conversationeval.ContextSourceRetrieved,
-				fmt.Sprintf("document-%d", docIndex+1),
-				conversationeval.ContextKindChunk,
-				doc.PageContent,
-				docIndex+1,
-				time.UnixMilli(1).UTC(),
-				nil,
-			)
-			item.Score = float64(doc.Score)
-			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonMissingMsgID))
+			if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("document-%d", docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					nil,
+				)
+				item.Score = float64(doc.Score)
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonMissingMsgID))
+			}
 			continue
 		}
-		chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
-		if cutoffTime != "" {
-			chunkQuery = osquery.Bool().Must(
-				osquery.Term("msg_ids", msgID),
-				osquery.Range("timestamp_v2").Gte(cutoffTime),
-			)
-		}
+		chunkQuery := buildChunkQuery(msgID, cutoffTime, anchorAt)
 		resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 			Search().Sort("timestamp_v2", osquery.OrderDesc).
 			Query(chunkQuery).
 			Size(1),
 		)
 		if searchErr != nil {
-			item := newContextItem(
-				conversationeval.ContextSourceRetrieved,
-				fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
-				conversationeval.ContextKindChunk,
-				doc.PageContent,
-				docIndex+1,
-				time.UnixMilli(1).UTC(),
-				map[string]string{"message_id": msgID},
-			)
-			excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
-			continue
-		}
-		chunk := &xmodel.MessageChunkLogV3{}
-		if len(resp.Hits.Hits) > 0 {
-			if err := sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk); err != nil {
+			if captureEnabled {
 				item := newContextItem(
 					conversationeval.ContextSourceRetrieved,
-					fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+					fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
 					conversationeval.ContextKindChunk,
 					doc.PageContent,
 					docIndex+1,
 					time.UnixMilli(1).UTC(),
 					map[string]string{"message_id": msgID},
 				)
-				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkInvalid))
+				excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkMissing))
+			}
+			continue
+		}
+		chunk := &xmodel.MessageChunkLogV3{}
+		if len(resp.Hits.Hits) > 0 {
+			if err := sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk); err != nil {
+				if captureEnabled {
+					item := newContextItem(
+						conversationeval.ContextSourceRetrieved,
+						fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+						conversationeval.ContextKindChunk,
+						doc.PageContent,
+						docIndex+1,
+						time.UnixMilli(1).UTC(),
+						map[string]string{"message_id": msgID},
+					)
+					excludedItems = append(excludedItems, excludedContextItem(item, excludeReasonChunkInvalid))
+				}
 				continue
 			}
 			t := ""
@@ -384,19 +403,33 @@ func buildTwoPhaseTopicContext(
 			if sourceID == "" {
 				sourceID = msgID
 			}
-			item := newContextItem(
-				conversationeval.ContextSourceRetrieved,
-				sourceID,
-				conversationeval.ContextKindChunk,
-				topicLine,
-				docIndex+1,
-				parseContextTime(t),
-				map[string]string{"message_id": msgID},
-			)
-			item.Score = float64(doc.Score)
+			occurredAt, causalReason := parseCausalContextTime(t, anchorAt)
+			if causalReason != "" {
+				if captureEnabled {
+					excluded, degraded := captureDroppedRetrieved(
+						sourceID, msgID, topicLine, t, causalReason,
+						docIndex+1, float64(doc.Score), anchorAt,
+					)
+					excludedItems = append(excludedItems, excluded)
+					degradedSources = append(degradedSources, degraded)
+				}
+				continue
+			}
 			topicLines = append(topicLines, topicLine)
-			retrievedItems = append(retrievedItems, item)
-		} else {
+			if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					sourceID,
+					conversationeval.ContextKindChunk,
+					topicLine,
+					docIndex+1,
+					occurredAt,
+					map[string]string{"message_id": msgID},
+				)
+				item.Score = float64(doc.Score)
+				retrievedItems = append(retrievedItems, item)
+			}
+		} else if captureEnabled {
 			item := newContextItem(
 				conversationeval.ContextSourceRetrieved,
 				fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
@@ -410,7 +443,7 @@ func buildTwoPhaseTopicContext(
 		}
 	}
 	deduplicated := utils.Dedup(topicLines)
-	if len(deduplicated) != len(topicLines) {
+	if captureEnabled && len(deduplicated) != len(topicLines) {
 		selected := make([]conversationeval.ContextItem, 0, len(deduplicated))
 		seen := make(map[string]struct{}, len(deduplicated))
 		for index, item := range retrievedItems {
@@ -426,7 +459,7 @@ func buildTwoPhaseTopicContext(
 		}
 		retrievedItems = selected
 	}
-	return deduplicated, retrievedItems, excludedItems, nil
+	return deduplicated, retrievedItems, excludedItems, degradedSources
 }
 
 // fmtTwoPhaseInput 格式化当前输入消息
