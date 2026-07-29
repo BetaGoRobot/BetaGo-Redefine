@@ -31,15 +31,16 @@ const (
 
 // SearchResult 是我们最终返回给 LLM 的标准结果格式
 type SearchResult struct {
-	MessageID    string  `json:"message_id"`
-	OpenID       string  `json:"user_id"`
-	RawMessage   string  `json:"raw_message"`
-	UserName     string  `json:"user_name"`
-	ChatName     string  `json:"chat_name"`
-	CreateTime   string  `json:"create_time"`
-	CreateTimeV2 string  `json:"create_time_v2"`
-	Mentions     string  `json:"mentions"`
-	Score        float64 `json:"score"`
+	MessageID            string  `json:"message_id"`
+	OpenID               string  `json:"user_id"`
+	RawMessage           string  `json:"raw_message"`
+	UserName             string  `json:"user_name"`
+	ChatName             string  `json:"chat_name"`
+	CreateTime           string  `json:"create_time"`
+	CreateTimeV2         string  `json:"create_time_v2"`
+	CreateTimeUnixMillis int64   `json:"create_time_unix_millis"`
+	Mentions             string  `json:"mentions"`
+	Score                float64 `json:"score"`
 }
 
 // HybridSearchRequest 定义了搜索的输入参数
@@ -53,7 +54,8 @@ type HybridSearchRequest struct {
 	StartTime        string   `json:"start_time,omitempty"`
 	EndTime          string   `json:"end_time,omitempty"`
 	CutoffTime       string   `json:"cutoff_time,omitempty"` // RFC3339, messages before this time are excluded
-	MessageIndexOnly bool     `json:"-"`                     // internal mode: query message_v2 only and skip Retriever
+	CausalEndMillis  int64    `json:"-"`
+	MessageIndexOnly bool     `json:"-"` // internal mode: query message_v2 only and skip Retriever
 }
 
 type EmbeddingFunc func(ctx context.Context, text string) (vector []float32, tokenUsage model.Usage, err error)
@@ -201,6 +203,7 @@ func parseSearchHits(ctx context.Context, res *opensearchapi.SearchResp) []*Sear
 			logs.L().Ctx(ctx).Warn("解析 SearchResult 失败", zap.Error(err), zap.String("source", string(hit.Source)))
 			continue
 		}
+		result.Score = float64(hit.Score)
 		mentions := make([]*Mention, 0)
 		if err := sonic.UnmarshalString(result.Mentions, &mentions); err != nil {
 			logs.L().Ctx(ctx).Warn("解析 mentions 失败", zap.Error(err), zap.String("mentions", result.Mentions))
@@ -238,6 +241,9 @@ func buildHybridSearchQuery(req HybridSearchRequest, queryTerms []string, queryV
 	if err != nil {
 		return nil, err
 	}
+	if req.MessageIndexOnly {
+		queryVecList = pushFiltersIntoKNN(queryVecList, filters)
+	}
 
 	shouldClauses := make([]map[string]any, 0, 2)
 	if len(queryTerms) > 0 {
@@ -269,12 +275,47 @@ func buildHybridSearchQuery(req HybridSearchRequest, queryTerms []string, queryV
 			"chat_name",
 			"create_time",
 			"create_time_v2",
+			"create_time_unix_millis",
 			"mentions",
 		},
 		"query": map[string]any{
 			"bool": boolQuery,
 		},
 	}, nil
+}
+
+func pushFiltersIntoKNN(queryVecList, filters []map[string]any) []map[string]any {
+	result := make([]map[string]any, 0, len(queryVecList))
+	for _, clause := range queryVecList {
+		clonedClause := cloneAnyMap(clause)
+		knn, ok := clonedClause["knn"].(map[string]any)
+		if !ok {
+			result = append(result, clonedClause)
+			continue
+		}
+		clonedKNN := cloneAnyMap(knn)
+		clonedClause["knn"] = clonedKNN
+		field, ok := clonedKNN[messageVectorFieldV2].(map[string]any)
+		if !ok {
+			result = append(result, clonedClause)
+			continue
+		}
+		clonedField := cloneAnyMap(field)
+		clonedField["filter"] = map[string]any{
+			"bool": map[string]any{"must": filters},
+		}
+		clonedKNN[messageVectorFieldV2] = clonedField
+		result = append(result, clonedClause)
+	}
+	return result
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 func buildHybridSearchFilters(req HybridSearchRequest, now time.Time) ([]map[string]any, error) {
@@ -312,7 +353,9 @@ func buildHybridSearchFilters(req HybridSearchRequest, now time.Time) ([]map[str
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"gte": now.Add(-7 * 24 * time.Hour).Format(time.RFC3339)}}})
 		}
 	}
-	if req.EndTime != "" {
+	if req.CausalEndMillis > 0 {
+		filters = append(filters, buildCausalEndFilter(req))
+	} else if req.EndTime != "" {
 		if parseEndTime := parseTimeFormat(req.EndTime, time.RFC3339Nano); !parseEndTime.IsErr() {
 			filters = append(filters, map[string]any{"range": map[string]any{"create_time_v2": map[string]any{"lte": parseEndTime.Value().Format(time.RFC3339Nano)}}})
 		} else if parseEndTime := parseTimeFormat(req.EndTime, time.DateTime); !parseEndTime.IsErr() {
@@ -332,6 +375,40 @@ func buildHybridSearchFilters(req HybridSearchRequest, now time.Time) ([]map[str
 	return filters, nil
 }
 
+func buildCausalEndFilter(req HybridSearchRequest) map[string]any {
+	anchor := time.UnixMilli(req.CausalEndMillis)
+	if parsed, err := time.Parse(time.RFC3339Nano, req.EndTime); err == nil &&
+		parsed.UnixMilli() == req.CausalEndMillis {
+		anchor = parsed
+	}
+	return map[string]any{
+		"bool": map[string]any{
+			"should": []map[string]any{
+				{
+					"range": map[string]any{
+						"create_time_unix_millis": map[string]any{"lte": req.CausalEndMillis},
+					},
+				},
+				{
+					"bool": map[string]any{
+						"must_not": []map[string]any{{
+							"exists": map[string]any{"field": "create_time_unix_millis"},
+						}},
+						"must": []map[string]any{{
+							"range": map[string]any{
+								"create_time_v2": map[string]any{
+									"lt": anchor.Truncate(time.Second).Format(time.RFC3339),
+								},
+							},
+						}},
+					},
+				},
+			},
+			"minimum_should_match": 1,
+		},
+	}
+}
+
 func hasHybridSearchSelector(req HybridSearchRequest) bool {
 	for _, query := range req.QueryText {
 		if strings.TrimSpace(query) != "" {
@@ -342,7 +419,8 @@ func hasHybridSearchSelector(req HybridSearchRequest) bool {
 		strings.TrimSpace(req.UserName) != "" ||
 		strings.TrimSpace(req.MessageType) != "" ||
 		strings.TrimSpace(req.StartTime) != "" ||
-		strings.TrimSpace(req.EndTime) != ""
+		strings.TrimSpace(req.EndTime) != "" ||
+		req.CausalEndMillis > 0
 }
 
 func normalizeSearchResultActor(result *SearchResult) {

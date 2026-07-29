@@ -42,6 +42,7 @@ func recallTopicDocsForMode(
 		ChatID:           chatID,
 		EndTime:          anchor.Format(time.RFC3339Nano),
 		CutoffTime:       cutoffTime,
+		CausalEndMillis:  anchor.UnixMilli(),
 		MessageIndexOnly: true,
 	}, embeddingFunc)
 	if err != nil {
@@ -53,23 +54,38 @@ func recallTopicDocsForMode(
 		if result == nil {
 			continue
 		}
-		if _, reason := parseCausalContextTime(result.CreateTimeV2, anchor); reason != "" {
+		if !topicSearchResultAtOrBeforeAnchor(result, anchor) {
 			continue
 		}
 		docs = append(docs, schema.Document{
 			PageContent: result.RawMessage,
 			Metadata: map[string]any{
-				"chat_id":        chatID,
-				"user_id":        result.OpenID,
-				"user_name":      result.UserName,
-				"msg_id":         result.MessageID,
-				"create_time":    result.CreateTime,
-				"create_time_v2": result.CreateTimeV2,
+				"chat_id":                 chatID,
+				"user_id":                 result.OpenID,
+				"user_name":               result.UserName,
+				"msg_id":                  result.MessageID,
+				"create_time":             result.CreateTime,
+				"create_time_v2":          result.CreateTimeV2,
+				"create_time_unix_millis": result.CreateTimeUnixMillis,
 			},
 			Score: float32(result.Score),
 		})
 	}
 	return docs, nil
+}
+
+func topicSearchResultAtOrBeforeAnchor(result *history.SearchResult, anchor time.Time) bool {
+	if result == nil {
+		return false
+	}
+	if result.CreateTimeUnixMillis > 0 {
+		return result.CreateTimeUnixMillis <= anchor.UnixMilli()
+	}
+	occurredAt, ok := parseContextTimeValue(result.CreateTimeV2)
+	if !ok {
+		return false
+	}
+	return occurredAt.Before(anchor.Truncate(time.Second))
 }
 
 func topicRecallEmbedding(scope llmusage.Scope) history.EmbeddingFunc {

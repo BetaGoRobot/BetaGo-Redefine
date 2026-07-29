@@ -78,16 +78,30 @@ func TestRecallTopicDocsForModeCaptureUsesCausalMessageIndexResults(t *testing.T
 		gotReq, gotEmbedding = req, embedding
 		return []*history.SearchResult{
 			{
-				MessageID: "om_past", RawMessage: "safe page content",
-				CreateTime:   "2026-07-29 15:00:00",
-				CreateTimeV2: "2026-07-29T15:00:00+08:00",
-				Score:        0.75,
+				MessageID: "om_exact", RawMessage: "exact page content",
+				CreateTime:           "2026-07-29 15:00:00",
+				CreateTimeV2:         "2026-07-29T15:00:00+08:00",
+				CreateTimeUnixMillis: anchor.UnixMilli(),
+				Score:                0.75,
 			},
 			{
 				MessageID: "om_future", RawMessage: "future page content",
-				CreateTime:   "2026-07-29 15:00:01",
-				CreateTimeV2: "2026-07-29T15:00:00.124+08:00",
-				Score:        0.99,
+				CreateTime:           "2026-07-29 15:00:01",
+				CreateTimeV2:         "2026-07-29T15:00:00+08:00",
+				CreateTimeUnixMillis: anchor.UnixMilli() + 1,
+				Score:                0.99,
+			},
+			{
+				MessageID: "om_old_same_second", RawMessage: "old same-second page content",
+				CreateTime:   "2026-07-29 15:00:00",
+				CreateTimeV2: "2026-07-29T15:00:00+08:00",
+				Score:        0.8,
+			},
+			{
+				MessageID: "om_old_past_second", RawMessage: "old past page content",
+				CreateTime:   "2026-07-29 14:59:59",
+				CreateTimeV2: "2026-07-29T14:59:59+08:00",
+				Score:        0.5,
 			},
 		}, nil
 	}
@@ -111,21 +125,27 @@ func TestRecallTopicDocsForModeCaptureUsesCausalMessageIndexResults(t *testing.T
 	if !gotReq.MessageIndexOnly || gotReq.ChatID != "oc_chat" ||
 		len(gotReq.QueryText) != 1 || gotReq.QueryText[0] != "query" ||
 		gotReq.TopK != 10 || gotReq.CutoffTime != "2026-07-01 00:00:00" ||
-		gotReq.EndTime != anchor.Format(time.RFC3339Nano) {
+		gotReq.EndTime != anchor.Format(time.RFC3339Nano) ||
+		gotReq.CausalEndMillis != anchor.UnixMilli() {
 		t.Fatalf("capture request = %#v", gotReq)
 	}
 	if gotEmbedding == nil {
 		t.Fatal("capture request did not forward embedding function")
 	}
-	if len(got) != 1 {
-		t.Fatalf("capture docs = %#v, want only causal result", got)
+	if len(got) != 2 {
+		t.Fatalf("capture docs = %#v, want exact and old prior-second results", got)
 	}
-	if got[0].PageContent != "safe page content" || got[0].Score != 0.75 {
+	if got[0].PageContent != "exact page content" || got[0].Score != 0.75 {
 		t.Fatalf("capture doc content/score = %#v", got[0])
 	}
-	if got[0].Metadata["msg_id"] != "om_past" ||
+	if got[0].Metadata["msg_id"] != "om_exact" ||
 		got[0].Metadata["create_time"] != "2026-07-29 15:00:00" ||
-		got[0].Metadata["create_time_v2"] != "2026-07-29T15:00:00+08:00" {
+		got[0].Metadata["create_time_v2"] != "2026-07-29T15:00:00+08:00" ||
+		got[0].Metadata["create_time_unix_millis"] != anchor.UnixMilli() {
 		t.Fatalf("capture doc metadata = %#v", got[0].Metadata)
+	}
+	if got[1].PageContent != "old past page content" ||
+		got[1].Metadata["msg_id"] != "om_old_past_second" {
+		t.Fatalf("legacy fallback doc = %#v", got[1])
 	}
 }
