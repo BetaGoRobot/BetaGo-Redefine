@@ -553,6 +553,38 @@ func TestGenerateChatSeqTwoPhaseNeedReplyFalseCapturesEmptyPlanAndSkip(t *testin
 	}
 }
 
+func TestGenerateChatSeqTwoPhaseNoCaptureDoesNotAddCreateTimeValidation(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	chatID := "oc_chat"
+	messageID := "om_anchor"
+	tests := []struct {
+		name       string
+		createTime *string
+	}{
+		{name: "missing", createTime: nil},
+		{name: "invalid", createTime: chatHandlerStrPtr("bad")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event := &larkim.P2MessageReceiveV1{
+				Event: &larkim.P2MessageReceiveV1Data{
+					Message: &larkim.EventMessage{
+						ChatId: &chatID, MessageId: &messageID, CreateTime: test.createTime,
+					},
+				},
+			}
+			meta := &xhandler.BaseMetaData{ChatID: chatID, OpenID: "ou_actor"}
+			meta.SetIntentAnalysis(&intentmeta.IntentAnalysis{NeedReply: false})
+
+			if _, err := GenerateChatSeqTwoPhase(
+				context.Background(), event, meta, "model", nil, nil,
+			); err != nil {
+				t.Fatalf("GenerateChatSeqTwoPhase() added error = %v", err)
+			}
+		})
+	}
+}
+
 func TestTwoPhaseCaptureRecordsPlannerHintsAndContext(t *testing.T) {
 	recorder := conversationeval.NewCaptureRecorder()
 	ctx := conversationeval.WithCapture(context.Background(), recorder)
@@ -607,33 +639,52 @@ func (f *fakeStandardChatExecutor) Do(
 	return func(func(*ark_dal.ModelStreamRespReasoning) bool) {}, nil
 }
 
-func TestExecuteStandardChatPlanPassesModelIDToExecutorFactory(t *testing.T) {
-	executor := &fakeStandardChatExecutor{}
-	var capturedModelID string
-	factory := func(modelID string) standardChatExecutor {
-		capturedModelID = modelID
-		return executor
+func TestExecuteStandardChatPlanOnlyOverridesModelWithCapture(t *testing.T) {
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		wantModelID string
+	}{
+		{name: "legacy", ctx: context.Background(), wantModelID: ""},
+		{
+			name: "capture",
+			ctx: conversationeval.WithCapture(
+				context.Background(),
+				conversationeval.NewCaptureRecorder(),
+			),
+			wantModelID: "plan-model",
+		},
 	}
-	meta := &xhandler.BaseMetaData{}
-	plan := StandardChatPlan{
-		ModelID: "plan-model",
-		chatID:  "oc_chat",
-		openID:  "ou_actor",
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeStandardChatExecutor{}
+			var capturedModelID string
+			factory := func(modelID string) standardChatExecutor {
+				capturedModelID = modelID
+				return executor
+			}
+			meta := &xhandler.BaseMetaData{}
+			plan := StandardChatPlan{
+				ModelID: "plan-model",
+				chatID:  "oc_chat",
+				openID:  "ou_actor",
+			}
 
-	if _, err := executeStandardChatPlanWithExecutorFactory(
-		context.Background(),
-		nil,
-		meta,
-		plan,
-		factory,
-	); err != nil {
-		t.Fatalf("executeStandardChatPlanWithExecutorFactory() error = %v", err)
-	}
-	if capturedModelID != plan.ModelID {
-		t.Fatalf("factory model ID = %q, want %q", capturedModelID, plan.ModelID)
-	}
-	if !executor.called {
-		t.Fatal("executor Do() was not called")
+			if _, err := executeStandardChatPlanWithExecutorFactory(
+				test.ctx,
+				nil,
+				meta,
+				plan,
+				factory,
+			); err != nil {
+				t.Fatalf("executeStandardChatPlanWithExecutorFactory() error = %v", err)
+			}
+			if capturedModelID != test.wantModelID {
+				t.Fatalf("factory model ID = %q, want %q", capturedModelID, test.wantModelID)
+			}
+			if !executor.called {
+				t.Fatal("executor Do() was not called")
+			}
+		})
 	}
 }

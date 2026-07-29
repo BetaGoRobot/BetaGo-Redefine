@@ -136,7 +136,7 @@ func getChatPersona(ctx context.Context, chatID string) string {
 
 // expandMissingParents fetches missing parent messages for reply chains and
 // expands thread context for the current message if it's a topic or reply.
-func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, anchor time.Time, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
+func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, anchor time.Time, captureEnabled bool, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
 	if len(msgList) == 0 && currentMsgThreadID == "" && currentMsgParentID == "" {
 		return msgList, nil
 	}
@@ -173,7 +173,9 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 	// If current message is a topic, fetch all messages in that thread
 	var threadMsgs history.OpensearchMsgLogList
 	if currentMsgThreadID != "" {
-		threadQuery := buildThreadExpansionQuery(currentMsgThreadID, cutoffTime, anchor)
+		threadQuery := buildThreadExpansionQueryForMode(
+			currentMsgThreadID, cutoffTime, anchor, captureEnabled,
+		)
 		threadMsgs, _ = history.New(ctx).
 			Index(index).
 			Query(threadQuery).
@@ -188,7 +190,9 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 	// Fetch missing parent messages
 	var parentMsgs history.OpensearchMsgLogList
 	if len(uniqueIDs) > 0 {
-		parentQuery := buildParentExpansionQuery(uniqueIDs, cutoffTime, anchor)
+		parentQuery := buildParentExpansionQueryForMode(
+			uniqueIDs, cutoffTime, anchor, captureEnabled,
+		)
 		parentMsgs, _ = history.New(ctx).
 			Index(index).
 			Query(parentQuery).
@@ -672,7 +676,11 @@ func executeStandardChatPlanWithExecutorFactory(
 	if factory == nil {
 		return nil, errors.New("nil standard chat executor factory")
 	}
-	dal := factory(plan.ModelID)
+	modelID := ""
+	if conversationeval.CaptureEnabled(ctx) {
+		modelID = plan.ModelID
+	}
+	dal := factory(modelID)
 	logs.L().Ctx(ctx).Info(
 		"calling chat dal",
 		zap.String("sys_prompt", plan.SystemPrompt),
@@ -749,9 +757,13 @@ func buildStandardChatPlan(
 		*size = 20
 	}
 	chatID := *event.Event.Message.ChatId
-	anchorAt, err := eventAnchorTime(event)
-	if err != nil {
-		return StandardChatPlan{}, err
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
+	var anchorAt time.Time
+	if captureEnabled {
+		anchorAt, err = eventAnchorTime(event)
+		if err != nil {
+			return StandardChatPlan{}, err
+		}
 	}
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
 	// Apply history cutoff if configured
@@ -765,7 +777,7 @@ func buildStandardChatPlan(
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
-	query := buildHistoryQuery(chatID, cutoffTime, anchorAt)
+	query := buildHistoryQueryForMode(chatID, cutoffTime, anchorAt, time.Now(), captureEnabled)
 	messageList, err := history.New(ctx).
 		Query(query).
 		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
@@ -775,11 +787,11 @@ func buildStandardChatPlan(
 	}
 
 	// Expand: fetch missing parent messages and expand thread context for current message
-	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, currentMsgThreadID, currentMsgParentID)
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, captureEnabled, currentMsgThreadID, currentMsgParentID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
-	messageList, droppedHistory := filterHistoryAtAnchor(messageList, anchorAt)
+	messageList, droppedHistory := filterHistoryForMode(messageList, anchorAt, captureEnabled)
 	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
@@ -811,8 +823,7 @@ func buildStandardChatPlan(
 	// 从chunking中拉取话题（应用 cutoff time 过滤）
 	topicLines := make([]string, 0)
 	retrievedItems := make([]conversationeval.ContextItem, 0)
-	captureEnabled := conversationeval.CaptureEnabled(ctx)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalAnchorEnd(anchorAt))
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalEndTime(anchorAt, captureEnabled))
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
 		if captureEnabled {
@@ -824,7 +835,7 @@ func buildStandardChatPlan(
 		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
 		if ok && msgID != "" {
 			// 构建 chunk 查询（应用 cutoff time 过滤）
-			chunkQuery := buildChunkQuery(msgID, cutoffTime, anchorAt)
+			chunkQuery := buildChunkQueryForMode(msgID, cutoffTime, anchorAt, captureEnabled)
 			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 				Search().Sort("timestamp_v2", osquery.OrderDesc).
 				Query(chunkQuery).
@@ -863,17 +874,19 @@ func buildStandardChatPlan(
 				if sourceID == "" {
 					sourceID = msgID
 				}
-				occurredAt, causalReason := parseCausalContextTime(t, anchorAt)
-				if causalReason != "" {
-					if captureEnabled {
+				var occurredAt time.Time
+				if captureEnabled {
+					var causalReason string
+					occurredAt, causalReason = contextTimeForMode(t, anchorAt, captureEnabled)
+					if causalReason != "" {
 						excluded, degraded := captureDroppedRetrieved(
 							sourceID, msgID, topicLine, t, causalReason,
 							docIndex+1, float64(doc.Score), anchorAt,
 						)
 						excludedItems = append(excludedItems, excluded)
 						degradedSources = append(degradedSources, degraded)
+						continue
 					}
-					continue
 				}
 				topicLines = append(topicLines, topicLine)
 				if captureEnabled {

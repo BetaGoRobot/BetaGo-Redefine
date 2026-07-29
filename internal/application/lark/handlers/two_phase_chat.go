@@ -56,12 +56,15 @@ func GenerateChatSeqTwoPhase(
 		*size = 20
 	}
 	chatID := *event.Event.Message.ChatId
-	anchorAt, err := eventAnchorTime(event)
-	if err != nil {
-		return nil, err
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
+	var anchorAt time.Time
+	if captureEnabled {
+		anchorAt, err = eventAnchorTime(event)
+		if err != nil {
+			return nil, err
+		}
 	}
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, metaData))
-	captureEnabled := conversationeval.CaptureEnabled(ctx)
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 
 	// 复用 intent 阶段产出的决策与工具线索
@@ -80,7 +83,7 @@ func GenerateChatSeqTwoPhase(
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
-	query := buildHistoryQuery(chatID, cutoffTime, anchorAt)
+	query := buildHistoryQueryForMode(chatID, cutoffTime, anchorAt, time.Now(), captureEnabled)
 	messageList, err := history.New(ctx).
 		Query(query).
 		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
@@ -89,11 +92,11 @@ func GenerateChatSeqTwoPhase(
 		return
 	}
 
-	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, currentMsgThreadID, currentMsgParentID)
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, captureEnabled, currentMsgThreadID, currentMsgParentID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
-	messageList, droppedHistory := filterHistoryAtAnchor(messageList, anchorAt)
+	messageList, droppedHistory := filterHistoryForMode(messageList, anchorAt, captureEnabled)
 	userName, err := larkuser.GetUserNameCache(ctx, chatID, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
@@ -210,9 +213,11 @@ func GenerateChatSeqTwoPhase(
 
 	genScope := twophase.BuildGeneratorScope(baseScope)
 	dal := ark_dal.
-		New(chatID, currentOpenID(event, metaData), event).
-		WithModelID(modelID).
-		WithTools(BuildRuntimeCapabilityTools())
+		New(chatID, currentOpenID(event, metaData), event)
+	if captureEnabled {
+		dal = dal.WithModelID(modelID)
+	}
+	dal = dal.WithTools(BuildRuntimeCapabilityTools())
 	if hasIntent {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
@@ -328,7 +333,7 @@ func buildTwoPhaseTopicContext(
 	retrievedItems := make([]conversationeval.ContextItem, 0)
 	excludedItems := make([]conversationeval.ExcludedContextItem, 0)
 	degradedSources := make([]string, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalAnchorEnd(anchorAt))
+	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, retrievalEndTime(anchorAt, captureEnabled))
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
 		if captureEnabled {
@@ -355,7 +360,7 @@ func buildTwoPhaseTopicContext(
 			}
 			continue
 		}
-		chunkQuery := buildChunkQuery(msgID, cutoffTime, anchorAt)
+		chunkQuery := buildChunkQueryForMode(msgID, cutoffTime, anchorAt, captureEnabled)
 		resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 			Search().Sort("timestamp_v2", osquery.OrderDesc).
 			Query(chunkQuery).
@@ -404,17 +409,19 @@ func buildTwoPhaseTopicContext(
 			if sourceID == "" {
 				sourceID = msgID
 			}
-			occurredAt, causalReason := parseCausalContextTime(t, anchorAt)
-			if causalReason != "" {
-				if captureEnabled {
+			var occurredAt time.Time
+			if captureEnabled {
+				var causalReason string
+				occurredAt, causalReason = contextTimeForMode(t, anchorAt, captureEnabled)
+				if causalReason != "" {
 					excluded, degraded := captureDroppedRetrieved(
 						sourceID, msgID, topicLine, t, causalReason,
 						docIndex+1, float64(doc.Score), anchorAt,
 					)
 					excludedItems = append(excludedItems, excluded)
 					degradedSources = append(degradedSources, degraded)
+					continue
 				}
-				continue
 			}
 			topicLines = append(topicLines, topicLine)
 			if captureEnabled {

@@ -34,11 +34,48 @@ func buildHistoryQuery(chatID, cutoffTime string, anchor time.Time) *osquery.Boo
 	)
 }
 
+func buildHistoryQueryForMode(
+	chatID, cutoffTime string,
+	anchor, now time.Time,
+	captureEnabled bool,
+) *osquery.BoolQuery {
+	if captureEnabled {
+		return buildHistoryQuery(chatID, cutoffTime, anchor)
+	}
+	if cutoffTime != "" {
+		return osquery.Bool().Must(
+			osquery.Term("chat_id", chatID),
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	}
+	return osquery.Bool().Must(
+		osquery.Term("chat_id", chatID),
+		osquery.Range("create_time_v2").Lte(now),
+	)
+}
+
 func buildThreadExpansionQuery(threadID, cutoffTime string, anchor time.Time) *osquery.BoolQuery {
 	return osquery.Bool().Must(
 		osquery.Term("thread_id", threadID),
 		causalTimeRange("create_time_v2", cutoffTime, anchor),
 	)
+}
+
+func buildThreadExpansionQueryForMode(
+	threadID, cutoffTime string,
+	anchor time.Time,
+	captureEnabled bool,
+) *osquery.BoolQuery {
+	if captureEnabled {
+		return buildThreadExpansionQuery(threadID, cutoffTime, anchor)
+	}
+	if cutoffTime != "" {
+		return osquery.Bool().Must(
+			osquery.Term("thread_id", threadID),
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	}
+	return osquery.Bool().Must(osquery.Term("thread_id", threadID))
 }
 
 func buildParentExpansionQuery(messageIDs []string, cutoffTime string, anchor time.Time) *osquery.BoolQuery {
@@ -48,11 +85,46 @@ func buildParentExpansionQuery(messageIDs []string, cutoffTime string, anchor ti
 	)
 }
 
+func buildParentExpansionQueryForMode(
+	messageIDs []string,
+	cutoffTime string,
+	anchor time.Time,
+	captureEnabled bool,
+) *osquery.BoolQuery {
+	if captureEnabled {
+		return buildParentExpansionQuery(messageIDs, cutoffTime, anchor)
+	}
+	if cutoffTime != "" {
+		return osquery.Bool().Must(
+			osqueryutil.TermsFromStrings("message_id", messageIDs),
+			osquery.Range("create_time_v2").Gte(cutoffTime),
+		)
+	}
+	return osquery.Bool().Must(osqueryutil.TermsFromStrings("message_id", messageIDs))
+}
+
 func buildChunkQuery(messageID, cutoffTime string, anchor time.Time) *osquery.BoolQuery {
 	return osquery.Bool().Must(
 		osquery.Term("msg_ids", messageID),
 		causalTimeRange("timestamp_v2", cutoffTime, anchor),
 	)
+}
+
+func buildChunkQueryForMode(
+	messageID, cutoffTime string,
+	anchor time.Time,
+	captureEnabled bool,
+) *osquery.BoolQuery {
+	if captureEnabled {
+		return buildChunkQuery(messageID, cutoffTime, anchor)
+	}
+	if cutoffTime != "" {
+		return osquery.Bool().Must(
+			osquery.Term("msg_ids", messageID),
+			osquery.Range("timestamp_v2").Gte(cutoffTime),
+		)
+	}
+	return osquery.Bool().Must(osquery.Term("msg_ids", messageID))
 }
 
 func causalTimeRange(field, cutoffTime string, anchor time.Time) *osquery.RangeQuery {
@@ -63,8 +135,10 @@ func causalTimeRange(field, cutoffTime string, anchor time.Time) *osquery.RangeQ
 	return value
 }
 
-func retrievalAnchorEnd(anchor time.Time) string {
-	return anchor.Format(time.RFC3339)
+func retrievalEndTime(_ time.Time, _ bool) string {
+	// The current vector index has no filterable top-level timestamp field.
+	// Capture mode enforces causality at the chunk query and post-filter layers.
+	return ""
 }
 
 type droppedHistoryMessage struct {
@@ -92,6 +166,17 @@ func filterHistoryAtAnchor(
 	return kept, dropped
 }
 
+func filterHistoryForMode(
+	messageList history.OpensearchMsgLogList,
+	anchor time.Time,
+	captureEnabled bool,
+) (history.OpensearchMsgLogList, []droppedHistoryMessage) {
+	if !captureEnabled {
+		return messageList, nil
+	}
+	return filterHistoryAtAnchor(messageList, anchor)
+}
+
 func parseCausalContextTime(value string, anchor time.Time) (time.Time, string) {
 	occurredAt, ok := parseContextTimeValue(value)
 	if !ok {
@@ -101,4 +186,15 @@ func parseCausalContextTime(value string, anchor time.Time) (time.Time, string) 
 		return occurredAt, excludeReasonAfterAnchor
 	}
 	return occurredAt, ""
+}
+
+func contextTimeForMode(
+	value string,
+	anchor time.Time,
+	captureEnabled bool,
+) (time.Time, string) {
+	if !captureEnabled {
+		return time.Time{}, ""
+	}
+	return parseCausalContextTime(value, anchor)
 }

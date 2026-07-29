@@ -95,10 +95,13 @@ func TestCausalQueryWithoutConfiguredCutoffStillAppliesAnchor(t *testing.T) {
 	}
 }
 
-func TestRetrievalAnchorEndUsesRFC3339(t *testing.T) {
+func TestRetrievalEndRemainsEmptyForLegacyAndCapture(t *testing.T) {
 	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
-	if got, want := retrievalAnchorEnd(anchor), anchor.Format(time.RFC3339); got != want {
-		t.Fatalf("retrievalAnchorEnd() = %q, want %q", got, want)
+	if got := retrievalEndTime(anchor, true); got != "" {
+		t.Fatalf("capture retrieval end = %q, want empty", got)
+	}
+	if got := retrievalEndTime(anchor, false); got != "" {
+		t.Fatalf("legacy retrieval end = %q, want empty", got)
 	}
 }
 
@@ -162,6 +165,91 @@ func TestFilterHistoryAtAnchorKeepsFutureMessagesOutOfPrompt(t *testing.T) {
 	}
 }
 
+func TestFilterHistoryForModePreservesLegacyAndFiltersCapture(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.Local)
+	before := &history.OpensearchMsgLog{
+		CreateTimeV2: "2026-07-29 14:59:59", MessageID: "om_before",
+	}
+	after := &history.OpensearchMsgLog{
+		CreateTimeV2: "2026-07-29 15:00:01", MessageID: "om_after",
+	}
+	input := history.OpensearchMsgLogList{before, after}
+
+	legacy, legacyDropped := filterHistoryForMode(input, anchor, false)
+	if len(legacy) != 2 || len(legacyDropped) != 0 {
+		t.Fatalf("legacy filter = %d kept/%d dropped", len(legacy), len(legacyDropped))
+	}
+	captured, capturedDropped := filterHistoryForMode(input, anchor, true)
+	if len(captured) != 1 || len(capturedDropped) != 1 ||
+		capturedDropped[0].Message.MessageID != "om_after" {
+		t.Fatalf("capture filter = %+v/%+v", captured, capturedDropped)
+	}
+}
+
+func TestLegacyAndCaptureQueryShapes(t *testing.T) {
+	anchor := time.UnixMilli(1785301200123)
+	now := anchor.Add(time.Hour)
+	cutoff := "2026-07-01 00:00:00"
+
+	captureHistory := buildHistoryQueryForMode("oc_chat", cutoff, anchor, now, true)
+	assertRangeBounds(t, captureHistory, "create_time_v2", cutoff, anchor)
+	legacyHistoryWithCutoff := buildHistoryQueryForMode("oc_chat", cutoff, anchor, now, false)
+	assertRangeBounds(t, legacyHistoryWithCutoff, "create_time_v2", cutoff, nil)
+	legacyHistoryWithoutCutoff := buildHistoryQueryForMode("oc_chat", "", anchor, now, false)
+	assertRangeBounds(t, legacyHistoryWithoutCutoff, "create_time_v2", nil, now)
+
+	tests := []struct {
+		name    string
+		capture *osquery.BoolQuery
+		legacy  *osquery.BoolQuery
+		field   string
+	}{
+		{
+			name:    "thread",
+			capture: buildThreadExpansionQueryForMode("omt_1", cutoff, anchor, true),
+			legacy:  buildThreadExpansionQueryForMode("omt_1", cutoff, anchor, false),
+			field:   "create_time_v2",
+		},
+		{
+			name:    "parent",
+			capture: buildParentExpansionQueryForMode([]string{"om_1"}, cutoff, anchor, true),
+			legacy:  buildParentExpansionQueryForMode([]string{"om_1"}, cutoff, anchor, false),
+			field:   "create_time_v2",
+		},
+		{
+			name:    "chunk",
+			capture: buildChunkQueryForMode("om_1", cutoff, anchor, true),
+			legacy:  buildChunkQueryForMode("om_1", cutoff, anchor, false),
+			field:   "timestamp_v2",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertRangeBounds(t, test.capture, test.field, cutoff, anchor)
+			assertRangeBounds(t, test.legacy, test.field, cutoff, nil)
+		})
+	}
+
+	if _, ok := optionalQueryRangeValues(
+		buildThreadExpansionQueryForMode("omt_1", "", anchor, false),
+		"create_time_v2",
+	); ok {
+		t.Fatal("legacy thread query without cutoff unexpectedly has range")
+	}
+	if _, ok := optionalQueryRangeValues(
+		buildParentExpansionQueryForMode([]string{"om_1"}, "", anchor, false),
+		"create_time_v2",
+	); ok {
+		t.Fatal("legacy parent query without cutoff unexpectedly has range")
+	}
+	if _, ok := optionalQueryRangeValues(
+		buildChunkQueryForMode("om_1", "", anchor, false),
+		"timestamp_v2",
+	); ok {
+		t.Fatal("legacy chunk query without cutoff unexpectedly has range")
+	}
+}
+
 func TestParseCausalContextTimeClassifiesBoundaryFutureAndInvalid(t *testing.T) {
 	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.Local)
 	tests := []struct {
@@ -180,6 +268,17 @@ func TestParseCausalContextTimeClassifiesBoundaryFutureAndInvalid(t *testing.T) 
 				t.Fatalf("parseCausalContextTime() reason = %q, want %q", reason, test.reason)
 			}
 		})
+	}
+}
+
+func TestContextTimeForModeOnlyFiltersFutureChunkInCapture(t *testing.T) {
+	anchor := time.Date(2026, 7, 29, 15, 0, 0, 0, time.Local)
+	future := "2026-07-29 15:00:01"
+	if _, reason := contextTimeForMode(future, anchor, false); reason != "" {
+		t.Fatalf("legacy context time reason = %q, want empty", reason)
+	}
+	if _, reason := contextTimeForMode(future, anchor, true); reason != excludeReasonAfterAnchor {
+		t.Fatalf("capture context time reason = %q, want %q", reason, excludeReasonAfterAnchor)
 	}
 }
 
@@ -225,6 +324,14 @@ func containsString(values []string, want string) bool {
 
 func queryRangeValues(t *testing.T, query *osquery.BoolQuery, field string) map[string]any {
 	t.Helper()
+	if values, ok := optionalQueryRangeValues(query, field); ok {
+		return values
+	}
+	t.Fatalf("query has no range for %q: %#v", field, query.Map())
+	return nil
+}
+
+func optionalQueryRangeValues(query *osquery.BoolQuery, field string) (map[string]any, bool) {
 	root := query.Map()["bool"].(map[string]any)
 	must := root["must"].([]map[string]any)
 	for _, clause := range must {
@@ -234,9 +341,25 @@ func queryRangeValues(t *testing.T, query *osquery.BoolQuery, field string) map[
 		}
 		values, ok := rangeClause[field].(map[string]any)
 		if ok {
-			return values
+			return values, true
 		}
 	}
-	t.Fatalf("query has no range for %q: %#v", field, query.Map())
-	return nil
+	return nil, false
+}
+
+func assertRangeBounds(
+	t *testing.T,
+	query *osquery.BoolQuery,
+	field string,
+	wantGTE any,
+	wantLTE any,
+) {
+	t.Helper()
+	values := queryRangeValues(t, query, field)
+	if got := values["gte"]; got != wantGTE {
+		t.Fatalf("range gte = %#v, want %#v", got, wantGTE)
+	}
+	if got := values["lte"]; got != wantLTE {
+		t.Fatalf("range lte = %#v, want %#v", got, wantLTE)
+	}
 }
