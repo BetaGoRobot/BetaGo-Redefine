@@ -16,6 +16,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
@@ -588,5 +589,51 @@ func TestTwoPhaseCaptureRecordsPlannerHintsAndContext(t *testing.T) {
 		snapshot.Context.UserPrompt != "two-phase user" ||
 		len(snapshot.Context.DegradedSources) != 1 {
 		t.Fatalf("two-phase context = %+v", snapshot.Context)
+	}
+}
+
+type fakeStandardChatExecutor struct {
+	called bool
+}
+
+func (f *fakeStandardChatExecutor) Do(
+	context.Context,
+	llmusage.Scope,
+	string,
+	string,
+	...string,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	f.called = true
+	return func(func(*ark_dal.ModelStreamRespReasoning) bool) {}, nil
+}
+
+func TestExecuteStandardChatPlanPassesModelIDToExecutorFactory(t *testing.T) {
+	executor := &fakeStandardChatExecutor{}
+	var capturedModelID string
+	factory := func(modelID string) standardChatExecutor {
+		capturedModelID = modelID
+		return executor
+	}
+	meta := &xhandler.BaseMetaData{}
+	plan := StandardChatPlan{
+		ModelID: "plan-model",
+		chatID:  "oc_chat",
+		openID:  "ou_actor",
+	}
+
+	if _, err := executeStandardChatPlanWithExecutorFactory(
+		context.Background(),
+		nil,
+		meta,
+		plan,
+		factory,
+	); err != nil {
+		t.Fatalf("executeStandardChatPlanWithExecutorFactory() error = %v", err)
+	}
+	if capturedModelID != plan.ModelID {
+		t.Fatalf("factory model ID = %q, want %q", capturedModelID, plan.ModelID)
+	}
+	if !executor.called {
+		t.Fatal("executor Do() was not called")
 	}
 }

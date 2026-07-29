@@ -211,6 +211,7 @@ func GenerateChatSeqTwoPhase(
 	genScope := twophase.BuildGeneratorScope(baseScope)
 	dal := ark_dal.
 		New(chatID, currentOpenID(event, metaData), event).
+		WithModelID(modelID).
 		WithTools(BuildRuntimeCapabilityTools())
 	if hasIntent {
 		dal = dal.Effort(intent.ReasoningEffort)

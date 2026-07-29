@@ -625,19 +625,54 @@ func GenerateChatSeq(
 	return executeStandardChatPlan(ctx, event, metaData, plan)
 }
 
+type standardChatExecutor interface {
+	Do(
+		context.Context,
+		llmusage.Scope,
+		string,
+		string,
+		...string,
+	) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error)
+}
+
+type standardChatExecutorFactory func(modelID string) standardChatExecutor
+
 func executeStandardChatPlan(
 	ctx context.Context,
 	event *larkim.P2MessageReceiveV1,
 	metaData *xhandler.BaseMetaData,
 	plan StandardChatPlan,
 ) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
-	dal := ark_dal.
-		New(plan.chatID, plan.openID, event).
-		WithTools(larktools()).
-		WithHandlersOnly(BuildInjectableFinanceTools())
-	if intent, ok := metaData.GetIntentAnalysis(); ok {
-		dal = dal.Effort(intent.ReasoningEffort)
+	return executeStandardChatPlanWithExecutorFactory(
+		ctx,
+		event,
+		metaData,
+		plan,
+		func(modelID string) standardChatExecutor {
+			dal := ark_dal.
+				New(plan.chatID, plan.openID, event).
+				WithModelID(modelID).
+				WithTools(larktools()).
+				WithHandlersOnly(BuildInjectableFinanceTools())
+			if intent, ok := metaData.GetIntentAnalysis(); ok {
+				dal = dal.Effort(intent.ReasoningEffort)
+			}
+			return dal
+		},
+	)
+}
+
+func executeStandardChatPlanWithExecutorFactory(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	plan StandardChatPlan,
+	factory standardChatExecutorFactory,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	if factory == nil {
+		return nil, errors.New("nil standard chat executor factory")
 	}
+	dal := factory(plan.ModelID)
 	logs.L().Ctx(ctx).Info(
 		"calling chat dal",
 		zap.String("sys_prompt", plan.SystemPrompt),
