@@ -139,8 +139,8 @@ func (w *PostWindow) Append(message WindowMessage, topicBoundary bool) (bool, er
 	if w.ClosedAt != nil {
 		return false, fmt.Errorf("%w: post-window is already closed", ErrInvalidTransition)
 	}
-	if message.OccurredAt.IsZero() || message.OccurredAt.Before(w.AnchorAt) {
-		return false, contractError("post-window message occurred_at precedes anchor")
+	if message.OccurredAt.IsZero() || !message.OccurredAt.After(w.AnchorAt) {
+		return false, contractError("post-window message occurred_at must follow anchor")
 	}
 	deadline := w.AnchorAt.Add(PostWindowMaxAge)
 	if !message.OccurredAt.Before(deadline) {

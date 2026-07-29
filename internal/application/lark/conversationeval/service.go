@@ -1,0 +1,478 @@
+package conversationeval
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+var ErrEvaluationUnavailable = errors.New("conversation evaluation unavailable")
+
+type MessageInput struct {
+	AppID            string
+	BotOpenID        string
+	ChatID           string
+	RunID            string
+	EventID          string
+	MessageID        string
+	TopicID          string
+	SenderOpenID     string
+	ReplyToMessageID string
+	Content          string
+	OccurredAt       time.Time
+}
+
+func (m MessageInput) Validate() error {
+	for name, value := range map[string]string{
+		"message app_id": m.AppID, "message bot_open_id": m.BotOpenID,
+		"message chat_id": m.ChatID, "message event_id": m.EventID,
+		"message message_id": m.MessageID,
+	} {
+		if err := validateID(name, value); err != nil {
+			return err
+		}
+	}
+	if m.OccurredAt.IsZero() {
+		return contractError("message occurred_at must not be zero")
+	}
+	return nil
+}
+
+func (m MessageInput) WindowMessage(position WindowPosition) WindowMessage {
+	return WindowMessage{
+		EventID: m.EventID, MessageID: m.MessageID, ChatID: m.ChatID,
+		TopicID: m.TopicID, SenderOpenID: m.SenderOpenID,
+		ReplyToMessageID: m.ReplyToMessageID, Content: m.Content,
+		OccurredAt: m.OccurredAt, Position: position,
+	}
+}
+
+type EpisodeWindow struct {
+	Episode Episode
+	Window  PostWindow
+}
+
+type EpisodeArtifacts interface {
+	SaveWindowMessages(context.Context, string, []WindowMessage) error
+	OpenEpisodeWindows(context.Context, string, time.Time) ([]EpisodeWindow, error)
+	AppendPostWindowMessage(context.Context, string, WindowMessage) error
+	ClosePostWindow(
+		context.Context,
+		string,
+		time.Time,
+		PostWindowCloseReason,
+	) error
+	MarkReadyIfComplete(context.Context, string, time.Time) (bool, error)
+}
+
+type EvaluationRepository interface {
+	Store
+	EpisodeArtifacts
+}
+
+type PreWindowSource interface {
+	MessagesBefore(context.Context, string, time.Time, int) ([]WindowMessage, error)
+}
+
+type TopicBoundaryDetector interface {
+	IsTopicBoundary(context.Context, Episode, WindowMessage) (bool, error)
+}
+
+type CandidateTask struct {
+	ID              string
+	Cohort          Cohort
+	Episode         Episode
+	Message         MessageInput
+	OutputID        string
+	ContextSnapshot ContextSnapshot
+	ExcludedContext []ExcludedContextItem
+	ControlCapture  CaptureSnapshot
+	CreatedAt       time.Time
+}
+
+type CandidateSubmitter interface {
+	SubmitCandidate(context.Context, CandidateTask) error
+}
+
+type ServiceOptions struct {
+	Repository         EvaluationRepository
+	PreWindowSource    PreWindowSource
+	BoundaryDetector   TopicBoundaryDetector
+	CandidateSubmitter CandidateSubmitter
+	Now                func() time.Time
+}
+
+type Service struct {
+	repository         EvaluationRepository
+	preWindowSource    PreWindowSource
+	boundaryDetector   TopicBoundaryDetector
+	candidateSubmitter CandidateSubmitter
+	now                func() time.Time
+}
+
+func NewService(options ServiceOptions) (*Service, error) {
+	if options.Repository == nil {
+		return nil, fmt.Errorf("%w: evaluation repository is nil", ErrEvaluationUnavailable)
+	}
+	if options.PreWindowSource == nil {
+		return nil, fmt.Errorf("%w: pre-window source is nil", ErrEvaluationUnavailable)
+	}
+	if options.CandidateSubmitter == nil {
+		return nil, fmt.Errorf("%w: candidate submitter is nil", ErrEvaluationUnavailable)
+	}
+	if options.Now == nil {
+		options.Now = func() time.Time { return time.Now().UTC() }
+	}
+	return &Service{
+		repository: options.Repository, preWindowSource: options.PreWindowSource,
+		boundaryDetector:   options.BoundaryDetector,
+		candidateSubmitter: options.CandidateSubmitter, now: options.Now,
+	}, nil
+}
+
+type MessageSession struct {
+	input    MessageInput
+	cohorts  []Cohort
+	pre      []WindowMessage
+	recorder *CaptureRecorder
+}
+
+func (s *MessageSession) Capture() Capture {
+	if s == nil || s.recorder == nil {
+		return noopCapture{}
+	}
+	return s.recorder
+}
+
+func (s *MessageSession) Enabled() bool {
+	return s != nil && s.recorder != nil && len(s.cohorts) > 0
+}
+
+// BeginMessage first advances all already-open post windows, then performs the
+// cheap active-cohort lookup. Control capture is allocated only when at least
+// one cohort matches.
+func (s *Service) BeginMessage(
+	ctx context.Context,
+	input MessageInput,
+) (*MessageSession, error) {
+	if s == nil || s.repository == nil {
+		return nil, ErrEvaluationUnavailable
+	}
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.ObserveMessage(ctx, input); err != nil {
+		return nil, err
+	}
+	cohorts, err := s.repository.ActiveCohorts(ctx, input.ChatID, input.OccurredAt)
+	if err != nil {
+		return nil, fmt.Errorf("load active evaluation cohorts: %w", err)
+	}
+	matched := make([]Cohort, 0, len(cohorts))
+	for _, cohort := range cohorts {
+		if cohort.AppID == input.AppID && cohort.BotOpenID == input.BotOpenID {
+			matched = append(matched, cohort)
+		}
+	}
+	if len(matched) == 0 {
+		return &MessageSession{input: input}, nil
+	}
+	rawPre, err := s.preWindowSource.MessagesBefore(
+		ctx,
+		input.ChatID,
+		input.OccurredAt,
+		PreWindowMessageLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load evaluation pre-window: %w", err)
+	}
+	pre, err := SelectPreWindow(rawPre, input.OccurredAt)
+	if err != nil {
+		return nil, err
+	}
+	return &MessageSession{
+		input: input, cohorts: matched, pre: pre, recorder: NewCaptureRecorder(),
+	}, nil
+}
+
+func (s *Service) ObserveMessage(ctx context.Context, input MessageInput) error {
+	windows, err := s.repository.OpenEpisodeWindows(ctx, input.ChatID, input.OccurredAt)
+	if err != nil {
+		return fmt.Errorf("load open evaluation windows: %w", err)
+	}
+	message := input.WindowMessage(WindowPositionPost)
+	for _, episodeWindow := range windows {
+		window := episodeWindow.Window
+		boundary := defaultTopicBoundary(episodeWindow.Episode, message)
+		if s.boundaryDetector != nil {
+			boundary, err = s.boundaryDetector.IsTopicBoundary(
+				ctx,
+				episodeWindow.Episode,
+				message,
+			)
+			if err != nil {
+				return fmt.Errorf("detect evaluation topic boundary: %w", err)
+			}
+		}
+		added, appendErr := window.Append(message, boundary)
+		if appendErr != nil {
+			if errors.Is(appendErr, ErrInvalidTransition) {
+				continue
+			}
+			return appendErr
+		}
+		if added {
+			stored := window.Messages[len(window.Messages)-1]
+			if err := s.repository.AppendPostWindowMessage(
+				ctx,
+				episodeWindow.Episode.ID,
+				stored,
+			); err != nil {
+				return fmt.Errorf("append evaluation post-window message: %w", err)
+			}
+		}
+		if window.ClosedAt != nil {
+			if err := s.repository.ClosePostWindow(
+				ctx,
+				episodeWindow.Episode.ID,
+				*window.ClosedAt,
+				window.CloseReason,
+			); err != nil {
+				return fmt.Errorf("close evaluation post-window: %w", err)
+			}
+			if _, err := s.repository.MarkReadyIfComplete(
+				ctx,
+				episodeWindow.Episode.ID,
+				*window.ClosedAt,
+			); err != nil {
+				return fmt.Errorf("mark evaluation episode ready: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) AdvanceOpenWindows(
+	ctx context.Context,
+	chatID string,
+	now time.Time,
+) (int, error) {
+	windows, err := s.repository.OpenEpisodeWindows(ctx, chatID, now)
+	if err != nil {
+		return 0, err
+	}
+	closed := 0
+	for _, episodeWindow := range windows {
+		window := episodeWindow.Window
+		advanced, advanceErr := window.Advance(now)
+		if advanceErr != nil {
+			return closed, advanceErr
+		}
+		if !advanced || window.ClosedAt == nil {
+			continue
+		}
+		if err := s.repository.ClosePostWindow(
+			ctx,
+			episodeWindow.Episode.ID,
+			*window.ClosedAt,
+			window.CloseReason,
+		); err != nil {
+			return closed, err
+		}
+		if _, err := s.repository.MarkReadyIfComplete(
+			ctx,
+			episodeWindow.Episode.ID,
+			*window.ClosedAt,
+		); err != nil {
+			return closed, err
+		}
+		closed++
+	}
+	return closed, nil
+}
+
+func (s *Service) CompleteMessage(ctx context.Context, session *MessageSession) error {
+	if session == nil || !session.Enabled() {
+		return nil
+	}
+	completedAt := s.now()
+	capture := session.recorder.Snapshot()
+	for _, cohort := range session.cohorts {
+		episode := newEpisode(cohort, session.input, session.pre, completedAt)
+		stored, err := s.repository.GetOrCreateEpisode(ctx, episode)
+		if err != nil {
+			return fmt.Errorf("get or create evaluation episode: %w", err)
+		}
+		windowMessages := append(
+			cloneCaptureValue(session.pre),
+			session.input.WindowMessage(WindowPositionAnchor),
+		)
+		windowMessages[len(windowMessages)-1].Sequence = 0
+		if err := s.repository.SaveWindowMessages(ctx, stored.ID, windowMessages); err != nil {
+			return fmt.Errorf("save evaluation pre-window: %w", err)
+		}
+		control, err := BuildControlLaneOutput(*stored, session.input, capture, completedAt)
+		if err != nil {
+			return err
+		}
+		if err := s.repository.UpsertLaneOutput(ctx, control); err != nil {
+			return fmt.Errorf("store evaluation control output: %w", err)
+		}
+		task := CandidateTask{
+			ID:     evaluationID("candidate_task", cohort.ID, session.input.EventID),
+			Cohort: cohort, Episode: *stored, Message: session.input,
+			OutputID:        evaluationID("lane_candidate", stored.ID),
+			ContextSnapshot: cloneCaptureValue(control.ContextSnapshot),
+			ExcludedContext: cloneCaptureValue(control.ExcludedContext),
+			ControlCapture:  cloneCaptureValue(capture),
+			CreatedAt:       completedAt,
+		}
+		if err := s.candidateSubmitter.SubmitCandidate(ctx, task); err != nil {
+			return fmt.Errorf("submit evaluation candidate: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) CompleteCandidate(
+	ctx context.Context,
+	episodeID string,
+	output LaneOutput,
+) error {
+	if output.EpisodeID != episodeID || output.Lane != LaneCandidate {
+		return contractError("candidate output does not match episode")
+	}
+	if err := s.repository.UpsertLaneOutput(ctx, output); err != nil {
+		return err
+	}
+	_, err := s.repository.MarkReadyIfComplete(ctx, episodeID, s.now())
+	return err
+}
+
+func BuildControlLaneOutput(
+	episode Episode,
+	input MessageInput,
+	capture CaptureSnapshot,
+	completedAt time.Time,
+) (LaneOutput, error) {
+	if completedAt.IsZero() {
+		return LaneOutput{}, contractError("control completion timestamp must not be zero")
+	}
+	snapshot := fallbackControlContext(input)
+	excluded := []ExcludedContextItem{}
+	if capture.Context != nil {
+		snapshot = cloneCaptureValue(*capture.Context)
+		excluded = cloneCaptureValue(capture.ExcludedContext)
+	}
+	if err := snapshot.Validate(); err != nil {
+		return LaneOutput{}, fmt.Errorf("control context snapshot: %w", err)
+	}
+	activation := objectOrEmpty(capture.IntentJSON)
+	decision := JoinDecisionSkip
+	relation := TopicRelationUnrelated
+	reply := ""
+	latency := time.Duration(0)
+	tokenUsage := json.RawMessage(`{}`)
+	if capture.Output != nil {
+		reply = capture.Output.Reply
+		latency = capture.Output.Latency
+		if capture.Output.Decision == OutputDecisionReply {
+			decision = JoinDecisionJoin
+			relation = TopicRelationRelated
+		}
+		if capture.Output.TokenUsage != nil {
+			tokenUsage = mustObjectJSON(capture.Output.TokenUsage)
+		}
+	}
+	relevance := mustObjectJSON(map[string]any{
+		"join_decision": decision, "topic_relation": relation, "source": "control",
+	})
+	toolPlan := mustObjectJSON(map[string]any{
+		"plans": capture.ToolPlans,
+		"capability_calls": func() []ToolTrace {
+			if capture.Output == nil {
+				return []ToolTrace{}
+			}
+			return capture.Output.CapabilityCalls
+		}(),
+	})
+	mode := OutputModeShadow
+	if episode.ServingLane == LaneControl {
+		mode = OutputModeActual
+	}
+	output := LaneOutput{
+		ID: evaluationID("lane_control", episode.ID), EpisodeID: episode.ID,
+		Lane: LaneControl, OutputMode: mode,
+		ActivationJSON: activation, RelevanceJSON: relevance,
+		JoinDecision: decision, TopicRelation: relation,
+		ContextSnapshot: snapshot, ExcludedContext: excluded,
+		ToolPlanJSON: toolPlan, ReplyText: reply, Latency: latency,
+		TokenUsageJSON: tokenUsage, ErrorJSON: json.RawMessage(`{}`),
+		CreatedAt: completedAt, UpdatedAt: completedAt,
+	}
+	if err := output.Validate(); err != nil {
+		return LaneOutput{}, err
+	}
+	return output, nil
+}
+
+func newEpisode(
+	cohort Cohort,
+	input MessageInput,
+	pre []WindowMessage,
+	createdAt time.Time,
+) Episode {
+	preStart := input.OccurredAt
+	if len(pre) > 0 {
+		preStart = pre[0].OccurredAt
+	}
+	return Episode{
+		ID:       evaluationID("episode", cohort.ID, input.EventID),
+		CohortID: cohort.ID, ChatID: input.ChatID, RunID: input.RunID,
+		AnchorEventID: input.EventID, AnchorMessageID: input.MessageID,
+		TopicID: input.TopicID, ServingLane: cohort.ServingLane,
+		Status: EpisodeStatusCollecting, PreWindowStart: preStart,
+		AnchorAt:          input.OccurredAt,
+		LateFeedbackUntil: input.OccurredAt.Add(LateFeedbackGracePeriod),
+		CreatedAt:         createdAt, UpdatedAt: createdAt,
+	}
+}
+
+func fallbackControlContext(input MessageInput) ContextSnapshot {
+	return ContextSnapshot{
+		SchemaVersion: SchemaVersion, AnchorEventID: input.EventID,
+		AnchorAt: input.OccurredAt, Messages: []ContextItem{},
+		Retrieved: []ContextItem{}, Events: []ContextItem{},
+		CurrentInput: input.Content, TokenBudget: 0, TokenEstimate: 0,
+	}
+}
+
+func defaultTopicBoundary(episode Episode, message WindowMessage) bool {
+	return episode.TopicID != "" && message.TopicID != "" && episode.TopicID != message.TopicID
+}
+
+func objectOrEmpty(raw json.RawMessage) json.RawMessage {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) == nil && object != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	return json.RawMessage(`{}`)
+}
+
+func mustObjectJSON(value any) json.RawMessage {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(encoded)
+}
+
+func evaluationID(prefix string, parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return prefix + "_" + hex.EncodeToString(sum[:16])
+}
