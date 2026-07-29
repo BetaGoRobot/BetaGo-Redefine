@@ -140,6 +140,9 @@ func (r *Repository) GetOrCreateEpisode(
 			if err := validateEpisodeCohort(canonical, cohort); err != nil {
 				return err
 			}
+			if err := validateEpisodeReplay(episode, canonical); err != nil {
+				return err
+			}
 			stored = &canonical
 			return nil
 		}
@@ -175,6 +178,9 @@ func (r *Repository) GetOrCreateEpisode(
 			return gorm.ErrRecordNotFound
 		}
 		if err := validateEpisodeCohort(canonical, cohort); err != nil {
+			return err
+		}
+		if err := validateEpisodeReplay(episode, canonical); err != nil {
 			return err
 		}
 		stored = &canonical
@@ -647,6 +653,51 @@ func validateEpisodeCohort(
 			"%w: episode serving lane %q does not match cohort lane %q",
 			conversationeval.ErrInvalidContract, episode.ServingLane, cohort.ServingLane,
 		)
+	}
+	return nil
+}
+
+func validateEpisodeReplay(
+	incoming conversationeval.Episode,
+	canonical conversationeval.Episode,
+) error {
+	fields := []struct {
+		name      string
+		incoming  string
+		canonical string
+	}{
+		{"cohort_id", incoming.CohortID, canonical.CohortID},
+		{"anchor_event_id", incoming.AnchorEventID, canonical.AnchorEventID},
+		{"chat_id", incoming.ChatID, canonical.ChatID},
+		{"anchor_message_id", incoming.AnchorMessageID, canonical.AnchorMessageID},
+		{"run_id", incoming.RunID, canonical.RunID},
+		{"topic_id", incoming.TopicID, canonical.TopicID},
+		{"serving_lane", string(incoming.ServingLane), string(canonical.ServingLane)},
+	}
+	for _, field := range fields {
+		if field.incoming != field.canonical {
+			return fmt.Errorf(
+				"%w: episode replay field %s conflicts with canonical episode %q",
+				conversationeval.ErrInvalidContract, field.name, canonical.ID,
+			)
+		}
+	}
+	times := []struct {
+		name      string
+		incoming  time.Time
+		canonical time.Time
+	}{
+		{"pre_window_start", incoming.PreWindowStart, canonical.PreWindowStart},
+		{"anchor_at", incoming.AnchorAt, canonical.AnchorAt},
+		{"late_feedback_until", incoming.LateFeedbackUntil, canonical.LateFeedbackUntil},
+	}
+	for _, field := range times {
+		if field.incoming.UnixMicro() != field.canonical.UnixMicro() {
+			return fmt.Errorf(
+				"%w: episode replay field %s conflicts with canonical episode %q",
+				conversationeval.ErrInvalidContract, field.name, canonical.ID,
+			)
+		}
 	}
 	return nil
 }

@@ -455,6 +455,78 @@ func TestGetOrCreateEpisodeFrozenCohortAllowsReplayButRejectsNewNaturalKey(t *te
 	}
 }
 
+func TestGetOrCreateEpisodeRejectsImmutableReplayConflicts(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort("replay_immutability", fixture.now.Add(-time.Hour), fixture.now.Add(time.Hour))
+	cohort.ChatIDs = append(cohort.ChatIDs, "chat_also_allowed_"+fixture.suffix)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	original := fixture.episode(
+		cohort.ID,
+		"episode_replay_original_"+fixture.suffix,
+		"anchor_replay_immutable",
+	)
+	canonical, err := fixture.repo.GetOrCreateEpisode(ctx, original)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(original) error = %v", err)
+	}
+
+	validReplay := original
+	validReplay.ID = "episode_replay_other_id_" + fixture.suffix
+	validReplay.AnchorAt = validReplay.AnchorAt.Add(500 * time.Nanosecond)
+	validReplay.PreWindowStart = validReplay.PreWindowStart.Add(500 * time.Nanosecond)
+	validReplay.LateFeedbackUntil = validReplay.LateFeedbackUntil.Add(500 * time.Nanosecond)
+	replayed, err := fixture.repo.GetOrCreateEpisode(ctx, validReplay)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(valid replay) error = %v", err)
+	}
+	if replayed.ID != canonical.ID {
+		t.Fatalf("valid replay ID = %q, want canonical %q", replayed.ID, canonical.ID)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*conversationeval.Episode)
+	}{
+		{"chat_id", func(episode *conversationeval.Episode) {
+			episode.ChatID = cohort.ChatIDs[1]
+		}},
+		{"anchor_message_id", func(episode *conversationeval.Episode) {
+			episode.AnchorMessageID = "different_anchor_message"
+		}},
+		{"run_id", func(episode *conversationeval.Episode) {
+			episode.RunID = "different_run"
+		}},
+		{"topic_id", func(episode *conversationeval.Episode) {
+			episode.TopicID = "different_topic"
+		}},
+		{"pre_window_start", func(episode *conversationeval.Episode) {
+			episode.PreWindowStart = episode.PreWindowStart.Add(time.Microsecond)
+		}},
+		{"anchor_at", func(episode *conversationeval.Episode) {
+			episode.AnchorAt = episode.AnchorAt.Add(time.Microsecond)
+		}},
+		{"late_feedback_until", func(episode *conversationeval.Episode) {
+			episode.LateFeedbackUntil = episode.LateFeedbackUntil.Add(time.Microsecond)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			replay := original
+			replay.ID = "episode_replay_conflict_" + tt.name + "_" + fixture.suffix
+			tt.mutate(&replay)
+			if _, err := fixture.repo.GetOrCreateEpisode(
+				ctx,
+				replay,
+			); !errors.Is(err, conversationeval.ErrInvalidContract) {
+				t.Fatalf("GetOrCreateEpisode() error = %v, want ErrInvalidContract", err)
+			}
+		})
+	}
+}
+
 func TestUpsertLaneOutputAcceptsPostgresMicrosecondAnchorRoundTrip(t *testing.T) {
 	fixture := newRepositoryFixture(t)
 	ctx := context.Background()
