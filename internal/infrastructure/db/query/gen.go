@@ -34,6 +34,11 @@ var (
 	CopyWritingGeneral       *copyWritingGeneral
 	CronCmdTask              *cronCmdTask
 	DynamicConfig            *dynamicConfig
+	EvaluationCohort         *evaluationCohort
+	EvaluationEpisode        *evaluationEpisode
+	EvaluationFeedback       *evaluationFeedback
+	EvaluationJudgment       *evaluationJudgment
+	EvaluationLaneOutput     *evaluationLaneOutput
 	FunctionEnabling         *functionEnabling
 	ImitateRateCustom        *imitateRateCustom
 	InteractionStat          *interactionStat
@@ -81,6 +86,11 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	CopyWritingGeneral = &Q.CopyWritingGeneral
 	CronCmdTask = &Q.CronCmdTask
 	DynamicConfig = &Q.DynamicConfig
+	EvaluationCohort = &Q.EvaluationCohort
+	EvaluationEpisode = &Q.EvaluationEpisode
+	EvaluationFeedback = &Q.EvaluationFeedback
+	EvaluationJudgment = &Q.EvaluationJudgment
+	EvaluationLaneOutput = &Q.EvaluationLaneOutput
 	FunctionEnabling = &Q.FunctionEnabling
 	ImitateRateCustom = &Q.ImitateRateCustom
 	InteractionStat = &Q.InteractionStat
@@ -129,6 +139,11 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		CopyWritingGeneral:       newCopyWritingGeneral(db, opts...),
 		CronCmdTask:              newCronCmdTask(db, opts...),
 		DynamicConfig:            newDynamicConfig(db, opts...),
+		EvaluationCohort:         newEvaluationCohort(db, opts...),
+		EvaluationEpisode:        newEvaluationEpisode(db, opts...),
+		EvaluationFeedback:       newEvaluationFeedback(db, opts...),
+		EvaluationJudgment:       newEvaluationJudgment(db, opts...),
+		EvaluationLaneOutput:     newEvaluationLaneOutput(db, opts...),
 		FunctionEnabling:         newFunctionEnabling(db, opts...),
 		ImitateRateCustom:        newImitateRateCustom(db, opts...),
 		InteractionStat:          newInteractionStat(db, opts...),
@@ -178,6 +193,11 @@ type Query struct {
 	CopyWritingGeneral       copyWritingGeneral
 	CronCmdTask              cronCmdTask
 	DynamicConfig            dynamicConfig
+	EvaluationCohort         evaluationCohort
+	EvaluationEpisode        evaluationEpisode
+	EvaluationFeedback       evaluationFeedback
+	EvaluationJudgment       evaluationJudgment
+	EvaluationLaneOutput     evaluationLaneOutput
 	FunctionEnabling         functionEnabling
 	ImitateRateCustom        imitateRateCustom
 	InteractionStat          interactionStat
@@ -230,6 +250,11 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		CopyWritingGeneral:       q.CopyWritingGeneral.clone(db),
 		CronCmdTask:              q.CronCmdTask.clone(db),
 		DynamicConfig:            q.DynamicConfig.clone(db),
+		EvaluationCohort:         q.EvaluationCohort.clone(db),
+		EvaluationEpisode:        q.EvaluationEpisode.clone(db),
+		EvaluationFeedback:       q.EvaluationFeedback.clone(db),
+		EvaluationJudgment:       q.EvaluationJudgment.clone(db),
+		EvaluationLaneOutput:     q.EvaluationLaneOutput.clone(db),
 		FunctionEnabling:         q.FunctionEnabling.clone(db),
 		ImitateRateCustom:        q.ImitateRateCustom.clone(db),
 		InteractionStat:          q.InteractionStat.clone(db),
@@ -287,6 +312,11 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		CopyWritingGeneral:       q.CopyWritingGeneral.replaceDB(db),
 		CronCmdTask:              q.CronCmdTask.replaceDB(db),
 		DynamicConfig:            q.DynamicConfig.replaceDB(db),
+		EvaluationCohort:         q.EvaluationCohort.replaceDB(db),
+		EvaluationEpisode:        q.EvaluationEpisode.replaceDB(db),
+		EvaluationFeedback:       q.EvaluationFeedback.replaceDB(db),
+		EvaluationJudgment:       q.EvaluationJudgment.replaceDB(db),
+		EvaluationLaneOutput:     q.EvaluationLaneOutput.replaceDB(db),
 		FunctionEnabling:         q.FunctionEnabling.replaceDB(db),
 		ImitateRateCustom:        q.ImitateRateCustom.replaceDB(db),
 		InteractionStat:          q.InteractionStat.replaceDB(db),
@@ -334,6 +364,11 @@ type queryCtx struct {
 	CopyWritingGeneral       ICopyWritingGeneralDo
 	CronCmdTask              ICronCmdTaskDo
 	DynamicConfig            IDynamicConfigDo
+	EvaluationCohort         IEvaluationCohortDo
+	EvaluationEpisode        IEvaluationEpisodeDo
+	EvaluationFeedback       IEvaluationFeedbackDo
+	EvaluationJudgment       IEvaluationJudgmentDo
+	EvaluationLaneOutput     IEvaluationLaneOutputDo
 	FunctionEnabling         IFunctionEnablingDo
 	ImitateRateCustom        IImitateRateCustomDo
 	InteractionStat          IInteractionStatDo
@@ -381,6 +416,11 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		CopyWritingGeneral:       q.CopyWritingGeneral.WithContext(ctx),
 		CronCmdTask:              q.CronCmdTask.WithContext(ctx),
 		DynamicConfig:            q.DynamicConfig.WithContext(ctx),
+		EvaluationCohort:         q.EvaluationCohort.WithContext(ctx),
+		EvaluationEpisode:        q.EvaluationEpisode.WithContext(ctx),
+		EvaluationFeedback:       q.EvaluationFeedback.WithContext(ctx),
+		EvaluationJudgment:       q.EvaluationJudgment.WithContext(ctx),
+		EvaluationLaneOutput:     q.EvaluationLaneOutput.WithContext(ctx),
 		FunctionEnabling:         q.FunctionEnabling.WithContext(ctx),
 		ImitateRateCustom:        q.ImitateRateCustom.WithContext(ctx),
 		InteractionStat:          q.InteractionStat.WithContext(ctx),
