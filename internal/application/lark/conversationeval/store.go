@@ -13,5 +13,8 @@ type Store interface {
 	AppendFeedback(context.Context, Feedback) error
 	AppendJudgment(context.Context, Judgment) error
 	EpisodesReadyForJudge(context.Context, time.Time, int) ([]Episode, error)
+	// TransitionCohorts returns the number of state transitions. A collecting
+	// cohort recovered after its late-feedback deadline counts twice when one
+	// sweep advances it through waiting_late_feedback to finalized.
 	TransitionCohorts(context.Context, time.Time) (int64, error)
 }

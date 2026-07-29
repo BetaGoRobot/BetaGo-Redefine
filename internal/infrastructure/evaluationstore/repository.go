@@ -120,6 +120,13 @@ func (r *Repository) GetOrCreateEpisode(
 	}
 	var stored *conversationeval.Episode
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cohort, err := loadCohort(tx, episode.CohortID, true)
+		if err != nil {
+			return err
+		}
+		if err := validateEpisodeCohort(episode, cohort); err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			INSERT INTO evaluation_episodes (
 				id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
@@ -150,7 +157,13 @@ func (r *Repository) GetOrCreateEpisode(
 		if result.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
-		value := row.domain()
+		value, err := row.domain()
+		if err != nil {
+			return err
+		}
+		if err := validateEpisodeCohort(value, cohort); err != nil {
+			return err
+		}
 		stored = &value
 		return nil
 	})
@@ -180,33 +193,56 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 	if err != nil {
 		return fmt.Errorf("marshal excluded context: %w", err)
 	}
-	return db.WithContext(ctx).Exec(`
-		INSERT INTO evaluation_lane_outputs (
-			id, episode_id, lane, output_mode, activation_json, relevance_json,
-			join_decision, topic_relation, context_snapshot_json, excluded_context_json,
-			tool_plan_json, reply_text, latency_ms, token_usage_json, error_json
-		) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb,
-		          ?::jsonb, ?, ?, ?::jsonb, ?::jsonb)
-		ON CONFLICT (episode_id, lane) DO UPDATE SET
-			output_mode = EXCLUDED.output_mode,
-			activation_json = EXCLUDED.activation_json,
-			relevance_json = EXCLUDED.relevance_json,
-			join_decision = EXCLUDED.join_decision,
-			topic_relation = EXCLUDED.topic_relation,
-			context_snapshot_json = EXCLUDED.context_snapshot_json,
-			excluded_context_json = EXCLUDED.excluded_context_json,
-			tool_plan_json = EXCLUDED.tool_plan_json,
-			reply_text = EXCLUDED.reply_text,
-			latency_ms = EXCLUDED.latency_ms,
-			token_usage_json = EXCLUDED.token_usage_json,
-			error_json = EXCLUDED.error_json,
-			updated_at = now()`,
-		output.ID, output.EpisodeID, string(output.Lane), string(output.OutputMode),
-		string(output.ActivationJSON), string(output.RelevanceJSON),
-		string(output.JoinDecision), string(output.TopicRelation), string(contextJSON),
-		string(excludedJSON), string(output.ToolPlanJSON), output.ReplyText,
-		output.Latency.Milliseconds(), string(output.TokenUsageJSON), string(output.ErrorJSON),
-	).Error
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		episode, err := loadEpisode(tx, output.EpisodeID, true)
+		if err != nil {
+			return err
+		}
+		if output.ContextSnapshot.AnchorEventID != episode.AnchorEventID ||
+			!output.ContextSnapshot.AnchorAt.Equal(episode.AnchorAt) {
+			return fmt.Errorf(
+				"%w: lane output snapshot anchor does not match episode %q",
+				conversationeval.ErrInvalidContract, episode.ID,
+			)
+		}
+		expectedMode := conversationeval.OutputModeShadow
+		if output.Lane == episode.ServingLane {
+			expectedMode = conversationeval.OutputModeActual
+		}
+		if output.OutputMode != expectedMode {
+			return fmt.Errorf(
+				"%w: lane %q for episode %q must use output mode %q",
+				conversationeval.ErrInvalidContract, output.Lane, episode.ID, expectedMode,
+			)
+		}
+		return tx.Exec(`
+			INSERT INTO evaluation_lane_outputs (
+				id, episode_id, lane, output_mode, activation_json, relevance_json,
+				join_decision, topic_relation, context_snapshot_json, excluded_context_json,
+				tool_plan_json, reply_text, latency_ms, token_usage_json, error_json
+			) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb,
+			          ?::jsonb, ?, ?, ?::jsonb, ?::jsonb)
+			ON CONFLICT (episode_id, lane) DO UPDATE SET
+				output_mode = EXCLUDED.output_mode,
+				activation_json = EXCLUDED.activation_json,
+				relevance_json = EXCLUDED.relevance_json,
+				join_decision = EXCLUDED.join_decision,
+				topic_relation = EXCLUDED.topic_relation,
+				context_snapshot_json = EXCLUDED.context_snapshot_json,
+				excluded_context_json = EXCLUDED.excluded_context_json,
+				tool_plan_json = EXCLUDED.tool_plan_json,
+				reply_text = EXCLUDED.reply_text,
+				latency_ms = EXCLUDED.latency_ms,
+				token_usage_json = EXCLUDED.token_usage_json,
+				error_json = EXCLUDED.error_json,
+				updated_at = now()`,
+			output.ID, output.EpisodeID, string(output.Lane), string(output.OutputMode),
+			string(output.ActivationJSON), string(output.RelevanceJSON),
+			string(output.JoinDecision), string(output.TopicRelation), string(contextJSON),
+			string(excludedJSON), string(output.ToolPlanJSON), output.ReplyText,
+			output.Latency.Milliseconds(), string(output.TokenUsageJSON), string(output.ErrorJSON),
+		).Error
+	})
 }
 
 func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationeval.Feedback) error {
@@ -217,16 +253,45 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 	if err != nil {
 		return err
 	}
-	return db.WithContext(ctx).Exec(`
-		INSERT INTO evaluation_feedback (
-			id, episode_id, target_lane, target_message_id, feedback_event_id,
-			feedback_type, explicitness, content_json, attribution_confidence, occurred_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
-		ON CONFLICT (episode_id, feedback_event_id) DO NOTHING`,
-		feedback.ID, feedback.EpisodeID, string(feedback.TargetLane), feedback.TargetMessageID,
-		feedback.FeedbackEventID, string(feedback.FeedbackType), string(feedback.Explicitness),
-		string(feedback.ContentJSON), feedback.AttributionConfidence, feedback.OccurredAt,
-	).Error
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		episode, err := loadEpisode(tx, feedback.EpisodeID, true)
+		if err != nil {
+			return err
+		}
+		if feedback.TargetLane != "" {
+			if feedback.TargetLane != episode.ServingLane {
+				return fmt.Errorf(
+					"%w: feedback target lane %q is not episode serving lane %q",
+					conversationeval.ErrInvalidContract, feedback.TargetLane, episode.ServingLane,
+				)
+			}
+			var actualCount int64
+			if err := tx.Raw(`
+				SELECT count(*)
+				FROM evaluation_lane_outputs
+				WHERE episode_id = ? AND lane = ? AND output_mode = ?`,
+				episode.ID, string(feedback.TargetLane), string(conversationeval.OutputModeActual),
+			).Scan(&actualCount).Error; err != nil {
+				return err
+			}
+			if actualCount != 1 {
+				return fmt.Errorf(
+					"%w: feedback target requires one corresponding actual lane output",
+					conversationeval.ErrInvalidContract,
+				)
+			}
+		}
+		return tx.Exec(`
+			INSERT INTO evaluation_feedback (
+				id, episode_id, target_lane, target_message_id, feedback_event_id,
+				feedback_type, explicitness, content_json, attribution_confidence, occurred_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+			ON CONFLICT (episode_id, feedback_event_id) DO NOTHING`,
+			feedback.ID, feedback.EpisodeID, string(feedback.TargetLane), feedback.TargetMessageID,
+			feedback.FeedbackEventID, string(feedback.FeedbackType), string(feedback.Explicitness),
+			string(feedback.ContentJSON), feedback.AttributionConfidence, feedback.OccurredAt,
+		).Error
+	})
 }
 
 func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationeval.Judgment) error {
@@ -324,7 +389,11 @@ func (r *Repository) EpisodesReadyForJudge(
 	}
 	episodes := make([]conversationeval.Episode, 0, len(rows))
 	for _, row := range rows {
-		episodes = append(episodes, row.domain())
+		episode, err := row.domain()
+		if err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, episode)
 	}
 	return episodes, nil
 }
@@ -339,6 +408,17 @@ func (r *Repository) TransitionCohorts(ctx context.Context, at time.Time) (int64
 	}
 	var transitioned int64
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		collecting := tx.Exec(`
+			UPDATE evaluation_cohorts
+			SET status = ?, updated_at = ?
+			WHERE status = ?
+			  AND end_at <= ?`,
+			string(conversationeval.CohortStatusWaitingLateFeedback), at,
+			string(conversationeval.CohortStatusCollecting), at,
+		)
+		if collecting.Error != nil {
+			return collecting.Error
+		}
 		finalized := tx.Exec(`
 			UPDATE evaluation_cohorts
 			SET status = ?, updated_at = ?
@@ -350,17 +430,6 @@ func (r *Repository) TransitionCohorts(ctx context.Context, at time.Time) (int64
 		)
 		if finalized.Error != nil {
 			return finalized.Error
-		}
-		collecting := tx.Exec(`
-			UPDATE evaluation_cohorts
-			SET status = ?, updated_at = ?
-			WHERE status = ?
-			  AND end_at <= ?`,
-			string(conversationeval.CohortStatusWaitingLateFeedback), at,
-			string(conversationeval.CohortStatusCollecting), at,
-		)
-		if collecting.Error != nil {
-			return collecting.Error
 		}
 		transitioned = finalized.RowsAffected + collecting.RowsAffected
 		return nil
@@ -430,13 +499,13 @@ type episodeRow struct {
 	UpdatedAt         time.Time
 }
 
-func (r episodeRow) domain() conversationeval.Episode {
+func (r episodeRow) domain() (conversationeval.Episode, error) {
 	var postWindowEnd *time.Time
 	if r.PostWindowEnd.Valid {
 		value := r.PostWindowEnd.Time
 		postWindowEnd = &value
 	}
-	return conversationeval.Episode{
+	episode := conversationeval.Episode{
 		ID: r.ID, CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
 		AnchorEventID: r.AnchorEventID, AnchorMessageID: r.AnchorMessageID,
 		TopicID: r.TopicID, ServingLane: conversationeval.Lane(r.ServingLane),
@@ -444,6 +513,10 @@ func (r episodeRow) domain() conversationeval.Episode {
 		AnchorAt: r.AnchorAt, PostWindowEnd: postWindowEnd,
 		LateFeedbackUntil: r.LateFeedbackUntil, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
+	if err := episode.Validate(); err != nil {
+		return conversationeval.Episode{}, fmt.Errorf("stored episode %q: %w", r.ID, err)
+	}
+	return episode, nil
 }
 
 func validateQueryID(name, value string) error {
@@ -451,6 +524,84 @@ func validateQueryID(name, value string) error {
 		return fmt.Errorf(
 			"%w: %s must be non-empty without surrounding whitespace",
 			conversationeval.ErrInvalidContract, name,
+		)
+	}
+	return nil
+}
+
+func loadCohort(db *gorm.DB, cohortID string, lock bool) (conversationeval.Cohort, error) {
+	query := `
+		SELECT id, app_id, bot_open_id, chat_ids::text AS chat_ids, start_at, end_at,
+		       status, serving_lane, control_version, candidate_version,
+		       judge_config_json::text AS judge_config_json,
+		       sampling_policy_json::text AS sampling_policy_json,
+		       result_version, created_at, updated_at
+		FROM evaluation_cohorts
+		WHERE id = ?
+		LIMIT 1`
+	if lock {
+		query += " FOR SHARE"
+	}
+	var row cohortRow
+	result := db.Raw(query, cohortID).Scan(&row)
+	if result.Error != nil {
+		return conversationeval.Cohort{}, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return conversationeval.Cohort{}, gorm.ErrRecordNotFound
+	}
+	return row.domain()
+}
+
+func loadEpisode(db *gorm.DB, episodeID string, lock bool) (conversationeval.Episode, error) {
+	query := `
+		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		       topic_id, serving_lane, status, pre_window_start, anchor_at,
+		       post_window_end, late_feedback_until, created_at, updated_at
+		FROM evaluation_episodes
+		WHERE id = ?
+		LIMIT 1`
+	if lock {
+		query += " FOR SHARE"
+	}
+	var row episodeRow
+	result := db.Raw(query, episodeID).Scan(&row)
+	if result.Error != nil {
+		return conversationeval.Episode{}, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return conversationeval.Episode{}, gorm.ErrRecordNotFound
+	}
+	return row.domain()
+}
+
+func validateEpisodeCohort(
+	episode conversationeval.Episode,
+	cohort conversationeval.Cohort,
+) error {
+	chatAllowed := false
+	for _, chatID := range cohort.ChatIDs {
+		if chatID == episode.ChatID {
+			chatAllowed = true
+			break
+		}
+	}
+	if !chatAllowed {
+		return fmt.Errorf(
+			"%w: episode chat %q does not belong to cohort %q",
+			conversationeval.ErrInvalidContract, episode.ChatID, cohort.ID,
+		)
+	}
+	if episode.AnchorAt.Before(cohort.StartAt) || !episode.AnchorAt.Before(cohort.EndAt) {
+		return fmt.Errorf(
+			"%w: episode anchor_at must fall within cohort [start_at, end_at)",
+			conversationeval.ErrInvalidContract,
+		)
+	}
+	if episode.ServingLane != cohort.ServingLane {
+		return fmt.Errorf(
+			"%w: episode serving lane %q does not match cohort lane %q",
+			conversationeval.ErrInvalidContract, episode.ServingLane, cohort.ServingLane,
 		)
 	}
 	return nil

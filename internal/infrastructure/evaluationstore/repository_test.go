@@ -3,6 +3,7 @@ package evaluationstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -136,26 +137,17 @@ func TestCohortQueriesAndLifecycleAreTimeBoundAndIrreversible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first TransitionCohorts() error = %v", err)
 	}
-	if transitioned != 1 {
-		t.Fatalf("first TransitionCohorts() = %d, want 1", transitioned)
-	}
-	assertCohortStatus(t, fixture.db, expired.ID, conversationeval.CohortStatusWaitingLateFeedback)
-
-	transitioned, err = fixture.repo.TransitionCohorts(ctx, fixture.now)
-	if err != nil {
-		t.Fatalf("second TransitionCohorts() error = %v", err)
-	}
-	if transitioned != 1 {
-		t.Fatalf("second TransitionCohorts() = %d, want 1", transitioned)
+	if transitioned != 2 {
+		t.Fatalf("first TransitionCohorts() = %d, want two legal state transitions", transitioned)
 	}
 	assertCohortStatus(t, fixture.db, expired.ID, conversationeval.CohortStatusFinalized)
 
-	transitioned, err = fixture.repo.TransitionCohorts(ctx, fixture.now.Add(-72*time.Hour))
+	transitioned, err = fixture.repo.TransitionCohorts(ctx, fixture.now)
 	if err != nil {
-		t.Fatalf("past TransitionCohorts() error = %v", err)
+		t.Fatalf("restart TransitionCohorts() error = %v", err)
 	}
 	if transitioned != 0 {
-		t.Fatalf("past TransitionCohorts() = %d, want irreversible no-op", transitioned)
+		t.Fatalf("restart TransitionCohorts() = %d, want idempotent no-op", transitioned)
 	}
 	assertCohortStatus(t, fixture.db, expired.ID, conversationeval.CohortStatusFinalized)
 }
@@ -192,9 +184,11 @@ func TestEpisodeAndLaneOutputUseTargetedConcurrentUpserts(t *testing.T) {
 		t.Fatalf("concurrent GetOrCreateEpisode() error = %v", err)
 	}
 	var episodeID string
+	var storedEpisode conversationeval.Episode
 	for stored := range results {
 		if episodeID == "" {
 			episodeID = stored.ID
+			storedEpisode = *stored
 		}
 		if stored.ID != episodeID {
 			t.Fatalf("concurrent stored episode ID = %q, want %q", stored.ID, episodeID)
@@ -215,11 +209,18 @@ func TestEpisodeAndLaneOutputUseTargetedConcurrentUpserts(t *testing.T) {
 		t.Fatal("GetOrCreateEpisode(primary-key collision) error = nil, want non-target conflict")
 	}
 
-	first := fixture.laneOutput(episodeID, conversationeval.LaneControl, "lane_control_first")
+	first := fixture.laneOutput(storedEpisode, conversationeval.LaneControl, "lane_control_first")
 	if err := fixture.repo.UpsertLaneOutput(ctx, first); err != nil {
 		t.Fatalf("first UpsertLaneOutput() error = %v", err)
 	}
-	second := fixture.laneOutput(episodeID, conversationeval.LaneControl, "lane_control_second")
+	var firstCreatedAt time.Time
+	if err := fixture.db.Table("evaluation_lane_outputs").
+		Select("created_at").
+		Where("episode_id = ? AND lane = ?", episodeID, conversationeval.LaneControl).
+		Scan(&firstCreatedAt).Error; err != nil {
+		t.Fatalf("read first lane created_at: %v", err)
+	}
+	second := fixture.laneOutput(storedEpisode, conversationeval.LaneControl, "lane_control_second")
 	second.ReplyText = "updated reply"
 	if err := fixture.repo.UpsertLaneOutput(ctx, second); err != nil {
 		t.Fatalf("second UpsertLaneOutput() error = %v", err)
@@ -230,21 +231,218 @@ func TestEpisodeAndLaneOutputUseTargetedConcurrentUpserts(t *testing.T) {
 		Count(&laneCount).Error; err != nil {
 		t.Fatalf("count lane outputs: %v", err)
 	}
-	var storedReply string
+	var storedLane struct {
+		ID        string
+		ReplyText string
+		CreatedAt time.Time
+	}
 	if err := fixture.db.Table("evaluation_lane_outputs").
-		Select("reply_text").
+		Select("id, reply_text, created_at").
 		Where("episode_id = ? AND lane = ?", episodeID, conversationeval.LaneControl).
-		Scan(&storedReply).Error; err != nil {
+		Scan(&storedLane).Error; err != nil {
 		t.Fatalf("read lane output: %v", err)
 	}
-	if laneCount != 1 || storedReply != second.ReplyText {
-		t.Fatalf("lane output count/reply = %d/%q, want 1/%q", laneCount, storedReply, second.ReplyText)
+	if laneCount != 1 || storedLane.ID != first.ID || storedLane.ReplyText != second.ReplyText ||
+		!storedLane.CreatedAt.Equal(firstCreatedAt) {
+		t.Fatalf(
+			"stored lane = count:%d row:%#v, want first ID/created_at and updated reply %q/%s/%q",
+			laneCount, storedLane, first.ID, firstCreatedAt, second.ReplyText,
+		)
 	}
 
-	nonTargetCollision := fixture.laneOutput(episodeID, conversationeval.LaneCandidate, first.ID)
+	nonTargetCollision := fixture.laneOutput(storedEpisode, conversationeval.LaneCandidate, first.ID)
 	nonTargetCollision.ID = first.ID
 	if err := fixture.repo.UpsertLaneOutput(ctx, nonTargetCollision); err == nil {
 		t.Fatal("UpsertLaneOutput(primary-key collision) error = nil, want non-target conflict")
+	}
+}
+
+func TestGetOrCreateEpisodeValidatesCohortOwnership(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort("ownership", fixture.now.Add(-time.Hour), fixture.now.Add(time.Hour))
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*conversationeval.Episode)
+	}{
+		{"chat outside cohort", func(episode *conversationeval.Episode) { episode.ChatID = "other_chat" }},
+		{"anchor before cohort", func(episode *conversationeval.Episode) { episode.AnchorAt = cohort.StartAt.Add(-time.Microsecond) }},
+		{"anchor at exclusive end", func(episode *conversationeval.Episode) { episode.AnchorAt = cohort.EndAt }},
+		{"serving lane mismatch", func(episode *conversationeval.Episode) { episode.ServingLane = conversationeval.LaneCandidate }},
+	}
+	for index, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			episode := fixture.episode(
+				cohort.ID,
+				fmt.Sprintf("episode_invalid_%d_%s", index, fixture.suffix),
+				fmt.Sprintf("anchor_invalid_%d", index),
+			)
+			tt.mutate(&episode)
+			if episode.PreWindowStart.After(episode.AnchorAt) {
+				episode.PreWindowStart = episode.AnchorAt.Add(-time.Minute)
+			}
+			if episode.LateFeedbackUntil.Before(episode.AnchorAt) {
+				episode.LateFeedbackUntil = episode.AnchorAt.Add(time.Hour)
+			}
+			if _, err := fixture.repo.GetOrCreateEpisode(ctx, episode); !errors.Is(err, conversationeval.ErrInvalidContract) {
+				t.Fatalf("GetOrCreateEpisode() error = %v, want ErrInvalidContract", err)
+			}
+		})
+	}
+
+	candidateCohort := fixture.cohort(
+		"candidate_serving",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	candidateCohort.ServingLane = conversationeval.LaneCandidate
+	if err := fixture.repo.CreateCohort(ctx, candidateCohort); err != nil {
+		t.Fatalf("CreateCohort(candidate-serving) error = %v", err)
+	}
+	candidateEpisode := fixture.episode(
+		candidateCohort.ID,
+		"episode_candidate_"+fixture.suffix,
+		"anchor_candidate",
+	)
+	candidateEpisode.ServingLane = conversationeval.LaneCandidate
+	if _, err := fixture.repo.GetOrCreateEpisode(ctx, candidateEpisode); err != nil {
+		t.Fatalf("GetOrCreateEpisode(candidate-serving) error = %v", err)
+	}
+
+	corruptible := fixture.episode(
+		cohort.ID,
+		"episode_corruptible_"+fixture.suffix,
+		"anchor_corruptible",
+	)
+	storedCorruptible, err := fixture.repo.GetOrCreateEpisode(ctx, corruptible)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(corruptible) error = %v", err)
+	}
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("id = ?", storedCorruptible.ID).
+		Update("status", "invalid_status").Error; err != nil {
+		t.Fatalf("corrupt episode fixture: %v", err)
+	}
+	replay := corruptible
+	replay.ID = "episode_corruptible_replay_" + fixture.suffix
+	if _, err := fixture.repo.GetOrCreateEpisode(ctx, replay); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("GetOrCreateEpisode(corrupt stored row) error = %v, want ErrInvalidContract", err)
+	}
+
+	crossEntity := fixture.episode(
+		cohort.ID,
+		"episode_cross_entity_"+fixture.suffix,
+		"anchor_cross_entity",
+	)
+	storedCrossEntity, err := fixture.repo.GetOrCreateEpisode(ctx, crossEntity)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(cross-entity) error = %v", err)
+	}
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("id = ?", storedCrossEntity.ID).
+		Update("chat_id", "chat_outside_cohort").Error; err != nil {
+		t.Fatalf("corrupt episode cohort ownership: %v", err)
+	}
+	crossEntityReplay := crossEntity
+	crossEntityReplay.ID = "episode_cross_entity_replay_" + fixture.suffix
+	if _, err := fixture.repo.GetOrCreateEpisode(
+		ctx,
+		crossEntityReplay,
+	); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("GetOrCreateEpisode(cross-entity stored row) error = %v, want ErrInvalidContract", err)
+	}
+}
+
+func TestUpsertLaneOutputValidatesEpisodeAnchorAndServingMode(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort("lane_contract", fixture.now.Add(-time.Hour), fixture.now.Add(time.Hour))
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	episode, err := fixture.repo.GetOrCreateEpisode(
+		ctx,
+		fixture.episode(cohort.ID, "episode_lane_contract_"+fixture.suffix, "anchor_lane_contract"),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*conversationeval.LaneOutput)
+	}{
+		{"anchor event mismatch", func(output *conversationeval.LaneOutput) {
+			output.ContextSnapshot.AnchorEventID = "other_anchor"
+		}},
+		{"anchor time mismatch", func(output *conversationeval.LaneOutput) {
+			output.ContextSnapshot.AnchorAt = output.ContextSnapshot.AnchorAt.Add(time.Microsecond)
+		}},
+		{"serving lane marked shadow", func(output *conversationeval.LaneOutput) {
+			output.OutputMode = conversationeval.OutputModeShadow
+		}},
+	}
+	for index, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := fixture.laneOutput(
+				*episode,
+				conversationeval.LaneControl,
+				fmt.Sprintf("invalid_control_%d", index),
+			)
+			tt.mutate(&output)
+			if err := fixture.repo.UpsertLaneOutput(ctx, output); !errors.Is(err, conversationeval.ErrInvalidContract) {
+				t.Fatalf("UpsertLaneOutput() error = %v, want ErrInvalidContract", err)
+			}
+		})
+	}
+	candidateActual := fixture.laneOutput(*episode, conversationeval.LaneCandidate, "candidate_actual")
+	candidateActual.OutputMode = conversationeval.OutputModeActual
+	if err := fixture.repo.UpsertLaneOutput(ctx, candidateActual); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("UpsertLaneOutput(non-serving actual) error = %v, want ErrInvalidContract", err)
+	}
+
+	candidateCohort := fixture.cohort(
+		"candidate_lane_contract",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	candidateCohort.ServingLane = conversationeval.LaneCandidate
+	if err := fixture.repo.CreateCohort(ctx, candidateCohort); err != nil {
+		t.Fatalf("CreateCohort(candidate-serving) error = %v", err)
+	}
+	candidateEpisode := fixture.episode(
+		candidateCohort.ID,
+		"episode_candidate_lane_"+fixture.suffix,
+		"anchor_candidate_lane",
+	)
+	candidateEpisode.ServingLane = conversationeval.LaneCandidate
+	storedCandidate, err := fixture.repo.GetOrCreateEpisode(ctx, candidateEpisode)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(candidate-serving) error = %v", err)
+	}
+	if err := fixture.repo.UpsertLaneOutput(
+		ctx,
+		fixture.laneOutput(*storedCandidate, conversationeval.LaneControl, "candidate_control_shadow"),
+	); err != nil {
+		t.Fatalf("UpsertLaneOutput(control shadow) error = %v", err)
+	}
+	actual := fixture.laneOutput(*storedCandidate, conversationeval.LaneCandidate, "candidate_serving_actual")
+	actual.OutputMode = conversationeval.OutputModeActual
+	if err := fixture.repo.UpsertLaneOutput(ctx, actual); err != nil {
+		t.Fatalf("UpsertLaneOutput(candidate actual) error = %v", err)
+	}
+	candidateFeedback := conversationeval.Feedback{
+		ID: "feedback_candidate_" + fixture.suffix, EpisodeID: storedCandidate.ID,
+		TargetLane: conversationeval.LaneCandidate, TargetMessageID: "candidate_message",
+		FeedbackEventID: "candidate_feedback_event", FeedbackType: conversationeval.FeedbackTypeReaction,
+		Explicitness: conversationeval.FeedbackExplicit, ContentJSON: json.RawMessage(`{"reaction":"THUMBSUP"}`),
+		AttributionConfidence: 100, OccurredAt: fixture.now,
+	}
+	if err := fixture.repo.AppendFeedback(ctx, candidateFeedback); err != nil {
+		t.Fatalf("AppendFeedback(candidate-serving actual) error = %v", err)
 	}
 }
 
@@ -268,11 +466,29 @@ func TestFeedbackDedupesAndJudgmentsRemainAppendOnlyAndVersioned(t *testing.T) {
 		Explicitness: conversationeval.FeedbackExplicit, ContentJSON: json.RawMessage(`{"text":"不对"}`),
 		AttributionConfidence: 100, OccurredAt: fixture.now,
 	}
+	if err := fixture.repo.AppendFeedback(ctx, feedback); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("AppendFeedback(without actual output) error = %v, want ErrInvalidContract", err)
+	}
+	episodeOnly := feedback
+	episodeOnly.ID = "feedback_episode_only_" + fixture.suffix
+	episodeOnly.FeedbackEventID = "event_episode_only"
+	episodeOnly.TargetLane = ""
+	episodeOnly.TargetMessageID = ""
+	if err := fixture.repo.AppendFeedback(ctx, episodeOnly); err != nil {
+		t.Fatalf("AppendFeedback(episode-only) error = %v", err)
+	}
+	if err := fixture.repo.UpsertLaneOutput(
+		ctx,
+		fixture.laneOutput(*stored, conversationeval.LaneControl, "feedback_control_actual"),
+	); err != nil {
+		t.Fatalf("UpsertLaneOutput(actual) error = %v", err)
+	}
 	if err := fixture.repo.AppendFeedback(ctx, feedback); err != nil {
 		t.Fatalf("first AppendFeedback() error = %v", err)
 	}
 	duplicate := feedback
 	duplicate.ID = "feedback_2_" + fixture.suffix
+	duplicate.ContentJSON = json.RawMessage(`{"text":"overwritten"}`)
 	if err := fixture.repo.AppendFeedback(ctx, duplicate); err != nil {
 		t.Fatalf("duplicate AppendFeedback() error = %v", err)
 	}
@@ -284,6 +500,26 @@ func TestFeedbackDedupesAndJudgmentsRemainAppendOnlyAndVersioned(t *testing.T) {
 	}
 	if feedbackCount != 1 {
 		t.Fatalf("feedback count = %d, want 1", feedbackCount)
+	}
+	var storedFeedback struct {
+		ID          string
+		ContentText string
+	}
+	if err := fixture.db.Table("evaluation_feedback").
+		Select("id, content_json->>'text' AS content_text").
+		Where("episode_id = ? AND feedback_event_id = ?", stored.ID, feedback.FeedbackEventID).
+		Scan(&storedFeedback).Error; err != nil {
+		t.Fatalf("read first feedback: %v", err)
+	}
+	if storedFeedback.ID != feedback.ID || storedFeedback.ContentText != "不对" {
+		t.Fatalf("stored feedback = %#v, want first ID/content %q/%q", storedFeedback, feedback.ID, "不对")
+	}
+	nonServing := feedback
+	nonServing.ID = "feedback_non_serving_" + fixture.suffix
+	nonServing.FeedbackEventID = "event_non_serving"
+	nonServing.TargetLane = conversationeval.LaneCandidate
+	if err := fixture.repo.AppendFeedback(ctx, nonServing); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("AppendFeedback(non-serving lane) error = %v, want ErrInvalidContract", err)
 	}
 	nonTargetFeedback := feedback
 	nonTargetFeedback.FeedbackEventID = "event_different"
@@ -352,7 +588,7 @@ func TestEpisodesReadyForJudgeRequiresClosedWindowAndBothLanes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateEpisode() error = %v", err)
 	}
-	if err := fixture.repo.UpsertLaneOutput(ctx, fixture.laneOutput(stored.ID, conversationeval.LaneControl, "ready_control")); err != nil {
+	if err := fixture.repo.UpsertLaneOutput(ctx, fixture.laneOutput(*stored, conversationeval.LaneControl, "ready_control")); err != nil {
 		t.Fatalf("UpsertLaneOutput(control) error = %v", err)
 	}
 	episodes, err := fixture.repo.EpisodesReadyForJudge(ctx, fixture.now, 10)
@@ -362,7 +598,7 @@ func TestEpisodesReadyForJudgeRequiresClosedWindowAndBothLanes(t *testing.T) {
 	if len(episodes) != 0 {
 		t.Fatalf("EpisodesReadyForJudge(one lane) = %#v, want empty", episodes)
 	}
-	if err := fixture.repo.UpsertLaneOutput(ctx, fixture.laneOutput(stored.ID, conversationeval.LaneCandidate, "ready_candidate")); err != nil {
+	if err := fixture.repo.UpsertLaneOutput(ctx, fixture.laneOutput(*stored, conversationeval.LaneCandidate, "ready_candidate")); err != nil {
 		t.Fatalf("UpsertLaneOutput(candidate) error = %v", err)
 	}
 	episodes, err = fixture.repo.EpisodesReadyForJudge(ctx, fixture.now, 10)
@@ -374,6 +610,14 @@ func TestEpisodesReadyForJudgeRequiresClosedWindowAndBothLanes(t *testing.T) {
 	}
 	if _, err := fixture.repo.EpisodesReadyForJudge(ctx, fixture.now, 0); err == nil {
 		t.Fatal("EpisodesReadyForJudge(limit=0) error = nil, want validation error")
+	}
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("id = ?", stored.ID).
+		Update("serving_lane", "invalid_lane").Error; err != nil {
+		t.Fatalf("corrupt stored episode fixture: %v", err)
+	}
+	if _, err := fixture.repo.EpisodesReadyForJudge(ctx, fixture.now, 10); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("EpisodesReadyForJudge(corrupt episode) error = %v, want ErrInvalidContract", err)
 	}
 }
 
@@ -399,25 +643,29 @@ func (f *repositoryFixture) episode(cohortID, id, anchorEventID string) conversa
 	}
 }
 
-func (f *repositoryFixture) laneOutput(episodeID string, lane conversationeval.Lane, id string) conversationeval.LaneOutput {
+func (f *repositoryFixture) laneOutput(
+	episode conversationeval.Episode,
+	lane conversationeval.Lane,
+	id string,
+) conversationeval.LaneOutput {
 	mode := conversationeval.OutputModeShadow
-	if lane == conversationeval.LaneControl {
+	if lane == episode.ServingLane {
 		mode = conversationeval.OutputModeActual
 	}
 	return conversationeval.LaneOutput{
-		ID: id + "_" + f.suffix, EpisodeID: episodeID, Lane: lane, OutputMode: mode,
+		ID: id + "_" + f.suffix, EpisodeID: episode.ID, Lane: lane, OutputMode: mode,
 		ActivationJSON: json.RawMessage(`{"active":true}`),
 		RelevanceJSON:  json.RawMessage(`{"score":0.9}`),
 		JoinDecision:   conversationeval.JoinDecisionJoin,
 		TopicRelation:  conversationeval.TopicRelationRelated,
 		ContextSnapshot: conversationeval.ContextSnapshot{
-			SchemaVersion: conversationeval.SchemaVersion, AnchorEventID: "anchor_shared",
-			AnchorAt: f.now, SystemPrompt: "system", UserPrompt: "user",
+			SchemaVersion: conversationeval.SchemaVersion, AnchorEventID: episode.AnchorEventID,
+			AnchorAt: episode.AnchorAt, SystemPrompt: "system", UserPrompt: "user",
 			TokenEstimate: 10, TokenBudget: 100,
 			Messages: []conversationeval.ContextItem{{
 				ID: "message_context", Source: "lark_message", SourceID: "om_context",
 				Kind: "message", Content: "context", ContentHash: "sha256:context",
-				Rank: 0, TokenCount: 10, Selected: true, OccurredAt: f.now.Add(-time.Minute),
+				Rank: 0, TokenCount: 10, Selected: true, OccurredAt: episode.AnchorAt.Add(-time.Minute),
 			}},
 		},
 		ToolPlanJSON: json.RawMessage(`{}`), ReplyText: "reply",

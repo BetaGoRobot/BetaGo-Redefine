@@ -156,6 +156,40 @@ func TestDomainValidationRejectsInvalidEnumsJSONIDsTimesAndRanges(t *testing.T) 
 	}
 }
 
+func TestFeedbackTargetLaneAndMessageAreBothPresentOrBothEmpty(t *testing.T) {
+	base := Feedback{
+		ID: "feedback_1", EpisodeID: "episode_1", FeedbackEventID: "event_1",
+		FeedbackType: FeedbackTypeCorrection, Explicitness: FeedbackExplicit,
+		ContentJSON: json.RawMessage(`{}`), AttributionConfidence: 100,
+		OccurredAt: time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC),
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("episode-only Feedback.Validate() error = %v", err)
+	}
+	for _, feedback := range []Feedback{
+		func() Feedback {
+			value := base
+			value.TargetLane = LaneControl
+			return value
+		}(),
+		func() Feedback {
+			value := base
+			value.TargetMessageID = "message_1"
+			return value
+		}(),
+	} {
+		if err := feedback.Validate(); !errors.Is(err, ErrInvalidContract) {
+			t.Fatalf("partially targeted Feedback.Validate() error = %v, want ErrInvalidContract", err)
+		}
+	}
+	targeted := base
+	targeted.TargetLane = LaneCandidate
+	targeted.TargetMessageID = "message_1"
+	if err := targeted.Validate(); err != nil {
+		t.Fatalf("fully targeted Feedback.Validate() error = %v", err)
+	}
+}
+
 func cloneSnapshot(t *testing.T, value ContextSnapshot) ContextSnapshot {
 	t.Helper()
 	encoded, err := json.Marshal(value)

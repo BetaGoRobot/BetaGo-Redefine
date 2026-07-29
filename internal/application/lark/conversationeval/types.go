@@ -478,6 +478,9 @@ func (f Feedback) Validate() error {
 	if f.TargetLane != "" && !f.TargetLane.Valid() {
 		return contractError("invalid feedback target lane %q", f.TargetLane)
 	}
+	if (f.TargetLane == "") != (f.TargetMessageID == "") {
+		return contractError("target_lane and target_message_id must both be present or both be empty")
+	}
 	if f.TargetMessageID != "" {
 		if err := validateID("target_message_id", f.TargetMessageID); err != nil {
 			return err
