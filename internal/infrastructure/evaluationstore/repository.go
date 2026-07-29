@@ -127,6 +127,28 @@ func (r *Repository) GetOrCreateEpisode(
 		if err := validateEpisodeCohort(episode, cohort); err != nil {
 			return err
 		}
+		canonical, found, err := loadEpisodeByNaturalKey(
+			tx,
+			episode.CohortID,
+			episode.AnchorEventID,
+			true,
+		)
+		if err != nil {
+			return err
+		}
+		if found {
+			if err := validateEpisodeCohort(canonical, cohort); err != nil {
+				return err
+			}
+			stored = &canonical
+			return nil
+		}
+		if cohort.Status != conversationeval.CohortStatusCollecting {
+			return fmt.Errorf(
+				"%w: cohort %q is %q and cannot accept a new episode",
+				conversationeval.ErrInvalidTransition, cohort.ID, cohort.Status,
+			)
+		}
 		if err := tx.Exec(`
 			INSERT INTO evaluation_episodes (
 				id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
@@ -141,30 +163,21 @@ func (r *Repository) GetOrCreateEpisode(
 		).Error; err != nil {
 			return err
 		}
-		var row episodeRow
-		result := tx.Raw(`
-			SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
-			       topic_id, serving_lane, status, pre_window_start, anchor_at,
-			       post_window_end, late_feedback_until, created_at, updated_at
-			FROM evaluation_episodes
-			WHERE cohort_id = ? AND anchor_event_id = ?
-			LIMIT 1`,
+		canonical, found, err = loadEpisodeByNaturalKey(
+			tx,
 			episode.CohortID, episode.AnchorEventID,
-		).Scan(&row)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
-		value, err := row.domain()
+			true,
+		)
 		if err != nil {
 			return err
 		}
-		if err := validateEpisodeCohort(value, cohort); err != nil {
+		if !found {
+			return gorm.ErrRecordNotFound
+		}
+		if err := validateEpisodeCohort(canonical, cohort); err != nil {
 			return err
 		}
-		stored = &value
+		stored = &canonical
 		return nil
 	})
 	if err != nil {
@@ -199,7 +212,7 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 			return err
 		}
 		if output.ContextSnapshot.AnchorEventID != episode.AnchorEventID ||
-			!output.ContextSnapshot.AnchorAt.Equal(episode.AnchorAt) {
+			output.ContextSnapshot.AnchorAt.UnixMicro() != episode.AnchorAt.UnixMicro() {
 			return fmt.Errorf(
 				"%w: lane output snapshot anchor does not match episode %q",
 				conversationeval.ErrInvalidContract, episode.ID,
@@ -573,6 +586,37 @@ func loadEpisode(db *gorm.DB, episodeID string, lock bool) (conversationeval.Epi
 		return conversationeval.Episode{}, gorm.ErrRecordNotFound
 	}
 	return row.domain()
+}
+
+func loadEpisodeByNaturalKey(
+	db *gorm.DB,
+	cohortID string,
+	anchorEventID string,
+	lock bool,
+) (conversationeval.Episode, bool, error) {
+	query := `
+		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		       topic_id, serving_lane, status, pre_window_start, anchor_at,
+		       post_window_end, late_feedback_until, created_at, updated_at
+		FROM evaluation_episodes
+		WHERE cohort_id = ? AND anchor_event_id = ?
+		LIMIT 1`
+	if lock {
+		query += " FOR SHARE"
+	}
+	var row episodeRow
+	result := db.Raw(query, cohortID, anchorEventID).Scan(&row)
+	if result.Error != nil {
+		return conversationeval.Episode{}, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return conversationeval.Episode{}, false, nil
+	}
+	episode, err := row.domain()
+	if err != nil {
+		return conversationeval.Episode{}, false, err
+	}
+	return episode, true, nil
 }
 
 func validateEpisodeCohort(

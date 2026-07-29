@@ -2,9 +2,11 @@ package evaluationstore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"strings"
 	"sync"
@@ -19,10 +21,11 @@ import (
 )
 
 type repositoryFixture struct {
-	db     *gorm.DB
-	repo   *Repository
-	suffix string
-	now    time.Time
+	db              *gorm.DB
+	repo            *Repository
+	suffix          string
+	applicationName string
+	now             time.Time
 }
 
 func newRepositoryFixture(t *testing.T) *repositoryFixture {
@@ -76,6 +79,7 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 
 	testConfig := *cfg.DBConfig
 	testConfig.SearchPath = schema
+	testConfig.ApplicationName = schema
 	testDB, err := gorm.Open(postgres.Open(testConfig.DSN()), &gorm.Config{})
 	if err != nil {
 		_ = rootDB.Exec(fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schema)).Error
@@ -94,7 +98,7 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 		_ = rootSQLDB.Close()
 	})
 	return &repositoryFixture{
-		db: testDB, repo: NewRepository(testDB), suffix: suffix,
+		db: testDB, repo: NewRepository(testDB), suffix: suffix, applicationName: schema,
 		now: time.Now().UTC().Truncate(time.Microsecond),
 	}
 }
@@ -354,6 +358,238 @@ func TestGetOrCreateEpisodeValidatesCohortOwnership(t *testing.T) {
 		crossEntityReplay,
 	); !errors.Is(err, conversationeval.ErrInvalidContract) {
 		t.Fatalf("GetOrCreateEpisode(cross-entity stored row) error = %v, want ErrInvalidContract", err)
+	}
+}
+
+func TestGetOrCreateEpisodeFrozenCohortAllowsReplayButRejectsNewNaturalKey(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort("frozen_replay", fixture.now.Add(-time.Hour), fixture.now.Add(time.Hour))
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	original := fixture.episode(
+		cohort.ID,
+		"episode_frozen_original_"+fixture.suffix,
+		"anchor_frozen_original",
+	)
+	canonical, err := fixture.repo.GetOrCreateEpisode(ctx, original)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode(original) error = %v", err)
+	}
+
+	for _, sweep := range []struct {
+		at         time.Time
+		wantStatus conversationeval.CohortStatus
+	}{
+		{cohort.EndAt.Add(time.Hour), conversationeval.CohortStatusWaitingLateFeedback},
+		{
+			cohort.EndAt.Add(conversationeval.LateFeedbackGracePeriod + time.Hour),
+			conversationeval.CohortStatusFinalized,
+		},
+	} {
+		count, err := fixture.repo.TransitionCohorts(ctx, sweep.at)
+		if err != nil {
+			t.Fatalf("TransitionCohorts(%s) error = %v", sweep.at, err)
+		}
+		if count != 1 {
+			t.Fatalf("TransitionCohorts(%s) count = %d, want 1", sweep.at, count)
+		}
+		assertCohortStatus(t, fixture.db, cohort.ID, sweep.wantStatus)
+		replay := original
+		replay.ID = "episode_frozen_replay_" + uuid.NewV4().String()
+		stored, err := fixture.repo.GetOrCreateEpisode(ctx, replay)
+		if err != nil {
+			t.Fatalf("GetOrCreateEpisode(frozen replay) error = %v", err)
+		}
+		if stored.ID != canonical.ID {
+			t.Fatalf("frozen replay ID = %q, want canonical %q", stored.ID, canonical.ID)
+		}
+		for name, mutate := range map[string]func(*conversationeval.Episode){
+			"chat": func(episode *conversationeval.Episode) {
+				episode.ChatID = "forged_chat"
+			},
+			"serving lane": func(episode *conversationeval.Episode) {
+				episode.ServingLane = conversationeval.LaneCandidate
+			},
+			"anchor time": func(episode *conversationeval.Episode) {
+				episode.AnchorAt = cohort.EndAt
+				episode.PreWindowStart = episode.AnchorAt.Add(-time.Minute)
+				episode.LateFeedbackUntil = episode.AnchorAt.Add(time.Hour)
+			},
+		} {
+			forged := replay
+			forged.ID = "episode_frozen_forged_" + uuid.NewV4().String()
+			mutate(&forged)
+			if _, err := fixture.repo.GetOrCreateEpisode(
+				ctx,
+				forged,
+			); !errors.Is(err, conversationeval.ErrInvalidContract) {
+				t.Fatalf(
+					"GetOrCreateEpisode(frozen replay with forged %s) error = %v, want ErrInvalidContract",
+					name, err,
+				)
+			}
+		}
+
+		newEpisode := fixture.episode(
+			cohort.ID,
+			"episode_frozen_new_"+uuid.NewV4().String(),
+			"anchor_frozen_new_"+uuid.NewV4().String(),
+		)
+		if _, err := fixture.repo.GetOrCreateEpisode(
+			ctx,
+			newEpisode,
+		); !errors.Is(err, conversationeval.ErrInvalidTransition) {
+			t.Fatalf("GetOrCreateEpisode(new frozen key) error = %v, want ErrInvalidTransition", err)
+		}
+	}
+	var count int64
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("cohort_id = ?", cohort.ID).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count frozen cohort episodes: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("frozen cohort episode count = %d, want canonical only", count)
+	}
+}
+
+func TestUpsertLaneOutputAcceptsPostgresMicrosecondAnchorRoundTrip(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort("anchor_precision", fixture.now.Add(-time.Hour), fixture.now.Add(time.Hour))
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	original := fixture.episode(
+		cohort.ID,
+		"episode_anchor_precision_"+fixture.suffix,
+		"anchor_precision",
+	)
+	original.AnchorAt = fixture.now.Add(789 * time.Nanosecond)
+	original.PreWindowStart = original.AnchorAt.Add(-time.Minute)
+	original.LateFeedbackUntil = original.AnchorAt.Add(conversationeval.LateFeedbackGracePeriod)
+	if _, err := fixture.repo.GetOrCreateEpisode(ctx, original); err != nil {
+		t.Fatalf("GetOrCreateEpisode(nanosecond anchor) error = %v", err)
+	}
+	output := fixture.laneOutput(original, conversationeval.LaneControl, "anchor_precision_output")
+	if err := fixture.repo.UpsertLaneOutput(ctx, output); err != nil {
+		t.Fatalf("UpsertLaneOutput(nanosecond anchor) error = %v", err)
+	}
+}
+
+func TestGetOrCreateEpisodeCommitsBeforeWaitingCohortTransition(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"create_before_transition",
+		fixture.now.Add(-2*time.Hour),
+		fixture.now.Add(-30*time.Minute),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	advisoryKey := fixtureAdvisoryKey(fixture.suffix, "episode-insert")
+	installAdvisoryTrigger(t, fixture.db, "evaluation_episodes", "INSERT", "block_episode_insert", advisoryKey)
+	lock := holdAdvisoryLock(t, fixture.db, advisoryKey)
+
+	episode := fixture.episode(
+		cohort.ID,
+		"episode_create_before_transition_"+fixture.suffix,
+		"anchor_create_before_transition",
+	)
+	episode.AnchorAt = fixture.now.Add(-time.Hour)
+	episode.PreWindowStart = episode.AnchorAt.Add(-time.Minute)
+	episode.LateFeedbackUntil = episode.AnchorAt.Add(conversationeval.LateFeedbackGracePeriod)
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := fixture.repo.GetOrCreateEpisode(ctx, episode)
+		createDone <- err
+	}()
+	waitForAdvisoryWaiter(t, fixture.db, advisoryKey)
+
+	transitionDone := make(chan transitionResult, 1)
+	go func() {
+		count, err := fixture.repo.TransitionCohorts(ctx, fixture.now)
+		transitionDone <- transitionResult{count: count, err: err}
+	}()
+	waitForTransactionWaiter(t, fixture.db, fixture.applicationName)
+	select {
+	case result := <-transitionDone:
+		lock.release()
+		t.Fatalf("TransitionCohorts() returned before creator released cohort lock: %#v", result)
+	default:
+	}
+	lock.release()
+	if err := receiveError(t, createDone); err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	transition := receiveTransition(t, transitionDone)
+	if transition.err != nil || transition.count != 1 {
+		t.Fatalf("TransitionCohorts() = %#v, want one transition after create commit", transition)
+	}
+	assertCohortStatus(t, fixture.db, cohort.ID, conversationeval.CohortStatusWaitingLateFeedback)
+}
+
+func TestGetOrCreateEpisodeRejectsNewKeyWhenTransitionCommitsFirst(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"transition_before_create",
+		fixture.now.Add(-2*time.Hour),
+		fixture.now.Add(-30*time.Minute),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	advisoryKey := fixtureAdvisoryKey(fixture.suffix, "cohort-update")
+	installAdvisoryTrigger(t, fixture.db, "evaluation_cohorts", "UPDATE", "block_cohort_update", advisoryKey)
+	lock := holdAdvisoryLock(t, fixture.db, advisoryKey)
+
+	transitionDone := make(chan transitionResult, 1)
+	go func() {
+		count, err := fixture.repo.TransitionCohorts(ctx, fixture.now)
+		transitionDone <- transitionResult{count: count, err: err}
+	}()
+	waitForAdvisoryWaiter(t, fixture.db, advisoryKey)
+
+	episode := fixture.episode(
+		cohort.ID,
+		"episode_transition_before_create_"+fixture.suffix,
+		"anchor_transition_before_create",
+	)
+	episode.AnchorAt = fixture.now.Add(-time.Hour)
+	episode.PreWindowStart = episode.AnchorAt.Add(-time.Minute)
+	episode.LateFeedbackUntil = episode.AnchorAt.Add(conversationeval.LateFeedbackGracePeriod)
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := fixture.repo.GetOrCreateEpisode(ctx, episode)
+		createDone <- err
+	}()
+	waitForTransactionWaiter(t, fixture.db, fixture.applicationName)
+	select {
+	case err := <-createDone:
+		lock.release()
+		t.Fatalf("GetOrCreateEpisode() returned before transition released cohort lock: %v", err)
+	default:
+	}
+	lock.release()
+	transition := receiveTransition(t, transitionDone)
+	if transition.err != nil || transition.count != 1 {
+		t.Fatalf("TransitionCohorts() = %#v, want one committed transition", transition)
+	}
+	if err := receiveError(t, createDone); !errors.Is(err, conversationeval.ErrInvalidTransition) {
+		t.Fatalf("GetOrCreateEpisode() error = %v, want ErrInvalidTransition", err)
+	}
+	var count int64
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("cohort_id = ?", cohort.ID).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count rejected episodes: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("episode count = %d, want no insert after transition commit", count)
 	}
 }
 
@@ -682,5 +918,163 @@ func assertCohortStatus(t *testing.T, db *gorm.DB, cohortID string, want convers
 	}
 	if got != string(want) {
 		t.Fatalf("cohort status = %q, want %q", got, want)
+	}
+}
+
+type heldAdvisoryLock struct {
+	t        *testing.T
+	conn     *sql.Conn
+	key      int64
+	released bool
+}
+
+func holdAdvisoryLock(t *testing.T, db *gorm.DB, key int64) *heldAdvisoryLock {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("reserve advisory lock connection: %v", err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, key); err != nil {
+		_ = conn.Close()
+		t.Fatalf("hold advisory lock: %v", err)
+	}
+	lock := &heldAdvisoryLock{t: t, conn: conn, key: key}
+	t.Cleanup(lock.release)
+	return lock
+}
+
+func (l *heldAdvisoryLock) release() {
+	l.t.Helper()
+	if l.released {
+		return
+	}
+	l.released = true
+	if _, err := l.conn.ExecContext(
+		context.Background(),
+		`SELECT pg_advisory_unlock($1)`,
+		l.key,
+	); err != nil {
+		l.t.Errorf("release advisory lock: %v", err)
+	}
+	if err := l.conn.Close(); err != nil {
+		l.t.Errorf("close advisory lock connection: %v", err)
+	}
+}
+
+func installAdvisoryTrigger(
+	t *testing.T,
+	db *gorm.DB,
+	table string,
+	event string,
+	name string,
+	key int64,
+) {
+	t.Helper()
+	functionName := name + "_fn"
+	if err := db.Exec(fmt.Sprintf(`
+		CREATE FUNCTION %q() RETURNS trigger
+		LANGUAGE plpgsql
+		AS $trigger$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(%d);
+			RETURN NEW;
+		END
+		$trigger$`, functionName, key)).Error; err != nil {
+		t.Fatalf("create advisory trigger function: %v", err)
+	}
+	if err := db.Exec(fmt.Sprintf(`
+		CREATE TRIGGER %q
+		BEFORE %s ON %q
+		FOR EACH ROW EXECUTE FUNCTION %q()`,
+		name, event, table, functionName,
+	)).Error; err != nil {
+		t.Fatalf("create advisory trigger: %v", err)
+	}
+}
+
+func waitForAdvisoryWaiter(t *testing.T, db *gorm.DB, key int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int64
+		if err := db.Raw(`
+			SELECT count(*)
+			FROM pg_locks
+			WHERE locktype = 'advisory'
+			  AND classid = 0
+			  AND objid = ?
+			  AND NOT granted`,
+			key,
+		).Scan(&count).Error; err != nil {
+			t.Fatalf("inspect advisory lock waiter: %v", err)
+		}
+		if count > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for advisory lock waiter %d", key)
+}
+
+func waitForTransactionWaiter(t *testing.T, db *gorm.DB, applicationName string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int64
+		if err := db.Raw(`
+			SELECT count(*)
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND application_name = ?
+			  AND wait_event_type = 'Lock'
+			  AND wait_event = 'transactionid'`,
+			applicationName,
+		).Scan(&count).Error; err != nil {
+			t.Fatalf("inspect transaction lock waiter: %v", err)
+		}
+		if count > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for transaction lock waiter")
+}
+
+func fixtureAdvisoryKey(suffix, purpose string) int64 {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(suffix))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(purpose))
+	return int64(hash.Sum32()&0x7fffffff) + 1
+}
+
+type transitionResult struct {
+	count int64
+	err   error
+}
+
+func receiveTransition(t *testing.T, results <-chan transitionResult) transitionResult {
+	t.Helper()
+	select {
+	case result := <-results:
+		return result
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for cohort transition")
+		return transitionResult{}
+	}
+}
+
+func receiveError(t *testing.T, results <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-results:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for repository operation")
+		return nil
 	}
 }
