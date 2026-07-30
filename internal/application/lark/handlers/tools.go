@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
@@ -50,9 +51,16 @@ func BuildCandidateRunnerForTask(
 }
 
 func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {
+	return BuildLarkToolsWithAgentCardService(nil)
+}
+
+func BuildLarkToolsWithAgentCardService(
+	agentCardService agentcardtool.Service,
+) *tools.Impl[larkim.P2MessageReceiveV1] {
 	ins := buildTools(true, true, true, true)
 	xcommand.RegisterTool(ins, PermissionManage)
 	registerLuckinTools(ins)
+	registerAgentCardTools(ins, agentCardService)
 	return ins
 }
 

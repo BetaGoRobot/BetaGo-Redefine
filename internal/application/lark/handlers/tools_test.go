@@ -11,11 +11,32 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/toolmeta"
 	toolkit "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type agentCardToolServiceFake struct {
+	discover agentcardtool.DiscoverResponse
+	compose  agentcardtool.ComposeResponse
+}
+
+func (f *agentCardToolServiceFake) DiscoverComponents(
+	context.Context,
+	agentcardtool.DiscoverRequest,
+) (agentcardtool.DiscoverResponse, error) {
+	return f.discover, nil
+}
+
+func (f *agentCardToolServiceFake) ComposeCard(
+	context.Context,
+	agentcardtool.ComposeContext,
+	agentcardtool.ComposeRequest,
+) (agentcardtool.ComposeResponse, error) {
+	return f.compose, nil
+}
 
 func useWorkspaceConfigPath(t *testing.T) {
 	t.Helper()
@@ -369,5 +390,92 @@ func TestLarkToolsEmitStrictCompatibleSchemas(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestAgentCardToolsExposeTypedStrictSchemasOnlyWhenInjected(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	if _, exists := BuildLarkTools().Get("compose_card"); exists {
+		t.Fatal("compose_card is available without a scoped service")
+	}
+	tools := BuildLarkToolsWithAgentCardService(&agentCardToolServiceFake{})
+	discover, exists := tools.Get("discover_card_components")
+	if !exists {
+		t.Fatal("discover_card_components is missing")
+	}
+	for _, name := range []string{"version", "category", "name"} {
+		if discover.Parameters.Props[name] == nil {
+			t.Fatalf("discover filter %q is missing", name)
+		}
+	}
+	compose, exists := tools.Get("compose_card")
+	if !exists {
+		t.Fatal("compose_card is missing")
+	}
+	for _, name := range []string{"purpose", "card", "interaction"} {
+		if compose.Parameters.Props[name] == nil {
+			t.Fatalf("compose field %q is missing", name)
+		}
+	}
+	for _, forbidden := range []string{
+		"runtime", "runtime_envelope", "raw_json", "callback", "token",
+		"trusted_capability", "capability_input",
+	} {
+		if compose.Parameters.Props[forbidden] != nil {
+			t.Fatalf("compose schema exposes forbidden field %q", forbidden)
+		}
+	}
+	card := compose.Parameters.Props["card"]
+	interaction := compose.Parameters.Props["interaction"]
+	if card.Type != "object" || card.Props["blocks"].Type != "array" ||
+		card.Props["blocks"].Items == nil ||
+		card.Props["blocks"].Items.Type != "object" ||
+		card.Props["actions"].Items == nil ||
+		card.Props["actions"].Items.Type != "object" ||
+		interaction.Type != "object" ||
+		interaction.Props["mode"] == nil ||
+		interaction.Props["expires_in_seconds"] == nil {
+		t.Fatalf("compose schema is not typed: card=%#v interaction=%#v", card, interaction)
+	}
+	schema := map[string]any{}
+	if err := json.Unmarshal(compose.Parameters.JSON(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("compose additionalProperties = %#v", schema["additionalProperties"])
+	}
+	description := strings.ToLower(compose.Description)
+	for _, guidance := range []string{"text", "secret", "duplicate"} {
+		if !strings.Contains(description, guidance) {
+			t.Fatalf("compose description lacks %q guidance: %s", guidance, compose.Description)
+		}
+	}
+}
+
+func TestAgentCardToolReturnsStructuredRepairResult(t *testing.T) {
+	service := &agentCardToolServiceFake{
+		compose: agentcardtool.ComposeResponse{
+			Status: "repair_required", Attempt: 1,
+			Issues: []agentcardtool.Issue{{
+				Code: "title_length", Path: "$.card.title",
+			}},
+		},
+	}
+	tools := BuildLarkToolsWithAgentCardService(service)
+	compose, ok := tools.Get("compose_card")
+	if !ok {
+		t.Fatal("compose_card is missing")
+	}
+	result := compose.Function(
+		context.Background(),
+		`{"purpose":"confirmation","card":{"title":"","blocks":[]},"interaction":{"mode":"ui_action"}}`,
+		toolkit.FCMeta[larkim.P2MessageReceiveV1]{
+			ChatID: "chat-1", OpenID: "owner-1",
+		},
+	)
+	if result.IsErr() ||
+		!strings.Contains(result.Value(), `"status":"repair_required"`) ||
+		!strings.Contains(result.Value(), `"attempt":1`) {
+		t.Fatalf("compose result = %#v", result)
 	}
 }
