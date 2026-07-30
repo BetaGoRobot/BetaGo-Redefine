@@ -276,6 +276,15 @@ func TestValidateMappingSubsetRejectsNestedFieldDrift(t *testing.T) {
 	}
 }
 
+func TestValidateMappingSubsetAcceptsOpenSearchBooleanStrings(t *testing.T) {
+	actual := map[string]any{"dynamic": "false"}
+	expected := map[string]any{"dynamic": false}
+
+	if err := validateMappingSubset(actual, expected, "mappings"); err != nil {
+		t.Fatalf("semantically equal dynamic mapping rejected: %v", err)
+	}
+}
+
 func TestProvisionerAdoptsCompatibleOrphanPhysicalIndex(t *testing.T) {
 	owner, _ := tenant.New("app-a", "bot-a")
 	alias, _ := owner.IndexAlias("events")

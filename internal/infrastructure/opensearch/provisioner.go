@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
@@ -419,15 +420,38 @@ func validateMappingSubset(actual, expected any, path string) error {
 		}
 		return nil
 	default:
-		if !reflect.DeepEqual(actual, expected) {
+		if !mappingScalarEqual(actual, expected) {
 			return fmt.Errorf(
-				"%s mismatch: got=%v want=%v",
+				"%s mismatch: got=%T(%v) want=%T(%v)",
 				path,
 				actual,
+				actual,
+				expected,
 				expected,
 			)
 		}
 		return nil
+	}
+}
+
+func mappingScalarEqual(actual, expected any) bool {
+	actualBool, actualIsBool := mappingBool(actual)
+	expectedBool, expectedIsBool := mappingBool(expected)
+	if actualIsBool && expectedIsBool {
+		return actualBool == expectedBool
+	}
+	return reflect.DeepEqual(actual, expected)
+}
+
+func mappingBool(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseBool(typed)
+		return parsed, err == nil
+	default:
+		return false, false
 	}
 }
 
