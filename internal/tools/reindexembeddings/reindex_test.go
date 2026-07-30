@@ -5,7 +5,38 @@ import (
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
+	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
+
+func TestMappingInfoUsesV4ResponseAccessor(t *testing.T) {
+	t.Parallel()
+
+	var response opensearchapi.MappingGetResp
+	if err := json.Unmarshal([]byte(`{
+		"messages-v1": {
+			"mappings": {
+				"properties": {
+					"message_v2": {"type": "knn_vector", "dimension": 2048}
+				}
+			}
+		}
+	}`), &response); err != nil {
+		t.Fatalf("decode mapping response: %v", err)
+	}
+
+	got := mappingInfo(response.GetIndices(), "messages-v1")
+	properties, ok := got["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("mapping properties = %#v, want object", got["properties"])
+	}
+	messageV2, ok := properties["message_v2"].(map[string]any)
+	if !ok {
+		t.Fatalf("message_v2 mapping = %#v, want object", properties["message_v2"])
+	}
+	if got := messageV2["dimension"]; got != float64(2048) {
+		t.Fatalf("message_v2 dimension = %#v, want 2048", got)
+	}
+}
 
 func TestExtractText(t *testing.T) {
 	t.Parallel()
