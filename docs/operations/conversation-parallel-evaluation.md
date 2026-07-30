@@ -122,6 +122,54 @@ Judge 结果是 append-only：
 
 ## 查询与核对
 
+### WebUI 抽检 API
+
+评测数据包含群聊原文、上下文和用户反馈，属于敏感读取。必须先配置
+`[webui_config].auth_token`；即使是 GET，也必须携带同一个 Bearer token。
+未配置 token 时，评测 API 返回 `503`，不会退化成匿名读取。
+
+```bash
+curl -H 'Authorization: Bearer <token>' \
+  'http://127.0.0.1:8090/api/evaluations?chat_id=oc_xxx&from=2026-07-30T00:00:00%2B08:00&to=2026-07-31T00:00:00%2B08:00&limit=50'
+
+curl -H 'Authorization: Bearer <token>' \
+  'http://127.0.0.1:8090/api/evaluations/<episode_id>'
+```
+
+列表支持 `chat_id`、`cohort_id`、`status`、`winner`、
+`needs_review`、`from`、`to` 和 `cursor`。单次最多 100 条，时间范围最多
+31 天。服务端固定使用当前进程的 `app_id + bot_open_id` 过滤，调用方不能
+覆盖 Bot 身份。
+
+详情一次返回：
+
+- pre/anchor/post 消息时间线；
+- Control/Candidate 的 join/topic、上下文、排除上下文和 tool plan；
+- 两条回复、延迟、token 和错误；
+- 用户直接回复、reaction、纠正和卡片反馈；
+- 自动 Judge 与人工判断的完整版本链。
+
+追加人工判断：
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "evaluator_id":"reviewer-1",
+    "winner":"candidate",
+    "scores":{"response_relevance":9,"context_correctness":8},
+    "problem_tags":["control_missed_context"],
+    "rationale":"Candidate 使用了前文约束。",
+    "confidence":90,
+    "needs_review":false
+  }' \
+  'http://127.0.0.1:8090/api/evaluations/<episode_id>/judgments'
+```
+
+人工结果使用 `source=human` 独立追加版本；并发提交由 episode 行锁串行化，
+不会覆盖自动 Judge 或旧人工版本。
+
 查看 cohort/episode 状态：
 
 ```sql

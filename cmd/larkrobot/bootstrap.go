@@ -589,22 +589,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			return nil
 		},
 	}))
-	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
-		Name:     "agent_card_patch_reconciler",
-		Critical: false,
-		Start: func(ctx context.Context) error {
-			if components.agentCardPatchReconciler == nil {
-				return errors.New("agent card patch reconciler unavailable")
-			}
-			return components.agentCardPatchReconciler.Start(ctx)
-		},
-		Stop: func(ctx context.Context) error {
-			if components.agentCardPatchReconciler == nil {
-				return nil
-			}
-			return components.agentCardPatchReconciler.Stop(ctx)
-		},
-	}))
+	app.AddModule(&agentCardPatchModule{components: components})
 	app.AddModule(components.conversationWorker)
 	app.AddModule(components.conversationProjectionWorker)
 	addConversationEvaluationModule(app, cfg, components)

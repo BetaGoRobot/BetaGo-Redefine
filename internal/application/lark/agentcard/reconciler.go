@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +30,16 @@ type PatchReconciler struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	running       atomic.Bool
+	scanned       atomic.Uint64
+	completed     atomic.Uint64
+	skipped       atomic.Uint64
+	failed        atomic.Uint64
+	statusMu      sync.RWMutex
+	lastError     string
+	lastSuccessAt time.Time
+	lastFailureAt time.Time
 }
 
 func NewPatchReconciler(
@@ -73,18 +84,32 @@ func (r *PatchReconciler) ReconcileOnce(
 		r.batchSize,
 	)
 	if err != nil {
+		r.recordFailure(err)
 		return 0, err
 	}
+	r.scanned.Add(uint64(len(targets)))
 	processed := 0
+	hadFailure := false
 	for _, target := range targets {
 		if err := r.processors[processorIndex].Process(
 			ctx,
 			target.SurfaceID,
 			target.Revision,
 		); err != nil {
+			if errors.Is(err, ErrCardNotFound) ||
+				errors.Is(err, ErrCardConflict) {
+				r.skipped.Add(1)
+				continue
+			}
+			hadFailure = true
+			r.recordFailure(err)
 			continue
 		}
 		processed++
+		r.completed.Add(1)
+	}
+	if !hadFailure {
+		r.recordSuccess()
 	}
 	return processed, nil
 }
@@ -100,6 +125,7 @@ func (r *PatchReconciler) Start(ctx context.Context) error {
 	}
 	workerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	r.cancel = cancel
+	r.running.Store(true)
 	for index := range r.processors {
 		r.wg.Add(1)
 		go r.run(workerCtx, index)
@@ -133,5 +159,61 @@ func (r *PatchReconciler) Stop(context.Context) error {
 		cancel()
 		r.wg.Wait()
 	}
+	r.running.Store(false)
 	return nil
+}
+
+func (r *PatchReconciler) recordFailure(err error) {
+	if r == nil || err == nil {
+		return
+	}
+	message := err.Error()
+	if len(message) > 1024 {
+		message = message[:1024]
+	}
+	r.failed.Add(1)
+	r.statusMu.Lock()
+	r.lastError = message
+	r.lastFailureAt = r.now().UTC()
+	r.statusMu.Unlock()
+}
+
+func (r *PatchReconciler) recordSuccess() {
+	if r == nil {
+		return
+	}
+	r.statusMu.Lock()
+	r.lastError = ""
+	r.lastSuccessAt = r.now().UTC()
+	r.statusMu.Unlock()
+}
+
+func (r *PatchReconciler) Stats() map[string]any {
+	if r == nil {
+		return map[string]any{"running": false}
+	}
+	r.statusMu.RLock()
+	lastError := r.lastError
+	lastSuccessAt := r.lastSuccessAt
+	lastFailureAt := r.lastFailureAt
+	r.statusMu.RUnlock()
+	return map[string]any{
+		"running": r.running.Load(), "workers": len(r.processors),
+		"scanned": r.scanned.Load(), "completed": r.completed.Load(),
+		"skipped": r.skipped.Load(), "failed": r.failed.Load(),
+		"last_error": lastError, "last_success_at": lastSuccessAt,
+		"last_failure_at": lastFailureAt,
+	}
+}
+
+func (r *PatchReconciler) Health() (bool, string) {
+	if r == nil {
+		return false, "agent card patch reconciler unavailable"
+	}
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	if r.lastError != "" {
+		return false, r.lastError
+	}
+	return true, ""
 }
