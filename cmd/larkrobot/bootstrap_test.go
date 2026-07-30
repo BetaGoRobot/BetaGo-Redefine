@@ -24,6 +24,18 @@ func TestAddInfrastructureModulesRegistersAKShareAPIModule(t *testing.T) {
 	}
 }
 
+func TestRuntimeSchemaIsRegisteredAfterDBBeforeRepositories(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	app, err := buildApp(cfg)
+	if err != nil {
+		t.Fatalf("buildApp() error = %v", err)
+	}
+	names := app.ModuleNames()
+	assertModuleBefore(t, names, "db", "runtime_schema")
+	assertModuleBefore(t, names, "runtime_schema", "application_services")
+	assertModuleBefore(t, names, "runtime_schema", "conversation_evaluation")
+}
+
 func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	components, err := newAppComponents(cfg)

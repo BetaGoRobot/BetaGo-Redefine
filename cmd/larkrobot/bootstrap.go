@@ -45,6 +45,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schema"
 	larkiface "github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/webui"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
@@ -293,6 +294,20 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 		},
 		Stop: func(context.Context) error {
 			return closeDB(db.DB())
+		},
+	}))
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "runtime_schema",
+		Critical: true,
+		Init: func(ctx context.Context) error {
+			runner := &schema.Runner{
+				DB:         db.DB(),
+				Schema:     runtimeSchemaName(cfg),
+				Revision:   "larkrobot",
+				Migrations: schema.DefaultMigrations(),
+			}
+			_, err := runner.Apply(ctx)
+			return err
 		},
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
@@ -706,29 +721,6 @@ func addConversationEvaluationModule(
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "conversation_evaluation",
 		Critical: false,
-		Init: func(ctx context.Context) error {
-			var installed bool
-			if err := db.DB().WithContext(ctx).Raw(`
-				SELECT
-					to_regclass('betago.evaluation_episode_messages') IS NOT NULL
-					AND to_regclass('betago.evaluation_candidate_tasks') IS NOT NULL
-					AND EXISTS (
-						SELECT 1
-						FROM information_schema.columns
-						WHERE table_schema = 'betago'
-						  AND table_name = 'evaluation_episodes'
-						  AND column_name = 'post_window_reason'
-					)`,
-			).Scan(&installed).Error; err != nil {
-				return err
-			}
-			if !installed {
-				return errors.New(
-					"conversation evaluation runtime migration 20260729 is not installed",
-				)
-			}
-			return nil
-		},
 		Start: func(ctx context.Context) error {
 			repository = evaluationstore.NewRepository(db.DB())
 			service, err := conversationeval.NewService(conversationeval.ServiceOptions{
@@ -929,6 +921,21 @@ func addConversationEvaluationModule(
 			return stats
 		},
 	}))
+}
+
+func runtimeSchemaName(cfg *infraConfig.BaseConfig) string {
+	if cfg == nil || cfg.DBConfig == nil {
+		return "betago"
+	}
+	searchPath := strings.TrimSpace(cfg.DBConfig.SearchPath)
+	if searchPath == "" {
+		return "betago"
+	}
+	name := strings.Trim(strings.TrimSpace(strings.Split(searchPath, ",")[0]), `"`)
+	if name == "" || name == "$user" {
+		return "betago"
+	}
+	return name
 }
 
 func evaluationJudgeModelID(
