@@ -55,6 +55,7 @@ func newAgentCardSurface(db *gorm.DB, opts ...gen.DOOption) agentCardSurface {
 	_agentCardSurface.LastError = field.NewString(tableName, "last_error")
 	_agentCardSurface.CreatedAt = field.NewTime(tableName, "created_at")
 	_agentCardSurface.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_agentCardSurface.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentCardSurface.fillFieldMap()
 
@@ -95,6 +96,7 @@ type agentCardSurface struct {
 	LastError            field.String
 	CreatedAt            field.Time
 	UpdatedAt            field.Time
+	TenantID             field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -141,6 +143,7 @@ func (a *agentCardSurface) updateTableName(table string) *agentCardSurface {
 	a.LastError = field.NewString(table, "last_error")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -169,7 +172,7 @@ func (a *agentCardSurface) GetFieldByName(fieldName string) (field.OrderExpr, bo
 }
 
 func (a *agentCardSurface) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 30)
+	a.fieldMap = make(map[string]field.Expr, 31)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["run_id"] = a.RunID
 	a.fieldMap["wait_step_id"] = a.WaitStepID
@@ -200,6 +203,7 @@ func (a *agentCardSurface) fillFieldMap() {
 	a.fieldMap["last_error"] = a.LastError
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentCardSurface) clone(db *gorm.DB) agentCardSurface {

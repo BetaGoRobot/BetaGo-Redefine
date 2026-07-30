@@ -29,6 +29,7 @@ type EvaluationLaneOutput struct {
 	ErrorJSON           string    `gorm:"column:error_json;not null;default:{}" json:"error_json"`
 	CreatedAt           time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt           time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	TenantID            string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName EvaluationLaneOutput's table name

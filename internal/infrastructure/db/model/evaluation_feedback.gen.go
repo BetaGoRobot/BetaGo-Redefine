@@ -23,6 +23,7 @@ type EvaluationFeedback struct {
 	AttributionConfidence int32     `gorm:"column:attribution_confidence;not null" json:"attribution_confidence"`
 	OccurredAt            time.Time `gorm:"column:occurred_at;not null" json:"occurred_at"`
 	CreatedAt             time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	TenantID              string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName EvaluationFeedback's table name

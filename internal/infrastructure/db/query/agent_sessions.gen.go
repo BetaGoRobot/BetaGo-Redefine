@@ -38,6 +38,7 @@ func newAgentSession(db *gorm.DB, opts ...gen.DOOption) agentSession {
 	_agentSession.MemoryVersion = field.NewInt64(tableName, "memory_version")
 	_agentSession.CreatedAt = field.NewTime(tableName, "created_at")
 	_agentSession.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_agentSession.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentSession.fillFieldMap()
 
@@ -61,6 +62,7 @@ type agentSession struct {
 	MemoryVersion   field.Int64
 	CreatedAt       field.Time
 	UpdatedAt       field.Time
+	TenantID        field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -90,6 +92,7 @@ func (a *agentSession) updateTableName(table string) *agentSession {
 	a.MemoryVersion = field.NewInt64(table, "memory_version")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -118,7 +121,7 @@ func (a *agentSession) GetFieldByName(fieldName string) (field.OrderExpr, bool) 
 }
 
 func (a *agentSession) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 13)
+	a.fieldMap = make(map[string]field.Expr, 14)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["app_id"] = a.AppID
 	a.fieldMap["bot_open_id"] = a.BotOpenID
@@ -132,6 +135,7 @@ func (a *agentSession) fillFieldMap() {
 	a.fieldMap["memory_version"] = a.MemoryVersion
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentSession) clone(db *gorm.DB) agentSession {

@@ -38,6 +38,7 @@ func newEvaluationJudgment(db *gorm.DB, opts ...gen.DOOption) evaluationJudgment
 	_evaluationJudgment.NeedsReview = field.NewBool(tableName, "needs_review")
 	_evaluationJudgment.SupersedesID = field.NewString(tableName, "supersedes_id")
 	_evaluationJudgment.CreatedAt = field.NewTime(tableName, "created_at")
+	_evaluationJudgment.TenantID = field.NewString(tableName, "tenant_id")
 
 	_evaluationJudgment.fillFieldMap()
 
@@ -61,6 +62,7 @@ type evaluationJudgment struct {
 	NeedsReview     field.Bool
 	SupersedesID    field.String
 	CreatedAt       field.Time
+	TenantID        field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -90,6 +92,7 @@ func (e *evaluationJudgment) updateTableName(table string) *evaluationJudgment {
 	e.NeedsReview = field.NewBool(table, "needs_review")
 	e.SupersedesID = field.NewString(table, "supersedes_id")
 	e.CreatedAt = field.NewTime(table, "created_at")
+	e.TenantID = field.NewString(table, "tenant_id")
 
 	e.fillFieldMap()
 
@@ -118,7 +121,7 @@ func (e *evaluationJudgment) GetFieldByName(fieldName string) (field.OrderExpr, 
 }
 
 func (e *evaluationJudgment) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 13)
+	e.fieldMap = make(map[string]field.Expr, 14)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["episode_id"] = e.EpisodeID
 	e.fieldMap["version"] = e.Version
@@ -132,6 +135,7 @@ func (e *evaluationJudgment) fillFieldMap() {
 	e.fieldMap["needs_review"] = e.NeedsReview
 	e.fieldMap["supersedes_id"] = e.SupersedesID
 	e.fieldMap["created_at"] = e.CreatedAt
+	e.fieldMap["tenant_id"] = e.TenantID
 }
 
 func (e evaluationJudgment) clone(db *gorm.DB) evaluationJudgment {

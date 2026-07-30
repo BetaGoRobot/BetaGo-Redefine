@@ -27,6 +27,7 @@ type EvaluationCohort struct {
 	ResultVersion      int64     `gorm:"column:result_version;not null" json:"result_version"`
 	CreatedAt          time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt          time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	TenantID           string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName EvaluationCohort's table name

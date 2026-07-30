@@ -24,6 +24,7 @@ type AgentCapabilityExecution struct {
 	FinishedAt     time.Time `gorm:"column:finished_at" json:"finished_at"`
 	CreatedAt      time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt      time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	TenantID       string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName AgentCapabilityExecution's table name

@@ -36,6 +36,7 @@ func newEvaluationCandidateTask(db *gorm.DB, opts ...gen.DOOption) evaluationCan
 	_evaluationCandidateTask.LastError = field.NewString(tableName, "last_error")
 	_evaluationCandidateTask.CreatedAt = field.NewTime(tableName, "created_at")
 	_evaluationCandidateTask.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_evaluationCandidateTask.TenantID = field.NewString(tableName, "tenant_id")
 
 	_evaluationCandidateTask.fillFieldMap()
 
@@ -57,6 +58,7 @@ type evaluationCandidateTask struct {
 	LastError      field.String
 	CreatedAt      field.Time
 	UpdatedAt      field.Time
+	TenantID       field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -84,6 +86,7 @@ func (e *evaluationCandidateTask) updateTableName(table string) *evaluationCandi
 	e.LastError = field.NewString(table, "last_error")
 	e.CreatedAt = field.NewTime(table, "created_at")
 	e.UpdatedAt = field.NewTime(table, "updated_at")
+	e.TenantID = field.NewString(table, "tenant_id")
 
 	e.fillFieldMap()
 
@@ -112,7 +115,7 @@ func (e *evaluationCandidateTask) GetFieldByName(fieldName string) (field.OrderE
 }
 
 func (e *evaluationCandidateTask) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 11)
+	e.fieldMap = make(map[string]field.Expr, 12)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["episode_id"] = e.EpisodeID
 	e.fieldMap["status"] = e.Status
@@ -124,6 +127,7 @@ func (e *evaluationCandidateTask) fillFieldMap() {
 	e.fieldMap["last_error"] = e.LastError
 	e.fieldMap["created_at"] = e.CreatedAt
 	e.fieldMap["updated_at"] = e.UpdatedAt
+	e.fieldMap["tenant_id"] = e.TenantID
 }
 
 func (e evaluationCandidateTask) clone(db *gorm.DB) evaluationCandidateTask {

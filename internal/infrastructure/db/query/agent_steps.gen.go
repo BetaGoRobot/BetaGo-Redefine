@@ -43,6 +43,7 @@ func newAgentStep(db *gorm.DB, opts ...gen.DOOption) agentStep {
 	_agentStep.WorkerID = field.NewString(tableName, "worker_id")
 	_agentStep.LeaseExpiresAt = field.NewTime(tableName, "lease_expires_at")
 	_agentStep.RetryOfStepID = field.NewString(tableName, "retry_of_step_id")
+	_agentStep.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentStep.fillFieldMap()
 
@@ -71,6 +72,7 @@ type agentStep struct {
 	WorkerID       field.String
 	LeaseExpiresAt field.Time
 	RetryOfStepID  field.String
+	TenantID       field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -105,6 +107,7 @@ func (a *agentStep) updateTableName(table string) *agentStep {
 	a.WorkerID = field.NewString(table, "worker_id")
 	a.LeaseExpiresAt = field.NewTime(table, "lease_expires_at")
 	a.RetryOfStepID = field.NewString(table, "retry_of_step_id")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -131,7 +134,7 @@ func (a *agentStep) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *agentStep) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 18)
+	a.fieldMap = make(map[string]field.Expr, 19)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["run_id"] = a.RunID
 	a.fieldMap["index"] = a.Index
@@ -150,6 +153,7 @@ func (a *agentStep) fillFieldMap() {
 	a.fieldMap["worker_id"] = a.WorkerID
 	a.fieldMap["lease_expires_at"] = a.LeaseExpiresAt
 	a.fieldMap["retry_of_step_id"] = a.RetryOfStepID
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentStep) clone(db *gorm.DB) agentStep {

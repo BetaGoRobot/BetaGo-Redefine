@@ -42,6 +42,7 @@ func newEvaluationLaneOutput(db *gorm.DB, opts ...gen.DOOption) evaluationLaneOu
 	_evaluationLaneOutput.ErrorJSON = field.NewString(tableName, "error_json")
 	_evaluationLaneOutput.CreatedAt = field.NewTime(tableName, "created_at")
 	_evaluationLaneOutput.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_evaluationLaneOutput.TenantID = field.NewString(tableName, "tenant_id")
 
 	_evaluationLaneOutput.fillFieldMap()
 
@@ -69,6 +70,7 @@ type evaluationLaneOutput struct {
 	ErrorJSON           field.String
 	CreatedAt           field.Time
 	UpdatedAt           field.Time
+	TenantID            field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -102,6 +104,7 @@ func (e *evaluationLaneOutput) updateTableName(table string) *evaluationLaneOutp
 	e.ErrorJSON = field.NewString(table, "error_json")
 	e.CreatedAt = field.NewTime(table, "created_at")
 	e.UpdatedAt = field.NewTime(table, "updated_at")
+	e.TenantID = field.NewString(table, "tenant_id")
 
 	e.fillFieldMap()
 
@@ -130,7 +133,7 @@ func (e *evaluationLaneOutput) GetFieldByName(fieldName string) (field.OrderExpr
 }
 
 func (e *evaluationLaneOutput) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 17)
+	e.fieldMap = make(map[string]field.Expr, 18)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["episode_id"] = e.EpisodeID
 	e.fieldMap["lane"] = e.Lane
@@ -148,6 +151,7 @@ func (e *evaluationLaneOutput) fillFieldMap() {
 	e.fieldMap["error_json"] = e.ErrorJSON
 	e.fieldMap["created_at"] = e.CreatedAt
 	e.fieldMap["updated_at"] = e.UpdatedAt
+	e.fieldMap["tenant_id"] = e.TenantID
 }
 
 func (e evaluationLaneOutput) clone(db *gorm.DB) evaluationLaneOutput {

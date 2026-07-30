@@ -38,6 +38,7 @@ func newAgentProjectionOutbox(db *gorm.DB, opts ...gen.DOOption) agentProjection
 	_agentProjectionOutbox.LastError = field.NewString(tableName, "last_error")
 	_agentProjectionOutbox.CreatedAt = field.NewTime(tableName, "created_at")
 	_agentProjectionOutbox.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_agentProjectionOutbox.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentProjectionOutbox.fillFieldMap()
 
@@ -61,6 +62,7 @@ type agentProjectionOutbox struct {
 	LastError      field.String
 	CreatedAt      field.Time
 	UpdatedAt      field.Time
+	TenantID       field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -90,6 +92,7 @@ func (a *agentProjectionOutbox) updateTableName(table string) *agentProjectionOu
 	a.LastError = field.NewString(table, "last_error")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -118,7 +121,7 @@ func (a *agentProjectionOutbox) GetFieldByName(fieldName string) (field.OrderExp
 }
 
 func (a *agentProjectionOutbox) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 13)
+	a.fieldMap = make(map[string]field.Expr, 14)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["step_id"] = a.StepID
 	a.fieldMap["index_alias"] = a.IndexAlias
@@ -132,6 +135,7 @@ func (a *agentProjectionOutbox) fillFieldMap() {
 	a.fieldMap["last_error"] = a.LastError
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentProjectionOutbox) clone(db *gorm.DB) agentProjectionOutbox {

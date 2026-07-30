@@ -40,6 +40,7 @@ type AgentRun struct {
 	ActivationSource string    `gorm:"column:activation_source;not null" json:"activation_source"`
 	TopicFingerprint string    `gorm:"column:topic_fingerprint;not null" json:"topic_fingerprint"`
 	LastRelevantAt   time.Time `gorm:"column:last_relevant_at" json:"last_relevant_at"`
+	TenantID         string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName AgentRun's table name

@@ -48,6 +48,7 @@ const (
 
 type CardSurface struct {
 	ID                   string
+	TenantID             string
 	RunID                string
 	WaitStepID           string
 	InteractionID        string

@@ -40,6 +40,7 @@ func newEvaluationCohort(db *gorm.DB, opts ...gen.DOOption) evaluationCohort {
 	_evaluationCohort.ResultVersion = field.NewInt64(tableName, "result_version")
 	_evaluationCohort.CreatedAt = field.NewTime(tableName, "created_at")
 	_evaluationCohort.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_evaluationCohort.TenantID = field.NewString(tableName, "tenant_id")
 
 	_evaluationCohort.fillFieldMap()
 
@@ -65,6 +66,7 @@ type evaluationCohort struct {
 	ResultVersion      field.Int64
 	CreatedAt          field.Time
 	UpdatedAt          field.Time
+	TenantID           field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -96,6 +98,7 @@ func (e *evaluationCohort) updateTableName(table string) *evaluationCohort {
 	e.ResultVersion = field.NewInt64(table, "result_version")
 	e.CreatedAt = field.NewTime(table, "created_at")
 	e.UpdatedAt = field.NewTime(table, "updated_at")
+	e.TenantID = field.NewString(table, "tenant_id")
 
 	e.fillFieldMap()
 
@@ -124,7 +127,7 @@ func (e *evaluationCohort) GetFieldByName(fieldName string) (field.OrderExpr, bo
 }
 
 func (e *evaluationCohort) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 15)
+	e.fieldMap = make(map[string]field.Expr, 16)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["app_id"] = e.AppID
 	e.fieldMap["bot_open_id"] = e.BotOpenID
@@ -140,6 +143,7 @@ func (e *evaluationCohort) fillFieldMap() {
 	e.fieldMap["result_version"] = e.ResultVersion
 	e.fieldMap["created_at"] = e.CreatedAt
 	e.fieldMap["updated_at"] = e.UpdatedAt
+	e.fieldMap["tenant_id"] = e.TenantID
 }
 
 func (e evaluationCohort) clone(db *gorm.DB) evaluationCohort {
