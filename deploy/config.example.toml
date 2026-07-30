@@ -55,6 +55,7 @@
     evaluation_judge_poll_millis = 1000
     # 留空时优先使用 ark_config.reasoning_model，其次 normal_model。
     evaluation_judge_model = ""
+    evaluation_judge_disabled = false
     evaluation_projection_interval_seconds = 30
     evaluation_projection_batch_size = 100
     evaluation_index = "agent_conversation_evaluations"

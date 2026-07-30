@@ -628,7 +628,10 @@ func addConversationEvaluationModule(
 			if err != nil {
 				return err
 			}
-			judgeModelID := evaluationJudgeModelID(cfg, runtimeConfig)
+			judgeModelID := ""
+			if !runtimeConfig.EvaluationJudgeDisabled {
+				judgeModelID = evaluationJudgeModelID(cfg, runtimeConfig)
+			}
 			if judgeModelID != "" {
 				judge, judgeErr := conversationeval.NewJudge(
 					conversationeval.JudgeConfig{ModelID: judgeModelID},
