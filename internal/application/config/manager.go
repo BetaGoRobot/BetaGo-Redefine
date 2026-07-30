@@ -322,6 +322,50 @@ func (m *Manager) GetBool(ctx context.Context, key ConfigKey, chatID, openID str
 	return result
 }
 
+// GetBoolOverride resolves only persisted runtime overrides. The boolean return
+// distinguishes an explicit false from an absent override, allowing TOML
+// rollout policies to remain the fallback while preserving an emergency
+// per-chat/global kill switch.
+func (m *Manager) GetBoolOverride(
+	ctx context.Context,
+	key ConfigKey,
+	chatID string,
+	openID string,
+) (bool, bool) {
+	for _, candidate := range []struct {
+		scope  ConfigScope
+		chatID string
+		openID string
+	}{
+		{ScopeUser, chatID, openID},
+		{ScopeUser, "", openID},
+		{ScopeChat, chatID, ""},
+		{ScopeGlobal, "", ""},
+	} {
+		if candidate.scope == ScopeUser && candidate.openID == "" {
+			continue
+		}
+		if candidate.scope == ScopeChat && candidate.chatID == "" {
+			continue
+		}
+		value, ok := m.getConfig(
+			ctx,
+			candidate.scope,
+			candidate.chatID,
+			candidate.openID,
+			key,
+		)
+		if !ok {
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return false, false
+}
+
 // GetString 获取字符串配置
 func (m *Manager) GetString(ctx context.Context, key ConfigKey, chatID, openID string) (result string) {
 	source := "toml"

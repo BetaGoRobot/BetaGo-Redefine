@@ -10,7 +10,8 @@ func toApplicationSurface(surface *model.AgentCardSurface) *agentcard.CardSurfac
 		return nil
 	}
 	return &agentcard.CardSurface{
-		ID: surface.ID, RunID: surface.RunID, WaitStepID: surface.WaitStepID,
+		ID: surface.ID, TenantID: surface.TenantID,
+		RunID: surface.RunID, WaitStepID: surface.WaitStepID,
 		InteractionID: surface.InteractionID, ChatID: surface.ChatID,
 		ReplyToMessageID: surface.ReplyToMessageID, MessageID: surface.MessageID,
 		SpecVersion: surface.SpecVersion, SpecJSON: surface.SpecJSON,

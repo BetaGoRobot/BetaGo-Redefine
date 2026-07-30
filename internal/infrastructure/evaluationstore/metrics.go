@@ -23,12 +23,13 @@ func (r *Repository) EvaluationMetrics(
 			Count int64
 		}
 		query := fmt.Sprintf(
-			"SELECT %s AS value, count(*) AS count FROM %s GROUP BY %s",
+			"SELECT %s AS value, count(*) AS count FROM %s WHERE tenant_id = ? GROUP BY %s",
 			column,
 			table,
 			column,
 		)
-		if err := db.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
+		if err := db.WithContext(ctx).Raw(query, r.tenant.ID).
+			Scan(&rows).Error; err != nil {
 			return nil, err
 		}
 		values := make(map[string]int64, len(rows))
@@ -73,8 +74,10 @@ func (r *Repository) EvaluationMetrics(
 		           END
 		       ), 0) AS average_tokens
 		FROM evaluation_lane_outputs
+		WHERE tenant_id = ?
 		GROUP BY lane
 		ORDER BY lane`,
+		r.tenant.ID,
 	).Scan(&laneRows).Error; err != nil {
 		return nil, err
 	}
@@ -107,10 +110,13 @@ func (r *Repository) EvaluationMetrics(
 		FROM evaluation_lane_outputs AS control
 		JOIN evaluation_lane_outputs AS candidate
 		  ON candidate.episode_id = control.episode_id
+		 AND candidate.tenant_id = control.tenant_id
 		 AND candidate.lane = ?
-		WHERE control.lane = ?`,
+		WHERE control.lane = ?
+		  AND control.tenant_id = ?`,
 		string(conversationeval.LaneCandidate),
 		string(conversationeval.LaneControl),
+		r.tenant.ID,
 	).Scan(&agreement).Error; err != nil {
 		return nil, err
 	}
@@ -120,14 +126,19 @@ func (r *Repository) EvaluationMetrics(
 		SELECT count(*)
 		FROM evaluation_episodes AS episode
 		WHERE episode.status = ?
+		  AND episode.tenant_id = ?
 		  AND episode.post_window_end IS NOT NULL
 		  AND episode.post_window_end <= now()
 		  AND (
 		      SELECT count(DISTINCT lane)
 		      FROM evaluation_lane_outputs
-		      WHERE episode_id = episode.id AND lane IN (?, ?)
+		      WHERE episode_id = episode.id
+		        AND tenant_id = ?
+		        AND lane IN (?, ?)
 		  ) = 2`,
 		string(conversationeval.EpisodeStatusReadyForJudge),
+		r.tenant.ID,
+		r.tenant.ID,
 		string(conversationeval.LaneControl),
 		string(conversationeval.LaneCandidate),
 	).Scan(&judgeBacklog).Error; err != nil {
@@ -144,11 +155,12 @@ func (r *Repository) EvaluationMetrics(
 		    SELECT DISTINCT ON (episode_id)
 		           episode_id, winner
 		    FROM evaluation_judgments
-		    WHERE source = ?
+		    WHERE source = ? AND tenant_id = ?
 		    ORDER BY episode_id, version DESC
 		) AS latest
 		GROUP BY winner`,
 		string(conversationeval.JudgmentSourceConversationJudge),
+		r.tenant.ID,
 	).Scan(&winnerRows).Error; err != nil {
 		return nil, err
 	}
@@ -168,7 +180,9 @@ func (r *Repository) EvaluationMetrics(
 		             AND feedback.occurred_at > episode.post_window_end
 		       ) AS late
 		FROM evaluation_feedback AS feedback
-		JOIN evaluation_episodes AS episode ON episode.id = feedback.episode_id`,
+		JOIN evaluation_episodes AS episode ON episode.id = feedback.episode_id
+		WHERE feedback.tenant_id = ?`,
+		r.tenant.ID,
 	).Scan(&feedback).Error; err != nil {
 		return nil, err
 	}
@@ -176,8 +190,10 @@ func (r *Repository) EvaluationMetrics(
 	projectionQuery := `
 		SELECT count(*)
 		FROM evaluation_episodes
-		WHERE status = ?`
-	projectionArgs := []any{string(conversationeval.EpisodeStatusJudged)}
+		WHERE status = ? AND tenant_id = ?`
+	projectionArgs := []any{
+		string(conversationeval.EpisodeStatusJudged), r.tenant.ID,
+	}
 	if !cursor.UpdatedAt.IsZero() {
 		projectionQuery += `
 		  AND (updated_at > ? OR (updated_at = ? AND id > ?))`

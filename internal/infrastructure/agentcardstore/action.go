@@ -217,8 +217,8 @@ func persistClaimedAction(
 		return nil, nil, err
 	}
 	event := &model.AgentStep{
-		ID:    eventID,
-		RunID: run.ID, Index: index,
+		ID:       eventID,
+		TenantID: run.TenantID, RunID: run.ID, Index: index,
 		Kind:      string(agentruntime.StepKindCardAction),
 		Status:    string(agentruntime.StepStatusCompleted),
 		InputJSON: string(eventPayload), OutputJSON: string(outcome),
@@ -243,8 +243,8 @@ func persistClaimedAction(
 	case agentcard.ActionModeUI:
 		resumeDedupe := dedupeBase + ":resume"
 		resume := &model.AgentStep{
-			ID:    stableCardStepID(run.ID, resumeDedupe),
-			RunID: run.ID, Index: index + 1,
+			ID:       stableCardStepID(run.ID, resumeDedupe),
+			TenantID: run.TenantID, RunID: run.ID, Index: index + 1,
 			Kind:      string(agentruntime.StepKindResume),
 			Status:    string(agentruntime.StepStatusCompleted),
 			InputJSON: string(eventPayload), OutputJSON: string(outcome),
@@ -271,8 +271,8 @@ func persistClaimedAction(
 			return nil, nil, err
 		}
 		next = &model.AgentStep{
-			ID:    stableCardStepID(run.ID, resumeDedupe+":continuation"),
-			RunID: run.ID, Index: index + 2,
+			ID:       stableCardStepID(run.ID, resumeDedupe+":continuation"),
+			TenantID: run.TenantID, RunID: run.ID, Index: index + 2,
 			Kind:      string(agentruntime.StepKindDecide),
 			Status:    string(agentruntime.StepStatusQueued),
 			InputJSON: string(input), OutputJSON: "{}",
@@ -289,8 +289,8 @@ func persistClaimedAction(
 			return nil, nil, err
 		}
 		next = &model.AgentStep{
-			ID:    stableCardStepID(run.ID, dedupeBase+":capability"),
-			RunID: run.ID, Index: index + 1,
+			ID:       stableCardStepID(run.ID, dedupeBase+":capability"),
+			TenantID: run.TenantID, RunID: run.ID, Index: index + 1,
 			Kind:           string(agentruntime.StepKindCapabilityCall),
 			Status:         string(agentruntime.StepStatusQueued),
 			CapabilityName: descriptor.CapabilityName,

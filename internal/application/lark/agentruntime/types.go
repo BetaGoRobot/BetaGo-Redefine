@@ -68,6 +68,7 @@ const (
 
 type AgentSession struct {
 	ID              string
+	TenantID        string
 	AppID           string
 	BotOpenID       string
 	ChatID          string
@@ -84,6 +85,7 @@ type AgentSession struct {
 
 type AgentRun struct {
 	ID               string
+	TenantID         string
 	SessionID        string
 	TriggerType      TriggerType
 	TriggerMessageID string
@@ -115,6 +117,7 @@ type AgentRun struct {
 
 type AgentStep struct {
 	ID             string
+	TenantID       string
 	RunID          string
 	Index          int32
 	Kind           StepKind

@@ -17,6 +17,14 @@ const (
 	AgentCardModeOn        AgentCardMode = "on"
 )
 
+type EvaluationMode string
+
+const (
+	EvaluationModeOff       EvaluationMode = "off"
+	EvaluationModeAllowlist EvaluationMode = "allowlist"
+	EvaluationModeOn        EvaluationMode = "on"
+)
+
 // AgentCardSettings is the normalized, fail-closed runtime policy used by
 // both tool exposure and delivery. Callers must not inspect raw config values.
 type AgentCardSettings struct {
@@ -27,6 +35,84 @@ type AgentCardSettings struct {
 	PatchLease        time.Duration
 
 	allowedChats map[string]struct{}
+}
+
+type EvaluationSettings struct {
+	Mode           EvaluationMode
+	CohortDuration time.Duration
+
+	allowedChats map[string]struct{}
+}
+
+func EvaluationRolloutSettings(
+	cfg *infraConfig.BaseConfig,
+) (EvaluationSettings, error) {
+	settings := EvaluationSettings{
+		Mode:           EvaluationModeOff,
+		CohortDuration: 24 * time.Hour,
+		allowedChats:   make(map[string]struct{}),
+	}
+	if cfg == nil || cfg.RuntimeConfig == nil {
+		return settings, nil
+	}
+
+	raw := cfg.RuntimeConfig
+	mode := EvaluationMode(strings.ToLower(strings.TrimSpace(raw.EvaluationMode)))
+	if mode == "" {
+		mode = EvaluationModeOff
+	}
+	switch mode {
+	case EvaluationModeOff, EvaluationModeAllowlist, EvaluationModeOn:
+		settings.Mode = mode
+	default:
+		return EvaluationSettings{}, fmt.Errorf(
+			"unsupported evaluation mode %q",
+			raw.EvaluationMode,
+		)
+	}
+
+	if raw.EvaluationCohortDurationHours < 0 ||
+		raw.EvaluationCohortDurationHours > 168 {
+		return EvaluationSettings{}, fmt.Errorf(
+			"evaluation cohort duration hours must be between 1 and 168",
+		)
+	}
+	if raw.EvaluationCohortDurationHours > 0 {
+		settings.CohortDuration =
+			time.Duration(raw.EvaluationCohortDurationHours) * time.Hour
+	}
+	for _, chatID := range raw.EvaluationChatIDs {
+		if chatID = strings.TrimSpace(chatID); chatID != "" {
+			settings.allowedChats[chatID] = struct{}{}
+		}
+	}
+	if settings.Mode == EvaluationModeAllowlist &&
+		len(settings.allowedChats) == 0 {
+		return EvaluationSettings{}, fmt.Errorf(
+			"evaluation allowlist mode requires at least one chat id",
+		)
+	}
+	return settings, nil
+}
+
+func (s EvaluationSettings) Enabled() bool {
+	return s.Mode == EvaluationModeAllowlist || s.Mode == EvaluationModeOn
+}
+
+func (s EvaluationSettings) Allows(chatID string) bool {
+	switch s.Mode {
+	case EvaluationModeOn:
+		return true
+	case EvaluationModeAllowlist:
+		_, allowed := s.allowedChats[strings.TrimSpace(chatID)]
+		return allowed
+	default:
+		return false
+	}
+}
+
+func (s EvaluationSettings) AllowedChatCount() int {
+	return len(s.allowedChats)
 }
 
 func AgentCardRolloutSettings(cfg *infraConfig.BaseConfig) (AgentCardSettings, error) {

@@ -24,6 +24,12 @@ patch_lease_seconds = 30
 推荐按 `off -> shadow -> allowlist -> on` 推进。关闭 authoring 不会禁用旧卡片
 的回调消费；已经发出的 waiting interaction 仍可完成、取消或过期。
 
+上线只需加入配置并重启，不执行 SQL。Agent Card 所需表、tenant 列、复合
+外键和索引由应用启动时的内嵌 migration 幂等创建或升级。surface、callback、
+run、step 和 capability execution 全部绑定由当前 `app_id + bot_open_id`
+派生的 `tenant_id`；两个 Bot 即使使用相同业务 ID 也不能互相读取、claim
+或完成回调。无法解析租户的历史数据会使 migration fail closed。
+
 ## 安全边界
 
 - Agent 只能提交语义 Card DSL，不能提交原始飞书 JSON、runtime token 或可信

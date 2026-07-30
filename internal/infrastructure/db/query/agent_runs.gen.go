@@ -53,6 +53,7 @@ func newAgentRun(db *gorm.DB, opts ...gen.DOOption) agentRun {
 	_agentRun.ActivationSource = field.NewString(tableName, "activation_source")
 	_agentRun.TopicFingerprint = field.NewString(tableName, "topic_fingerprint")
 	_agentRun.LastRelevantAt = field.NewTime(tableName, "last_relevant_at")
+	_agentRun.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentRun.fillFieldMap()
 
@@ -91,6 +92,7 @@ type agentRun struct {
 	ActivationSource field.String
 	TopicFingerprint field.String
 	LastRelevantAt   field.Time
+	TenantID         field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -135,6 +137,7 @@ func (a *agentRun) updateTableName(table string) *agentRun {
 	a.ActivationSource = field.NewString(table, "activation_source")
 	a.TopicFingerprint = field.NewString(table, "topic_fingerprint")
 	a.LastRelevantAt = field.NewTime(table, "last_relevant_at")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -159,7 +162,7 @@ func (a *agentRun) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *agentRun) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 28)
+	a.fieldMap = make(map[string]field.Expr, 29)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["session_id"] = a.SessionID
 	a.fieldMap["trigger_type"] = a.TriggerType
@@ -188,6 +191,7 @@ func (a *agentRun) fillFieldMap() {
 	a.fieldMap["activation_source"] = a.ActivationSource
 	a.fieldMap["topic_fingerprint"] = a.TopicFingerprint
 	a.fieldMap["last_relevant_at"] = a.LastRelevantAt
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentRun) clone(db *gorm.DB) agentRun {

@@ -273,8 +273,9 @@ func createDeliveryFailureRepair(
 		return nil, nil, err
 	}
 	event := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, dedupeBase+":event"),
-		RunID: run.ID, Index: index, Kind: string(agentruntime.StepKindObserve),
+		ID:       stableCardStepID(run.ID, dedupeBase+":event"),
+		TenantID: run.TenantID, RunID: run.ID,
+		Index: index, Kind: string(agentruntime.StepKindObserve),
 		Status:    string(agentruntime.StepStatusCompleted),
 		InputJSON: string(eventPayload), OutputJSON: "{}",
 		ExternalRef: surface.InteractionID, StartedAt: now, FinishedAt: now,
@@ -315,8 +316,8 @@ func createDeliveryFailureRepair(
 		return nil, nil, err
 	}
 	continuation := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, dedupeBase+":continuation"),
-		RunID: run.ID, Index: index + 1,
+		ID:       stableCardStepID(run.ID, dedupeBase+":continuation"),
+		TenantID: run.TenantID, RunID: run.ID, Index: index + 1,
 		Kind:      string(agentruntime.StepKindDecide),
 		Status:    string(agentruntime.StepStatusQueued),
 		InputJSON: string(continuationInput), OutputJSON: "{}",

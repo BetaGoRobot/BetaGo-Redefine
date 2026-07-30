@@ -11,23 +11,18 @@
 - 显式反馈最多在 anchor 后 24 小时归因；推断反馈只能落在因果后向窗口内。
 - 用户回复、reaction、卡片点击只有在目标 message ID 精确匹配实际投递消息时，才标记为 serving-lane feedback。shadow 输出没有可供用户交互的投递身份。
 
-PostgreSQL 是事实源；OpenSearch
-`agent_conversation_evaluations` 只是可重建的检索投影。
+PostgreSQL 是事实源；OpenSearch 只是可重建的检索投影。实际 alias 会在
+`evaluation_index` base name 后自动追加当前 Bot 的租户后缀。
 
-## 上线前检查
+## 上线配置
 
-1. 执行以下迁移：
-
-   - `script/sql/20260728_conversation_parallel_evaluation.sql`
-   - `script/sql/20260729_conversation_evaluation_runtime.sql`
-
-2. 用 `script/opensearch/agent_conversation_evaluations_v1.json`
-   创建物理 index，并把 alias
-   `agent_conversation_evaluations` 指向该 index。
-
-3. 配置 `[runtime_config]`。推荐起点：
+只需配置并重启，不执行 SQL、OpenSearch API 或 cohort 初始化。推荐起点：
 
 ```toml
+evaluation_mode = "allowlist" # off | allowlist | on
+evaluation_chat_ids = ["oc_xxx"]
+evaluation_cohort_duration_hours = 24
+
 evaluation_candidate_workers = 2
 evaluation_candidate_lease_seconds = 600
 evaluation_candidate_retry_seconds = 15
@@ -48,49 +43,25 @@ evaluation_index = "agent_conversation_evaluations"
 `ark_config.reasoning_model`，其次使用 `normal_model`。没有可用 Judge
 模型时，窗口和双 lane 数据仍会采集，自动 Judge 暂停。
 
-4. 在配置管理中按 chat 打开
-   `conversation_parallel_evaluation_enabled`。该开关默认关闭；只创建 cohort
-   而不打开开关不会产生新的 episode。
+应用启动会自动执行内嵌 PostgreSQL migration，并创建当前 Bot 独占的
+OpenSearch physical index/write alias。`evaluation_mode=allowlist` 时只采集
+`evaluation_chat_ids`；`on` 时采集全部群；`off` 时关闭。符合配置的群首次
+收到消息时会按时间桶幂等创建滚动 cohort，重启不会重复创建。
 
-## 创建评测 cohort
+多个 Bot 可填写相同 `evaluation_index`。数据库行、队列 claim、OpenSearch
+alias、文档字段、文档 ID 和查询 filter 都绑定 `tenant_id`；不会互相消费或
+检索数据。
 
-时间使用带时区的绝对时间。`serving_lane` 首轮必须保持 `control`，避免把
-shadow 误当现网输出。
+`evaluation_mode=off` 时不会创建 Evaluation 专属 OpenSearch 资源。
+兼容旧动态开关：没有显式动态 override 时以 TOML 为准；显式动态 `false`
+可紧急关闭，显式动态 `true` 会在首次命中时幂等准备当前 Bot 的 Evaluation
+alias。新部署建议只使用 TOML rollout，这样索引权限或 mapping 错误会在启动
+readiness 阶段直接暴露。
 
-```sql
-insert into betago.evaluation_cohorts (
-    id,
-    app_id,
-    bot_open_id,
-    chat_ids,
-    start_at,
-    end_at,
-    status,
-    serving_lane,
-    control_version,
-    candidate_version,
-    judge_config_json,
-    sampling_policy_json,
-    result_version
-) values (
-    'cohort_20260730_chat_a',
-    'cli_xxx',
-    'ou_xxx',
-    '["oc_xxx"]'::jsonb,
-    '2026-07-30 10:00:00+08',
-    '2026-07-30 12:00:00+08',
-    'collecting',
-    'control',
-    'control_20260730',
-    'candidate_20260730',
-    '{"dimensions_version":"v1"}'::jsonb,
-    '{"sample_rate":1}'::jsonb,
-    0
-);
-```
-
-同一时间段可以建立多个 cohort。每个 cohort 独立归因和出结果，因此同一条
-用户反馈可以出现在多个 cohort 的对齐 episode 中。
+`/healthz` 的 `runtime_schema`、`tenant_search_schema` 和
+`conversation_evaluation` 会暴露脱敏 tenant、migration version/checksum、
+实际 alias/physical index、schema version、evaluation mode/allow count
+以及最近一次 bootstrap 结果。不会返回 OpenSearch 凭据或完整 Bot 身份。
 
 ## 生命周期
 
@@ -175,11 +146,13 @@ curl -X POST \
 ```sql
 select status, count(*)
 from betago.evaluation_cohorts
+where tenant_id = '<tenant_id>'
 group by status
 order by status;
 
 select status, count(*)
 from betago.evaluation_episodes
+where tenant_id = '<tenant_id>'
 group by status
 order by status;
 ```
@@ -190,12 +163,14 @@ order by status;
 select count(*) as judge_backlog
 from betago.evaluation_episodes e
 where e.status = 'ready_for_judge'
+  and e.tenant_id = '<tenant_id>'
   and e.post_window_end is not null
   and e.post_window_end <= now()
   and (
       select count(distinct lane)
       from betago.evaluation_lane_outputs o
       where o.episode_id = e.id
+        and o.tenant_id = e.tenant_id
         and o.lane in ('control', 'candidate')
   ) = 2;
 ```
@@ -216,8 +191,10 @@ select
     o.tool_plan_json->>'delivery_message_id' as delivery_message_id,
     o.error_json
 from betago.evaluation_episodes e
-join betago.evaluation_lane_outputs o on o.episode_id = e.id
+join betago.evaluation_lane_outputs o
+  on o.episode_id = e.id and o.tenant_id = e.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by e.anchor_at, e.id, o.lane;
 ```
 
@@ -233,8 +210,10 @@ select
     f.content_json,
     f.occurred_at
 from betago.evaluation_feedback f
-join betago.evaluation_episodes e on e.id = f.episode_id
+join betago.evaluation_episodes e
+  on e.id = f.episode_id and e.tenant_id = f.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by f.occurred_at, f.id;
 
 select
@@ -248,8 +227,10 @@ select
     j.supersedes_id,
     j.created_at
 from betago.evaluation_judgments j
-join betago.evaluation_episodes e on e.id = j.episode_id
+join betago.evaluation_episodes e
+  on e.id = j.episode_id and e.tenant_id = j.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by j.episode_id, j.source, j.version;
 ```
 

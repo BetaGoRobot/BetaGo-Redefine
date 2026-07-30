@@ -35,7 +35,9 @@ func TestAppendEventDeduplicatesAndAdvancesIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find outbox by step: %v", err)
 	}
-	expectedOutbox := newProjectionOutbox(stored.ID, testProjection(f.runID), outbox.CreatedAt)
+	expectedOutbox := newProjectionOutbox(
+		stored.TenantID, stored.ID, testProjection(f.runID), outbox.CreatedAt,
+	)
 	if outbox.ID != expectedOutbox.ID || outbox.IndexAlias != expectedOutbox.IndexAlias ||
 		outbox.DocumentID != expectedOutbox.DocumentID || !equalJSON(outbox.PayloadJSON, expectedOutbox.PayloadJSON) ||
 		outbox.Status != "pending" || !outbox.NextAttemptAt.Equal(outbox.CreatedAt) {
@@ -566,7 +568,9 @@ func TestClaimQueuedStepAllowsOnlyOneCompetingWorker(t *testing.T) {
 		Index: 1, Kind: agentruntime.StepKindCapabilityCall, Status: agentruntime.StepStatusQueued,
 	})
 	now := time.Now().UTC()
-	repositories := []*Repository{NewRepository(f.db), NewRepository(f.db)}
+	repositories := []*Repository{
+		mustNewTestRepository(f.db), mustNewTestRepository(f.db),
+	}
 	type result struct {
 		step *agentruntime.AgentStep
 		err  error
@@ -794,7 +798,7 @@ func claimConcurrently(db *gorm.DB, now time.Time) []claimResult {
 		wg.Add(1)
 		go func(worker int) {
 			defer wg.Done()
-			step, err := NewRepository(db.Session(&gorm.Session{})).ClaimQueuedStep(
+			step, err := mustNewTestRepository(db.Session(&gorm.Session{})).ClaimQueuedStep(
 				context.Background(),
 				agentruntime.StepClaim{
 					WorkerID: "worker-" + string(rune('a'+worker)),
@@ -825,14 +829,16 @@ func createAdditionalRunFixture(
 	sessionID := "session_test_" + suffix
 	runID := "run_test_" + suffix
 	if err := f.db.Create(&model.AgentSession{
-		ID: sessionID, AppID: "app_" + suffix, BotOpenID: "bot_" + suffix,
+		ID: sessionID, TenantID: repositoryTestTenant.ID,
+		AppID: repositoryTestTenant.AppID, BotOpenID: repositoryTestTenant.BotOpenID,
 		ChatID: "chat_" + suffix, ScopeType: "chat", ScopeID: "scope_" + suffix,
 		Status: "active", CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := f.db.Create(&model.AgentRun{
-		ID: runID, SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		ID: runID, TenantID: repositoryTestTenant.ID,
+		SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
 		TriggerMessageID: "message_" + suffix, Status: string(status), Revision: 1,
 		CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -863,7 +869,7 @@ func appendConcurrently(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			stored, err := NewRepository(db.Session(&gorm.Session{})).AppendEvent(
+			stored, err := mustNewTestRepository(db.Session(&gorm.Session{})).AppendEvent(
 				context.Background(), step, projection,
 			)
 			results <- appendResult{step: stored, err: err}

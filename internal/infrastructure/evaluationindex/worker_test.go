@@ -17,8 +17,13 @@ func TestProjectionProcessorAdvancesOnlyAfterSuccessfulUpsert(t *testing.T) {
 	second.EpisodeID = "episode-2"
 	second.UpdatedAt = first.UpdatedAt.Add(time.Second)
 	source := &projectionSourceFake{pages: [][]EvaluationSnapshot{{first, second}}}
-	backend := &projectionBackendFake{failID: second.EpisodeID}
-	store, err := NewStoreWithBackend("evaluations", backend)
+	owner, index := evaluationIndexTestTenant(t)
+	failID, err := owner.DocumentID(second.EpisodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &projectionBackendFake{failID: failID}
+	store, err := NewStoreWithBackend(owner, index, backend)
 	if err != nil {
 		t.Fatalf("NewStoreWithBackend() error = %v", err)
 	}
@@ -44,7 +49,8 @@ func TestProjectionProcessorAdvancesOnlyAfterSuccessfulUpsert(t *testing.T) {
 
 func TestProjectionWorkerStopsIdleLoop(t *testing.T) {
 	source := &projectionSourceFake{}
-	store, err := NewStoreWithBackend("evaluations", &projectionBackendFake{})
+	owner, index := evaluationIndexTestTenant(t)
+	store, err := NewStoreWithBackend(owner, index, &projectionBackendFake{})
 	if err != nil {
 		t.Fatalf("NewStoreWithBackend() error = %v", err)
 	}

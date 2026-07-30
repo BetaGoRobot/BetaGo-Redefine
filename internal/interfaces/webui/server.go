@@ -63,7 +63,7 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 	}
 	evaluations := opts.EvaluationWorkbench
 	if evaluations == nil && db != nil {
-		evaluations = newEvaluationWorkbenchStore(db)
+		evaluations = newEvaluationWorkbenchStore(db, opts.AppID, opts.BotOpenID)
 	}
 	return &Server{
 		cfg:              opts.ConfigManager,

@@ -38,6 +38,7 @@ type ProjectionDocument struct {
 
 type ProjectionOutbox struct {
 	ID             string
+	TenantID       string
 	StepID         string
 	IndexAlias     string
 	DocumentID     string

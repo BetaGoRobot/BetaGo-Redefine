@@ -45,7 +45,11 @@
     conversation_projection_workers = 2
     conversation_projection_queue_size = 128
     conversation_projection_timeout_seconds = 60
+    # 以下两个索引名都是 base name；启动时自动追加当前 Bot 的租户后缀并建 alias。
     conversation_event_index = "agent_conversation_events"
+    evaluation_mode = "off" # off | allowlist | on
+    evaluation_chat_ids = []
+    evaluation_cohort_duration_hours = 24
     evaluation_candidate_workers = 2
     evaluation_candidate_lease_seconds = 600
     evaluation_candidate_retry_seconds = 15
@@ -71,7 +75,8 @@
     patch_worker_count = 1
     patch_lease_seconds = 30
 
-# 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
+# 管理后台 WebUI。addr 为空则禁用；生产环境必须设置高熵 auth_token。
+# 评测读取包含群消息和反馈，未配置 token 时评测 API 会返回 503。
 # WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。
 [webui_config]
     addr = ":8090"

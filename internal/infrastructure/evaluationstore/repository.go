@@ -10,23 +10,59 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	infraDB "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
 type Repository struct {
-	db *gorm.DB
+	db     *gorm.DB
+	tenant tenant.Tenant
 }
 
 var _ conversationeval.Store = (*Repository)(nil)
 
-func NewRepository(db *gorm.DB) *Repository {
+func NewRepository(db *gorm.DB, owner tenant.Tenant) (*Repository, error) {
+	if err := owner.Validate(); err != nil {
+		return nil, err
+	}
 	db = infraDB.WithoutQueryCache(db)
 	if db != nil {
 		db = db.Session(&gorm.Session{Logger: logger.Discard})
+		db = db.Scopes(scopeTenant(owner.ID))
 	}
-	return &Repository{db: db}
+	return &Repository{db: db, tenant: owner}, nil
+}
+
+func scopeTenant(tenantID string) func(*gorm.DB) *gorm.DB {
+	return func(database *gorm.DB) *gorm.DB {
+		table := database.Statement.Table
+		modelValue := database.Statement.Model
+		if modelValue == nil {
+			modelValue = database.Statement.Dest
+		}
+		if table == "" && modelValue != nil {
+			_ = database.Statement.Parse(modelValue)
+			table = database.Statement.Table
+		}
+		switch table {
+		case "evaluation_cohorts", "cohorts",
+			"evaluation_episodes", "episodes",
+			"evaluation_episode_messages",
+			"evaluation_lane_outputs", "outputs",
+			"evaluation_feedback", "feedback",
+			"evaluation_judgments", "judgments",
+			"evaluation_candidate_tasks":
+		default:
+			return database
+		}
+		return database.Where(clause.Eq{
+			Column: clause.Column{Table: clause.CurrentTable, Name: "tenant_id"},
+			Value:  tenantID,
+		})
+	}
 }
 
 func (r *Repository) CreateCohort(ctx context.Context, cohort conversationeval.Cohort) error {
@@ -39,6 +75,10 @@ func (r *Repository) CreateCohort(ctx context.Context, cohort conversationeval.C
 			conversationeval.ErrInvalidTransition, conversationeval.CohortStatusCollecting,
 		)
 	}
+	if cohort.AppID != r.tenant.AppID || cohort.BotOpenID != r.tenant.BotOpenID {
+		return fmt.Errorf("%w: cohort belongs to another tenant", conversationeval.ErrInvalidContract)
+	}
+	cohort.TenantID = r.tenant.ID
 	db, err := r.database()
 	if err != nil {
 		return err
@@ -49,11 +89,12 @@ func (r *Repository) CreateCohort(ctx context.Context, cohort conversationeval.C
 	}
 	return db.WithContext(ctx).Exec(`
 		INSERT INTO evaluation_cohorts (
-			id, app_id, bot_open_id, chat_ids, start_at, end_at, status,
+			id, tenant_id, app_id, bot_open_id, chat_ids, start_at, end_at, status,
 			serving_lane, control_version, candidate_version, judge_config_json,
 			sampling_policy_json, result_version
-		) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)`,
-		cohort.ID, cohort.AppID, cohort.BotOpenID, string(chatIDs), cohort.StartAt, cohort.EndAt,
+		) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)`,
+		cohort.ID, cohort.TenantID, cohort.AppID, cohort.BotOpenID,
+		string(chatIDs), cohort.StartAt, cohort.EndAt,
 		string(cohort.Status), string(cohort.ServingLane), cohort.ControlVersion,
 		cohort.CandidateVersion, string(cohort.JudgeConfigJSON),
 		string(cohort.SamplingPolicyJSON), cohort.ResultVersion,
@@ -81,18 +122,20 @@ func (r *Repository) ActiveCohorts(
 	}
 	var rows []cohortRow
 	if err := db.WithContext(ctx).Raw(`
-		SELECT id, app_id, bot_open_id, chat_ids::text AS chat_ids, start_at, end_at,
+		SELECT id, tenant_id, app_id, bot_open_id, chat_ids::text AS chat_ids, start_at, end_at,
 		       status, serving_lane, control_version, candidate_version,
 		       judge_config_json::text AS judge_config_json,
 		       sampling_policy_json::text AS sampling_policy_json,
 		       result_version, created_at, updated_at
 		FROM evaluation_cohorts
-		WHERE status = ?
+		WHERE tenant_id = ?
+		  AND status = ?
 		  AND start_at <= ?
 		  AND end_at > ?
 		  AND chat_ids @> ?::jsonb
 		ORDER BY start_at, id`,
-		string(conversationeval.CohortStatusCollecting), at, at, string(chatJSON),
+		r.tenant.ID, string(conversationeval.CohortStatusCollecting),
+		at, at, string(chatJSON),
 	).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -114,13 +157,14 @@ func (r *Repository) GetOrCreateEpisode(
 	if err := episode.Validate(); err != nil {
 		return nil, err
 	}
+	episode.TenantID = r.tenant.ID
 	db, err := r.database()
 	if err != nil {
 		return nil, err
 	}
 	var stored *conversationeval.Episode
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		cohort, err := loadCohort(tx, episode.CohortID, true)
+		cohort, err := loadCohort(tx, r.tenant.ID, episode.CohortID, true)
 		if err != nil {
 			return err
 		}
@@ -129,6 +173,7 @@ func (r *Repository) GetOrCreateEpisode(
 		}
 		canonical, found, err := loadEpisodeByNaturalKey(
 			tx,
+			r.tenant.ID,
 			episode.CohortID,
 			episode.AnchorEventID,
 			true,
@@ -154,12 +199,12 @@ func (r *Repository) GetOrCreateEpisode(
 		}
 		if err := tx.Exec(`
 			INSERT INTO evaluation_episodes (
-				id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+				id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
 				topic_id, serving_lane, status, pre_window_start, anchor_at,
 				post_window_end, late_feedback_until
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (cohort_id, anchor_event_id) DO NOTHING`,
-			episode.ID, episode.CohortID, episode.ChatID, episode.RunID,
+			episode.ID, episode.TenantID, episode.CohortID, episode.ChatID, episode.RunID,
 			episode.AnchorEventID, episode.AnchorMessageID, episode.TopicID,
 			string(episode.ServingLane), string(episode.Status), episode.PreWindowStart,
 			episode.AnchorAt, episode.PostWindowEnd, episode.LateFeedbackUntil,
@@ -168,6 +213,7 @@ func (r *Repository) GetOrCreateEpisode(
 		}
 		canonical, found, err = loadEpisodeByNaturalKey(
 			tx,
+			r.tenant.ID,
 			episode.CohortID, episode.AnchorEventID,
 			true,
 		)
@@ -196,6 +242,7 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 	if err := output.Validate(); err != nil {
 		return err
 	}
+	output.TenantID = r.tenant.ID
 	db, err := r.database()
 	if err != nil {
 		return err
@@ -213,7 +260,7 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 		return fmt.Errorf("marshal excluded context: %w", err)
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisode(tx, output.EpisodeID, true)
+		episode, err := loadEpisode(tx, r.tenant.ID, output.EpisodeID, true)
 		if err != nil {
 			return err
 		}
@@ -236,10 +283,10 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 		}
 		return tx.Exec(`
 			INSERT INTO evaluation_lane_outputs (
-				id, episode_id, lane, output_mode, activation_json, relevance_json,
+				id, tenant_id, episode_id, lane, output_mode, activation_json, relevance_json,
 				join_decision, topic_relation, context_snapshot_json, excluded_context_json,
 				tool_plan_json, reply_text, latency_ms, token_usage_json, error_json
-			) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb,
+			) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?::jsonb, ?::jsonb,
 			          ?::jsonb, ?, ?, ?::jsonb, ?::jsonb)
 			ON CONFLICT (episode_id, lane) DO UPDATE SET
 				output_mode = EXCLUDED.output_mode,
@@ -255,7 +302,8 @@ func (r *Repository) UpsertLaneOutput(ctx context.Context, output conversationev
 				token_usage_json = EXCLUDED.token_usage_json,
 				error_json = EXCLUDED.error_json,
 				updated_at = now()`,
-			output.ID, output.EpisodeID, string(output.Lane), string(output.OutputMode),
+			output.ID, output.TenantID, output.EpisodeID,
+			string(output.Lane), string(output.OutputMode),
 			string(output.ActivationJSON), string(output.RelevanceJSON),
 			string(output.JoinDecision), string(output.TopicRelation), string(contextJSON),
 			string(excludedJSON), string(output.ToolPlanJSON), output.ReplyText,
@@ -268,12 +316,13 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 	if err := feedback.Validate(); err != nil {
 		return err
 	}
+	feedback.TenantID = r.tenant.ID
 	db, err := r.database()
 	if err != nil {
 		return err
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisode(tx, feedback.EpisodeID, false)
+		episode, err := loadEpisode(tx, r.tenant.ID, feedback.EpisodeID, false)
 		if err != nil {
 			return err
 		}
@@ -283,10 +332,10 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 		cohortResult := tx.Raw(`
 			SELECT status
 			FROM evaluation_cohorts
-			WHERE id = ?
+			WHERE id = ? AND tenant_id = ?
 			LIMIT 1
 			FOR UPDATE`,
-			episode.CohortID,
+			episode.CohortID, r.tenant.ID,
 		).Scan(&cohortState)
 		if cohortResult.Error != nil {
 			return cohortResult.Error
@@ -294,7 +343,7 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 		if cohortResult.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
-		episode, err = loadEpisode(tx, feedback.EpisodeID, true)
+		episode, err = loadEpisode(tx, r.tenant.ID, feedback.EpisodeID, true)
 		if err != nil {
 			return err
 		}
@@ -322,9 +371,10 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 			if err := tx.Raw(`
 				SELECT count(*)
 				FROM evaluation_lane_outputs
-				WHERE episode_id = ? AND lane = ? AND output_mode = ?
+				WHERE episode_id = ? AND tenant_id = ? AND lane = ? AND output_mode = ?
 				  AND tool_plan_json->>'delivery_message_id' = ?`,
-				episode.ID, string(feedback.TargetLane), string(conversationeval.OutputModeActual),
+				episode.ID, r.tenant.ID,
+				string(feedback.TargetLane), string(conversationeval.OutputModeActual),
 				feedback.TargetMessageID,
 			).Scan(&actualCount).Error; err != nil {
 				return err
@@ -338,11 +388,12 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 		}
 		insert := tx.Exec(`
 			INSERT INTO evaluation_feedback (
-				id, episode_id, target_lane, target_message_id, feedback_event_id,
+				id, tenant_id, episode_id, target_lane, target_message_id, feedback_event_id,
 				feedback_type, explicitness, content_json, attribution_confidence, occurred_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
 			ON CONFLICT (episode_id, feedback_event_id) DO NOTHING`,
-			feedback.ID, feedback.EpisodeID, string(feedback.TargetLane), feedback.TargetMessageID,
+			feedback.ID, feedback.TenantID, feedback.EpisodeID,
+			string(feedback.TargetLane), feedback.TargetMessageID,
 			feedback.FeedbackEventID, string(feedback.FeedbackType), string(feedback.Explicitness),
 			string(feedback.ContentJSON), feedback.AttributionConfidence, feedback.OccurredAt,
 		)
@@ -353,8 +404,8 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 			if err := tx.Exec(`
 				UPDATE evaluation_episodes
 				SET updated_at = now()
-				WHERE id = ?`,
-				episode.ID,
+				WHERE id = ? AND tenant_id = ?`,
+				episode.ID, r.tenant.ID,
 			).Error; err != nil {
 				return err
 			}
@@ -363,8 +414,8 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 			return tx.Exec(`
 				UPDATE evaluation_cohorts
 				SET result_version = result_version + 1, updated_at = now()
-				WHERE id = ?`,
-				episode.CohortID,
+				WHERE id = ? AND tenant_id = ?`,
+				episode.CohortID, r.tenant.ID,
 			).Error
 		}
 		return nil
@@ -391,7 +442,7 @@ func (r *Repository) FeedbackCandidates(
 	}
 	var rows []feedbackCandidateRow
 	if err := db.WithContext(ctx).Raw(`
-		SELECT e.id, e.cohort_id, e.chat_id, e.run_id, e.anchor_event_id,
+		SELECT e.id, e.tenant_id, e.cohort_id, e.chat_id, e.run_id, e.anchor_event_id,
 		       e.anchor_message_id, e.topic_id, e.serving_lane, e.status,
 		       e.pre_window_start, e.anchor_at, e.post_window_end,
 		       e.late_feedback_until, e.created_at, e.updated_at,
@@ -402,12 +453,14 @@ func (r *Repository) FeedbackCandidates(
 		 AND output.lane = e.serving_lane
 		 AND output.output_mode = ?
 		WHERE e.chat_id = ?
+		  AND e.tenant_id = ?
 		  AND e.anchor_at <= ?
 		  AND e.late_feedback_until >= ?
 		ORDER BY e.anchor_at DESC, e.id
 		LIMIT 256`,
 		string(conversationeval.OutputModeActual),
 		chatID,
+		r.tenant.ID,
 		occurredAt,
 		occurredAt,
 	).Scan(&rows).Error; err != nil {
@@ -430,6 +483,7 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 	if err := judgment.Validate(); err != nil {
 		return err
 	}
+	judgment.TenantID = r.tenant.ID
 	db, err := r.database()
 	if err != nil {
 		return err
@@ -448,9 +502,10 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 			previous := tx.Raw(`
 				SELECT id
 				FROM evaluation_judgments
-				WHERE episode_id = ? AND source = ? AND version = ?
+				WHERE episode_id = ? AND tenant_id = ? AND source = ? AND version = ?
 				FOR SHARE`,
-				judgment.EpisodeID, string(judgment.Source), judgment.Version-1,
+				judgment.EpisodeID, r.tenant.ID,
+				string(judgment.Source), judgment.Version-1,
 			).Scan(&previousID)
 			if previous.Error != nil {
 				return previous.Error
@@ -470,10 +525,11 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 		}
 		if err := tx.Exec(`
 			INSERT INTO evaluation_judgments (
-				id, episode_id, version, source, evaluator_id, winner, scores_json,
+				id, tenant_id, episode_id, version, source, evaluator_id, winner, scores_json,
 				problem_tags_json, rationale, confidence, needs_review, supersedes_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)`,
-			judgment.ID, judgment.EpisodeID, judgment.Version, string(judgment.Source),
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)`,
+			judgment.ID, judgment.TenantID, judgment.EpisodeID,
+			judgment.Version, string(judgment.Source),
 			judgment.EvaluatorID, string(judgment.Winner), string(judgment.ScoresJSON),
 			string(problemTagsJSON), judgment.Rationale, judgment.Confidence,
 			judgment.NeedsReview, judgment.SupersedesID,
@@ -485,10 +541,10 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 				UPDATE evaluation_episodes
 				SET status = CASE WHEN status = ? THEN ? ELSE status END,
 				    updated_at = now()
-				WHERE id = ?`,
+				WHERE id = ? AND tenant_id = ?`,
 				string(conversationeval.EpisodeStatusReadyForJudge),
 				string(conversationeval.EpisodeStatusJudged),
-				judgment.EpisodeID,
+				judgment.EpisodeID, r.tenant.ID,
 			).Error
 		}
 		return nil
@@ -512,12 +568,13 @@ func (r *Repository) EpisodesReadyForJudge(
 	}
 	var rows []episodeRow
 	if err := db.WithContext(ctx).Raw(`
-		SELECT e.id, e.cohort_id, e.chat_id, e.run_id, e.anchor_event_id,
+		SELECT e.id, e.tenant_id, e.cohort_id, e.chat_id, e.run_id, e.anchor_event_id,
 		       e.anchor_message_id, e.topic_id, e.serving_lane, e.status,
 		       e.pre_window_start, e.anchor_at, e.post_window_end,
 		       e.late_feedback_until, e.created_at, e.updated_at
 		FROM evaluation_episodes AS e
 		WHERE e.status = ?
+		  AND e.tenant_id = ?
 		  AND e.post_window_end IS NOT NULL
 		  AND e.post_window_end <= ?
 		  AND (
@@ -528,7 +585,7 @@ func (r *Repository) EpisodesReadyForJudge(
 		  ) = 2
 		ORDER BY e.post_window_end, e.id
 		LIMIT ?`,
-		string(conversationeval.EpisodeStatusReadyForJudge), at,
+		string(conversationeval.EpisodeStatusReadyForJudge), r.tenant.ID, at,
 		string(conversationeval.LaneControl), string(conversationeval.LaneCandidate), limit,
 	).Scan(&rows).Error; err != nil {
 		return nil, err
@@ -558,9 +615,10 @@ func (r *Repository) TransitionCohorts(ctx context.Context, at time.Time) (int64
 			UPDATE evaluation_cohorts
 			SET status = ?, updated_at = ?
 			WHERE status = ?
+			  AND tenant_id = ?
 			  AND end_at <= ?`,
 			string(conversationeval.CohortStatusWaitingLateFeedback), at,
-			string(conversationeval.CohortStatusCollecting), at,
+			string(conversationeval.CohortStatusCollecting), r.tenant.ID, at,
 		)
 		if collecting.Error != nil {
 			return collecting.Error
@@ -569,9 +627,11 @@ func (r *Repository) TransitionCohorts(ctx context.Context, at time.Time) (int64
 			UPDATE evaluation_cohorts
 			SET status = ?, updated_at = ?
 			WHERE status = ?
+			  AND tenant_id = ?
 			  AND end_at + (? * interval '1 second') <= ?`,
 			string(conversationeval.CohortStatusFinalized), at,
 			string(conversationeval.CohortStatusWaitingLateFeedback),
+			r.tenant.ID,
 			int64(conversationeval.LateFeedbackGracePeriod/time.Second), at,
 		)
 		if finalized.Error != nil {
@@ -592,6 +652,7 @@ func (r *Repository) database() (*gorm.DB, error) {
 
 type cohortRow struct {
 	ID                 string
+	TenantID           string
 	AppID              string
 	BotOpenID          string
 	ChatIDs            string
@@ -614,7 +675,8 @@ func (r cohortRow) domain() (conversationeval.Cohort, error) {
 		return conversationeval.Cohort{}, fmt.Errorf("decode cohort %q chat ids: %w", r.ID, err)
 	}
 	value := conversationeval.Cohort{
-		ID: r.ID, AppID: r.AppID, BotOpenID: r.BotOpenID, ChatIDs: chatIDs,
+		ID: r.ID, TenantID: r.TenantID,
+		AppID: r.AppID, BotOpenID: r.BotOpenID, ChatIDs: chatIDs,
 		StartAt: r.StartAt, EndAt: r.EndAt, Status: conversationeval.CohortStatus(r.Status),
 		ServingLane: conversationeval.Lane(r.ServingLane), ControlVersion: r.ControlVersion,
 		CandidateVersion: r.CandidateVersion, JudgeConfigJSON: json.RawMessage(r.JudgeConfigJSON),
@@ -629,6 +691,7 @@ func (r cohortRow) domain() (conversationeval.Cohort, error) {
 
 type episodeRow struct {
 	ID                string
+	TenantID          string
 	CohortID          string
 	ChatID            string
 	RunID             string
@@ -647,6 +710,7 @@ type episodeRow struct {
 
 type feedbackCandidateRow struct {
 	ID                string
+	TenantID          string
 	CohortID          string
 	ChatID            string
 	RunID             string
@@ -666,7 +730,8 @@ type feedbackCandidateRow struct {
 
 func (r feedbackCandidateRow) episode() episodeRow {
 	return episodeRow{
-		ID: r.ID, CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
+		ID: r.ID, TenantID: r.TenantID,
+		CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
 		AnchorEventID: r.AnchorEventID, AnchorMessageID: r.AnchorMessageID,
 		TopicID: r.TopicID, ServingLane: r.ServingLane, Status: r.Status,
 		PreWindowStart: r.PreWindowStart, AnchorAt: r.AnchorAt,
@@ -682,7 +747,8 @@ func (r episodeRow) domain() (conversationeval.Episode, error) {
 		postWindowEnd = &value
 	}
 	episode := conversationeval.Episode{
-		ID: r.ID, CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
+		ID: r.ID, TenantID: r.TenantID,
+		CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
 		AnchorEventID: r.AnchorEventID, AnchorMessageID: r.AnchorMessageID,
 		TopicID: r.TopicID, ServingLane: conversationeval.Lane(r.ServingLane),
 		Status: conversationeval.EpisodeStatus(r.Status), PreWindowStart: r.PreWindowStart,
@@ -705,21 +771,26 @@ func validateQueryID(name, value string) error {
 	return nil
 }
 
-func loadCohort(db *gorm.DB, cohortID string, lock bool) (conversationeval.Cohort, error) {
+func loadCohort(
+	db *gorm.DB,
+	tenantID string,
+	cohortID string,
+	lock bool,
+) (conversationeval.Cohort, error) {
 	query := `
-		SELECT id, app_id, bot_open_id, chat_ids::text AS chat_ids, start_at, end_at,
+		SELECT id, tenant_id, app_id, bot_open_id, chat_ids::text AS chat_ids, start_at, end_at,
 		       status, serving_lane, control_version, candidate_version,
 		       judge_config_json::text AS judge_config_json,
 		       sampling_policy_json::text AS sampling_policy_json,
 		       result_version, created_at, updated_at
 		FROM evaluation_cohorts
-		WHERE id = ?
+		WHERE id = ? AND tenant_id = ?
 		LIMIT 1`
 	if lock {
 		query += " FOR SHARE"
 	}
 	var row cohortRow
-	result := db.Raw(query, cohortID).Scan(&row)
+	result := db.Raw(query, cohortID, tenantID).Scan(&row)
 	if result.Error != nil {
 		return conversationeval.Cohort{}, result.Error
 	}
@@ -729,19 +800,24 @@ func loadCohort(db *gorm.DB, cohortID string, lock bool) (conversationeval.Cohor
 	return row.domain()
 }
 
-func loadEpisode(db *gorm.DB, episodeID string, lock bool) (conversationeval.Episode, error) {
+func loadEpisode(
+	db *gorm.DB,
+	tenantID string,
+	episodeID string,
+	lock bool,
+) (conversationeval.Episode, error) {
 	query := `
-		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		SELECT id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
 		       topic_id, serving_lane, status, pre_window_start, anchor_at,
 		       post_window_end, late_feedback_until, created_at, updated_at
 		FROM evaluation_episodes
-		WHERE id = ?
+		WHERE id = ? AND tenant_id = ?
 		LIMIT 1`
 	if lock {
 		query += " FOR SHARE"
 	}
 	var row episodeRow
-	result := db.Raw(query, episodeID).Scan(&row)
+	result := db.Raw(query, episodeID, tenantID).Scan(&row)
 	if result.Error != nil {
 		return conversationeval.Episode{}, result.Error
 	}
@@ -753,22 +829,23 @@ func loadEpisode(db *gorm.DB, episodeID string, lock bool) (conversationeval.Epi
 
 func loadEpisodeByNaturalKey(
 	db *gorm.DB,
+	tenantID string,
 	cohortID string,
 	anchorEventID string,
 	lock bool,
 ) (conversationeval.Episode, bool, error) {
 	query := `
-		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		SELECT id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
 		       topic_id, serving_lane, status, pre_window_start, anchor_at,
 		       post_window_end, late_feedback_until, created_at, updated_at
 		FROM evaluation_episodes
-		WHERE cohort_id = ? AND anchor_event_id = ?
+		WHERE cohort_id = ? AND anchor_event_id = ? AND tenant_id = ?
 		LIMIT 1`
 	if lock {
 		query += " FOR SHARE"
 	}
 	var row episodeRow
-	result := db.Raw(query, cohortID, anchorEventID).Scan(&row)
+	result := db.Raw(query, cohortID, anchorEventID, tenantID).Scan(&row)
 	if result.Error != nil {
 		return conversationeval.Episode{}, false, result.Error
 	}

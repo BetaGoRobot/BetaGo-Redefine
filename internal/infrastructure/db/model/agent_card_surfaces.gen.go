@@ -42,6 +42,7 @@ type AgentCardSurface struct {
 	LastError            string    `gorm:"column:last_error;not null" json:"last_error"`
 	CreatedAt            time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt            time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	TenantID             string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName AgentCardSurface's table name

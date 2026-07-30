@@ -48,6 +48,7 @@ func (s CohortStatus) Valid() bool {
 
 type Cohort struct {
 	ID                 string          `json:"id"`
+	TenantID           string          `json:"tenant_id"`
 	AppID              string          `json:"app_id"`
 	BotOpenID          string          `json:"bot_open_id"`
 	ChatIDs            []string        `json:"chat_ids"`
@@ -140,6 +141,7 @@ func (s EpisodeStatus) Valid() bool {
 
 type Episode struct {
 	ID                string        `json:"id"`
+	TenantID          string        `json:"tenant_id"`
 	CohortID          string        `json:"cohort_id"`
 	ChatID            string        `json:"chat_id"`
 	RunID             string        `json:"run_id,omitempty"`
@@ -369,6 +371,7 @@ func (i ContextItem) validate(anchorAt time.Time) error {
 
 type LaneOutput struct {
 	ID              string                `json:"id"`
+	TenantID        string                `json:"tenant_id"`
 	EpisodeID       string                `json:"episode_id"`
 	Lane            Lane                  `json:"lane"`
 	OutputMode      OutputMode            `json:"output_mode"`
@@ -481,6 +484,7 @@ func (e FeedbackExplicitness) Valid() bool {
 
 type Feedback struct {
 	ID                    string               `json:"id"`
+	TenantID              string               `json:"tenant_id"`
 	EpisodeID             string               `json:"episode_id"`
 	TargetLane            Lane                 `json:"target_lane,omitempty"`
 	TargetMessageID       string               `json:"target_message_id,omitempty"`
@@ -552,6 +556,7 @@ func (w JudgmentWinner) Valid() bool {
 
 type Judgment struct {
 	ID           string          `json:"id"`
+	TenantID     string          `json:"tenant_id"`
 	EpisodeID    string          `json:"episode_id"`
 	Version      int64           `json:"version"`
 	Source       JudgmentSource  `json:"source"`

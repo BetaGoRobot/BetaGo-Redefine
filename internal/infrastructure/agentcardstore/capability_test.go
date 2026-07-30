@@ -11,7 +11,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 )
@@ -169,7 +168,7 @@ func TestCapabilityConfirmationExecutesTrustedInputOnceAndContinuesAgent(t *test
 	generator := &observeContinuationGenerator{}
 	deliverer := &noReplyDeliverer{}
 	processor := agentruntime.NewContinuationProcessor(
-		agentstore.NewRepository(fixture.db),
+		mustNewAgentTestRepository(fixture.db),
 		generator,
 		deliverer,
 		agentruntime.ContinuationProcessorConfig{
@@ -177,7 +176,7 @@ func TestCapabilityConfirmationExecutesTrustedInputOnceAndContinuesAgent(t *test
 			RetryDelay: time.Second, CapabilityProcessor: capabilityService,
 		},
 	)
-	dueRunIDs, err := agentstore.NewRepository(fixture.db).
+	dueRunIDs, err := mustNewAgentTestRepository(fixture.db).
 		ListDueContinuationRunIDs(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("ListDueContinuationRunIDs() error = %v", err)

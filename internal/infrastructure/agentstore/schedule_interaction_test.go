@@ -397,7 +397,8 @@ func TestScheduleInteractionConcurrentClaimHasOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			claim, err := NewRepository(f.db).ClaimScheduleInteraction(context.Background(), req)
+			claim, err := mustNewTestRepository(f.db).
+				ClaimScheduleInteraction(context.Background(), req)
 			results <- claim.State
 			errs <- err
 		}()

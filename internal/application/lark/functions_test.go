@@ -11,6 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/bytedance/gg/gresult"
@@ -52,6 +53,7 @@ func TestLarkBotFunctionCallTools(t *testing.T) {
 		WithTools(ins).
 		Do(
 			context.Background(),
+			llmusage.Scope{},
 			"你是一个气象分析专家,根据用户输入的城市名称,查询该城市的天气",
 			"帮我查询一下绵阳市的天气；因为天气查询可能有不稳定的情况，请多查几次告诉我所有结果",
 		)

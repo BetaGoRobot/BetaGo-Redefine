@@ -223,6 +223,47 @@ func TestConversationRuntimeFlagsDefaultOffAndHonorChatScope(t *testing.T) {
 	}
 }
 
+func TestGetBoolOverrideDistinguishesExplicitFalseFromMissing(t *testing.T) {
+	manager := NewManager()
+	ctx := context.Background()
+	if value, configured := manager.GetBoolOverride(
+		ctx,
+		KeyConversationParallelEvaluationEnabled,
+		"chat-a",
+		"",
+	); configured || value {
+		t.Fatalf("missing override = %v, %v", value, configured)
+	}
+	manager.cache[buildConfigKey(
+		ScopeChat,
+		"chat-a",
+		"",
+		KeyConversationParallelEvaluationEnabled,
+	)] = "false"
+	if value, configured := manager.GetBoolOverride(
+		ctx,
+		KeyConversationParallelEvaluationEnabled,
+		"chat-a",
+		"",
+	); !configured || value {
+		t.Fatalf("explicit false override = %v, %v", value, configured)
+	}
+	manager.cache[buildConfigKey(
+		ScopeGlobal,
+		"",
+		"",
+		KeyConversationParallelEvaluationEnabled,
+	)] = "true"
+	if value, configured := manager.GetBoolOverride(
+		ctx,
+		KeyConversationParallelEvaluationEnabled,
+		"chat-b",
+		"",
+	); !configured || !value {
+		t.Fatalf("global true override = %v, %v", value, configured)
+	}
+}
+
 func TestConversationRuntimeGlobalHelpersDefaultOff(t *testing.T) {
 	if IsConversationRuntimeEnabled(context.Background(), "chat-default", "") ||
 		IsConversationCallbackContinuationEnabled(context.Background(), "chat-default", "") ||

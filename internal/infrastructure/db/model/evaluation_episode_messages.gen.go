@@ -21,6 +21,7 @@ type EvaluationEpisodeMessage struct {
 	OccurredAt  time.Time `gorm:"column:occurred_at;not null" json:"occurred_at"`
 	PayloadJSON string    `gorm:"column:payload_json;not null;default:{}" json:"payload_json"`
 	CreatedAt   time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	TenantID    string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName EvaluationEpisodeMessage's table name

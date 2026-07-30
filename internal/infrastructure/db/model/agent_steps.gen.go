@@ -30,6 +30,7 @@ type AgentStep struct {
 	WorkerID       string    `gorm:"column:worker_id;not null" json:"worker_id"`
 	LeaseExpiresAt time.Time `gorm:"column:lease_expires_at" json:"lease_expires_at"`
 	RetryOfStepID  string    `gorm:"column:retry_of_step_id;not null" json:"retry_of_step_id"`
+	TenantID       string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName AgentStep's table name

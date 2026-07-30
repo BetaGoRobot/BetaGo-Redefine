@@ -104,12 +104,22 @@ type CandidateSubmitter interface {
 	SubmitCandidate(context.Context, CandidateTask) error
 }
 
+type RollingCohortStore interface {
+	EnsureRollingCohort(
+		context.Context,
+		MessageInput,
+		time.Duration,
+	) (Cohort, error)
+}
+
 type ServiceOptions struct {
-	Repository         EvaluationRepository
-	PreWindowSource    PreWindowSource
-	BoundaryDetector   TopicBoundaryDetector
-	CandidateSubmitter CandidateSubmitter
-	Now                func() time.Time
+	Repository          EvaluationRepository
+	PreWindowSource     PreWindowSource
+	BoundaryDetector    TopicBoundaryDetector
+	CandidateSubmitter  CandidateSubmitter
+	EnsureCohortForChat func(string) bool
+	CohortDuration      time.Duration
+	Now                 func() time.Time
 }
 
 type Service struct {
@@ -117,6 +127,9 @@ type Service struct {
 	preWindowSource    PreWindowSource
 	boundaryDetector   TopicBoundaryDetector
 	candidateSubmitter CandidateSubmitter
+	rollingCohorts     RollingCohortStore
+	ensureCohort       func(string) bool
+	cohortDuration     time.Duration
 	feedback           *FeedbackAttributor
 	now                func() time.Time
 }
@@ -131,6 +144,23 @@ func NewService(options ServiceOptions) (*Service, error) {
 	if options.CandidateSubmitter == nil {
 		return nil, fmt.Errorf("%w: candidate submitter is nil", ErrEvaluationUnavailable)
 	}
+	var rollingCohorts RollingCohortStore
+	if options.EnsureCohortForChat != nil {
+		var ok bool
+		rollingCohorts, ok = options.Repository.(RollingCohortStore)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: repository cannot create rolling cohorts",
+				ErrEvaluationUnavailable,
+			)
+		}
+		if options.CohortDuration <= 0 || options.CohortDuration > 7*24*time.Hour {
+			return nil, fmt.Errorf(
+				"%w: rolling cohort duration must be within (0, 168h]",
+				ErrEvaluationUnavailable,
+			)
+		}
+	}
 	if options.Now == nil {
 		options.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -142,6 +172,9 @@ func NewService(options ServiceOptions) (*Service, error) {
 		repository: options.Repository, preWindowSource: options.PreWindowSource,
 		boundaryDetector:   options.BoundaryDetector,
 		candidateSubmitter: options.CandidateSubmitter,
+		rollingCohorts:     rollingCohorts,
+		ensureCohort:       options.EnsureCohortForChat,
+		cohortDuration:     options.CohortDuration,
 		feedback:           feedback,
 		now:                options.Now,
 	}, nil
@@ -180,6 +213,15 @@ func (s *Service) BeginMessage(
 	}
 	if err := s.ObserveWindowMessage(ctx, input); err != nil {
 		return nil, err
+	}
+	if s.ensureCohort != nil && s.ensureCohort(input.ChatID) {
+		if _, err := s.rollingCohorts.EnsureRollingCohort(
+			ctx,
+			input,
+			s.cohortDuration,
+		); err != nil {
+			return nil, fmt.Errorf("ensure rolling evaluation cohort: %w", err)
+		}
 	}
 	cohorts, err := s.repository.ActiveCohorts(ctx, input.ChatID, input.OccurredAt)
 	if err != nil {

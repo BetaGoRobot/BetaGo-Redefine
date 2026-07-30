@@ -36,6 +36,7 @@ func newEvaluationFeedback(db *gorm.DB, opts ...gen.DOOption) evaluationFeedback
 	_evaluationFeedback.AttributionConfidence = field.NewInt32(tableName, "attribution_confidence")
 	_evaluationFeedback.OccurredAt = field.NewTime(tableName, "occurred_at")
 	_evaluationFeedback.CreatedAt = field.NewTime(tableName, "created_at")
+	_evaluationFeedback.TenantID = field.NewString(tableName, "tenant_id")
 
 	_evaluationFeedback.fillFieldMap()
 
@@ -57,6 +58,7 @@ type evaluationFeedback struct {
 	AttributionConfidence field.Int32
 	OccurredAt            field.Time
 	CreatedAt             field.Time
+	TenantID              field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -84,6 +86,7 @@ func (e *evaluationFeedback) updateTableName(table string) *evaluationFeedback {
 	e.AttributionConfidence = field.NewInt32(table, "attribution_confidence")
 	e.OccurredAt = field.NewTime(table, "occurred_at")
 	e.CreatedAt = field.NewTime(table, "created_at")
+	e.TenantID = field.NewString(table, "tenant_id")
 
 	e.fillFieldMap()
 
@@ -112,7 +115,7 @@ func (e *evaluationFeedback) GetFieldByName(fieldName string) (field.OrderExpr, 
 }
 
 func (e *evaluationFeedback) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 11)
+	e.fieldMap = make(map[string]field.Expr, 12)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["episode_id"] = e.EpisodeID
 	e.fieldMap["target_lane"] = e.TargetLane
@@ -124,6 +127,7 @@ func (e *evaluationFeedback) fillFieldMap() {
 	e.fieldMap["attribution_confidence"] = e.AttributionConfidence
 	e.fieldMap["occurred_at"] = e.OccurredAt
 	e.fieldMap["created_at"] = e.CreatedAt
+	e.fieldMap["tenant_id"] = e.TenantID
 }
 
 func (e evaluationFeedback) clone(db *gorm.DB) evaluationFeedback {

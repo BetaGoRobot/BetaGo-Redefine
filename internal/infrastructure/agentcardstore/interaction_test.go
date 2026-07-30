@@ -12,13 +12,65 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestNewRepositoryRequiresValidTenant(t *testing.T) {
+	if _, err := NewRepository(nil, tenant.Tenant{}); err == nil {
+		t.Fatal("NewRepository() accepted an invalid tenant")
+	}
+}
+
+func TestRepositoryDoesNotReadAnotherTenantSurface(t *testing.T) {
+	fixture := newCardStoreFixture(t)
+	request := fixture.beginRequest("tenant-isolation")
+	if _, err := fixture.repo.BeginCardInteraction(
+		context.Background(), request,
+	); err != nil {
+		t.Fatal(err)
+	}
+	otherTenant, err := tenant.New("app-agentcard-other", "bot-agentcard-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewRepository(fixture.db, otherTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.GetByInteraction(
+		context.Background(),
+		agentcard.GetSurfaceRequest{
+			RunID: request.RunID, InteractionID: request.InteractionID,
+		},
+	); !errors.Is(err, agentcard.ErrCardNotFound) {
+		t.Fatalf("cross-tenant GetByInteraction() error = %v, want ErrCardNotFound", err)
+	}
+}
+
+var repositoryTestTenant, _ = tenant.New("app-agentcard-test", "bot-agentcard-test")
+
+func mustNewTestRepository(database *gorm.DB) *Repository {
+	repository, err := NewRepository(database, repositoryTestTenant)
+	if err != nil {
+		panic(err)
+	}
+	return repository
+}
+
+func mustNewAgentTestRepository(database *gorm.DB) *agentstore.Repository {
+	repository, err := agentstore.NewRepository(database, repositoryTestTenant)
+	if err != nil {
+		panic(err)
+	}
+	return repository
+}
 
 func TestBeginCardInteractionAtomicallyCreatesWaitOutboxSurfaceAndWaitingState(t *testing.T) {
 	fixture := newCardStoreFixture(t)
@@ -288,6 +340,12 @@ func newCardStoreFixture(t *testing.T) *cardStoreFixture {
 		fmt.Sprintf(`CREATE TABLE %q.agent_card_surfaces (LIKE betago.agent_card_surfaces INCLUDING ALL)`, schema),
 		fmt.Sprintf(`ALTER TABLE %q.agent_card_surfaces ADD FOREIGN KEY (run_id) REFERENCES %q.agent_runs(id) ON DELETE CASCADE`, schema, schema),
 		fmt.Sprintf(`ALTER TABLE %q.agent_card_surfaces ADD FOREIGN KEY (wait_step_id) REFERENCES %q.agent_steps(id) ON DELETE CASCADE`, schema, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_sessions ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_runs ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_steps ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_capability_executions ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_projection_outbox ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.agent_card_surfaces ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
 	} {
 		if err := rootDB.Exec(statement).Error; err != nil {
 			_ = rootDB.Exec(fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schema)).Error
@@ -317,14 +375,15 @@ func newCardStoreFixture(t *testing.T) *cardStoreFixture {
 	sessionID := "session_" + suffix
 	runID := "run_" + suffix
 	if err := testDB.Create(&model.AgentSession{
-		ID: sessionID, AppID: "app_" + suffix, BotOpenID: "bot_" + suffix,
+		ID: sessionID, TenantID: repositoryTestTenant.ID,
+		AppID: repositoryTestTenant.AppID, BotOpenID: repositoryTestTenant.BotOpenID,
 		ChatID: "chat_" + suffix, ScopeType: "chat", ScopeID: "scope_" + suffix,
 		Status: "active", CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	if err := testDB.Create(&model.AgentRun{
-		ID: runID, SessionID: sessionID,
+		ID: runID, TenantID: repositoryTestTenant.ID, SessionID: sessionID,
 		TriggerType:      string(agentruntime.TriggerTypeMention),
 		TriggerMessageID: "message_" + suffix,
 		Status:           string(agentruntime.RunStatusRunning), Revision: 1,
@@ -333,7 +392,7 @@ func newCardStoreFixture(t *testing.T) *cardStoreFixture {
 		t.Fatalf("create run: %v", err)
 	}
 	return &cardStoreFixture{
-		db: testDB, repo: NewRepository(testDB),
+		db: testDB, repo: mustNewTestRepository(testDB),
 		sessionID: sessionID, runID: runID,
 	}
 }

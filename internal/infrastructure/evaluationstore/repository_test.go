@@ -14,12 +14,106 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/evaluationindex"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestNewRepositoryRequiresValidTenant(t *testing.T) {
+	if _, err := NewRepository(nil, tenant.Tenant{}); err == nil {
+		t.Fatal("NewRepository() accepted an invalid tenant")
+	}
+}
+
+func TestRepositoryDoesNotReadOrTransitionAnotherTenantCohort(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	cohort := fixture.cohort(
+		"tenant_isolation",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	if err := fixture.repo.CreateCohort(context.Background(), cohort); err != nil {
+		t.Fatal(err)
+	}
+	otherTenant, err := tenant.New("app-evaluation-other", "bot-evaluation-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewRepository(fixture.db, otherTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cohorts, err := other.ActiveCohorts(
+		context.Background(), cohort.ChatIDs[0], fixture.now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cohorts) != 0 {
+		t.Fatalf("cross-tenant ActiveCohorts() = %#v, want none", cohorts)
+	}
+	transitioned, err := other.TransitionCohorts(
+		context.Background(), cohort.EndAt.Add(time.Second),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transitioned != 0 {
+		t.Fatalf("cross-tenant TransitionCohorts() = %d, want 0", transitioned)
+	}
+}
+
+func TestEnsureRollingCohortIsAutomaticAndIdempotent(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	input := conversationeval.MessageInput{
+		AppID:      repositoryTestTenant.AppID,
+		BotOpenID:  repositoryTestTenant.BotOpenID,
+		ChatID:     "chat_" + fixture.suffix,
+		EventID:    "event_" + fixture.suffix,
+		MessageID:  "message_" + fixture.suffix,
+		OccurredAt: fixture.now,
+	}
+	first, err := fixture.repo.EnsureRollingCohort(
+		context.Background(), input, 6*time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := fixture.repo.EnsureRollingCohort(
+		context.Background(), input, 6*time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID ||
+		first.TenantID != repositoryTestTenant.ID ||
+		len(first.ChatIDs) != 1 ||
+		first.ChatIDs[0] != input.ChatID {
+		t.Fatalf("rolling cohorts are not canonical: first=%#v second=%#v", first, second)
+	}
+	var count int64
+	if err := fixture.db.Table("evaluation_cohorts").
+		Where("id = ?", first.ID).
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("rolling cohort rows = %d, want 1", count)
+	}
+}
+
+var repositoryTestTenant, _ = tenant.New("app-evaluation-test", "bot-evaluation-test")
+
+func mustNewTestRepository(database *gorm.DB) *Repository {
+	repository, err := NewRepository(database, repositoryTestTenant)
+	if err != nil {
+		panic(err)
+	}
+	return repository
+}
 
 type repositoryFixture struct {
 	db              *gorm.DB
@@ -128,6 +222,7 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 		fmt.Sprintf(`ALTER TABLE %q.evaluation_episodes ADD FOREIGN KEY (cohort_id) REFERENCES %q.evaluation_cohorts(id) ON DELETE CASCADE`, schema, schema),
 		fmt.Sprintf(`CREATE TABLE %q.evaluation_episode_messages (
 			id text PRIMARY KEY,
+			tenant_id text NOT NULL,
 			episode_id text NOT NULL REFERENCES %q.evaluation_episodes(id) ON DELETE CASCADE,
 			position text NOT NULL,
 			event_id text NOT NULL,
@@ -140,6 +235,7 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 		)`, schema, schema),
 		fmt.Sprintf(`CREATE TABLE %q.evaluation_candidate_tasks (
 			id text PRIMARY KEY,
+			tenant_id text NOT NULL,
 			episode_id text NOT NULL REFERENCES %q.evaluation_episodes(id) ON DELETE CASCADE,
 			status text NOT NULL,
 			payload_json jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -158,6 +254,11 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 		fmt.Sprintf(`ALTER TABLE %q.evaluation_feedback ADD FOREIGN KEY (episode_id) REFERENCES %q.evaluation_episodes(id) ON DELETE CASCADE`, schema, schema),
 		fmt.Sprintf(`CREATE TABLE %q.evaluation_judgments (LIKE betago.evaluation_judgments INCLUDING ALL)`, schema),
 		fmt.Sprintf(`ALTER TABLE %q.evaluation_judgments ADD FOREIGN KEY (episode_id) REFERENCES %q.evaluation_episodes(id) ON DELETE CASCADE`, schema, schema),
+		fmt.Sprintf(`ALTER TABLE %q.evaluation_cohorts ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.evaluation_episodes ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.evaluation_lane_outputs ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.evaluation_feedback ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
+		fmt.Sprintf(`ALTER TABLE %q.evaluation_judgments ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`, schema),
 	}
 	for _, statement := range ddl {
 		if err := rootDB.Exec(statement).Error; err != nil {
@@ -188,7 +289,8 @@ func newRepositoryFixture(t *testing.T) *repositoryFixture {
 		_ = rootSQLDB.Close()
 	})
 	return &repositoryFixture{
-		db: testDB, repo: NewRepository(testDB), suffix: suffix, applicationName: schema,
+		db: testDB, repo: mustNewTestRepository(testDB),
+		suffix: suffix, applicationName: schema,
 		now: time.Now().UTC().Truncate(time.Microsecond),
 	}
 }
@@ -1334,8 +1436,9 @@ func TestNextJudgeInputRejudgesAfterNewFeedback(t *testing.T) {
 
 func (f *repositoryFixture) cohort(name string, startAt, endAt time.Time) conversationeval.Cohort {
 	return conversationeval.Cohort{
-		ID: "cohort_" + name + "_" + f.suffix, AppID: "app_" + f.suffix,
-		BotOpenID: "bot_" + f.suffix, ChatIDs: []string{"chat_" + f.suffix},
+		ID:    "cohort_" + name + "_" + f.suffix,
+		AppID: repositoryTestTenant.AppID, BotOpenID: repositoryTestTenant.BotOpenID,
+		ChatIDs: []string{"chat_" + f.suffix},
 		StartAt: startAt, EndAt: endAt, Status: conversationeval.CohortStatusCollecting,
 		ServingLane: conversationeval.LaneControl, ControlVersion: "control-v1",
 		CandidateVersion: "candidate-v1", JudgeConfigJSON: json.RawMessage(`{}`),

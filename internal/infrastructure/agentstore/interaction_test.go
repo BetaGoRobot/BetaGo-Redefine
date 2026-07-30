@@ -122,7 +122,8 @@ func TestConcurrentStartInteractionAllowsOneActiveRunPerSession(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	secondRunID := "run_test_" + uuid.NewV4().String()
 	if err := f.db.Create(&model.AgentRun{
-		ID: secondRunID, SessionID: f.sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		ID: secondRunID, TenantID: repositoryTestTenant.ID,
+		SessionID: f.sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
 		TriggerMessageID: "message_" + uuid.NewV4().String(), Status: string(agentruntime.RunStatusRunning),
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -144,7 +145,8 @@ func TestConcurrentStartInteractionAllowsOneActiveRunPerSession(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			run, _, err := NewRepository(f.db).StartInteraction(context.Background(), req)
+			run, _, err := mustNewTestRepository(f.db).
+				StartInteraction(context.Background(), req)
 			results <- result{run: run, err: err}
 		}()
 	}
@@ -417,7 +419,8 @@ func TestResolveInteractionScopesSharedSourceRefByRun(t *testing.T) {
 	secondSessionID := "session_test_" + suffix
 	secondRunID := "run_test_" + suffix
 	if err := f.db.Create(&model.AgentSession{
-		ID: secondSessionID, AppID: "app_" + suffix, BotOpenID: "bot_" + suffix,
+		ID: secondSessionID, TenantID: repositoryTestTenant.ID,
+		AppID: repositoryTestTenant.AppID, BotOpenID: repositoryTestTenant.BotOpenID,
 		ChatID: "chat_" + suffix, ScopeType: "chat", ScopeID: "scope_" + suffix,
 		Status: "active", CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -425,7 +428,8 @@ func TestResolveInteractionScopesSharedSourceRefByRun(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.db.Exec("DELETE FROM agent_sessions WHERE id = ?", secondSessionID).Error })
 	if err := f.db.Create(&model.AgentRun{
-		ID: secondRunID, SessionID: secondSessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		ID: secondRunID, TenantID: repositoryTestTenant.ID,
+		SessionID: secondSessionID, TriggerType: string(agentruntime.TriggerTypeMention),
 		TriggerMessageID: "message_" + suffix, Status: string(agentruntime.RunStatusRunning),
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
@@ -544,7 +548,8 @@ func createAdditionalRunInSession(
 	suffix := uuid.NewV4().String()
 	runID := "run_test_" + suffix
 	if err := f.db.Create(&model.AgentRun{
-		ID: runID, SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
+		ID: runID, TenantID: repositoryTestTenant.ID,
+		SessionID: sessionID, TriggerType: string(agentruntime.TriggerTypeMention),
 		TriggerMessageID: "message_" + suffix, Status: string(status), Revision: 1,
 		CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {

@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
@@ -22,6 +24,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcapability"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
@@ -45,14 +48,17 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/schema"
 	larkiface "github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/lark"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/webui"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
+	opensearchschema "github.com/BetaGoRobot/BetaGo-Redefine/script/opensearch"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	uuid "github.com/satori/go.uuid"
+	"go.uber.org/zap"
 )
 
 type appComponents struct {
@@ -72,6 +78,14 @@ type appComponents struct {
 	handlerSet                   *larkiface.HandlerSet
 	eventDispatcher              *dispatcher.EventDispatcher
 	agentCardSettings            appruntime.AgentCardSettings
+	evaluationSettings           appruntime.EvaluationSettings
+	tenant                       tenant.Tenant
+	conversationIndexAlias       string
+	evaluationIndexAlias         string
+	schemaBootstrap              *bootstrapStatus
+	searchBootstrap              *bootstrapStatus
+	evaluationSearchMu           sync.Mutex
+	evaluationSearchReady        bool
 	agentCardPatchReconciler     *agentcard.PatchReconciler
 }
 
@@ -85,6 +99,20 @@ const (
 // scheduler 仍保留为包级句柄，是因为当前调度器本身还没有实现
 // runtime.Module。真正的生命周期仍由装配阶段注册的模块接管。
 var scheduler *scheduleapp.Scheduler
+
+type tenantIndexProvisioner interface {
+	EnsureTenantIndex(
+		context.Context,
+		tenant.Tenant,
+		string,
+		string,
+		[]byte,
+	) (opensearch.TenantIndex, error)
+}
+
+var newTenantIndexProvisioner = func() (tenantIndexProvisioner, error) {
+	return opensearch.NewProvisioner()
+}
 
 // buildApp 是当前单体进程的装配根。这里集中完成：
 // 1. 构造受控执行器和 handler 入口；
@@ -106,7 +134,8 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 	}
 	app := appruntime.NewApp()
 
-	addInfrastructureModules(app, cfg)
+	addInfrastructureModules(app, cfg, components)
+	addSearchSchemaModule(app, cfg, components)
 	addExecutorModules(app, components)
 	addApplicationModules(app, cfg, components)
 
@@ -126,6 +155,49 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	if err != nil {
 		return nil, err
 	}
+	evaluationSettings, err := appruntime.EvaluationRolloutSettings(cfg)
+	if err != nil {
+		return nil, err
+	}
+	runtimeTenant, err := tenant.New(
+		cfg.LarkConfig.AppID,
+		cfg.LarkConfig.BotOpenID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive runtime tenant: %w", err)
+	}
+	conversationIndexAlias, err := runtimeTenant.IndexAlias(
+		appruntime.ConversationEventIndex(cfg),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive conversation index alias: %w", err)
+	}
+	evaluationIndexBase := evaluationindex.DefaultIndexAlias
+	if cfg.RuntimeConfig != nil &&
+		strings.TrimSpace(cfg.RuntimeConfig.EvaluationIndex) != "" {
+		evaluationIndexBase = cfg.RuntimeConfig.EvaluationIndex
+	}
+	evaluationIndexAlias, err := runtimeTenant.IndexAlias(evaluationIndexBase)
+	if err != nil {
+		return nil, fmt.Errorf("derive evaluation index alias: %w", err)
+	}
+	schemaBootstrap := newBootstrapStatus(map[string]any{
+		"tenant_id":       runtimeTenant.ID,
+		"schema":          runtimeSchemaName(cfg),
+		"binary_revision": runtimeSchemaRevision(),
+	})
+	searchStats := map[string]any{
+		"tenant_id":              runtimeTenant.ID,
+		"conversation_alias":     conversationIndexAlias,
+		"conversation_schema":    "conversation_event.v1",
+		"evaluation_mode":        string(evaluationSettings.Mode),
+		"evaluation_allow_count": evaluationSettings.AllowedChatCount(),
+	}
+	if evaluationSettings.Enabled() {
+		searchStats["evaluation_alias"] = evaluationIndexAlias
+		searchStats["evaluation_schema"] = "conversation_evaluation.v1"
+	}
+	searchBootstrap := newBootstrapStatus(searchStats)
 	if agentCardSettings.ToolsAvailable() && !agentCardSettings.Shadow() &&
 		(strings.TrimSpace(cfg.LarkConfig.AppSecret) == "" ||
 			strings.TrimSpace(cfg.LarkConfig.AppID) == "" ||
@@ -159,7 +231,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	scheduleContinuationDispatcher, err := appcardaction.NewScheduleInteractionDispatcher(
 		conversationRuntime,
 		appcardaction.ScheduleInteractionDispatcherOptions{
-			IndexAlias: appruntime.ConversationEventIndex(cfg),
+			IndexAlias: conversationIndexAlias,
 		},
 	)
 	if err != nil {
@@ -191,6 +263,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	}
 
 	feedbackRouter := conversationeval.NewFeedbackRouter()
+	var components *appComponents
 	messageProcessor := messages.NewMessageProcessorWithOptions(
 		appconfig.GetManager(),
 		messages.MessageHandlerOptions{
@@ -201,6 +274,19 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 					return true
 				}
 				return agentCardSettings.CanSend(chatID)
+			},
+			EvaluationEnabled: func(ctx context.Context, chatID string) bool {
+				if !evaluationRolloutAllows(ctx, evaluationSettings, chatID) {
+					return false
+				}
+				if err := ensureEvaluationSearchIndex(ctx, cfg, components); err != nil {
+					logs.L().Ctx(ctx).Error(
+						"ensure evaluation search index failed",
+						zap.Error(err),
+					)
+					return false
+				}
+				return true
 			},
 		},
 	)
@@ -216,7 +302,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		FeedbackSink:           feedbackRouter,
 	})
 
-	return &appComponents{
+	components = &appComponents{
 		messageExecutor: messageExecutor, reactionExecutor: reactionExecutor,
 		recordingExecutor: recordingExecutor, chunkExecutor: chunkExecutor,
 		scheduleExecutor: scheduleExecutor, conversationExecutor: conversationExecutor,
@@ -229,7 +315,14 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		handlerSet:                   handlerSet,
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
 		agentCardSettings:            agentCardSettings,
-	}, nil
+		evaluationSettings:           evaluationSettings,
+		tenant:                       runtimeTenant,
+		conversationIndexAlias:       conversationIndexAlias,
+		evaluationIndexAlias:         evaluationIndexAlias,
+		schemaBootstrap:              schemaBootstrap,
+		searchBootstrap:              searchBootstrap,
+	}
+	return components, nil
 }
 
 func validateConversationRuntimeBudgets(configs map[string]appruntime.ExecutorConfig) error {
@@ -255,6 +348,76 @@ func validateConversationRuntimeBudgets(configs map[string]appruntime.ExecutorCo
 	return nil
 }
 
+func evaluationRolloutAllows(
+	ctx context.Context,
+	settings appruntime.EvaluationSettings,
+	chatID string,
+) bool {
+	if enabled, configured := appconfig.GetManager().GetBoolOverride(
+		ctx,
+		appconfig.KeyConversationParallelEvaluationEnabled,
+		chatID,
+		"",
+	); configured {
+		return enabled
+	}
+	return settings.Allows(chatID)
+}
+
+func ensureEvaluationSearchIndex(
+	ctx context.Context,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) error {
+	if components == nil {
+		return errors.New("runtime components are unavailable")
+	}
+	provisioner, err := newTenantIndexProvisioner()
+	if err == nil {
+		err = provisionEvaluationSearchIndex(ctx, cfg, components, provisioner)
+	}
+	components.searchBootstrap.Complete(err)
+	return err
+}
+
+func provisionEvaluationSearchIndex(
+	ctx context.Context,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+	provisioner tenantIndexProvisioner,
+) error {
+	if components == nil || provisioner == nil {
+		return errors.New("evaluation search provisioner is unavailable")
+	}
+	components.evaluationSearchMu.Lock()
+	defer components.evaluationSearchMu.Unlock()
+	if components.evaluationSearchReady {
+		return nil
+	}
+	evaluationBase := evaluationindex.DefaultIndexAlias
+	if cfg != nil && cfg.RuntimeConfig != nil &&
+		strings.TrimSpace(cfg.RuntimeConfig.EvaluationIndex) != "" {
+		evaluationBase = cfg.RuntimeConfig.EvaluationIndex
+	}
+	resource, err := provisioner.EnsureTenantIndex(
+		ctx,
+		components.tenant,
+		evaluationBase,
+		"conversation_evaluation.v1",
+		opensearchschema.ConversationEvaluationsV1,
+	)
+	if err != nil {
+		return err
+	}
+	components.evaluationSearchReady = true
+	components.searchBootstrap.Update(map[string]any{
+		"evaluation_alias":    resource.Alias,
+		"evaluation_physical": resource.PhysicalIndex,
+		"evaluation_schema":   "conversation_evaluation.v1",
+	})
+	return nil
+}
+
 func agentCardBindingKey(secret string) []byte {
 	returnKey := sha256.Sum256([]byte("betago-agent-card-binding\x00" + secret))
 	return returnKey[:]
@@ -262,7 +425,11 @@ func agentCardBindingKey(secret string) []byte {
 
 // addInfrastructureModules 注册基础设施层模块。顺序严格反映依赖方向：
 // 先准备底层连接和客户端，再让上层应用服务接入它们。
-func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) {
+func addInfrastructureModules(
+	app *appruntime.App,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) {
 	app.AddModule(newRecoverModule("otel", false, func() {
 		otel.Init(cfg.OtelConfig)
 	}))
@@ -293,6 +460,39 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 		},
 		Stop: func(context.Context) error {
 			return closeDB(db.DB())
+		},
+	}))
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "runtime_schema",
+		Critical: true,
+		Init: func(ctx context.Context) (initErr error) {
+			if components != nil && components.schemaBootstrap != nil {
+				defer func() {
+					components.schemaBootstrap.Complete(initErr)
+				}()
+			}
+			runner := &schema.Runner{
+				DB:         db.DB(),
+				Schema:     runtimeSchemaName(cfg),
+				Revision:   runtimeSchemaRevision(),
+				Migrations: schema.DefaultMigrations(),
+			}
+			report, err := runner.Apply(ctx)
+			if components != nil && components.schemaBootstrap != nil {
+				components.schemaBootstrap.Update(map[string]any{
+					"latest_version":  report.LatestVersion,
+					"latest_checksum": report.LatestChecksum,
+					"applied_count":   len(report.Applied),
+					"skipped_count":   len(report.Skipped),
+				})
+			}
+			return err
+		},
+		Stats: func() map[string]any {
+			if components == nil {
+				return nil
+			}
+			return components.schemaBootstrap.Stats()
 		},
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
@@ -369,6 +569,81 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 	}))
 }
 
+func addSearchSchemaModule(
+	app *appruntime.App,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) {
+	app.AddModule(newSearchSchemaModule(cfg, components))
+}
+
+func newSearchSchemaModule(
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) appruntime.Module {
+	configured := cfg != nil && cfg.OpensearchConfig != nil &&
+		strings.TrimSpace(cfg.OpensearchConfig.Domain) != ""
+	return appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name: "tenant_search_schema",
+		Critical: configured ||
+			(components != nil && components.evaluationSettings.Enabled()),
+		Start: func(ctx context.Context) (startErr error) {
+			if components != nil && components.searchBootstrap != nil {
+				defer func() {
+					components.searchBootstrap.Complete(startErr)
+				}()
+			}
+			if !configured {
+				if components != nil && components.evaluationSettings.Enabled() {
+					return errors.New(
+						"conversation evaluation requires opensearch configuration",
+					)
+				}
+				return appruntime.ErrDisabled
+			}
+			if components == nil {
+				return errors.New("runtime components are unavailable")
+			}
+			provisioner, err := newTenantIndexProvisioner()
+			if err != nil {
+				return err
+			}
+			conversationResource, err := provisioner.EnsureTenantIndex(
+				ctx,
+				components.tenant,
+				appruntime.ConversationEventIndex(cfg),
+				"conversation_event.v1",
+				opensearchschema.ConversationEventsV1,
+			)
+			if err != nil {
+				return fmt.Errorf("provision conversation event index: %w", err)
+			}
+			components.searchBootstrap.Update(map[string]any{
+				"conversation_alias":    conversationResource.Alias,
+				"conversation_physical": conversationResource.PhysicalIndex,
+			})
+			if !components.evaluationSettings.Enabled() {
+				return nil
+			}
+			if err := provisionEvaluationSearchIndex(
+				ctx,
+				cfg,
+				components,
+				provisioner,
+			); err != nil {
+				return fmt.Errorf("provision evaluation index: %w", err)
+			}
+			return nil
+		},
+		Stats: func() map[string]any {
+			if components == nil {
+				return nil
+			}
+			return components.searchBootstrap.Stats()
+		},
+	})
+}
+
 // addExecutorModules 把受控执行器作为一等运行时模块接入健康检查和关闭
 // 流程，避免“工作池存在但运行时看不见”。
 func addExecutorModules(app *appruntime.App, components *appComponents) {
@@ -403,8 +678,21 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			larkchunking.SetExecutor(components.chunkExecutor)
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
-			repository := agentstore.NewRepository(db.DB())
-			agentCardRepository := agentcardstore.NewRepository(db.DB())
+			owner, err := tenant.New(
+				cfg.LarkConfig.AppID,
+				cfg.LarkConfig.BotOpenID,
+			)
+			if err != nil {
+				return fmt.Errorf("derive runtime tenant: %w", err)
+			}
+			repository, err := agentstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create agent repository: %w", err)
+			}
+			agentCardRepository, err := agentcardstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create agent card repository: %w", err)
+			}
 			agentCardCompiler := agentcardcompiler.New()
 			agentCardSurfaceClient := agentcardsurface.NewClient(
 				agentcardsurface.ClientOptions{},
@@ -475,7 +763,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			if components.agentCardSettings.ToolsAvailable() {
 				composerOptions := agentcard.RolloutAuthoringComposerOptions{
 					Compiler:        agentCardCompiler,
-					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+					ProjectionIndex: components.conversationIndexAlias,
 					Shadow:          components.agentCardSettings.Shadow(),
 					CanSend:         components.agentCardSettings.CanSend,
 				}
@@ -526,7 +814,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 					Store: repository, AppID: appID, BotOpenID: botOpenID,
 					TokenSecret:     []byte(tokenSecret),
 					WaitTTL:         conversationInteractionWaitTTL,
-					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+					ProjectionIndex: components.conversationIndexAlias,
 				},
 			)
 			if err != nil {
@@ -553,8 +841,14 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 					CapabilityProcessor: agentCardCapabilityService,
 				},
 			)
+			projectionStore, err := conversationindex.NewStore(
+				db.DB(), owner, components.conversationIndexAlias,
+			)
+			if err != nil {
+				return fmt.Errorf("create conversation index store: %w", err)
+			}
 			projector := agentruntime.NewProjector(
-				conversationindex.NewStore(db.DB()),
+				projectionStore,
 				conversationindex.OpenSearchWriter{},
 				components.projectionExecutor,
 				agentruntime.ProjectorConfig{
@@ -705,35 +999,30 @@ func addConversationEvaluationModule(
 	var repository *evaluationstore.Repository
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "conversation_evaluation",
-		Critical: false,
-		Init: func(ctx context.Context) error {
-			var installed bool
-			if err := db.DB().WithContext(ctx).Raw(`
-				SELECT
-					to_regclass('betago.evaluation_episode_messages') IS NOT NULL
-					AND to_regclass('betago.evaluation_candidate_tasks') IS NOT NULL
-					AND EXISTS (
-						SELECT 1
-						FROM information_schema.columns
-						WHERE table_schema = 'betago'
-						  AND table_name = 'evaluation_episodes'
-						  AND column_name = 'post_window_reason'
-					)`,
-			).Scan(&installed).Error; err != nil {
-				return err
-			}
-			if !installed {
-				return errors.New(
-					"conversation evaluation runtime migration 20260729 is not installed",
-				)
-			}
-			return nil
-		},
+		Critical: components.evaluationSettings.Enabled(),
 		Start: func(ctx context.Context) error {
-			repository = evaluationstore.NewRepository(db.DB())
+			owner, err := tenant.New(
+				cfg.LarkConfig.AppID,
+				cfg.LarkConfig.BotOpenID,
+			)
+			if err != nil {
+				return fmt.Errorf("derive evaluation tenant: %w", err)
+			}
+			repository, err = evaluationstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create evaluation repository: %w", err)
+			}
 			service, err := conversationeval.NewService(conversationeval.ServiceOptions{
 				Repository: repository, PreWindowSource: evaluationwindow.OpenSearchPreWindowSource{},
 				CandidateSubmitter: repository,
+				EnsureCohortForChat: func(chatID string) bool {
+					return evaluationRolloutAllows(
+						context.Background(),
+						components.evaluationSettings,
+						chatID,
+					)
+				},
+				CohortDuration: components.evaluationSettings.CohortDuration,
 			})
 			if err != nil {
 				return err
@@ -820,7 +1109,8 @@ func addConversationEvaluationModule(
 			}
 			if cfg.OpensearchConfig != nil {
 				indexStore, indexErr := evaluationindex.NewStoreWithBackend(
-					runtimeConfig.EvaluationIndex,
+					components.tenant,
+					components.evaluationIndexAlias,
 					evaluationindex.NewOpenSearchBackend(),
 				)
 				if indexErr != nil {
@@ -898,15 +1188,20 @@ func addConversationEvaluationModule(
 			return stopErr
 		},
 		Stats: func() map[string]any {
+			base := map[string]any{
+				"tenant_id":       components.tenant.ID,
+				"evaluation_mode": string(components.evaluationSettings.Mode),
+				"allow_count":     components.evaluationSettings.AllowedChatCount(),
+			}
 			if candidateWorker == nil {
-				return map[string]any{"running": false}
+				base["running"] = false
+				return base
 			}
-			stats := map[string]any{
-				"running":            true,
-				"candidate":          candidateWorker.Stats(),
-				"judge_enabled":      judgeWorker != nil,
-				"projection_enabled": projectionWorker != nil,
-			}
+			stats := base
+			stats["running"] = true
+			stats["candidate"] = candidateWorker.Stats()
+			stats["judge_enabled"] = judgeWorker != nil
+			stats["projection_enabled"] = projectionWorker != nil
 			if judgeWorker != nil {
 				stats["judge"] = judgeWorker.Stats()
 			}
@@ -929,6 +1224,45 @@ func addConversationEvaluationModule(
 			return stats
 		},
 	}))
+}
+
+func runtimeSchemaName(cfg *infraConfig.BaseConfig) string {
+	if cfg == nil || cfg.DBConfig == nil {
+		return "betago"
+	}
+	searchPath := strings.TrimSpace(cfg.DBConfig.SearchPath)
+	if searchPath == "" {
+		return "betago"
+	}
+	name := strings.Trim(strings.TrimSpace(strings.Split(searchPath, ",")[0]), `"`)
+	if name == "" || name == "$user" {
+		return "betago"
+	}
+	return name
+}
+
+func runtimeSchemaRevision() string {
+	build, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	revision := ""
+	modified := false
+	for _, setting := range build.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = strings.TrimSpace(setting.Value)
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		revision = "unknown"
+	}
+	if modified {
+		revision += "-dirty"
+	}
+	return revision
 }
 
 func evaluationJudgeModelID(

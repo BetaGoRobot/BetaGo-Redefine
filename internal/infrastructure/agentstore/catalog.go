@@ -22,8 +22,9 @@ func (r *Repository) FindRunChatID(ctx context.Context, runID string) (string, e
 		FROM agent_runs AS runs
 		JOIN agent_sessions AS sessions ON sessions.id = runs.session_id
 		WHERE runs.id = ?
+		  AND runs.tenant_id = ?
 		LIMIT 1`,
-		runID,
+		runID, r.tenant.ID,
 	).Scan(&row)
 	if result.Error != nil {
 		return "", result.Error
@@ -51,6 +52,7 @@ func (r *Repository) ListDueContinuationRunIDs(ctx context.Context, limit int) (
 		 AND sessions.active_run_id = runs.id
 		JOIN agent_steps AS steps ON steps.run_id = runs.id
 		WHERE runs.status IN (?, ?)
+		  AND runs.tenant_id = ?
 		  AND (
 		    (
 		      steps.kind = ?
@@ -104,6 +106,7 @@ func (r *Repository) ListDueContinuationRunIDs(ctx context.Context, limit int) (
 		ORDER BY MIN(COALESCE(steps.lease_expires_at, steps.created_at)), runs.id
 		LIMIT ?`,
 		string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
+		r.tenant.ID,
 		string(agentruntime.StepKindDecide),
 		string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
 		string(agentruntime.StepStatusCompleted),

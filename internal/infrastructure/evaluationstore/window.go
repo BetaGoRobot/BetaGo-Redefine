@@ -30,7 +30,7 @@ func (r *Repository) SaveWindowMessages(
 		return err
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisode(tx, episodeID, true)
+		episode, err := loadEpisode(tx, r.tenant.ID, episodeID, true)
 		if err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func (r *Repository) SaveWindowMessages(
 					conversationeval.ErrInvalidContract,
 				)
 			}
-			if err := insertWindowMessage(tx, episodeID, message); err != nil {
+			if err := insertWindowMessage(tx, r.tenant.ID, episodeID, message); err != nil {
 				return err
 			}
 		}
@@ -86,17 +86,19 @@ func (r *Repository) OpenEpisodesForMessage(
 	}
 	var rows []episodeRow
 	if err := db.WithContext(ctx).Raw(`
-		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		SELECT id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
 		       topic_id, serving_lane, status, pre_window_start, anchor_at,
 		       post_window_end, late_feedback_until, created_at, updated_at
 		FROM evaluation_episodes
 		WHERE chat_id = ?
+		  AND tenant_id = ?
 		  AND status = ?
 		  AND post_window_end IS NULL
 		  AND anchor_at < ?
 		  AND late_feedback_until >= ?
 		ORDER BY anchor_at, id`,
-		chatID, string(conversationeval.EpisodeStatusCollecting), at, at,
+		chatID, r.tenant.ID,
+		string(conversationeval.EpisodeStatusCollecting), at, at,
 	).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -126,7 +128,7 @@ func (r *Repository) ApplyPostWindowObservation(
 	}
 	var mutation conversationeval.PostWindowMutation
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisodeForUpdate(tx, episodeID)
+		episode, err := loadEpisodeForUpdate(tx, r.tenant.ID, episodeID)
 		if err != nil {
 			return err
 		}
@@ -147,7 +149,9 @@ func (r *Repository) ApplyPostWindowObservation(
 			if err := validateWindowMessageForEpisode(stored, episode); err != nil {
 				return err
 			}
-			if err := insertWindowMessage(tx, episode.ID, stored); err != nil {
+			if err := insertWindowMessage(
+				tx, r.tenant.ID, episode.ID, stored,
+			); err != nil {
 				return err
 			}
 		}
@@ -157,8 +161,9 @@ func (r *Repository) ApplyPostWindowObservation(
 		result := tx.Exec(`
 			UPDATE evaluation_episodes
 			SET post_window_end = ?, post_window_reason = ?, updated_at = ?
-			WHERE id = ? AND post_window_end IS NULL`,
-			*window.ClosedAt, string(window.CloseReason), *window.ClosedAt, episode.ID,
+			WHERE id = ? AND tenant_id = ? AND post_window_end IS NULL`,
+			*window.ClosedAt, string(window.CloseReason), *window.ClosedAt,
+			episode.ID, r.tenant.ID,
 		)
 		if result.Error != nil {
 			return result.Error
@@ -166,7 +171,9 @@ func (r *Repository) ApplyPostWindowObservation(
 		if result.RowsAffected != 1 {
 			return conversationeval.ErrInvalidTransition
 		}
-		ready, err := markReadyIfComplete(tx, episode.ID, *window.ClosedAt)
+		ready, err := markReadyIfComplete(
+			tx, r.tenant.ID, episode.ID, *window.ClosedAt,
+		)
 		if err != nil {
 			return err
 		}
@@ -226,11 +233,13 @@ func (r *Repository) closeExpiredPostWindows(
 		SELECT id, anchor_at
 		FROM evaluation_episodes
 		WHERE status = ?
+		  AND tenant_id = ?
 		  AND post_window_end IS NULL
 		  AND anchor_at + (? * interval '1 second') <= ?
 	`
 	args := []any{
 		string(conversationeval.EpisodeStatusCollecting),
+		r.tenant.ID,
 		int64(conversationeval.PostWindowMaxAge / time.Second),
 		now,
 	}
@@ -281,13 +290,18 @@ func (r *Repository) MarkReadyIfComplete(
 	var ready bool
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		ready, err = markReadyIfComplete(tx, episodeID, at)
+		ready, err = markReadyIfComplete(tx, r.tenant.ID, episodeID, at)
 		return err
 	})
 	return ready, err
 }
 
-func markReadyIfComplete(tx *gorm.DB, episodeID string, at time.Time) (bool, error) {
+func markReadyIfComplete(
+	tx *gorm.DB,
+	tenantID string,
+	episodeID string,
+	at time.Time,
+) (bool, error) {
 	var state struct {
 		Status        string
 		PostWindowEnd *time.Time
@@ -298,12 +312,13 @@ func markReadyIfComplete(tx *gorm.DB, episodeID string, at time.Time) (bool, err
 		       (
 		           SELECT count(DISTINCT lane)
 		           FROM evaluation_lane_outputs
-		           WHERE episode_id = e.id AND lane IN (?, ?)
+		           WHERE episode_id = e.id AND tenant_id = ? AND lane IN (?, ?)
 		       ) AS lane_count
 		FROM evaluation_episodes AS e
-		WHERE e.id = ?
+		WHERE e.id = ? AND e.tenant_id = ?
 		FOR UPDATE`,
-		string(conversationeval.LaneControl), string(conversationeval.LaneCandidate), episodeID,
+		tenantID, string(conversationeval.LaneControl), string(conversationeval.LaneCandidate),
+		episodeID, tenantID,
 	).Scan(&state)
 	if result.Error != nil {
 		return false, result.Error
@@ -321,8 +336,9 @@ func markReadyIfComplete(tx *gorm.DB, episodeID string, at time.Time) (bool, err
 	update := tx.Exec(`
 		UPDATE evaluation_episodes
 		SET status = ?, updated_at = ?
-		WHERE id = ? AND status = ?`,
-		string(conversationeval.EpisodeStatusReadyForJudge), at, episodeID,
+		WHERE id = ? AND tenant_id = ? AND status = ?`,
+		string(conversationeval.EpisodeStatusReadyForJudge), at,
+		episodeID, tenantID,
 		string(conversationeval.EpisodeStatusCollecting),
 	)
 	if update.Error != nil {
@@ -331,17 +347,21 @@ func markReadyIfComplete(tx *gorm.DB, episodeID string, at time.Time) (bool, err
 	return update.RowsAffected == 1, nil
 }
 
-func loadEpisodeForUpdate(db *gorm.DB, episodeID string) (conversationeval.Episode, error) {
+func loadEpisodeForUpdate(
+	db *gorm.DB,
+	tenantID string,
+	episodeID string,
+) (conversationeval.Episode, error) {
 	var row episodeRow
 	result := db.Raw(`
-		SELECT id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
+		SELECT id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id, anchor_message_id,
 		       topic_id, serving_lane, status, pre_window_start, anchor_at,
 		       post_window_end, late_feedback_until, created_at, updated_at
 		FROM evaluation_episodes
-		WHERE id = ?
+		WHERE id = ? AND tenant_id = ?
 		LIMIT 1
 		FOR UPDATE`,
-		episodeID,
+		episodeID, tenantID,
 	).Scan(&row)
 	if result.Error != nil {
 		return conversationeval.Episode{}, result.Error
@@ -366,9 +386,9 @@ func loadPostWindow(
 	if err := db.Raw(`
 		SELECT payload_json::text AS payload_json
 		FROM evaluation_episode_messages
-		WHERE episode_id = ? AND position = ?
+		WHERE episode_id = ? AND tenant_id = ? AND position = ?
 		ORDER BY occurred_at, event_id`,
-		episode.ID, string(conversationeval.WindowPositionPost),
+		episode.ID, episode.TenantID, string(conversationeval.WindowPositionPost),
 	).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -390,6 +410,7 @@ func loadPostWindow(
 
 func insertWindowMessage(
 	tx *gorm.DB,
+	tenantID string,
 	episodeID string,
 	message conversationeval.WindowMessage,
 ) error {
@@ -400,10 +421,10 @@ func insertWindowMessage(
 	id := windowMessageID(episodeID, message.Position, message.EventID)
 	result := tx.Exec(`
 		INSERT INTO evaluation_episode_messages (
-			id, episode_id, position, event_id, message_id, sequence, occurred_at, payload_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+			id, tenant_id, episode_id, position, event_id, message_id, sequence, occurred_at, payload_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
 		ON CONFLICT (episode_id, position, event_id) DO NOTHING`,
-		id, episodeID, string(message.Position), message.EventID, message.MessageID,
+		id, tenantID, episodeID, string(message.Position), message.EventID, message.MessageID,
 		message.Sequence, message.OccurredAt, string(payload),
 	)
 	if result.Error != nil {
@@ -422,9 +443,9 @@ func insertWindowMessage(
 	load := tx.Raw(`
 		SELECT id, message_id, sequence, occurred_at, payload_json::text AS payload_json
 		FROM evaluation_episode_messages
-		WHERE episode_id = ? AND position = ? AND event_id = ?
+		WHERE episode_id = ? AND tenant_id = ? AND position = ? AND event_id = ?
 		LIMIT 1`,
-		episodeID, string(message.Position), message.EventID,
+		episodeID, tenantID, string(message.Position), message.EventID,
 	).Scan(&stored)
 	if load.Error != nil {
 		return load.Error

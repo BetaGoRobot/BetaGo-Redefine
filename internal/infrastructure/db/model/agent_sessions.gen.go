@@ -25,6 +25,7 @@ type AgentSession struct {
 	MemoryVersion   int64     `gorm:"column:memory_version;not null" json:"memory_version"`
 	CreatedAt       time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	TenantID        string    `gorm:"column:tenant_id;not null" json:"tenant_id"`
 }
 
 // TableName AgentSession's table name

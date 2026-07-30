@@ -63,6 +63,7 @@ var (
 	RepeatWhitelist          *repeatWhitelist
 	RepeatWordsRate          *repeatWordsRate
 	RepeatWordsRateCustom    *repeatWordsRateCustom
+	RuntimeSchemaMigration   *runtimeSchemaMigration
 	ScheduledTask            *scheduledTask
 	StickerMapping           *stickerMapping
 	TemplateVersion          *templateVersion
@@ -118,6 +119,7 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	RepeatWhitelist = &Q.RepeatWhitelist
 	RepeatWordsRate = &Q.RepeatWordsRate
 	RepeatWordsRateCustom = &Q.RepeatWordsRateCustom
+	RuntimeSchemaMigration = &Q.RuntimeSchemaMigration
 	ScheduledTask = &Q.ScheduledTask
 	StickerMapping = &Q.StickerMapping
 	TemplateVersion = &Q.TemplateVersion
@@ -174,6 +176,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		RepeatWhitelist:          newRepeatWhitelist(db, opts...),
 		RepeatWordsRate:          newRepeatWordsRate(db, opts...),
 		RepeatWordsRateCustom:    newRepeatWordsRateCustom(db, opts...),
+		RuntimeSchemaMigration:   newRuntimeSchemaMigration(db, opts...),
 		ScheduledTask:            newScheduledTask(db, opts...),
 		StickerMapping:           newStickerMapping(db, opts...),
 		TemplateVersion:          newTemplateVersion(db, opts...),
@@ -231,6 +234,7 @@ type Query struct {
 	RepeatWhitelist          repeatWhitelist
 	RepeatWordsRate          repeatWordsRate
 	RepeatWordsRateCustom    repeatWordsRateCustom
+	RuntimeSchemaMigration   runtimeSchemaMigration
 	ScheduledTask            scheduledTask
 	StickerMapping           stickerMapping
 	TemplateVersion          templateVersion
@@ -291,6 +295,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		RepeatWhitelist:          q.RepeatWhitelist.clone(db),
 		RepeatWordsRate:          q.RepeatWordsRate.clone(db),
 		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.clone(db),
+		RuntimeSchemaMigration:   q.RuntimeSchemaMigration.clone(db),
 		ScheduledTask:            q.ScheduledTask.clone(db),
 		StickerMapping:           q.StickerMapping.clone(db),
 		TemplateVersion:          q.TemplateVersion.clone(db),
@@ -356,6 +361,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		RepeatWhitelist:          q.RepeatWhitelist.replaceDB(db),
 		RepeatWordsRate:          q.RepeatWordsRate.replaceDB(db),
 		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.replaceDB(db),
+		RuntimeSchemaMigration:   q.RuntimeSchemaMigration.replaceDB(db),
 		ScheduledTask:            q.ScheduledTask.replaceDB(db),
 		StickerMapping:           q.StickerMapping.replaceDB(db),
 		TemplateVersion:          q.TemplateVersion.replaceDB(db),
@@ -411,6 +417,7 @@ type queryCtx struct {
 	RepeatWhitelist          IRepeatWhitelistDo
 	RepeatWordsRate          IRepeatWordsRateDo
 	RepeatWordsRateCustom    IRepeatWordsRateCustomDo
+	RuntimeSchemaMigration   IRuntimeSchemaMigrationDo
 	ScheduledTask            IScheduledTaskDo
 	StickerMapping           IStickerMappingDo
 	TemplateVersion          ITemplateVersionDo
@@ -466,6 +473,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		RepeatWhitelist:          q.RepeatWhitelist.WithContext(ctx),
 		RepeatWordsRate:          q.RepeatWordsRate.WithContext(ctx),
 		RepeatWordsRateCustom:    q.RepeatWordsRateCustom.WithContext(ctx),
+		RuntimeSchemaMigration:   q.RuntimeSchemaMigration.WithContext(ctx),
 		ScheduledTask:            q.ScheduledTask.WithContext(ctx),
 		StickerMapping:           q.StickerMapping.WithContext(ctx),
 		TemplateVersion:          q.TemplateVersion.WithContext(ctx),

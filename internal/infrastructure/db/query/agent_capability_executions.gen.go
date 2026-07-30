@@ -37,6 +37,7 @@ func newAgentCapabilityExecution(db *gorm.DB, opts ...gen.DOOption) agentCapabil
 	_agentCapabilityExecution.FinishedAt = field.NewTime(tableName, "finished_at")
 	_agentCapabilityExecution.CreatedAt = field.NewTime(tableName, "created_at")
 	_agentCapabilityExecution.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_agentCapabilityExecution.TenantID = field.NewString(tableName, "tenant_id")
 
 	_agentCapabilityExecution.fillFieldMap()
 
@@ -59,6 +60,7 @@ type agentCapabilityExecution struct {
 	FinishedAt     field.Time
 	CreatedAt      field.Time
 	UpdatedAt      field.Time
+	TenantID       field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -87,6 +89,7 @@ func (a *agentCapabilityExecution) updateTableName(table string) *agentCapabilit
 	a.FinishedAt = field.NewTime(table, "finished_at")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
+	a.TenantID = field.NewString(table, "tenant_id")
 
 	a.fillFieldMap()
 
@@ -115,7 +118,7 @@ func (a *agentCapabilityExecution) GetFieldByName(fieldName string) (field.Order
 }
 
 func (a *agentCapabilityExecution) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 12)
+	a.fieldMap = make(map[string]field.Expr, 13)
 	a.fieldMap["idempotency_key"] = a.IdempotencyKey
 	a.fieldMap["run_id"] = a.RunID
 	a.fieldMap["step_id"] = a.StepID
@@ -128,6 +131,7 @@ func (a *agentCapabilityExecution) fillFieldMap() {
 	a.fieldMap["finished_at"] = a.FinishedAt
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
+	a.fieldMap["tenant_id"] = a.TenantID
 }
 
 func (a agentCapabilityExecution) clone(db *gorm.DB) agentCapabilityExecution {
