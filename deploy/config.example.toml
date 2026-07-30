@@ -75,7 +75,8 @@
     patch_worker_count = 1
     patch_lease_seconds = 30
 
-# 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
+# 管理后台 WebUI。addr 为空则禁用；生产环境必须设置高熵 auth_token。
+# 评测读取包含群消息和反馈，未配置 token 时评测 API 会返回 503。
 # WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。
 [webui_config]
     addr = ":8090"

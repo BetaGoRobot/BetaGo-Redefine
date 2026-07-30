@@ -37,6 +37,12 @@
 初始化失败时 `runtime_schema` 或 `tenant_search_schema` 会令启动失败，不会
 静默进入共享或半初始化状态。
 
+启动后的 `/healthz` 会暴露脱敏后的 `tenant_id`、当前 migration
+version/checksum、实际 conversation alias/physical index、schema version
+以及最近一次 bootstrap 结果。alias 已存在时，应用仍会校验 alias 指向、
+mapping `_meta` 和租户字段；指向其他 Bot、mapping 不兼容或缺少
+OpenSearch 建索引/读 mapping/维护 alias 权限都会 fail closed。
+
 ### 两个动态开关均为 false 时部署
 
 两个开关代码默认值都是 `false`。部署前还应确认全局值为 false，且没有遗留 chat=true override。可用现有配置命令设置全局值：
@@ -53,7 +59,9 @@
 - 旧 Schedule 确认/取消卡片仍走 V1 fallback；
 - 新进程正常启动；
 - 如果配置了 `[management_http_config].addr`，`/healthz` 中 `conversation_runtime_worker` 和 `conversation_projection_worker` 可见；
-- OpenSearch 不可用最多使 projection worker 降级，不应让 PostgreSQL callback runtime 不 ready。
+- 启动 bootstrap 完成后发生的短暂 OpenSearch 故障只使 projection worker
+  降级并保留 outbox 重试；启动时无法验证租户 alias/mapping 则 readiness
+  失败。
 
 ### 只为一个测试群启用 runtime
 
@@ -97,6 +105,8 @@ select r.id, r.status, r.waiting_reason, r.revision, r.error_text,
 from betago.agent_runs r
 join betago.agent_sessions s on s.id = r.session_id
 where s.chat_id = '<chat_id>'
+  and r.tenant_id = '<tenant_id>'
+  and s.tenant_id = '<tenant_id>'
 order by r.created_at desc
 limit 20;
 
@@ -105,12 +115,14 @@ select id, "index", kind, status, dedupe_key, attempt_count,
        worker_id, lease_expires_at, error_text, external_ref
 from betago.agent_steps
 where run_id = '<run_id>'
+  and tenant_id = '<tenant_id>'
 order by "index";
 
 -- duplicate callback 应复用同一 idempotency_key；同一个主键只有一条执行记录
 select idempotency_key, capability_name, status, count(*)
 from betago.agent_capability_executions
 where run_id = '<run_id>'
+  and tenant_id = '<tenant_id>'
 group by idempotency_key, capability_name, status;
 
 -- projection 成功或 durable retry 状态
@@ -118,8 +130,10 @@ select id, step_id, index_alias, document_id, status, attempt_count,
        next_attempt_at, worker_id, lease_expires_at, last_error
 from betago.agent_projection_outbox
 where step_id in (
-  select id from betago.agent_steps where run_id = '<run_id>'
+  select id from betago.agent_steps
+  where run_id = '<run_id>' and tenant_id = '<tenant_id>'
 )
+and tenant_id = '<tenant_id>'
 order by created_at;
 ```
 

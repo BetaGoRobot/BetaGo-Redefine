@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/testsupport/pgtest"
 )
 
 func TestEvaluationWorkbenchRejectsUnboundedOrUnscopedQueries(t *testing.T) {
-	store := newEvaluationWorkbenchStore(nil)
+	store := newEvaluationWorkbenchStore(nil, "app-1", "bot-1")
 	now := time.Now().UTC()
 	tests := []EvaluationListQuery{
 		{BotOpenID: "bot-1", From: now.Add(-time.Hour), To: now, Limit: 10},
@@ -66,69 +67,77 @@ func TestEvaluationWorkbenchPostgresBundleAndHumanVersioning(t *testing.T) {
 		).Error; err != nil {
 			t.Fatalf("create %s: %v", table, err)
 		}
+		if err := db.Exec(
+			"ALTER TABLE " + table +
+				" ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''",
+		).Error; err != nil {
+			t.Fatalf("add %s tenant column: %v", table, err)
+		}
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	owner, _ := tenant.New("app-1", "bot-1")
+	foreign, _ := tenant.New("app-2", "bot-2")
 	if err := db.Exec(`
 		INSERT INTO evaluation_cohorts (
-			id, app_id, bot_open_id, chat_ids, start_at, end_at, status,
+			id, tenant_id, app_id, bot_open_id, chat_ids, start_at, end_at, status,
 			serving_lane, control_version, candidate_version,
 			judge_config_json, sampling_policy_json, result_version
 		) VALUES
-		('cohort-1','app-1','bot-1','["chat-1"]'::jsonb,?,?, 'collecting',
+		('cohort-1',?,'app-1','bot-1','["chat-1"]'::jsonb,?,?, 'collecting',
 		 'control','control-v1','candidate-v1','{}'::jsonb,'{}'::jsonb,0),
-		('cohort-foreign','app-2','bot-2','["chat-1"]'::jsonb,?,?, 'collecting',
+		('cohort-foreign',?,'app-2','bot-2','["chat-1"]'::jsonb,?,?, 'collecting',
 		 'control','control-v1','candidate-v1','{}'::jsonb,'{}'::jsonb,0)`,
-		now.Add(-time.Hour), now.Add(time.Hour),
-		now.Add(-time.Hour), now.Add(time.Hour),
+		owner.ID, now.Add(-time.Hour), now.Add(time.Hour),
+		foreign.ID, now.Add(-time.Hour), now.Add(time.Hour),
 	).Error; err != nil {
 		t.Fatal(err)
 	}
-	insertEpisode := func(id, cohort string, anchor time.Time) {
+	insertEpisode := func(id, tenantID, cohort string, anchor time.Time) {
 		t.Helper()
 		if err := db.Exec(`
 			INSERT INTO evaluation_episodes (
-				id, cohort_id, chat_id, run_id, anchor_event_id,
+				id, tenant_id, cohort_id, chat_id, run_id, anchor_event_id,
 				anchor_message_id, topic_id, serving_lane, status,
 				pre_window_start, anchor_at, post_window_end,
 				late_feedback_until, post_window_reason
-			) VALUES (?,?,'chat-1','run-1',?,?,'topic-1','control',
+			) VALUES (?, ?, ?,'chat-1','run-1',?,?,'topic-1','control',
 				'judged',?,?,?,?,'topic_boundary')`,
-			id, cohort, "event-"+id, "message-"+id,
+			id, tenantID, cohort, "event-"+id, "message-"+id,
 			anchor.Add(-time.Minute), anchor, anchor.Add(time.Minute),
 			anchor.Add(24*time.Hour),
 		).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	insertEpisode("episode-1", "cohort-1", now.Add(-time.Minute))
-	insertEpisode("episode-2", "cohort-1", now)
-	insertEpisode("episode-foreign", "cohort-foreign", now)
+	insertEpisode("episode-1", owner.ID, "cohort-1", now.Add(-time.Minute))
+	insertEpisode("episode-2", owner.ID, "cohort-1", now)
+	insertEpisode("episode-foreign", foreign.ID, "cohort-foreign", now)
 	if err := db.Exec(`
 		INSERT INTO evaluation_episode_messages (
-			id, episode_id, position, event_id, message_id, sequence,
+			id, tenant_id, episode_id, position, event_id, message_id, sequence,
 			occurred_at, payload_json
 		) VALUES
-		('window-1','episode-1','pre','event-pre','message-pre',0,?,
+		('window-1',?,'episode-1','pre','event-pre','message-pre',0,?,
 		 '{"content":"before"}'::jsonb),
-		('window-2','episode-1','post','event-post','message-post',1,?,
+		('window-2',?,'episode-1','post','event-post','message-post',1,?,
 		 '{"content":"after"}'::jsonb)`,
-		now.Add(-2*time.Minute), now,
+		owner.ID, now.Add(-2*time.Minute), owner.ID, now,
 	).Error; err != nil {
 		t.Fatal(err)
 	}
 	for _, lane := range []string{"control", "candidate"} {
 		if err := db.Exec(`
 			INSERT INTO evaluation_lane_outputs (
-				id, episode_id, lane, output_mode, activation_json,
+				id, tenant_id, episode_id, lane, output_mode, activation_json,
 				relevance_json, join_decision, topic_relation,
 				context_snapshot_json, excluded_context_json, tool_plan_json,
 				reply_text, latency_ms, token_usage_json, error_json
-			) VALUES (?, 'episode-1', ?, ?, '{"active":true}'::jsonb,
+			) VALUES (?, ?, 'episode-1', ?, ?, '{"active":true}'::jsonb,
 				'{"score":0.9}'::jsonb, ?, 'related',
 				'{"messages":[{"content":"context"}]}'::jsonb, '[]'::jsonb,
 				'{"tools":[]}'::jsonb, ?, 100, '{"total":10}'::jsonb,
 				'{}'::jsonb)`,
-			"output-"+lane, lane,
+			"output-"+lane, owner.ID, lane,
 			map[bool]string{true: "actual", false: "shadow"}[lane == "control"],
 			map[bool]string{true: "join", false: "skip"}[lane == "control"],
 			lane+" reply",
@@ -138,28 +147,28 @@ func TestEvaluationWorkbenchPostgresBundleAndHumanVersioning(t *testing.T) {
 	}
 	if err := db.Exec(`
 		INSERT INTO evaluation_feedback (
-			id, episode_id, target_lane, target_message_id,
+			id, tenant_id, episode_id, target_lane, target_message_id,
 			feedback_event_id, feedback_type, explicitness, content_json,
 			attribution_confidence, occurred_at
-		) VALUES ('feedback-1','episode-1','control','delivered-1',
+		) VALUES ('feedback-1',?,'episode-1','control','delivered-1',
 			'feedback-event','direct_reply','explicit',
-			'{"text":"good"}'::jsonb,95,?)`, now,
+			'{"text":"good"}'::jsonb,95,?)`, owner.ID, now,
 	).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`
 		INSERT INTO evaluation_judgments (
-			id, episode_id, version, source, evaluator_id, winner,
+			id, tenant_id, episode_id, version, source, evaluator_id, winner,
 			scores_json, problem_tags_json, rationale, confidence, needs_review,
 			supersedes_id
-		) VALUES ('judge-1','episode-1',1,'conversation_evaluation_judge',
+		) VALUES ('judge-1',?,'episode-1',1,'conversation_evaluation_judge',
 			'judge-model','candidate','{"candidate":9}'::jsonb,'[]'::jsonb,
-			'candidate is better',80,true,'')`,
+			'candidate is better',80,true,'')`, owner.ID,
 	).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	store := newEvaluationWorkbenchStore(db)
+	store := newEvaluationWorkbenchStore(db, owner.AppID, owner.BotOpenID)
 	page, err := store.ListEpisodes(context.Background(), EvaluationListQuery{
 		AppID: "app-1", BotOpenID: "bot-1",
 		From: now.Add(-time.Hour), To: now.Add(time.Hour), Limit: 1,
@@ -208,6 +217,23 @@ func TestEvaluationWorkbenchPostgresBundleAndHumanVersioning(t *testing.T) {
 		"episode-foreign",
 	); !errors.Is(err, ErrEvaluationNotFound) {
 		t.Fatalf("foreign detail error = %v", err)
+	}
+	if _, err := store.GetEpisode(
+		context.Background(),
+		"app-2",
+		"bot-2",
+		"episode-foreign",
+	); !errors.Is(err, ErrEvaluationNotFound) {
+		t.Fatalf("caller-selected foreign tenant error = %v", err)
+	}
+	if _, err := store.ListEpisodes(
+		context.Background(),
+		EvaluationListQuery{
+			AppID: "app-2", BotOpenID: "bot-2",
+			From: now.Add(-time.Hour), To: now.Add(time.Hour), Limit: 10,
+		},
+	); !errors.Is(err, ErrEvaluationNotFound) {
+		t.Fatalf("caller-selected foreign tenant list error = %v", err)
 	}
 	request := HumanJudgmentRequest{
 		EvaluatorID: "reviewer-1", Winner: "candidate",

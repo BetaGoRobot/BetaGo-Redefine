@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -208,11 +209,17 @@ func (r HumanJudgmentRequest) validate() error {
 }
 
 type evaluationWorkbenchStore struct {
-	db *gorm.DB
+	db     *gorm.DB
+	tenant tenant.Tenant
 }
 
-func newEvaluationWorkbenchStore(db *gorm.DB) *evaluationWorkbenchStore {
-	return &evaluationWorkbenchStore{db: db}
+func newEvaluationWorkbenchStore(
+	db *gorm.DB,
+	appID string,
+	botOpenID string,
+) *evaluationWorkbenchStore {
+	owner, _ := tenant.New(appID, botOpenID)
+	return &evaluationWorkbenchStore{db: db, tenant: owner}
 }
 
 func (s *evaluationWorkbenchStore) ListEpisodes(
@@ -225,8 +232,19 @@ func (s *evaluationWorkbenchStore) ListEpisodes(
 	if s == nil || s.db == nil {
 		return EvaluationEpisodePage{}, ErrEvaluationUnavailable
 	}
-	args := []any{query.AppID, query.BotOpenID, query.From.UTC(), query.To.UTC()}
+	if err := s.requireIdentity(query.AppID, query.BotOpenID); err != nil {
+		return EvaluationEpisodePage{}, err
+	}
+	args := []any{
+		s.tenant.ID,
+		s.tenant.ID,
+		query.AppID,
+		query.BotOpenID,
+		query.From.UTC(),
+		query.To.UTC(),
+	}
 	where := []string{
+		"e.tenant_id = ?", "c.tenant_id = ?",
 		"c.app_id = ?", "c.bot_open_id = ?",
 		"e.anchor_at >= ?", "e.anchor_at < ?",
 	}
@@ -267,20 +285,24 @@ func (s *evaluationWorkbenchStore) ListEpisodes(
 		       COALESCE(h.confidence, j.confidence, 0) AS confidence,
 		       COALESCE(h.needs_review, j.needs_review, false) AS needs_review,
 		       (SELECT count(*) FROM evaluation_feedback f
-		        WHERE f.episode_id = e.id) AS feedback_count
+		        WHERE f.tenant_id = e.tenant_id AND f.episode_id = e.id) AS feedback_count
 		FROM evaluation_episodes e
-		JOIN evaluation_cohorts c ON c.id = e.cohort_id
+		JOIN evaluation_cohorts c
+		  ON c.tenant_id = e.tenant_id AND c.id = e.cohort_id
 		LEFT JOIN evaluation_lane_outputs control
-		  ON control.episode_id = e.id AND control.lane = 'control'
+		  ON control.tenant_id = e.tenant_id
+		  AND control.episode_id = e.id AND control.lane = 'control'
 		LEFT JOIN evaluation_lane_outputs candidate
-		  ON candidate.episode_id = e.id AND candidate.lane = 'candidate'
+		  ON candidate.tenant_id = e.tenant_id
+		  AND candidate.episode_id = e.id AND candidate.lane = 'candidate'
 		LEFT JOIN evaluation_judgments j ON j.id = (
 		  SELECT id FROM evaluation_judgments
-		  WHERE episode_id = e.id AND source = 'conversation_evaluation_judge'
+		  WHERE tenant_id = e.tenant_id AND episode_id = e.id
+		    AND source = 'conversation_evaluation_judge'
 		  ORDER BY version DESC LIMIT 1)
 		LEFT JOIN evaluation_judgments h ON h.id = (
 		  SELECT id FROM evaluation_judgments
-		  WHERE episode_id = e.id AND source = 'human'
+		  WHERE tenant_id = e.tenant_id AND episode_id = e.id AND source = 'human'
 		  ORDER BY version DESC LIMIT 1)
 		WHERE %s
 		ORDER BY e.anchor_at DESC, e.id DESC
@@ -358,15 +380,20 @@ func (s *evaluationWorkbenchStore) GetEpisode(
 	if s == nil || s.db == nil {
 		return nil, ErrEvaluationUnavailable
 	}
+	if err := s.requireIdentity(appID, botOpenID); err != nil {
+		return nil, err
+	}
 	var summary evaluationSummaryRow
 	result := s.db.WithContext(ctx).Raw(`
 		SELECT e.id, e.cohort_id, e.chat_id, e.anchor_message_id, e.topic_id,
 		       e.status, e.serving_lane, e.anchor_at, e.post_window_end,
 		       e.post_window_reason
 		FROM evaluation_episodes e
-		JOIN evaluation_cohorts c ON c.id = e.cohort_id
-		WHERE e.id = ? AND c.app_id = ? AND c.bot_open_id = ?`,
-		episodeID, appID, botOpenID,
+		JOIN evaluation_cohorts c
+		  ON c.tenant_id = e.tenant_id AND c.id = e.cohort_id
+		WHERE e.tenant_id = ? AND c.tenant_id = ?
+		  AND e.id = ? AND c.app_id = ? AND c.bot_open_id = ?`,
+		s.tenant.ID, s.tenant.ID, episodeID, appID, botOpenID,
 	).Scan(&summary)
 	if result.Error != nil {
 		return nil, result.Error
@@ -395,8 +422,10 @@ func (s *evaluationWorkbenchStore) loadEpisodeChildren(
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT id, position, event_id, message_id, sequence, occurred_at,
 		       payload_json::text AS payload_json
-		FROM evaluation_episode_messages WHERE episode_id = ?
-		ORDER BY occurred_at, sequence, event_id`, episodeID).Scan(&messages).Error; err != nil {
+		FROM evaluation_episode_messages
+		WHERE tenant_id = ? AND episode_id = ?
+		ORDER BY occurred_at, sequence, event_id`,
+		s.tenant.ID, episodeID).Scan(&messages).Error; err != nil {
 		return err
 	}
 	detail.Messages = make([]EvaluationMessageView, 0, len(messages))
@@ -425,8 +454,9 @@ func (s *evaluationWorkbenchStore) loadEpisodeChildren(
 		       tool_plan_json::text AS tool_plan_json, reply_text, latency_ms,
 		       token_usage_json::text AS token_usage_json,
 		       error_json::text AS error_json, created_at, updated_at
-		FROM evaluation_lane_outputs WHERE episode_id = ?
-		ORDER BY lane`, episodeID).Scan(&outputs).Error; err != nil {
+		FROM evaluation_lane_outputs
+		WHERE tenant_id = ? AND episode_id = ?
+		ORDER BY lane`, s.tenant.ID, episodeID).Scan(&outputs).Error; err != nil {
 		return err
 	}
 	detail.Outputs = make([]EvaluationLaneOutputView, 0, len(outputs))
@@ -456,8 +486,10 @@ func (s *evaluationWorkbenchStore) loadEpisodeChildren(
 		SELECT id, target_lane, target_message_id, feedback_event_id,
 		       feedback_type, explicitness, content_json::text AS content_json,
 		       attribution_confidence, occurred_at, created_at
-		FROM evaluation_feedback WHERE episode_id = ?
-		ORDER BY occurred_at, id`, episodeID).Scan(&feedback).Error; err != nil {
+		FROM evaluation_feedback
+		WHERE tenant_id = ? AND episode_id = ?
+		ORDER BY occurred_at, id`,
+		s.tenant.ID, episodeID).Scan(&feedback).Error; err != nil {
 		return err
 	}
 	detail.Feedback = make([]EvaluationFeedbackView, 0, len(feedback))
@@ -486,8 +518,10 @@ func (s *evaluationWorkbenchStore) loadEpisodeChildren(
 		       problem_tags_json::text AS problem_tags_json,
 		       rationale, confidence, needs_review, supersedes_id, version,
 		       created_at
-		FROM evaluation_judgments WHERE episode_id = ?
-		ORDER BY source, version`, episodeID).Scan(&judgments).Error; err != nil {
+		FROM evaluation_judgments
+		WHERE tenant_id = ? AND episode_id = ?
+		ORDER BY source, version`,
+		s.tenant.ID, episodeID).Scan(&judgments).Error; err != nil {
 		return err
 	}
 	detail.Judgments = make([]EvaluationJudgmentView, 0, len(judgments))
@@ -528,6 +562,9 @@ func (s *evaluationWorkbenchStore) AppendHumanJudgment(
 	if s == nil || s.db == nil {
 		return nil, ErrEvaluationUnavailable
 	}
+	if err := s.requireIdentity(appID, botOpenID); err != nil {
+		return nil, err
+	}
 	tagsJSON, _ := json.Marshal(request.ProblemTags)
 	var created EvaluationJudgmentView
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -535,9 +572,12 @@ func (s *evaluationWorkbenchStore) AppendHumanJudgment(
 		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Raw(`
 			SELECT e.id
 			FROM evaluation_episodes e
-			JOIN evaluation_cohorts c ON c.id = e.cohort_id
-			WHERE e.id = ? AND c.app_id = ? AND c.bot_open_id = ?
-			FOR UPDATE`, episodeID, appID, botOpenID).Scan(&owned)
+			JOIN evaluation_cohorts c
+			  ON c.tenant_id = e.tenant_id AND c.id = e.cohort_id
+			WHERE e.tenant_id = ? AND c.tenant_id = ?
+			  AND e.id = ? AND c.app_id = ? AND c.bot_open_id = ?
+			FOR UPDATE`,
+			s.tenant.ID, s.tenant.ID, episodeID, appID, botOpenID).Scan(&owned)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -550,9 +590,9 @@ func (s *evaluationWorkbenchStore) AppendHumanJudgment(
 		}
 		previousResult := tx.Raw(`
 			SELECT id, version FROM evaluation_judgments
-			WHERE episode_id = ? AND source = 'human'
+			WHERE tenant_id = ? AND episode_id = ? AND source = 'human'
 			ORDER BY version DESC LIMIT 1
-			FOR UPDATE`, episodeID).Scan(&previous)
+			FOR UPDATE`, s.tenant.ID, episodeID).Scan(&previous)
 		if previousResult.Error != nil {
 			return previousResult.Error
 		}
@@ -569,11 +609,11 @@ func (s *evaluationWorkbenchStore) AppendHumanJudgment(
 		}
 		return tx.Exec(`
 			INSERT INTO evaluation_judgments (
-				id, episode_id, version, source, evaluator_id, winner,
+				id, tenant_id, episode_id, version, source, evaluator_id, winner,
 				scores_json, problem_tags_json, rationale, confidence,
 				needs_review, supersedes_id, created_at
-			) VALUES (?, ?, ?, 'human', ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?)`,
-			created.ID, episodeID, created.Version, created.EvaluatorID,
+			) VALUES (?, ?, ?, ?, 'human', ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?)`,
+			created.ID, s.tenant.ID, episodeID, created.Version, created.EvaluatorID,
 			created.Winner, string(created.ScoresJSON),
 			string(created.ProblemTagsJSON), created.Rationale,
 			created.Confidence, created.NeedsReview, created.SupersedesID,
@@ -584,4 +624,14 @@ func (s *evaluationWorkbenchStore) AppendHumanJudgment(
 		return nil, err
 	}
 	return &created, nil
+}
+
+func (s *evaluationWorkbenchStore) requireIdentity(appID, botOpenID string) error {
+	if s == nil || s.tenant.Validate() != nil {
+		return ErrEvaluationUnavailable
+	}
+	if appID != s.tenant.AppID || botOpenID != s.tenant.BotOpenID {
+		return ErrEvaluationNotFound
+	}
+	return nil
 }

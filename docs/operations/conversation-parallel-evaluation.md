@@ -52,6 +52,17 @@ OpenSearch physical index/write alias。`evaluation_mode=allowlist` 时只采集
 alias、文档字段、文档 ID 和查询 filter 都绑定 `tenant_id`；不会互相消费或
 检索数据。
 
+`evaluation_mode=off` 时不会创建 Evaluation 专属 OpenSearch 资源。
+兼容旧动态开关：没有显式动态 override 时以 TOML 为准；显式动态 `false`
+可紧急关闭，显式动态 `true` 会在首次命中时幂等准备当前 Bot 的 Evaluation
+alias。新部署建议只使用 TOML rollout，这样索引权限或 mapping 错误会在启动
+readiness 阶段直接暴露。
+
+`/healthz` 的 `runtime_schema`、`tenant_search_schema` 和
+`conversation_evaluation` 会暴露脱敏 tenant、migration version/checksum、
+实际 alias/physical index、schema version、evaluation mode/allow count
+以及最近一次 bootstrap 结果。不会返回 OpenSearch 凭据或完整 Bot 身份。
+
 ## 生命周期
 
 ```text
@@ -135,11 +146,13 @@ curl -X POST \
 ```sql
 select status, count(*)
 from betago.evaluation_cohorts
+where tenant_id = '<tenant_id>'
 group by status
 order by status;
 
 select status, count(*)
 from betago.evaluation_episodes
+where tenant_id = '<tenant_id>'
 group by status
 order by status;
 ```
@@ -150,12 +163,14 @@ order by status;
 select count(*) as judge_backlog
 from betago.evaluation_episodes e
 where e.status = 'ready_for_judge'
+  and e.tenant_id = '<tenant_id>'
   and e.post_window_end is not null
   and e.post_window_end <= now()
   and (
       select count(distinct lane)
       from betago.evaluation_lane_outputs o
       where o.episode_id = e.id
+        and o.tenant_id = e.tenant_id
         and o.lane in ('control', 'candidate')
   ) = 2;
 ```
@@ -176,8 +191,10 @@ select
     o.tool_plan_json->>'delivery_message_id' as delivery_message_id,
     o.error_json
 from betago.evaluation_episodes e
-join betago.evaluation_lane_outputs o on o.episode_id = e.id
+join betago.evaluation_lane_outputs o
+  on o.episode_id = e.id and o.tenant_id = e.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by e.anchor_at, e.id, o.lane;
 ```
 
@@ -193,8 +210,10 @@ select
     f.content_json,
     f.occurred_at
 from betago.evaluation_feedback f
-join betago.evaluation_episodes e on e.id = f.episode_id
+join betago.evaluation_episodes e
+  on e.id = f.episode_id and e.tenant_id = f.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by f.occurred_at, f.id;
 
 select
@@ -208,8 +227,10 @@ select
     j.supersedes_id,
     j.created_at
 from betago.evaluation_judgments j
-join betago.evaluation_episodes e on e.id = j.episode_id
+join betago.evaluation_episodes e
+  on e.id = j.episode_id and e.tenant_id = j.tenant_id
 where e.cohort_id = 'cohort_20260730_chat_a'
+  and e.tenant_id = '<tenant_id>'
 order by j.episode_id, j.source, j.version;
 ```
 

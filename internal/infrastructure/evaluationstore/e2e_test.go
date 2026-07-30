@@ -11,7 +11,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/evaluationindex"
 )
 
-func TestConversationEvaluationEndToEnd(t *testing.T) {
+func TestConversationEvaluationZeroTouchEndToEnd(t *testing.T) {
 	fixture := newRepositoryFixture(t)
 	ctx := context.Background()
 	anchorAt := fixture.now
@@ -20,9 +20,6 @@ func TestConversationEvaluationEndToEnd(t *testing.T) {
 		anchorAt.Add(-time.Hour),
 		anchorAt.Add(time.Hour),
 	)
-	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
-		t.Fatalf("CreateCohort() error = %v", err)
-	}
 	preMessages := make([]conversationeval.WindowMessage, 25)
 	for index := range preMessages {
 		preMessages[index] = conversationeval.WindowMessage{
@@ -42,6 +39,10 @@ func TestConversationEvaluationEndToEnd(t *testing.T) {
 			messages: preMessages,
 		},
 		CandidateSubmitter: fixture.repo,
+		EnsureCohortForChat: func(chatID string) bool {
+			return chatID == cohort.ChatIDs[0]
+		},
+		CohortDuration: 6 * time.Hour,
 		Now: func() time.Time {
 			return currentNow
 		},

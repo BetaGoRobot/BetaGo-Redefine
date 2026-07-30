@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/satori/go.uuid"
 	"gorm.io/driver/postgres"
@@ -23,6 +24,10 @@ func TestRunnerBootstrapsEmptySchema(t *testing.T) {
 	}
 	if len(report.Applied) != len(DefaultMigrations()) || len(report.Skipped) != 0 {
 		t.Fatalf("Apply() report = %#v", report)
+	}
+	if report.LatestVersion == "" || report.LatestChecksum == "" ||
+		report.CompletedAt.IsZero() {
+		t.Fatalf("Apply() report lacks readiness metadata: %#v", report)
 	}
 
 	requiredTables := []string{
@@ -49,6 +54,27 @@ func TestRunnerBootstrapsEmptySchema(t *testing.T) {
 	for _, table := range requiredTables[1:] {
 		if !fixture.columnExists(t, table, "tenant_id") {
 			t.Errorf("column %s.%s.tenant_id was not created", fixture.schema, table)
+		} else if !fixture.columnIsNotNull(t, table, "tenant_id") {
+			t.Errorf("column %s.%s.tenant_id is nullable", fixture.schema, table)
+		}
+	}
+	for _, constraint := range []string{
+		"agent_runs_tenant_session_fk",
+		"agent_steps_tenant_run_fk",
+		"agent_capability_tenant_run_fk",
+		"agent_capability_tenant_step_fk",
+		"agent_outbox_tenant_step_fk",
+		"agent_card_tenant_run_fk",
+		"agent_card_tenant_step_fk",
+		"evaluation_episode_tenant_cohort_fk",
+		"evaluation_message_tenant_episode_fk",
+		"evaluation_task_tenant_episode_fk",
+		"evaluation_lane_tenant_episode_fk",
+		"evaluation_feedback_tenant_episode_fk",
+		"evaluation_judgment_tenant_episode_fk",
+	} {
+		if !fixture.constraintExists(t, constraint) {
+			t.Errorf("tenant constraint %s was not created", constraint)
 		}
 	}
 }
@@ -158,6 +184,126 @@ func TestRunnerDoesNotWrapConcurrentIndexInTransaction(t *testing.T) {
 	}
 }
 
+func TestRunnerBackfillsExistingAgentAndEvaluationTenantChains(t *testing.T) {
+	fixture := newRunnerFixture(t)
+	migrations := DefaultMigrations()
+	prepare := fixture.runner()
+	prepare.Migrations = migrations[:7]
+	if _, err := prepare.Apply(context.Background()); err != nil {
+		t.Fatalf("prepare legacy schema: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	inserts := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO agent_sessions (
+			id, app_id, bot_open_id, chat_id, scope_type, scope_id, status
+		) VALUES ('session-legacy', 'app-legacy', 'bot-legacy', 'chat', 'chat', 'scope', 'active')`, nil},
+		{`INSERT INTO agent_runs (
+			id, session_id, trigger_type, status
+		) VALUES ('run-legacy', 'session-legacy', 'message', 'active')`, nil},
+		{`INSERT INTO agent_steps (
+			id, run_id, index, kind, status
+		) VALUES ('step-legacy', 'run-legacy', 0, 'message', 'completed')`, nil},
+		{`INSERT INTO evaluation_cohorts (
+			id, app_id, bot_open_id, chat_ids, start_at, end_at, status,
+			serving_lane, control_version, candidate_version
+		) VALUES (
+			'cohort-legacy', 'app-legacy', 'bot-legacy', '["chat"]'::jsonb,
+			?, ?, 'collecting', 'control', 'control-v1', 'candidate-v1'
+		)`, []any{now.Add(-time.Hour), now.Add(time.Hour)}},
+		{`INSERT INTO evaluation_episodes (
+			id, cohort_id, chat_id, anchor_event_id, anchor_message_id,
+			serving_lane, status, pre_window_start, anchor_at,
+			late_feedback_until
+		) VALUES (
+			'episode-legacy', 'cohort-legacy', 'chat', 'event', 'message',
+			'control', 'collecting', ?, ?, ?
+		)`, []any{now.Add(-time.Minute), now, now.Add(24 * time.Hour)}},
+		{`INSERT INTO evaluation_episode_messages (
+			id, episode_id, position, event_id, message_id, sequence,
+			occurred_at
+		) VALUES (
+			'message-legacy', 'episode-legacy', 'anchor', 'event', 'message',
+			0, ?
+		)`, []any{now}},
+	}
+	for index, insert := range inserts {
+		if err := fixture.db.Exec(insert.sql, insert.args...).Error; err != nil {
+			t.Fatalf("insert legacy row %d: %v", index, err)
+		}
+	}
+	harden := fixture.runner()
+	harden.Migrations = migrations[7:]
+	if _, err := harden.Apply(context.Background()); err != nil {
+		t.Fatalf("harden legacy schema: %v", err)
+	}
+	owner, _ := tenant.New("app-legacy", "bot-legacy")
+	for table, id := range map[string]string{
+		"agent_sessions":              "session-legacy",
+		"agent_runs":                  "run-legacy",
+		"agent_steps":                 "step-legacy",
+		"evaluation_cohorts":          "cohort-legacy",
+		"evaluation_episodes":         "episode-legacy",
+		"evaluation_episode_messages": "message-legacy",
+	} {
+		var tenantID string
+		if err := fixture.db.Table(table).
+			Select("tenant_id").
+			Where("id = ?", id).
+			Scan(&tenantID).Error; err != nil {
+			t.Fatalf("read %s tenant: %v", table, err)
+		}
+		if tenantID != owner.ID {
+			t.Fatalf("%s tenant_id = %q, want %q", table, tenantID, owner.ID)
+		}
+	}
+	report, err := harden.Apply(context.Background())
+	if err != nil {
+		t.Fatalf("restart hardened schema: %v", err)
+	}
+	if len(report.Applied) != 0 || len(report.Skipped) != len(migrations[7:]) {
+		t.Fatalf("restart hardening report = %#v", report)
+	}
+}
+
+func TestRunnerFailsClosedForUnresolvableLegacyTenant(t *testing.T) {
+	fixture := newRunnerFixture(t)
+	migrations := DefaultMigrations()
+	prepare := fixture.runner()
+	prepare.Migrations = migrations[:7]
+	if _, err := prepare.Apply(context.Background()); err != nil {
+		t.Fatalf("prepare legacy schema: %v", err)
+	}
+	if err := fixture.db.Exec(`
+		INSERT INTO agent_sessions (
+			id, app_id, bot_open_id, chat_id, scope_type, scope_id, status
+		) VALUES ('session-unresolved', '', '', 'chat', 'chat', 'scope', 'active')`,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	harden := fixture.runner()
+	harden.Migrations = migrations[7:]
+	if _, err := harden.Apply(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "resolve tenant root") {
+		t.Fatalf("unresolvable tenant hardening error = %v", err)
+	}
+	var nullable string
+	if err := fixture.db.Raw(`
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = ? AND table_name = 'agent_sessions'
+		  AND column_name = 'tenant_id'`,
+		fixture.schema,
+	).Scan(&nullable).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "YES" {
+		t.Fatalf("failed hardening partially applied tenant constraint: is_nullable=%q", nullable)
+	}
+}
+
 type runnerFixture struct {
 	db     *gorm.DB
 	schema string
@@ -173,25 +319,40 @@ func newRunnerFixture(t *testing.T) *runnerFixture {
 	if cfg == nil || cfg.DBConfig == nil {
 		t.Fatal("configured PostgreSQL is unavailable")
 	}
-	database, err := gorm.Open(postgres.Open(cfg.DBConfig.DSN()))
+	rootDatabase, err := gorm.Open(postgres.Open(cfg.DBConfig.DSN()))
 	if err != nil {
 		t.Fatalf("open PostgreSQL: %v", err)
 	}
 	schemaName := "zerotouch_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
-	if err := database.Exec(
+	if err := rootDatabase.Exec(
 		fmt.Sprintf(`CREATE SCHEMA %s`, quoteTestIdent(schemaName)),
 	).Error; err != nil {
 		t.Fatalf("create test schema: %v", err)
 	}
+	testConfig := *cfg.DBConfig
+	testConfig.SearchPath = schemaName
+	testConfig.ApplicationName = schemaName
+	database, err := gorm.Open(postgres.Open(testConfig.DSN()))
+	if err != nil {
+		_ = rootDatabase.Exec(
+			fmt.Sprintf(`DROP SCHEMA %s CASCADE`, quoteTestIdent(schemaName)),
+		).Error
+		t.Fatalf("open isolated PostgreSQL schema: %v", err)
+	}
 	t.Cleanup(func() {
 		sqlDB, sqlErr := database.DB()
 		if sqlErr == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_, _ = sqlDB.ExecContext(
+			_ = sqlDB.Close()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		rootSQL, rootErr := rootDatabase.DB()
+		if rootErr == nil {
+			_, _ = rootSQL.ExecContext(
 				ctx,
 				fmt.Sprintf(`DROP SCHEMA %s CASCADE`, quoteTestIdent(schemaName)),
 			)
+			_ = rootSQL.Close()
 		}
 	})
 	return &runnerFixture{db: database, schema: schemaName}
@@ -237,6 +398,44 @@ func (f *runnerFixture) columnExists(t *testing.T, table, column string) bool {
 		column,
 	).Scan(&exists).Error; err != nil {
 		t.Fatalf("inspect column %s.%s: %v", table, column, err)
+	}
+	return exists
+}
+
+func (f *runnerFixture) columnIsNotNull(
+	t *testing.T,
+	table string,
+	column string,
+) bool {
+	t.Helper()
+	var nullable string
+	if err := f.db.Raw(`
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = ? AND table_name = ? AND column_name = ?`,
+		f.schema,
+		table,
+		column,
+	).Scan(&nullable).Error; err != nil {
+		t.Fatalf("inspect nullability %s.%s: %v", table, column, err)
+	}
+	return nullable == "NO"
+}
+
+func (f *runnerFixture) constraintExists(t *testing.T, name string) bool {
+	t.Helper()
+	var exists bool
+	if err := f.db.Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_constraint c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+			WHERE n.nspname = ? AND c.conname = ?
+		)`,
+		f.schema,
+		name,
+	).Scan(&exists).Error; err != nil {
+		t.Fatalf("inspect constraint %s: %v", name, err)
 	}
 	return exists
 }

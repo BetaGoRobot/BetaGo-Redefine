@@ -76,3 +76,8 @@ docker compose down -v         # 停止并清除 pgdata/redisdata
 
 并轨评测仍以 PostgreSQL 为事实源；OpenSearch 保存可重建的检索快照。文档
 包含 `tenant_id/app_id/bot_open_id`，文档 ID 也带租户前缀。
+
+`evaluation_mode = "off"` 时不会创建评测专属索引。`/healthz` 可核对脱敏
+tenant、migration version/checksum、实际 alias/physical index、schema
+version 和最近一次 bootstrap 结果；alias 指向错误、mapping 不兼容或
+OpenSearch 权限不足都会使启动 readiness 失败。

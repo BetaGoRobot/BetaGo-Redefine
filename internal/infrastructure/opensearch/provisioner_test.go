@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -55,6 +56,17 @@ func TestProvisionerCreatesTenantAliasAndPhysicalIndexAtomically(t *testing.T) {
 			}
 			created = true
 			_, _ = writer.Write([]byte(`{"acknowledged":true}`))
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/"+alias+"-v1/_mapping":
+			encoded, encodeErr := json.Marshal(map[string]any{
+				alias + "-v1": map[string]any{
+					"mappings": createBody["mappings"],
+				},
+			})
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			_, _ = writer.Write(encoded)
 		default:
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
@@ -113,8 +125,28 @@ func TestProvisionerAdoptsExistingSingleTenantAliasWithoutCreating(t *testing.T)
 		if request.Method != http.MethodGet {
 			t.Fatalf("unexpected mutating request: %s %s", request.Method, request.URL.Path)
 		}
-		_, _ = writer.Write([]byte(`{"events-physical":{"aliases":{"` +
-			alias + `":{"is_write_index":true}}}}`))
+		switch request.URL.Path {
+		case "/_alias/" + alias:
+			_, _ = writer.Write([]byte(`{"events-physical":{"aliases":{"` +
+				alias + `":{"is_write_index":true}}}}`))
+		case "/events-physical/_mapping":
+			_, _ = writer.Write([]byte(`{"events-physical":{"mappings":{
+				"_meta":{
+					"schema_name":"events",
+					"schema_version":"events.v1",
+					"tenant_id":"` + owner.ID + `",
+					"app_id":"app-a",
+					"bot_open_id":"bot-a"
+				},
+				"properties":{
+					"tenant_id":{"type":"keyword"},
+					"app_id":{"type":"keyword"},
+					"bot_open_id":{"type":"keyword"}
+				}
+			}}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
 	}))
 	defer server.Close()
 	client, err := opensearchapi.NewClient(opensearchapi.Config{
@@ -135,6 +167,183 @@ func TestProvisionerAdoptsExistingSingleTenantAliasWithoutCreating(t *testing.T)
 	}
 }
 
+func TestProvisionerRejectsExistingAliasWithIncompatibleTenantMapping(t *testing.T) {
+	owner, _ := tenant.New("app-a", "bot-a")
+	alias, _ := owner.IndexAlias("events")
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/_alias/" + alias:
+			_, _ = writer.Write([]byte(`{"events-physical":{"aliases":{"` +
+				alias + `":{"is_write_index":true}}}}`))
+		case "/events-physical/_mapping":
+			_, _ = writer.Write([]byte(`{"events-physical":{"mappings":{
+				"_meta":{
+					"schema_name":"conversation_event",
+					"schema_version":"conversation_event.v1",
+					"tenant_id":"another-tenant",
+					"app_id":"app-a",
+					"bot_open_id":"bot-a"
+				},
+				"properties":{
+					"tenant_id":{"type":"keyword"},
+					"app_id":{"type":"keyword"},
+					"bot_open_id":{"type":"keyword"}
+				}
+			}}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := opensearchapi.NewClient(opensearchapi.Config{
+		Client: opensearch.Config{Addresses: []string{server.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Provisioner{client: client}).EnsureTenantIndex(
+		context.Background(), owner, "events", "conversation_event.v1",
+		[]byte(`{"mappings":{"properties":{}}}`),
+	); err == nil {
+		t.Fatal("EnsureTenantIndex() accepted an alias owned by another tenant")
+	}
+}
+
+func TestProvisionerFailsClosedWhenMappingPermissionIsDenied(t *testing.T) {
+	owner, _ := tenant.New("app-a", "bot-a")
+	alias, _ := owner.IndexAlias("events")
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/_alias/" + alias:
+			_, _ = writer.Write([]byte(`{"events-physical":{"aliases":{"` +
+				alias + `":{"is_write_index":true}}}}`))
+		case "/events-physical/_mapping":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"error":"forbidden"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := opensearchapi.NewClient(opensearchapi.Config{
+		Client: opensearch.Config{Addresses: []string{server.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Provisioner{client: client}).EnsureTenantIndex(
+		context.Background(), owner, "events", "events.v1",
+		[]byte(`{"mappings":{"properties":{}}}`),
+	); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("EnsureTenantIndex() permission error = %v", err)
+	}
+}
+
+func TestValidateMappingSubsetRejectsNestedFieldDrift(t *testing.T) {
+	expected := map[string]any{
+		"dynamic": false,
+		"properties": map[string]any{
+			"control": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reply_text": map[string]any{"type": "text"},
+				},
+			},
+		},
+	}
+	actual := map[string]any{
+		"dynamic": false,
+		"properties": map[string]any{
+			"control": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reply_text": map[string]any{"type": "keyword"},
+				},
+			},
+		},
+	}
+	if err := validateMappingSubset(actual, expected, "mappings"); err == nil ||
+		!strings.Contains(err.Error(), "reply_text.type") {
+		t.Fatalf("nested mapping drift error = %v", err)
+	}
+}
+
+func TestProvisionerAdoptsCompatibleOrphanPhysicalIndex(t *testing.T) {
+	owner, _ := tenant.New("app-a", "bot-a")
+	alias, _ := owner.IndexAlias("events")
+	physical := alias + "-v1"
+	bound := false
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/_alias/"+alias:
+			if !bound {
+				writer.WriteHeader(http.StatusNotFound)
+				_, _ = writer.Write([]byte(`{"status":404}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"` + physical +
+				`":{"aliases":{"` + alias +
+				`":{"is_write_index":true}}}}`))
+		case request.Method == http.MethodPut &&
+			request.URL.Path == "/"+physical:
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":"resource_already_exists_exception"}`))
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/"+physical+"/_mapping":
+			_, _ = writer.Write([]byte(`{"` + physical + `":{"mappings":{
+				"_meta":{
+					"schema_name":"events",
+					"schema_version":"events.v1",
+					"tenant_id":"` + owner.ID + `",
+					"app_id":"app-a",
+					"bot_open_id":"bot-a"
+				},
+				"properties":{
+					"tenant_id":{"type":"keyword"},
+					"app_id":{"type":"keyword"},
+					"bot_open_id":{"type":"keyword"}
+				}
+			}}}`))
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/_aliases":
+			bound = true
+			_, _ = writer.Write([]byte(`{"acknowledged":true}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := opensearchapi.NewClient(opensearchapi.Config{
+		Client: opensearch.Config{Addresses: []string{server.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := (&Provisioner{client: client}).EnsureTenantIndex(
+		context.Background(), owner, "events", "events.v1",
+		[]byte(`{"mappings":{"properties":{}}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bound || resource.Alias != alias || resource.PhysicalIndex != physical {
+		t.Fatalf("adopted resource = %#v, bound=%v", resource, bound)
+	}
+}
+
 func TestProvisionerIsIdempotentAndSeparatesBotsSharingBaseName(t *testing.T) {
 	owners := make([]tenant.Tenant, 0, 2)
 	for _, identity := range [][2]string{
@@ -150,6 +359,7 @@ func TestProvisionerIsIdempotentAndSeparatesBotsSharingBaseName(t *testing.T) {
 
 	var mutex sync.Mutex
 	aliasTargets := make(map[string]string)
+	indexMappings := make(map[string]json.RawMessage)
 	createCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
@@ -159,6 +369,26 @@ func TestProvisionerIsIdempotentAndSeparatesBotsSharingBaseName(t *testing.T) {
 		defer mutex.Unlock()
 		writer.Header().Set("Content-Type", "application/json")
 		if request.Method == http.MethodGet {
+			if strings.HasSuffix(request.URL.Path, "/_mapping") {
+				physical := strings.TrimSuffix(
+					strings.TrimPrefix(request.URL.Path, "/"),
+					"/_mapping",
+				)
+				mapping, exists := indexMappings[physical]
+				if !exists {
+					writer.WriteHeader(http.StatusNotFound)
+					_, _ = writer.Write([]byte(`{"status":404}`))
+					return
+				}
+				encoded, encodeErr := json.Marshal(map[string]any{
+					physical: map[string]any{"mappings": mapping},
+				})
+				if encodeErr != nil {
+					t.Fatal(encodeErr)
+				}
+				_, _ = writer.Write(encoded)
+				return
+			}
 			alias := request.URL.Path[len("/_alias/"):]
 			physical, exists := aliasTargets[alias]
 			if !exists {
@@ -175,7 +405,8 @@ func TestProvisionerIsIdempotentAndSeparatesBotsSharingBaseName(t *testing.T) {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
 		var body struct {
-			Aliases map[string]json.RawMessage `json:"aliases"`
+			Aliases  map[string]json.RawMessage `json:"aliases"`
+			Mappings json.RawMessage            `json:"mappings"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
@@ -184,6 +415,7 @@ func TestProvisionerIsIdempotentAndSeparatesBotsSharingBaseName(t *testing.T) {
 			t.Fatalf("aliases = %#v", body.Aliases)
 		}
 		physical := request.URL.Path[1:]
+		indexMappings[physical] = append(json.RawMessage(nil), body.Mappings...)
 		for alias := range body.Aliases {
 			if _, exists := aliasTargets[alias]; exists {
 				t.Fatalf("duplicate create for alias %q", alias)

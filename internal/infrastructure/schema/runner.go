@@ -24,10 +24,11 @@ type Runner struct {
 }
 
 type Report struct {
-	Applied       []string
-	Skipped       []string
-	LatestVersion string
-	CompletedAt   time.Time
+	Applied        []string
+	Skipped        []string
+	LatestVersion  string
+	LatestChecksum string
+	CompletedAt    time.Time
 }
 
 func (r *Runner) Apply(ctx context.Context) (report Report, resultErr error) {
@@ -104,6 +105,7 @@ func (r *Runner) Apply(ctx context.Context) (report Report, resultErr error) {
 			}
 			report.Skipped = append(report.Skipped, migration.Version)
 			report.LatestVersion = migration.Version
+			report.LatestChecksum = checksum
 			continue
 		}
 		rendered := renderMigrationSQL(migration.SQL, r.Schema)
@@ -146,6 +148,7 @@ func (r *Runner) Apply(ctx context.Context) (report Report, resultErr error) {
 		}
 		report.Applied = append(report.Applied, migration.Version)
 		report.LatestVersion = migration.Version
+		report.LatestChecksum = checksum
 	}
 	report.CompletedAt = time.Now().UTC()
 	return report, nil

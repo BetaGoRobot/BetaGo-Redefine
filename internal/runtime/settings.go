@@ -111,6 +111,10 @@ func (s EvaluationSettings) Allows(chatID string) bool {
 	}
 }
 
+func (s EvaluationSettings) AllowedChatCount() int {
+	return len(s.allowedChats)
+}
+
 func AgentCardRolloutSettings(cfg *infraConfig.BaseConfig) (AgentCardSettings, error) {
 	settings := AgentCardSettings{
 		Mode:              AgentCardModeOff,
