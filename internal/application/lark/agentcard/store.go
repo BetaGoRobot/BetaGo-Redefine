@@ -202,13 +202,35 @@ type GetSurfaceRequest struct {
 }
 
 type ClaimActionRequest struct {
-	RunID            string
-	InteractionID    string
-	ExpectedRevision int64
-	ActionID         string
-	ActorOpenID      string
-	SourceRef        string
-	ClaimedAt        time.Time
+	RunID                string
+	StepID               string
+	InteractionID        string
+	ExpectedRevision     int64
+	ActionID             string
+	ActorOpenID          string
+	MessageID            string
+	ChatID               string
+	PresentedToken       string
+	InteractionKind      string
+	ContinueAgent        bool
+	SourceRef            string
+	EventID              string
+	FormValues           map[string]any
+	InputName            string
+	InputValue           string
+	SelectedOption       string
+	SelectedOptions      []string
+	Checked              bool
+	CompiledJSONRedacted string
+	DesiredStatus        SurfaceStatus
+	ClaimedAt            time.Time
+}
+
+type ActionClaim struct {
+	Surface    *CardSurface
+	Descriptor TrustedActionDescriptor
+	Outcome    json.RawMessage
+	Replay     bool
 }
 
 type TransitionSurfaceRequest struct {
@@ -262,7 +284,7 @@ type Store interface {
 	MarkSurfaceSendFailed(context.Context, MarkSurfaceSendFailedRequest) (*CardSurface, error)
 	MarkSurfaceSendUncertain(context.Context, MarkSurfaceSendUncertainRequest) (*CardSurface, error)
 	GetByInteraction(context.Context, GetSurfaceRequest) (*CardSurface, error)
-	ClaimAction(context.Context, ClaimActionRequest) (*CardSurface, error)
+	ClaimAction(context.Context, ClaimActionRequest) (*ActionClaim, error)
 	TransitionSurface(context.Context, TransitionSurfaceRequest) (*CardSurface, error)
 	ClaimPatch(context.Context, ClaimPatchRequest) (*CardSurface, error)
 	CompletePatch(context.Context, CompletePatchRequest) error

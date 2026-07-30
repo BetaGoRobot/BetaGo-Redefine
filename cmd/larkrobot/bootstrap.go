@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
@@ -21,6 +22,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -60,7 +63,7 @@ type appComponents struct {
 	conversationRuntime          *agentruntime.Runtime
 	conversationWorker           *agentruntime.ConversationWorker
 	conversationProjectionWorker *agentruntime.ProjectionWorker
-	continuationDispatcher       *appcardaction.ScheduleInteractionDispatcher
+	continuationDispatcher       *appcardaction.ContinuationChain
 	messageProcessor             *messages.MessageHandler
 	feedbackRouter               *conversationeval.FeedbackRouter
 	handlerSet                   *larkiface.HandlerSet
@@ -136,11 +139,17 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	if err != nil {
 		return nil, err
 	}
-	continuationDispatcher, err := appcardaction.NewScheduleInteractionDispatcher(
+	scheduleContinuationDispatcher, err := appcardaction.NewScheduleInteractionDispatcher(
 		conversationRuntime,
 		appcardaction.ScheduleInteractionDispatcherOptions{
 			IndexAlias: appruntime.ConversationEventIndex(cfg),
 		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	continuationDispatcher, err := appcardaction.NewContinuationChain(
+		scheduleContinuationDispatcher,
 	)
 	if err != nil {
 		return nil, err
@@ -366,6 +375,20 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
 			repository := agentstore.NewRepository(db.DB())
+			agentCardRepository := agentcardstore.NewRepository(db.DB())
+			agentCardCallback, err := agentcard.NewCallbackDispatcher(
+				agentcard.CallbackDispatcherOptions{
+					Store:    agentCardRepository,
+					Compiler: agentcardcompiler.New(),
+					Now:      func() time.Time { return time.Now().UTC() },
+				},
+			)
+			if err != nil {
+				return err
+			}
+			if err := components.continuationDispatcher.Add(agentCardCallback); err != nil {
+				return err
+			}
 			appID := ""
 			botOpenID := ""
 			tokenSecret := ""

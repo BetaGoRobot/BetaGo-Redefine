@@ -1,10 +1,13 @@
 package agentcardstore
 
 import (
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+var _ agentcard.Store = (*Repository)(nil)
 
 type Repository struct {
 	db *gorm.DB

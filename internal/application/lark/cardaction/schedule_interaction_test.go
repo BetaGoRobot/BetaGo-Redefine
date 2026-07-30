@@ -3,6 +3,7 @@ package cardaction
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -121,17 +122,12 @@ func TestScheduleInteractionDispatcherCompatibilityBoundary(t *testing.T) {
 		t.Fatal("CanHandle(legacy schedule edit) = true, want V1 fallback")
 	}
 
-	partial, _ := cardactionproto.Parse(actionEvent(map[string]any{
+	_, partialErr := cardactionproto.Parse(actionEvent(map[string]any{
 		cardactionproto.ActionField: cardactionproto.ActionScheduleEditConfirm,
 		cardactionproto.RunIDField:  "run-1",
 	}))
-	if !dispatcher.CanHandle(partial) {
-		t.Fatal("CanHandle(partial runtime envelope) = false, must not fall back")
-	}
-	if _, err := dispatcher.Dispatch(context.Background(), ContinuationRequest{
-		Event: actionEvent(partial.Value), Action: partial,
-	}); err == nil {
-		t.Fatal("Dispatch(partial runtime envelope) error = nil")
+	if !errors.Is(partialErr, cardactionproto.ErrPartialRuntimeEnvelope) {
+		t.Fatalf("Parse(partial runtime envelope) error = %v", partialErr)
 	}
 
 	other, _ := cardactionproto.Parse(runtimeActionEvent("unrelated.action"))

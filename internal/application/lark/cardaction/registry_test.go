@@ -130,45 +130,49 @@ func TestDispatchWithOptionsPrefersRuntimeContinuationOverV1(t *testing.T) {
 	}
 }
 
-func TestDispatchWithOptionsFallsBackToV1WhenContinuationCannotHandle(t *testing.T) {
+func TestDispatchWithOptionsNeverFallsBackForCompleteRuntimeEnvelope(t *testing.T) {
 	actionName := uniqueActionName("runtime_fallback")
-	want := InfoToast("legacy")
+	v1Called := false
 	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
-		return want, nil
+		v1Called = true
+		return InfoToast("legacy"), nil
 	})
 	continuation := &continuationDispatcherFake{canHandle: false}
 
-	got, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
+	_, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
 		Continuation: continuation,
 	})
-	if err != nil {
+	if !errors.Is(err, ErrUnhandledRuntimeAction) ||
+		!IsContinuationDispatchError(err) {
 		t.Fatalf("DispatchWithOptions() error = %v", err)
-	}
-	if got != want {
-		t.Fatalf("DispatchWithOptions() response = %#v, want V1 response %#v", got, want)
 	}
 	_, dispatchCalls, _ := continuation.snapshot()
 	if dispatchCalls != 0 {
 		t.Fatalf("continuation Dispatch() calls = %d, want 0", dispatchCalls)
 	}
+	if v1Called {
+		t.Fatal("V1 handler ran for a complete runtime envelope")
+	}
 }
 
-func TestDispatchWithOptionsTreatsTypedNilContinuationAsUnconfigured(t *testing.T) {
+func TestDispatchWithOptionsRejectsRuntimeEnvelopeWithoutContinuation(t *testing.T) {
 	actionName := uniqueActionName("typed_nil")
-	want := InfoToast("legacy")
+	v1Called := false
 	registerSyncForTest(t, actionName, func(context.Context, *Context) (*callback.CardActionTriggerResponse, error) {
-		return want, nil
+		v1Called = true
+		return InfoToast("legacy"), nil
 	})
 	var continuation *continuationDispatcherFake
 
-	got, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
+	_, err := DispatchWithOptions(context.Background(), runtimeActionEvent(actionName), nil, DispatchOptions{
 		Continuation: continuation,
 	})
-	if err != nil {
+	if !errors.Is(err, ErrContinuationDispatcherRequired) ||
+		!IsContinuationDispatchError(err) {
 		t.Fatalf("DispatchWithOptions() error = %v", err)
 	}
-	if got != want {
-		t.Fatalf("DispatchWithOptions() response = %#v, want V1 response %#v", got, want)
+	if v1Called {
+		t.Fatal("V1 handler ran without a runtime continuation dispatcher")
 	}
 }
 
@@ -289,6 +293,40 @@ func TestDispatchPreservesAsyncV1Behavior(t *testing.T) {
 	case <-taskStarted:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for V1 async task")
+	}
+}
+
+func TestContinuationChainRoutesWithoutChangingDispatcherOrder(t *testing.T) {
+	first := &continuationDispatcherFake{canHandle: false}
+	want := InfoToast("second")
+	second := &continuationDispatcherFake{canHandle: true, response: want}
+	chain, err := NewContinuationChain(first, second)
+	if err != nil {
+		t.Fatalf("NewContinuationChain() error = %v", err)
+	}
+	event := runtimeActionEvent(uniqueActionName("chain"))
+	action, err := cardactionproto.Parse(event)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	response, err := chain.Dispatch(
+		context.Background(),
+		ContinuationRequest{Event: event, Action: action},
+	)
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if response != want {
+		t.Fatalf("response = %#v, want %#v", response, want)
+	}
+	_, firstDispatch, _ := first.snapshot()
+	_, secondDispatch, _ := second.snapshot()
+	if firstDispatch != 0 || secondDispatch != 1 {
+		t.Fatalf(
+			"dispatch calls first=%d second=%d",
+			firstDispatch,
+			secondDispatch,
+		)
 	}
 }
 

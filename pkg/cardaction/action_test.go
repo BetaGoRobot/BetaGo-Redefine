@@ -1,11 +1,89 @@
 package cardaction
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
+
+func TestParseAgentRuntimeEnvelopeAndCallbackInputs(t *testing.T) {
+	event := newCardActionEvent(map[string]any{
+		ActionField: ActionAgentRuntimeResume, RunIDField: "run-1",
+		StepIDField: "step-1", InteractionIDField: "interaction-1",
+		RevisionField: float64(3), TokenField: "opaque-token",
+		InteractionKindField: "agent_card", ContinueAgentField: true,
+		ActionIDField: "confirm",
+	}, map[string]any{
+		"reason": "looks good", "choices": []any{"a", "b"},
+	})
+	event.Event.Action.Tag = "multi_select_static"
+	event.Event.Action.Name = "choices"
+	event.Event.Action.InputValue = "typed"
+	event.Event.Action.Option = "a"
+	event.Event.Action.Options = []string{"a", "b"}
+	event.Event.Action.Checked = true
+	event.Event.Context = &callback.Context{
+		OpenMessageID: "om-card", OpenChatID: "oc-chat",
+	}
+	event.Event.Operator = &callback.Operator{OpenID: "ou-actor"}
+	event.EventV2Base = &larkevent.EventV2Base{
+		Header: &larkevent.EventHeader{EventID: "event-1"},
+	}
+
+	parsed, err := Parse(event)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	wantRuntime := &RuntimeEnvelope{
+		RunID: "run-1", StepID: "step-1", InteractionID: "interaction-1",
+		Revision: 3, Token: "opaque-token", InteractionKind: "agent_card",
+		ContinueAgent: true, ActionID: "confirm",
+	}
+	if !reflect.DeepEqual(parsed.Runtime, wantRuntime) {
+		t.Fatalf("runtime = %#v, want %#v", parsed.Runtime, wantRuntime)
+	}
+	if parsed.Source.EventID != "event-1" ||
+		parsed.Source.MessageID != "om-card" ||
+		parsed.Source.ChatID != "oc-chat" ||
+		parsed.Source.OperatorOpenID != "ou-actor" {
+		t.Fatalf("source = %#v", parsed.Source)
+	}
+	if parsed.InputValue != "typed" || parsed.SelectedOption() != "a" ||
+		!reflect.DeepEqual(parsed.Options, []string{"a", "b"}) ||
+		!parsed.Checked ||
+		!reflect.DeepEqual(parsed.FormValue["choices"], []any{"a", "b"}) {
+		t.Fatalf("callback inputs = %#v", parsed)
+	}
+}
+
+func TestParseRejectsPartialOrMalformedRuntimeEnvelope(t *testing.T) {
+	partial := map[string]any{
+		ActionField: ActionAgentRuntimeResume,
+		RunIDField:  "run-1",
+	}
+	if _, err := Parse(newCardActionEvent(partial, nil)); !errors.Is(
+		err,
+		ErrPartialRuntimeEnvelope,
+	) {
+		t.Fatalf("partial Parse() error = %v", err)
+	}
+	malformed := map[string]any{
+		ActionField: ActionAgentRuntimeResume, RunIDField: "run-1",
+		StepIDField: "step-1", InteractionIDField: "interaction-1",
+		RevisionField: 1.5, TokenField: "token",
+		InteractionKindField: "agent_card", ContinueAgentField: true,
+		ActionIDField: "confirm",
+	}
+	if _, err := Parse(newCardActionEvent(malformed, nil)); !errors.Is(
+		err,
+		ErrMalformedRuntimeEnvelope,
+	) {
+		t.Fatalf("malformed Parse() error = %v", err)
+	}
+}
 
 func TestRuntimeEnvelopeFieldNamesAndValues(t *testing.T) {
 	value := map[string]any{

@@ -13,7 +13,9 @@ import (
 )
 
 var (
-	ErrUnhandledAction = errors.New("unhandled card action")
+	ErrUnhandledAction                = errors.New("unhandled card action")
+	ErrContinuationDispatcherRequired = errors.New("runtime card action requires a continuation dispatcher")
+	ErrUnhandledRuntimeAction         = errors.New("runtime card action is not handled by the continuation dispatcher")
 	// ErrContinuationDispatcherPanic identifies a recovered continuation panic
 	// without retaining or exposing the panic payload.
 	ErrContinuationDispatcherPanic = errors.New("card continuation dispatcher panic")
@@ -82,6 +84,75 @@ type DispatchOptions struct {
 	Continuation ContinuationDispatcher
 }
 
+type ContinuationChain struct {
+	mu          sync.RWMutex
+	dispatchers []ContinuationDispatcher
+}
+
+func NewContinuationChain(
+	dispatchers ...ContinuationDispatcher,
+) (*ContinuationChain, error) {
+	chain := &ContinuationChain{
+		dispatchers: make([]ContinuationDispatcher, 0, len(dispatchers)),
+	}
+	for _, dispatcher := range dispatchers {
+		if isNilContinuationDispatcher(dispatcher) {
+			return nil, errors.New("continuation chain contains a nil dispatcher")
+		}
+		chain.dispatchers = append(chain.dispatchers, dispatcher)
+	}
+	if len(chain.dispatchers) == 0 {
+		return nil, errors.New("continuation chain requires at least one dispatcher")
+	}
+	return chain, nil
+}
+
+func (c *ContinuationChain) CanHandle(action *cardactionproto.Parsed) bool {
+	if c == nil {
+		return false
+	}
+	for _, dispatcher := range c.snapshot() {
+		if dispatcher.CanHandle(action) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *ContinuationChain) Dispatch(
+	ctx context.Context,
+	request ContinuationRequest,
+) (*callback.CardActionTriggerResponse, error) {
+	if c == nil {
+		return nil, ErrUnhandledRuntimeAction
+	}
+	for _, dispatcher := range c.snapshot() {
+		if dispatcher.CanHandle(request.Action) {
+			return dispatcher.Dispatch(ctx, request)
+		}
+	}
+	return nil, ErrUnhandledRuntimeAction
+}
+
+func (c *ContinuationChain) Add(dispatcher ContinuationDispatcher) error {
+	if c == nil {
+		return errors.New("continuation chain is nil")
+	}
+	if isNilContinuationDispatcher(dispatcher) {
+		return errors.New("cannot add a nil continuation dispatcher")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dispatchers = append(c.dispatchers, dispatcher)
+	return nil
+}
+
+func (c *ContinuationChain) snapshot() []ContinuationDispatcher {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]ContinuationDispatcher(nil), c.dispatchers...)
+}
+
 type entry struct {
 	mode  Mode
 	sync  SyncHandler
@@ -140,7 +211,12 @@ func DispatchWithOptions(
 		return nil, err
 	}
 
-	if !isNilContinuationDispatcher(options.Continuation) {
+	if action.Runtime != nil {
+		if isNilContinuationDispatcher(options.Continuation) {
+			return nil, &ContinuationDispatchError{
+				cause: ErrContinuationDispatcherRequired,
+			}
+		}
 		handled, response, continuationErr := tryContinuation(ctx, options.Continuation, ContinuationRequest{
 			Event:  event,
 			Meta:   metaData,
@@ -149,6 +225,7 @@ func DispatchWithOptions(
 		if handled {
 			return response, continuationErr
 		}
+		return nil, &ContinuationDispatchError{cause: ErrUnhandledRuntimeAction}
 	}
 
 	actionCtx := &Context{

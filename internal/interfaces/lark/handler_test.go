@@ -278,6 +278,7 @@ func TestCardActionHandlerEmitsFeedbackThroughExecutor(t *testing.T) {
 		return appcardaction.InfoToast("ok"), nil
 	})
 	event := newCardActionEvent("delivered-card", actionName)
+	event.Event.Action.Value[cardaction.TokenField] = "plaintext-callback-token"
 	event.EventV2Base = &larkevent.EventV2Base{Header: &larkevent.EventHeader{
 		EventID: "card-feedback-event", CreateTime: "1785398400123",
 	}}
@@ -299,6 +300,10 @@ func TestCardActionHandlerEmitsFeedbackThroughExecutor(t *testing.T) {
 		got.ActionName != actionName ||
 		got.OccurredAt != time.UnixMilli(1785398400123) {
 		t.Fatalf("card feedback = %#v", got)
+	}
+	if strings.Contains(string(got.Value), "plaintext-callback-token") ||
+		!strings.Contains(string(got.Value), "[REDACTED]") {
+		t.Fatalf("card feedback leaked callback token: %s", got.Value)
 	}
 }
 

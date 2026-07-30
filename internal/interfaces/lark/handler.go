@@ -282,7 +282,14 @@ func cardFeedbackFromEvent(
 			actionName = strings.TrimSpace(value)
 		}
 	}
-	value, err := json.Marshal(cardAction.Event.Action.Value)
+	auditValue := make(map[string]any, len(cardAction.Event.Action.Value))
+	for key, item := range cardAction.Event.Action.Value {
+		auditValue[key] = item
+	}
+	if _, exists := auditValue[cardactionproto.TokenField]; exists {
+		auditValue[cardactionproto.TokenField] = "[REDACTED]"
+	}
+	value, err := json.Marshal(auditValue)
 	if err != nil {
 		return conversationeval.CardFeedback{}, fmt.Errorf("marshal card action value: %w", err)
 	}
