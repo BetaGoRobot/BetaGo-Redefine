@@ -97,6 +97,7 @@ func lifecycleElement(state agentcard.LifecycleState) any {
 		agentcard.LifecycleSubmitted:  "已提交，正在进入处理队列。",
 		agentcard.LifecycleProcessing: "处理中，请稍候。",
 		agentcard.LifecycleResolved:   "已完成。",
+		agentcard.LifecycleCancelled:  "已取消。",
 		agentcard.LifecycleExpired:    "该交互已过期。",
 		agentcard.LifecycleFailed:     "处理失败，请稍后重试。",
 	}[state]

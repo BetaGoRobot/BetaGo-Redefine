@@ -15,6 +15,7 @@ const (
 	LifecycleSubmitted   LifecycleState = "submitted"
 	LifecycleProcessing  LifecycleState = "processing"
 	LifecycleResolved    LifecycleState = "resolved"
+	LifecycleCancelled   LifecycleState = "cancelled"
 	LifecycleExpired     LifecycleState = "expired"
 	LifecycleFailed      LifecycleState = "failed"
 )
@@ -173,7 +174,7 @@ func cloneSpec(spec CardSpec) (CardSpec, error) {
 func validLifecycleState(state LifecycleState) bool {
 	switch state {
 	case LifecycleInteractive, LifecycleSubmitted, LifecycleProcessing,
-		LifecycleResolved, LifecycleExpired, LifecycleFailed:
+		LifecycleResolved, LifecycleCancelled, LifecycleExpired, LifecycleFailed:
 		return true
 	default:
 		return false

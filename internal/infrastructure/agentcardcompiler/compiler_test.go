@@ -59,6 +59,7 @@ func TestCompilerLifecycleSurfacesRemoveActions(t *testing.T) {
 		agentcard.LifecycleSubmitted,
 		agentcard.LifecycleProcessing,
 		agentcard.LifecycleResolved,
+		agentcard.LifecycleCancelled,
 		agentcard.LifecycleExpired,
 		agentcard.LifecycleFailed,
 	} {

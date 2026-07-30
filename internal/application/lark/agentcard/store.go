@@ -188,6 +188,14 @@ type MarkSurfaceSendFailedRequest struct {
 	FailedAt         time.Time
 }
 
+type MarkSurfaceSendUncertainRequest struct {
+	SurfaceID        string
+	ExpectedRevision int64
+	SourceRef        string
+	ErrorCode        string
+	ObservedAt       time.Time
+}
+
 type GetSurfaceRequest struct {
 	RunID         string
 	InteractionID string
@@ -204,20 +212,23 @@ type ClaimActionRequest struct {
 }
 
 type TransitionSurfaceRequest struct {
-	SurfaceID        string
-	ExpectedRevision int64
-	From             SurfaceStatus
-	To               SurfaceStatus
-	ActionID         string
-	ActorOpenID      string
-	SourceRef        string
-	OccurredAt       time.Time
+	SurfaceID            string
+	ExpectedRevision     int64
+	From                 SurfaceStatus
+	To                   SurfaceStatus
+	CompiledJSONRedacted string
+	ActionID             string
+	ActorOpenID          string
+	SourceRef            string
+	OccurredAt           time.Time
 }
 
 type ClaimPatchRequest struct {
-	WorkerID string
-	LeaseTTL time.Duration
-	Now      time.Time
+	SurfaceID        string
+	ExpectedRevision int64
+	WorkerID         string
+	LeaseTTL         time.Duration
+	Now              time.Time
 }
 
 type CompletePatchRequest struct {
@@ -249,6 +260,7 @@ type Store interface {
 	InteractionStore
 	MarkSurfaceSent(context.Context, MarkSurfaceSentRequest) (*CardSurface, error)
 	MarkSurfaceSendFailed(context.Context, MarkSurfaceSendFailedRequest) (*CardSurface, error)
+	MarkSurfaceSendUncertain(context.Context, MarkSurfaceSendUncertainRequest) (*CardSurface, error)
 	GetByInteraction(context.Context, GetSurfaceRequest) (*CardSurface, error)
 	ClaimAction(context.Context, ClaimActionRequest) (*CardSurface, error)
 	TransitionSurface(context.Context, TransitionSurfaceRequest) (*CardSurface, error)
