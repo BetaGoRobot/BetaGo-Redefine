@@ -14,29 +14,32 @@ import (
 
 // Server 持有 WebUI 的依赖并构建 HTTP 路由。
 type Server struct {
-	cfg           ConfigManager
-	chats         ChatService
-	memberCount   MemberCountFunc
-	memberList    MemberListFunc
-	messageStats  MessageStatsFunc
-	recentChatIDs RecentChatIDsFunc
-	chatActivity  ChatActivityFunc
-	chatKeywords  ChatKeywordsFunc
-	chatCommands  ChatCommandsFunc
-	chatTopSenders ChatTopSendersFunc
+	cfg              ConfigManager
+	chats            ChatService
+	memberCount      MemberCountFunc
+	memberList       MemberListFunc
+	messageStats     MessageStatsFunc
+	recentChatIDs    RecentChatIDsFunc
+	chatActivity     ChatActivityFunc
+	chatKeywords     ChatKeywordsFunc
+	chatCommands     ChatCommandsFunc
+	chatTopSenders   ChatTopSendersFunc
 	chatMessageKinds ChatMessageKindsFunc
 	chatCommandTrend ChatCommandTrendFunc
 	chatTopMentions  ChatTopMentionsFunc
 	chatTopicTrend   ChatTopicTrendFunc
-	now           func() time.Time
+	now              func() time.Time
 
 	authToken   string
 	corsOrigins []string
 	store       *tokenStatsStore
 
-	robotName string
-	instance  string
-	botID     string
+	robotName   string
+	instance    string
+	botID       string
+	appID       string
+	botOpenID   string
+	evaluations EvaluationWorkbench
 }
 
 // NewServer 根据注入的依赖构造 Server。db 由模块在 Init 阶段惰性解析后传入。
@@ -58,28 +61,35 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 			botID = "lark:" + inst
 		}
 	}
+	evaluations := opts.EvaluationWorkbench
+	if evaluations == nil && db != nil {
+		evaluations = newEvaluationWorkbenchStore(db)
+	}
 	return &Server{
-		cfg:           opts.ConfigManager,
-		chats:         opts.ChatService,
-		memberCount:   opts.MemberCount,
-		memberList:    opts.MemberList,
-		messageStats:  opts.MessageStats,
-		recentChatIDs: opts.RecentChatIDs,
-		chatActivity:  opts.ChatActivity,
-		chatKeywords:  opts.ChatKeywords,
-		chatCommands:  opts.ChatCommands,
-		chatTopSenders: opts.ChatTopSenders,
+		cfg:              opts.ConfigManager,
+		chats:            opts.ChatService,
+		memberCount:      opts.MemberCount,
+		memberList:       opts.MemberList,
+		messageStats:     opts.MessageStats,
+		recentChatIDs:    opts.RecentChatIDs,
+		chatActivity:     opts.ChatActivity,
+		chatKeywords:     opts.ChatKeywords,
+		chatCommands:     opts.ChatCommands,
+		chatTopSenders:   opts.ChatTopSenders,
 		chatMessageKinds: opts.ChatMessageKinds,
 		chatCommandTrend: opts.ChatCommandTrend,
-		chatTopMentions: opts.ChatTopMentions,
-		chatTopicTrend: opts.ChatTopicTrend,
-		now:           now,
-		authToken:     authToken,
-		corsOrigins:   corsOrigins,
-		store:         newTokenStatsStore(db, botID),
-		robotName:     strings.TrimSpace(opts.RobotName),
-		instance:      strings.TrimSpace(opts.Instance),
-		botID:         botID,
+		chatTopMentions:  opts.ChatTopMentions,
+		chatTopicTrend:   opts.ChatTopicTrend,
+		now:              now,
+		authToken:        authToken,
+		corsOrigins:      corsOrigins,
+		store:            newTokenStatsStore(db, botID),
+		robotName:        strings.TrimSpace(opts.RobotName),
+		instance:         strings.TrimSpace(opts.Instance),
+		botID:            botID,
+		appID:            strings.TrimSpace(opts.AppID),
+		botOpenID:        strings.TrimSpace(opts.BotOpenID),
+		evaluations:      evaluations,
 	}
 }
 
@@ -105,6 +115,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{chatID}/configs", s.handleListConfigs)
 	mux.HandleFunc("PUT /api/chats/{chatID}/configs/{key}", s.handleSetConfig)
 	mux.HandleFunc("DELETE /api/chats/{chatID}/configs/{key}", s.handleDeleteConfig)
+	mux.HandleFunc("GET /api/evaluations", s.handleListEvaluations)
+	mux.HandleFunc("GET /api/evaluations/{episodeID}", s.handleGetEvaluation)
+	mux.HandleFunc("POST /api/evaluations/{episodeID}/judgments", s.handleAppendEvaluationJudgment)
 
 	return s.withMetrics(s.withCORS(s.withAuth(mux)))
 }
