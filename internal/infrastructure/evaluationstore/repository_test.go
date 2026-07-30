@@ -28,6 +28,68 @@ type repositoryFixture struct {
 	now             time.Time
 }
 
+func TestConversationEvaluationRuntimeMigrationContract(t *testing.T) {
+	configPath := os.Getenv("BETAGO_CONFIG_PATH")
+	if configPath == "" {
+		t.Skip("BETAGO_CONFIG_PATH is not set; skipping PostgreSQL migration contract test")
+	}
+	cfg, err := config.LoadFileE(configPath)
+	if err != nil || cfg == nil || cfg.DBConfig == nil {
+		t.Skip("PostgreSQL test configuration is unavailable")
+	}
+	rootDB, err := gorm.Open(postgres.Open(cfg.DBConfig.DSN()), &gorm.Config{})
+	if err != nil {
+		t.Skip("PostgreSQL is unavailable")
+	}
+	sqlDB, err := rootDB.DB()
+	if err != nil {
+		t.Fatalf("get PostgreSQL handle: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := sqlDB.PingContext(context.Background()); err != nil {
+		t.Skip("PostgreSQL is unavailable")
+	}
+
+	var installed struct {
+		EpisodeMessages  bool
+		CandidateTasks   bool
+		PostWindowReason bool
+		TimelineIndex    bool
+		ChatIDsIndex     bool
+		ClaimIndex       bool
+		ReclaimIndex     bool
+	}
+	if err := rootDB.Raw(`
+		SELECT
+			to_regclass('betago.evaluation_episode_messages') IS NOT NULL
+				AS episode_messages,
+			to_regclass('betago.evaluation_candidate_tasks') IS NOT NULL
+				AS candidate_tasks,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'betago'
+				  AND table_name = 'evaluation_episodes'
+				  AND column_name = 'post_window_reason'
+			) AS post_window_reason,
+			to_regclass('betago.idx_eval_episode_message_timeline') IS NOT NULL
+				AS timeline_index,
+			to_regclass('betago.idx_eval_cohort_chat_ids') IS NOT NULL
+				AS chat_ids_index,
+			to_regclass('betago.idx_eval_candidate_task_claim') IS NOT NULL
+				AS claim_index,
+			to_regclass('betago.idx_eval_candidate_task_reclaim') IS NOT NULL
+				AS reclaim_index`,
+	).Scan(&installed).Error; err != nil {
+		t.Fatalf("inspect conversation evaluation runtime migration: %v", err)
+	}
+	if !installed.EpisodeMessages || !installed.CandidateTasks ||
+		!installed.PostWindowReason || !installed.TimelineIndex ||
+		!installed.ChatIDsIndex || !installed.ClaimIndex || !installed.ReclaimIndex {
+		t.Fatalf("conversation evaluation runtime migration is incomplete: %+v", installed)
+	}
+}
+
 func newRepositoryFixture(t *testing.T) *repositoryFixture {
 	t.Helper()
 	configPath := os.Getenv("BETAGO_CONFIG_PATH")
