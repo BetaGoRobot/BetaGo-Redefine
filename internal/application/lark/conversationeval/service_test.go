@@ -27,6 +27,38 @@ func TestServiceNoActiveCohortAvoidsCaptureAndPreWindowLoad(t *testing.T) {
 	}
 }
 
+func TestServiceAutoCreatesRollingCohortWhenConfigured(t *testing.T) {
+	input := serviceMessageInput()
+	repository := &serviceRepositoryFake{}
+	pre := &preWindowSourceFake{}
+	service, err := NewService(ServiceOptions{
+		Repository: repository, PreWindowSource: pre,
+		CandidateSubmitter: &candidateSubmitterFake{},
+		EnsureCohortForChat: func(chatID string) bool {
+			return chatID == input.ChatID
+		},
+		CohortDuration: 6 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := service.BeginMessage(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.ensureCalls != 1 ||
+		repository.ensureDuration != 6*time.Hour {
+		t.Fatalf(
+			"ensure calls/duration = %d/%s, want 1/6h",
+			repository.ensureCalls,
+			repository.ensureDuration,
+		)
+	}
+	if !session.Enabled() {
+		t.Fatal("auto-created cohort did not enable capture")
+	}
+}
+
 func TestServiceCollectsEpisodeAndSubmitsCandidate(t *testing.T) {
 	input := serviceMessageInput()
 	cohort := serviceCohort(input)
@@ -199,7 +231,21 @@ type serviceRepositoryFake struct {
 		at     time.Time
 		reason PostWindowCloseReason
 	}
-	readyCalls int
+	readyCalls     int
+	ensureCalls    int
+	ensureDuration time.Duration
+}
+
+func (r *serviceRepositoryFake) EnsureRollingCohort(
+	_ context.Context,
+	input MessageInput,
+	duration time.Duration,
+) (Cohort, error) {
+	r.ensureCalls++
+	r.ensureDuration = duration
+	cohort := serviceCohort(input)
+	r.cohorts = append(r.cohorts, cohort)
+	return cohort, nil
 }
 
 func (r *serviceRepositoryFake) CreateCohort(context.Context, Cohort) error { return nil }

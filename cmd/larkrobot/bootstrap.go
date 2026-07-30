@@ -74,6 +74,7 @@ type appComponents struct {
 	handlerSet                   *larkiface.HandlerSet
 	eventDispatcher              *dispatcher.EventDispatcher
 	agentCardSettings            appruntime.AgentCardSettings
+	evaluationSettings           appruntime.EvaluationSettings
 	agentCardPatchReconciler     *agentcard.PatchReconciler
 }
 
@@ -125,6 +126,10 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		return nil, errors.New("lark config is nil")
 	}
 	agentCardSettings, err := appruntime.AgentCardRolloutSettings(cfg)
+	if err != nil {
+		return nil, err
+	}
+	evaluationSettings, err := appruntime.EvaluationRolloutSettings(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +209,12 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 				}
 				return agentCardSettings.CanSend(chatID)
 			},
+			EvaluationEnabled: func(ctx context.Context, chatID string) bool {
+				return evaluationSettings.Allows(chatID) ||
+					appconfig.IsConversationParallelEvaluationEnabled(
+						ctx, chatID, "",
+					)
+			},
 		},
 	)
 	reactionProcessor := reaction.NewReactionProcessorWithOptions(reaction.ProcessorOptions{
@@ -231,6 +242,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		handlerSet:                   handlerSet,
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
 		agentCardSettings:            agentCardSettings,
+		evaluationSettings:           evaluationSettings,
 	}, nil
 }
 
@@ -734,7 +746,7 @@ func addConversationEvaluationModule(
 	var repository *evaluationstore.Repository
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "conversation_evaluation",
-		Critical: false,
+		Critical: components.evaluationSettings.Enabled(),
 		Start: func(ctx context.Context) error {
 			owner, err := tenant.New(
 				cfg.LarkConfig.AppID,
@@ -749,7 +761,9 @@ func addConversationEvaluationModule(
 			}
 			service, err := conversationeval.NewService(conversationeval.ServiceOptions{
 				Repository: repository, PreWindowSource: evaluationwindow.OpenSearchPreWindowSource{},
-				CandidateSubmitter: repository,
+				CandidateSubmitter:  repository,
+				EnsureCohortForChat: components.evaluationSettings.Allows,
+				CohortDuration:      components.evaluationSettings.CohortDuration,
 			})
 			if err != nil {
 				return err

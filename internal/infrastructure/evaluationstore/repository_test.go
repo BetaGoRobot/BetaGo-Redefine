@@ -66,6 +66,45 @@ func TestRepositoryDoesNotReadOrTransitionAnotherTenantCohort(t *testing.T) {
 	}
 }
 
+func TestEnsureRollingCohortIsAutomaticAndIdempotent(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	input := conversationeval.MessageInput{
+		AppID:      repositoryTestTenant.AppID,
+		BotOpenID:  repositoryTestTenant.BotOpenID,
+		ChatID:     "chat_" + fixture.suffix,
+		EventID:    "event_" + fixture.suffix,
+		MessageID:  "message_" + fixture.suffix,
+		OccurredAt: fixture.now,
+	}
+	first, err := fixture.repo.EnsureRollingCohort(
+		context.Background(), input, 6*time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := fixture.repo.EnsureRollingCohort(
+		context.Background(), input, 6*time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID ||
+		first.TenantID != repositoryTestTenant.ID ||
+		len(first.ChatIDs) != 1 ||
+		first.ChatIDs[0] != input.ChatID {
+		t.Fatalf("rolling cohorts are not canonical: first=%#v second=%#v", first, second)
+	}
+	var count int64
+	if err := fixture.db.Table("evaluation_cohorts").
+		Where("id = ?", first.ID).
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("rolling cohort rows = %d, want 1", count)
+	}
+}
+
 var repositoryTestTenant, _ = tenant.New("app-evaluation-test", "bot-evaluation-test")
 
 func mustNewTestRepository(database *gorm.DB) *Repository {
