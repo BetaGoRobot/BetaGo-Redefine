@@ -7,6 +7,7 @@ import (
 
 type capabilityExecutionContext struct {
 	CapabilityName           string
+	IdempotencyKey           string
 	SuppressCompatibleOutput bool
 }
 
@@ -17,11 +18,26 @@ func WithCapabilityExecution(ctx context.Context, capabilityName string) context
 }
 
 func WithCapabilityExecutionOptions(ctx context.Context, capabilityName string, suppressCompatibleOutput bool) context.Context {
+	return WithCapabilityExecutionIdentity(
+		ctx,
+		capabilityName,
+		"",
+		suppressCompatibleOutput,
+	)
+}
+
+func WithCapabilityExecutionIdentity(
+	ctx context.Context,
+	capabilityName string,
+	idempotencyKey string,
+	suppressCompatibleOutput bool,
+) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, capabilityExecutionContextKey{}, capabilityExecutionContext{
 		CapabilityName:           strings.TrimSpace(capabilityName),
+		IdempotencyKey:           strings.TrimSpace(idempotencyKey),
 		SuppressCompatibleOutput: suppressCompatibleOutput,
 	})
 }
@@ -32,6 +48,14 @@ func CapabilityExecutionName(ctx context.Context) string {
 		return ""
 	}
 	return state.CapabilityName
+}
+
+func CapabilityExecutionIdempotencyKey(ctx context.Context) string {
+	state := capabilityExecutionState(ctx)
+	if state == nil {
+		return ""
+	}
+	return state.IdempotencyKey
 }
 
 func ShouldSuppressCompatibleOutput(ctx context.Context) bool {

@@ -39,8 +39,9 @@ type Binder struct {
 }
 
 type TrustedCapability struct {
-	name  string
-	input json.RawMessage
+	name    string
+	version string
+	input   json.RawMessage
 }
 
 func NewTrustedCapability(name string, input json.RawMessage) (TrustedCapability, error) {
@@ -59,7 +60,8 @@ func NewTrustedCapability(name string, input json.RawMessage) (TrustedCapability
 		return TrustedCapability{}, fmt.Errorf("capability input must be a JSON object")
 	}
 	return TrustedCapability{
-		name: name, input: append(json.RawMessage(nil), input...),
+		name: name, version: "v1",
+		input: append(json.RawMessage(nil), input...),
 	}, nil
 }
 
@@ -254,10 +256,34 @@ func buildBindings(
 		}
 		if hasCapability {
 			descriptor.CapabilityName = capability.name
+			descriptor.CapabilityVersion = capability.version
 			descriptor.CapabilityInput = append(
 				json.RawMessage(nil),
 				capability.input...,
 			)
+			descriptor.IdempotencyKey = stableCapabilityExecutionKey(
+				request.RunID,
+				ids.interactionID,
+				action.ID,
+				capability.name,
+				capability.version,
+			)
+			descriptor.PermissionContext = CapabilityPermissionContext{
+				Scope: capability.name, ChatID: request.ChatID,
+			}
+			descriptor.ActorPolicy = ActorPolicy{Mode: request.ActorPolicy}
+			if descriptor.ActorPolicy.Mode == "" {
+				descriptor.ActorPolicy.Mode = ActorPolicyOwner
+			}
+			if descriptor.ActorPolicy.Mode == ActorPolicyOwner {
+				descriptor.ActorPolicy.OpenID = request.ExpectedActorOpenID
+				descriptor.PermissionContext.ActorOpenID = request.ExpectedActorOpenID
+			}
+			descriptor.ResultProjectionPolicy = ResultProjectionPolicy{
+				ContinueAgent:       true,
+				SuccessSurfaceState: SurfaceStatusResolved,
+				FailureSurfaceState: SurfaceStatusFailed,
+			}
 		}
 		descriptors = append(descriptors, descriptor)
 		bindings[action.ID] = RuntimeBinding{
@@ -286,6 +312,16 @@ func buildBindings(
 		return descriptors[i].ActionID < descriptors[j].ActionID
 	})
 	return descriptors, bindings, nil
+}
+
+func stableCapabilityExecutionKey(
+	runID, interactionID, actionID, name, version string,
+) string {
+	sum := sha256.Sum256([]byte(
+		runID + "\x00" + interactionID + "\x00" + actionID +
+			"\x00" + name + "\x00" + version,
+	))
+	return "cardcap_" + hex.EncodeToString(sum[:])
 }
 
 type derivedIdentifiers struct {

@@ -483,6 +483,61 @@ func TestRepairContinuationRequeuesExpiredRunningStage(t *testing.T) {
 	}
 }
 
+func TestRepairContinuationRequeuesExpiredCapabilityStage(t *testing.T) {
+	f := newRepositoryFixture(t, agentruntime.RunStatusRunning)
+	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", f.sessionID).
+		Update("active_run_id", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	source := &agentruntime.AgentStep{
+		Index: 1, Kind: agentruntime.StepKindCardAction,
+		Status:     agentruntime.StepStatusCompleted,
+		InputJSON:  `{"version":1,"action_id":"confirm"}`,
+		OutputJSON: `{}`, ExternalRef: "interaction-1",
+		DedupeKey: "card:event",
+	}
+	f.createStep(t, source)
+	capability := &agentruntime.AgentStep{
+		Index: 2, Kind: agentruntime.StepKindCapabilityCall,
+		Status:         agentruntime.StepStatusRunning,
+		CapabilityName: "schedule.update",
+		InputJSON: `{
+			"version":1,
+			"source_step_id":"` + source.ID + `",
+			"interaction_id":"interaction-1",
+			"action_id":"confirm",
+			"descriptor":{"capability_name":"schedule.update"}
+		}`,
+		OutputJSON: `{}`, ExternalRef: "interaction-1",
+		DedupeKey: "card:event:capability",
+		WorkerID:  "lost-capability-worker", AttemptCount: 1,
+		LeaseExpiresAt: now.Add(-time.Minute),
+	}
+	f.createStep(t, capability)
+	if err := f.repo.RepairContinuation(
+		context.Background(),
+		f.runID,
+		now,
+	); err != nil {
+		t.Fatalf("RepairContinuation() error = %v", err)
+	}
+	var repaired model.AgentStep
+	var run model.AgentRun
+	if err := f.db.First(&repaired, "id = ?", capability.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.First(&run, "id = ?", f.runID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if repaired.Status != string(agentruntime.StepStatusQueued) ||
+		repaired.WorkerID != "" ||
+		!repaired.LeaseExpiresAt.Equal(now) ||
+		run.Status != string(agentruntime.RunStatusQueued) {
+		t.Fatalf("repaired capability=%#v run=%#v", repaired, run)
+	}
+}
+
 func TestRepairContinuationNoOpsForCompletedDecisionWithFutureReplyRetry(t *testing.T) {
 	f, _, request := newScheduleInteractionFixture(t)
 	if _, err := f.repo.ClaimScheduleInteraction(context.Background(), request); err != nil {

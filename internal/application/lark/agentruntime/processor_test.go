@@ -145,6 +145,53 @@ type continuationGeneratorFake struct {
 	err      error
 }
 
+type capabilityStepProcessorFake struct {
+	calls int
+	step  *AgentStep
+	lease StepLease
+	err   error
+}
+
+func (f *capabilityStepProcessorFake) ProcessCapabilityStep(
+	_ context.Context,
+	step *AgentStep,
+	lease StepLease,
+) error {
+	f.calls++
+	f.step = cloneStep(step)
+	f.lease = lease
+	return f.err
+}
+
+func TestContinuationProcessorDelegatesClaimedCapabilityStep(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{
+			ID: "step-capability", RunID: "run-1",
+			Kind: StepKindCapabilityCall, Status: StepStatusQueued,
+			CapabilityName: "schedule.update", InputJSON: `{"version":1}`,
+		},
+	}
+	capability := &capabilityStepProcessorFake{}
+	processor := NewContinuationProcessor(
+		store,
+		&continuationGeneratorFake{},
+		&replyDelivererFake{},
+		ContinuationProcessorConfig{
+			WorkerID: "worker-1", LeaseTTL: time.Minute, RetryDelay: time.Second,
+			CapabilityProcessor: capability,
+		},
+	)
+	if err := processor.ProcessRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+	if capability.calls != 1 || capability.step.Kind != StepKindCapabilityCall ||
+		capability.lease.StepID != "step-capability" ||
+		capability.lease.WorkerID != "worker-1" ||
+		capability.lease.AttemptCount != 1 {
+		t.Fatalf("capability step=%#v lease=%#v", capability.step, capability.lease)
+	}
+}
+
 func (f *continuationGeneratorFake) Generate(context.Context, ContinuationContext) (TurnDecision, error) {
 	f.calls++
 	return f.decision, f.err
@@ -324,5 +371,35 @@ func TestDisabledContinuationProcessorSuppressesAlreadyQueuedReply(t *testing.T)
 	}
 	if store.suppressed != 1 || store.deliveryMessage != "" {
 		t.Fatalf("suppressed=%d delivery=%q, want suppressed reply", store.suppressed, store.deliveryMessage)
+	}
+}
+
+func TestDisabledContinuationProcessorStillExecutesConfirmedCapability(t *testing.T) {
+	store := &continuationStoreFake{
+		step: &AgentStep{
+			ID: "step-capability", RunID: "run-1",
+			Kind: StepKindCapabilityCall, Status: StepStatusQueued,
+			CapabilityName: "schedule.update", InputJSON: `{"version":1}`,
+		},
+	}
+	capability := &capabilityStepProcessorFake{}
+	processor := NewDisabledContinuationProcessor(
+		store,
+		DisabledContinuationProcessorConfig{
+			WorkerID: "worker-disabled", LeaseTTL: time.Minute,
+			CapabilityProcessor: capability,
+		},
+	)
+	if err := processor.ProcessRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("ProcessRun() error = %v", err)
+	}
+	if capability.calls != 1 ||
+		capability.step.Kind != StepKindCapabilityCall ||
+		capability.lease.StepID != "step-capability" {
+		t.Fatalf(
+			"capability step=%#v lease=%#v",
+			capability.step,
+			capability.lease,
+		)
 	}
 }

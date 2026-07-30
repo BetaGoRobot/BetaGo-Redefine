@@ -77,6 +77,24 @@ func (r *Repository) ClaimContinuationStep(
 			      AND steps.input_json->>'idempotency_key' = steps.id
 			      AND steps.dedupe_key LIKE '%:continuation:reply'
 			    )
+			    OR (
+			      steps.kind = ?
+			      AND steps.input_json->>'version' = '1'
+			      AND COALESCE(steps.input_json->>'source_step_id', '') <> ''
+			      AND COALESCE(steps.input_json->>'interaction_id', '') <> ''
+			      AND COALESCE(steps.input_json->>'action_id', '') <> ''
+			      AND steps.input_json->'descriptor'->>'capability_name' = steps.capability_name
+			      AND steps.dedupe_key LIKE '%:capability'
+			      AND EXISTS (
+			        SELECT 1 FROM agent_steps AS source
+			        WHERE source.id = steps.input_json->>'source_step_id'
+			          AND source.run_id = steps.run_id
+			          AND source.index < steps.index
+			          AND source.kind = ?
+			          AND source.status = ?
+			          AND source.external_ref = steps.external_ref
+			      )
+			    )
 			  )
 			  AND steps.status = ?
 			  AND (steps.lease_expires_at IS NULL OR steps.lease_expires_at <= ?)
@@ -93,6 +111,9 @@ func (r *Repository) ClaimContinuationStep(
 			claim.RunID, string(agentruntime.StepKindDecide),
 			string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
 			string(agentruntime.StepStatusCompleted), string(agentruntime.StepKindReply),
+			string(agentruntime.StepKindCapabilityCall),
+			string(agentruntime.StepKindCardAction),
+			string(agentruntime.StepStatusCompleted),
 			string(agentruntime.StepStatusQueued), claim.Now,
 			string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
 			string(agentruntime.StepStatusQueued), string(agentruntime.StepStatusRunning),
@@ -156,7 +177,9 @@ func (r *Repository) ValidateContinuationLease(ctx context.Context, lease agentr
 			step.Status != string(agentruntime.StepStatusRunning) ||
 			step.WorkerID != lease.WorkerID || step.AttemptCount != lease.AttemptCount ||
 			!step.LeaseExpiresAt.After(lease.Now) ||
-			(step.Kind != string(agentruntime.StepKindDecide) && step.Kind != string(agentruntime.StepKindReply)) {
+			(step.Kind != string(agentruntime.StepKindDecide) &&
+				step.Kind != string(agentruntime.StepKindReply) &&
+				step.Kind != string(agentruntime.StepKindCapabilityCall)) {
 			return agentruntime.ErrLeaseLost
 		}
 		result := tx.Model(&model.AgentStep{}).
@@ -584,6 +607,25 @@ func (r *Repository) RepairContinuation(ctx context.Context, runID string, now t
 		if run.Status != string(agentruntime.RunStatusQueued) &&
 			run.Status != string(agentruntime.RunStatusRunning) {
 			return nil
+		}
+		var expiredCapability model.AgentStep
+		expiredCapabilityErr := tx.Where(
+			"run_id = ? AND kind = ? AND status = ? AND lease_expires_at <= ?",
+			runID,
+			string(agentruntime.StepKindCapabilityCall),
+			string(agentruntime.StepStatusRunning),
+			now,
+		).Order(`"index"`).First(&expiredCapability).Error
+		if expiredCapabilityErr == nil {
+			return requeueExpiredContinuationTx(
+				tx,
+				&run,
+				&expiredCapability,
+				now,
+			)
+		}
+		if !errors.Is(expiredCapabilityErr, gorm.ErrRecordNotFound) {
+			return expiredCapabilityErr
 		}
 		var anchor model.AgentStep
 		if err := tx.Where("run_id = ? AND kind IN ?", runID, []string{

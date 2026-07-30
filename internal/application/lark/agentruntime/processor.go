@@ -58,11 +58,16 @@ type ContinuationStore interface {
 }
 
 type ContinuationProcessorConfig struct {
-	WorkerID        string
-	LeaseTTL        time.Duration
-	RetryDelay      time.Duration
-	RecentStepLimit int
-	Now             func() time.Time
+	WorkerID            string
+	LeaseTTL            time.Duration
+	RetryDelay          time.Duration
+	RecentStepLimit     int
+	CapabilityProcessor CapabilityStepProcessor
+	Now                 func() time.Time
+}
+
+type CapabilityStepProcessor interface {
+	ProcessCapabilityStep(context.Context, *AgentStep, StepLease) error
 }
 
 type ContinuationProcessor struct {
@@ -130,6 +135,21 @@ func (p *ContinuationProcessor) processClaimed(ctx context.Context, step *AgentS
 		return err
 	}
 	switch step.Kind {
+	case StepKindCapabilityCall:
+		if isNilRuntimeDependency(p.config.CapabilityProcessor) {
+			return p.retry(ctx, step, errors.New("capability continuation processor is not configured"))
+		}
+		if err := p.config.CapabilityProcessor.ProcessCapabilityStep(
+			ctx,
+			step,
+			lease,
+		); err != nil {
+			if errors.Is(err, ErrLeaseLost) {
+				return err
+			}
+			return p.retry(ctx, step, err)
+		}
+		return nil
 	case StepKindDecide:
 		input, err := p.store.LoadContinuationContext(ctx, LoadContinuationContextRequest{
 			RunID: step.RunID, AnchorStepID: step.ID, RecentLimit: p.config.RecentStepLimit,

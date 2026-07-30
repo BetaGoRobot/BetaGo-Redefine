@@ -22,6 +22,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcapability"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
@@ -376,10 +377,11 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
 			repository := agentstore.NewRepository(db.DB())
 			agentCardRepository := agentcardstore.NewRepository(db.DB())
+			agentCardCompiler := agentcardcompiler.New()
 			agentCardCallback, err := agentcard.NewCallbackDispatcher(
 				agentcard.CallbackDispatcherOptions{
 					Store:    agentCardRepository,
-					Compiler: agentcardcompiler.New(),
+					Compiler: agentCardCompiler,
 					Now:      func() time.Time { return time.Now().UTC() },
 				},
 			)
@@ -387,6 +389,24 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 				return err
 			}
 			if err := components.continuationDispatcher.Add(agentCardCallback); err != nil {
+				return err
+			}
+			agentCardCapabilityExecutor, err :=
+				agentcardcapability.NewAgentCardCapabilityExecutor(
+					handlers.BuildRuntimeCapabilityTools(),
+				)
+			if err != nil {
+				return err
+			}
+			agentCardCapabilityService, err := agentcard.NewCapabilityService(
+				agentcard.CapabilityServiceOptions{
+					Store:    agentCardRepository,
+					Executor: agentCardCapabilityExecutor,
+					Compiler: agentCardCompiler,
+					Now:      func() time.Time { return time.Now().UTC() },
+				},
+			)
+			if err != nil {
 				return err
 			}
 			appID := ""
@@ -414,17 +434,19 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 				generator,
 				agentruntime.NewLarkReplyDeliverer(),
 				agentruntime.ContinuationProcessorConfig{
-					WorkerID:        "conversation-enabled-" + uuid.NewV4().String(),
-					LeaseTTL:        conversationContinuationLeaseTTL,
-					RetryDelay:      5 * time.Second,
-					RecentStepLimit: 32,
+					WorkerID:            "conversation-enabled-" + uuid.NewV4().String(),
+					LeaseTTL:            conversationContinuationLeaseTTL,
+					RetryDelay:          5 * time.Second,
+					RecentStepLimit:     32,
+					CapabilityProcessor: agentCardCapabilityService,
 				},
 			)
 			disabledProcessor := agentruntime.NewDisabledContinuationProcessor(
 				repository,
 				agentruntime.DisabledContinuationProcessorConfig{
-					WorkerID: "conversation-disabled-" + uuid.NewV4().String(),
-					LeaseTTL: conversationContinuationLeaseTTL,
+					WorkerID:            "conversation-disabled-" + uuid.NewV4().String(),
+					LeaseTTL:            conversationContinuationLeaseTTL,
+					CapabilityProcessor: agentCardCapabilityService,
 				},
 			)
 			projector := agentruntime.NewProjector(

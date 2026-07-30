@@ -89,12 +89,17 @@ type ActorPolicy struct {
 }
 
 type TrustedActionDescriptor struct {
-	ActionID        string          `json:"action_id"`
-	Mode            ActionMode      `json:"mode"`
-	Intent          string          `json:"intent"`
-	ContinueAgent   bool            `json:"continue_agent"`
-	CapabilityName  string          `json:"capability_name,omitempty"`
-	CapabilityInput json.RawMessage `json:"capability_input,omitempty"`
+	ActionID               string                      `json:"action_id"`
+	Mode                   ActionMode                  `json:"mode"`
+	Intent                 string                      `json:"intent"`
+	ContinueAgent          bool                        `json:"continue_agent"`
+	CapabilityName         string                      `json:"capability_name,omitempty"`
+	CapabilityVersion      string                      `json:"capability_version,omitempty"`
+	CapabilityInput        json.RawMessage             `json:"capability_input,omitempty"`
+	IdempotencyKey         string                      `json:"idempotency_key,omitempty"`
+	PermissionContext      CapabilityPermissionContext `json:"permission_context,omitempty"`
+	ActorPolicy            ActorPolicy                 `json:"actor_policy,omitempty"`
+	ResultProjectionPolicy ResultProjectionPolicy      `json:"result_projection_policy,omitempty"`
 }
 
 type TrustedWaitInput struct {

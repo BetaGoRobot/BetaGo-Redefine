@@ -184,4 +184,31 @@ func TestAgentCardCallbackClaimQueuesContinuationAndIsIdempotent(t *testing.T) {
 		strings.Contains(event.InputJSON, "trusted-task") {
 		t.Fatalf("public callback event leaked trusted data: %s", event.InputJSON)
 	}
+	var normalized struct {
+		Type        string            `json:"type"`
+		Action      string            `json:"action"`
+		Intent      string            `json:"intent"`
+		ActionLabel string            `json:"action_label"`
+		Payload     json.RawMessage   `json:"payload"`
+		FormLabels  map[string]string `json:"form_labels"`
+		ContextRefs struct {
+			WaitStepID       string `json:"wait_step_id"`
+			CardMessageID    string `json:"card_message_id"`
+			ReplyToMessageID string `json:"reply_to_message_id"`
+		} `json:"context_refs"`
+	}
+	if err := json.Unmarshal([]byte(event.InputJSON), &normalized); err != nil {
+		t.Fatalf("decode normalized card event: %v", err)
+	}
+	if normalized.Type != string(agentruntime.EventTypeCardAction) ||
+		normalized.Action != "submit" ||
+		normalized.Intent != "submit_form" ||
+		normalized.ActionLabel != "提交" ||
+		normalized.FormLabels["reason"] != "原因" ||
+		normalized.ContextRefs.WaitStepID != bound.Surface.WaitStepID ||
+		normalized.ContextRefs.CardMessageID != "card-message" ||
+		normalized.ContextRefs.ReplyToMessageID != "source-message" ||
+		len(normalized.Payload) == 0 {
+		t.Fatalf("normalized card event = %#v", normalized)
+	}
 }

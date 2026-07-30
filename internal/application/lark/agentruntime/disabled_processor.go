@@ -42,9 +42,11 @@ type DisabledContinuationStore interface {
 }
 
 type DisabledContinuationProcessorConfig struct {
-	WorkerID string
-	LeaseTTL time.Duration
-	Now      func() time.Time
+	WorkerID            string
+	LeaseTTL            time.Duration
+	RetryDelay          time.Duration
+	CapabilityProcessor CapabilityStepProcessor
+	Now                 func() time.Time
 }
 
 type DisabledContinuationProcessor struct {
@@ -58,6 +60,9 @@ func NewDisabledContinuationProcessor(
 ) *DisabledContinuationProcessor {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if config.RetryDelay <= 0 {
+		config.RetryDelay = 5 * time.Second
 	}
 	return &DisabledContinuationProcessor{store: store, config: config}
 }
@@ -98,6 +103,30 @@ func (p *DisabledContinuationProcessor) ProcessRun(ctx context.Context, runID st
 			return err
 		}
 		switch step.Kind {
+		case StepKindCapabilityCall:
+			if isNilRuntimeDependency(p.config.CapabilityProcessor) {
+				err = errors.New("capability continuation processor is not configured")
+			} else {
+				err = p.config.CapabilityProcessor.ProcessCapabilityStep(
+					ctx,
+					step,
+					lease,
+				)
+			}
+			if err != nil && !errors.Is(err, ErrLeaseLost) {
+				retryErr := p.store.RetryContinuationStep(
+					ctx,
+					RetryStepRequest{
+						StepID: step.ID, WorkerID: step.WorkerID,
+						AttemptCount: step.AttemptCount,
+						ErrorText:    err.Error(),
+						RetryAt:      p.config.Now().Add(p.config.RetryDelay),
+					},
+				)
+				if retryErr != nil {
+					return retryErr
+				}
+			}
 		case StepKindDecide:
 			_, err = p.store.PersistDecision(ctx, PersistDecisionRequest{
 				StepID: step.ID, WorkerID: step.WorkerID, AttemptCount: step.AttemptCount,

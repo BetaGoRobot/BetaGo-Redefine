@@ -76,6 +76,24 @@ func (r *Repository) ListDueContinuationRunIDs(ctx context.Context, limit int) (
 		      AND steps.input_json->>'idempotency_key' = steps.id
 		      AND steps.dedupe_key LIKE '%:continuation:reply'
 		    )
+		    OR (
+		      steps.kind = ?
+		      AND steps.input_json->>'version' = '1'
+		      AND COALESCE(steps.input_json->>'source_step_id', '') <> ''
+		      AND COALESCE(steps.input_json->>'interaction_id', '') <> ''
+		      AND COALESCE(steps.input_json->>'action_id', '') <> ''
+		      AND steps.input_json->'descriptor'->>'capability_name' = steps.capability_name
+		      AND steps.dedupe_key LIKE '%:capability'
+		      AND EXISTS (
+		        SELECT 1 FROM agent_steps AS source
+		        WHERE source.id = steps.input_json->>'source_step_id'
+		          AND source.run_id = steps.run_id
+		          AND source.index < steps.index
+		          AND source.kind = ?
+		          AND source.status = ?
+		          AND source.external_ref = steps.external_ref
+		      )
+		    )
 		  )
 		  AND (
 		    (steps.status = ? AND (steps.lease_expires_at IS NULL OR steps.lease_expires_at <= ?))
@@ -90,6 +108,9 @@ func (r *Repository) ListDueContinuationRunIDs(ctx context.Context, limit int) (
 		string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
 		string(agentruntime.StepStatusCompleted),
 		string(agentruntime.StepKindReply),
+		string(agentruntime.StepKindCapabilityCall),
+		string(agentruntime.StepKindCardAction),
+		string(agentruntime.StepStatusCompleted),
 		string(agentruntime.StepStatusQueued), now,
 		string(agentruntime.StepStatusRunning), now,
 		limit,

@@ -137,6 +137,8 @@ func (r *Repository) ClaimAction(
 			&run,
 			&surface,
 			descriptor,
+			spec,
+			publicAction,
 			request,
 			outcome,
 		)
@@ -180,6 +182,8 @@ func persistClaimedAction(
 	run *model.AgentRun,
 	surface *model.AgentCardSurface,
 	descriptor agentcard.TrustedActionDescriptor,
+	spec agentcard.CardSpec,
+	publicAction agentcard.Action,
 	request agentcard.ClaimActionRequest,
 	outcome json.RawMessage,
 ) (*model.AgentStep, *model.AgentStep, error) {
@@ -189,20 +193,31 @@ func persistClaimedAction(
 	}
 	dedupeBase := "agent_card_action:" + surface.InteractionID + ":" +
 		request.SourceRef
+	eventID := stableCardStepID(run.ID, dedupeBase+":event")
 	eventPayload, err := json.Marshal(map[string]any{
+		"id": eventID, "type": string(agentruntime.EventTypeCardAction),
 		"version": 1, "event_id": request.EventID,
 		"event_type": "agent_card_action", "run_id": run.ID,
 		"interaction_id": surface.InteractionID,
-		"revision":       surface.Revision, "action_id": request.ActionID,
+		"revision":       surface.Revision, "action": request.ActionID,
+		"action_id": request.ActionID, "intent": descriptor.Intent,
+		"action_label":  publicAction.Label,
 		"actor_open_id": request.ActorOpenID, "message_id": request.MessageID,
 		"chat_id": request.ChatID, "source_ref": request.SourceRef,
-		"occurred_at": request.ClaimedAt, "outcome": json.RawMessage(outcome),
+		"occurred_at": request.ClaimedAt,
+		"payload":     json.RawMessage(outcome), "outcome": json.RawMessage(outcome),
+		"form_labels": publicFormLabels(spec, publicAction.FormRef),
+		"context_refs": map[string]string{
+			"wait_step_id":        surface.WaitStepID,
+			"card_message_id":     request.MessageID,
+			"reply_to_message_id": surface.ReplyToMessageID,
+		},
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	event := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, dedupeBase+":event"),
+		ID:    eventID,
 		RunID: run.ID, Index: index,
 		Kind:      string(agentruntime.StepKindCardAction),
 		Status:    string(agentruntime.StepStatusCompleted),
@@ -291,6 +306,53 @@ func persistClaimedAction(
 		}
 	}
 	return event, next, nil
+}
+
+func publicFormLabels(
+	spec agentcard.CardSpec,
+	formID string,
+) map[string]string {
+	labels := make(map[string]string)
+	if formID == "" {
+		return labels
+	}
+	var visit func([]agentcard.Block)
+	visit = func(blocks []agentcard.Block) {
+		for _, block := range blocks {
+			switch block.Kind {
+			case agentcard.BlockTextInput:
+				if block.TextInput != nil &&
+					block.TextInput.Field.FormID == formID {
+					labels[block.TextInput.Field.FieldID] =
+						block.TextInput.Field.Label
+				}
+			case agentcard.BlockSingleSelect:
+				if block.SingleSelect != nil &&
+					block.SingleSelect.Field.FormID == formID {
+					labels[block.SingleSelect.Field.FieldID] =
+						block.SingleSelect.Field.Label
+				}
+			case agentcard.BlockMultiSelect:
+				if block.MultiSelect != nil &&
+					block.MultiSelect.Field.FormID == formID {
+					labels[block.MultiSelect.Field.FieldID] =
+						block.MultiSelect.Field.Label
+				}
+			case agentcard.BlockColumns:
+				if block.Columns != nil {
+					for _, column := range block.Columns.Columns {
+						visit(column.Blocks)
+					}
+				}
+			case agentcard.BlockSection:
+				if block.Section != nil {
+					visit(block.Section.Blocks)
+				}
+			}
+		}
+	}
+	visit(spec.Blocks)
+	return labels
 }
 
 func insertActionProjection(
