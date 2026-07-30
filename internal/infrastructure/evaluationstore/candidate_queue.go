@@ -21,6 +21,15 @@ func (r *Repository) SubmitCandidate(
 	if err := task.Validate(); err != nil {
 		return err
 	}
+	if task.Cohort.AppID != r.tenant.AppID ||
+		task.Cohort.BotOpenID != r.tenant.BotOpenID {
+		return fmt.Errorf(
+			"%w: candidate task belongs to another tenant",
+			conversationeval.ErrInvalidContract,
+		)
+	}
+	task.Cohort.TenantID = r.tenant.ID
+	task.Episode.TenantID = r.tenant.ID
 	payload, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("marshal candidate task: %w", err)
@@ -30,7 +39,7 @@ func (r *Repository) SubmitCandidate(
 		return err
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisode(tx, task.Episode.ID, true)
+		episode, err := loadEpisode(tx, r.tenant.ID, task.Episode.ID, true)
 		if err != nil {
 			return err
 		}
@@ -43,10 +52,11 @@ func (r *Repository) SubmitCandidate(
 		}
 		result := tx.Exec(`
 			INSERT INTO evaluation_candidate_tasks (
-				id, episode_id, status, payload_json, next_attempt_at
-			) VALUES (?, ?, ?, ?::jsonb, ?)
+				id, tenant_id, episode_id, status, payload_json, next_attempt_at
+			) VALUES (?, ?, ?, ?, ?::jsonb, ?)
 			ON CONFLICT (episode_id) DO NOTHING`,
-			task.ID, episode.ID, string(conversationeval.CandidateTaskQueued),
+			task.ID, r.tenant.ID, episode.ID,
+			string(conversationeval.CandidateTaskQueued),
 			string(payload), task.CreatedAt,
 		)
 		if result.Error != nil {
@@ -62,9 +72,9 @@ func (r *Repository) SubmitCandidate(
 		load := tx.Raw(`
 			SELECT id, payload_json::text AS payload_json
 			FROM evaluation_candidate_tasks
-			WHERE episode_id = ?
+			WHERE episode_id = ? AND tenant_id = ?
 			LIMIT 1`,
-			episode.ID,
+			episode.ID, r.tenant.ID,
 		).Scan(&stored)
 		if load.Error != nil {
 			return load.Error
@@ -97,19 +107,19 @@ func (r *Repository) ClaimCandidate(
 	var row candidateTaskRow
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Raw(`
-			SELECT id, episode_id, status, payload_json::text AS payload_json,
+			SELECT id, tenant_id, episode_id, status, payload_json::text AS payload_json,
 			       attempt_count, next_attempt_at, worker_id, lease_expires_at,
 			       last_error, created_at, updated_at
 			FROM evaluation_candidate_tasks
-			WHERE (
+			WHERE tenant_id = ? AND ((
 				status = ? AND next_attempt_at <= ?
 			) OR (
 				status = ? AND lease_expires_at <= ?
-			)
+			))
 			ORDER BY next_attempt_at, id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1`,
-			string(conversationeval.CandidateTaskQueued), claim.Now,
+			r.tenant.ID, string(conversationeval.CandidateTaskQueued), claim.Now,
 			string(conversationeval.CandidateTaskRunning), claim.Now,
 		).Scan(&row)
 		if result.Error != nil {
@@ -123,9 +133,9 @@ func (r *Repository) ClaimCandidate(
 			UPDATE evaluation_candidate_tasks
 			SET status = ?, attempt_count = attempt_count + 1, worker_id = ?,
 			    lease_expires_at = ?, updated_at = ?
-			WHERE id = ? AND status = ?`,
+			WHERE id = ? AND tenant_id = ? AND status = ?`,
 			string(conversationeval.CandidateTaskRunning), claim.WorkerID,
-			leaseExpiresAt, claim.Now, row.ID, row.Status,
+			leaseExpiresAt, claim.Now, row.ID, r.tenant.ID, row.Status,
 		)
 		if update.Error != nil {
 			return update.Error
@@ -160,10 +170,10 @@ func (r *Repository) CompleteCandidateTask(
 		UPDATE evaluation_candidate_tasks
 		SET status = ?, worker_id = '', lease_expires_at = NULL,
 		    last_error = '', updated_at = ?
-		WHERE id = ? AND status = ? AND worker_id = ? AND attempt_count = ?
+		WHERE id = ? AND tenant_id = ? AND status = ? AND worker_id = ? AND attempt_count = ?
 		  AND lease_expires_at > ?`,
 		string(conversationeval.CandidateTaskCompleted), request.FinishedAt,
-		request.TaskID, string(conversationeval.CandidateTaskRunning),
+		request.TaskID, r.tenant.ID, string(conversationeval.CandidateTaskRunning),
 		request.WorkerID, request.AttemptCount, request.FinishedAt,
 	)
 	if result.Error != nil {
@@ -190,10 +200,10 @@ func (r *Repository) RetryCandidateTask(
 		UPDATE evaluation_candidate_tasks
 		SET status = ?, worker_id = '', lease_expires_at = NULL,
 		    last_error = ?, next_attempt_at = ?, updated_at = ?
-		WHERE id = ? AND status = ? AND worker_id = ? AND attempt_count = ?
+		WHERE id = ? AND tenant_id = ? AND status = ? AND worker_id = ? AND attempt_count = ?
 		  AND lease_expires_at > ?`,
 		string(conversationeval.CandidateTaskQueued), request.ErrorText,
-		request.RetryAt, request.FailedAt, request.TaskID,
+		request.RetryAt, request.FailedAt, request.TaskID, r.tenant.ID,
 		string(conversationeval.CandidateTaskRunning), request.WorkerID,
 		request.AttemptCount, request.FailedAt,
 	)
@@ -208,6 +218,7 @@ func (r *Repository) RetryCandidateTask(
 
 type candidateTaskRow struct {
 	ID             string
+	TenantID       string
 	EpisodeID      string
 	Status         string
 	PayloadJSON    string

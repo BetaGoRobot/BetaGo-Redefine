@@ -36,6 +36,7 @@ func (r *Repository) ExpireScheduleEditInteractions(
 			  ON sessions.id = runs.session_id
 			 AND sessions.active_run_id = runs.id
 			WHERE steps.kind = ?
+			  AND steps.tenant_id = ?
 			  AND steps.status = ?
 			  AND steps.input_json->>'kind' = 'schedule_edit'
 			  AND steps.input_json->>'version' = '1'
@@ -46,6 +47,7 @@ func (r *Repository) ExpireScheduleEditInteractions(
 			FOR UPDATE OF sessions, runs, steps SKIP LOCKED
 			LIMIT ?`,
 			string(agentruntime.StepKindWait),
+			r.tenant.ID,
 			string(agentruntime.StepStatusCompleted),
 			now,
 			string(agentruntime.RunStatusWaitingApproval),
@@ -97,7 +99,7 @@ func (r *Repository) ExpireScheduleEditInteractions(
 				return err
 			}
 			timeout := &model.AgentStep{
-				ID: timeoutID, RunID: run.ID, Index: index,
+				ID: timeoutID, TenantID: run.TenantID, RunID: run.ID, Index: index,
 				Kind: string(agentruntime.StepKindResume), Status: string(agentruntime.StepStatusCompleted),
 				CapabilityName: "interaction_expiry", InputJSON: string(input),
 				OutputJSON: `{"status":"expired"}`, ExternalRef: waitPayload.InteractionID,

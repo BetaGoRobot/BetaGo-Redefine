@@ -32,8 +32,8 @@ func (r *Repository) EvaluationSnapshotsAfter(
 	query := `
 		SELECT id
 		FROM evaluation_episodes
-		WHERE status = ?`
-	args := []any{string(conversationeval.EpisodeStatusJudged)}
+		WHERE status = ? AND tenant_id = ?`
+	args := []any{string(conversationeval.EpisodeStatusJudged), r.tenant.ID}
 	if !cursor.UpdatedAt.IsZero() {
 		query += `
 		  AND (updated_at > ? OR (updated_at = ? AND id > ?))`
@@ -48,7 +48,9 @@ func (r *Repository) EvaluationSnapshotsAfter(
 	}
 	snapshots := make([]evaluationindex.EvaluationSnapshot, 0, len(rows))
 	for _, row := range rows {
-		snapshot, loadErr := loadEvaluationSnapshot(db.WithContext(ctx), row.ID)
+		snapshot, loadErr := loadEvaluationSnapshot(
+			db.WithContext(ctx), r.tenant.ID, row.ID,
+		)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -59,23 +61,24 @@ func (r *Repository) EvaluationSnapshotsAfter(
 
 func loadEvaluationSnapshot(
 	db *gorm.DB,
+	tenantID string,
 	episodeID string,
 ) (evaluationindex.EvaluationSnapshot, error) {
-	input, err := loadJudgeInput(db, episodeID)
+	input, err := loadJudgeInput(db, tenantID, episodeID)
 	if err != nil {
 		return evaluationindex.EvaluationSnapshot{}, err
 	}
 	var judgmentRows []projectionJudgmentRow
 	if err := db.Raw(`
 		SELECT DISTINCT ON (source)
-		       id, episode_id, version, source, evaluator_id, winner,
+		       id, tenant_id, episode_id, version, source, evaluator_id, winner,
 		       scores_json::text AS scores_json,
 		       problem_tags_json::text AS problem_tags_json,
 		       rationale, confidence, needs_review, supersedes_id, created_at
 		FROM evaluation_judgments
-		WHERE episode_id = ?
+		WHERE episode_id = ? AND tenant_id = ?
 		ORDER BY source, version DESC`,
-		episodeID,
+		episodeID, tenantID,
 	).Scan(&judgmentRows).Error; err != nil {
 		return evaluationindex.EvaluationSnapshot{}, err
 	}
@@ -252,6 +255,7 @@ func uniqueFeedbackTypes(feedback []conversationeval.Feedback) []string {
 
 type projectionJudgmentRow struct {
 	ID              string
+	TenantID        string
 	EpisodeID       string
 	Version         int64
 	Source          string
@@ -276,7 +280,8 @@ func (r projectionJudgmentRow) domain() (conversationeval.Judgment, error) {
 		)
 	}
 	judgment := conversationeval.Judgment{
-		ID: r.ID, EpisodeID: r.EpisodeID, Version: r.Version,
+		ID: r.ID, TenantID: r.TenantID,
+		EpisodeID: r.EpisodeID, Version: r.Version,
 		Source: conversationeval.JudgmentSource(r.Source), EvaluatorID: r.EvaluatorID,
 		Winner:     conversationeval.JudgmentWinner(r.Winner),
 		ScoresJSON: json.RawMessage(r.ScoresJSON), ProblemTags: problemTags,

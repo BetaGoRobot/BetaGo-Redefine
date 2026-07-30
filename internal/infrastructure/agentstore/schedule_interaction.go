@@ -154,7 +154,8 @@ func (r *Repository) ClaimScheduleInteraction(
 		now := req.ResolvedAt
 		if errors.Is(executionErr, gorm.ErrRecordNotFound) {
 			execution = model.AgentCapabilityExecution{
-				IdempotencyKey: scheduleInteractionKey(req), RunID: req.RunID, StepID: wait.ID,
+				IdempotencyKey: scheduleInteractionKey(req),
+				TenantID:       r.tenant.ID, RunID: req.RunID, StepID: wait.ID,
 				CapabilityName: "edit_schedule", Status: "running", InputJSON: string(claimInput),
 				OutputJSON: "{}", StartedAt: now, CreatedAt: now, UpdatedAt: now,
 			}
@@ -282,8 +283,9 @@ func finalizeScheduleInteractionTx(
 		return err
 	}
 	cardStep := &agentruntime.AgentStep{
-		ID:    stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "card_action"),
-		RunID: req.RunID, Index: firstIndex, Kind: agentruntime.StepKindCardAction,
+		ID:       stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "card_action"),
+		TenantID: run.TenantID, RunID: req.RunID,
+		Index: firstIndex, Kind: agentruntime.StepKindCardAction,
 		Status: agentruntime.StepStatusCompleted, InputJSON: string(eventJSON),
 		OutputJSON: string(outcomeJSON), ExternalRef: req.InteractionID,
 		StartedAt: req.ResolvedAt, FinishedAt: req.ResolvedAt,
@@ -293,8 +295,9 @@ func finalizeScheduleInteractionTx(
 		return err
 	}
 	resultStep := &agentruntime.AgentStep{
-		ID:    stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "capability_result"),
-		RunID: req.RunID, Index: firstIndex + 1, Kind: agentruntime.StepKindCapabilityResult,
+		ID:       stableScheduleStepID(req.RunID, scheduleInteractionKey(req), "capability_result"),
+		TenantID: run.TenantID, RunID: req.RunID,
+		Index: firstIndex + 1, Kind: agentruntime.StepKindCapabilityResult,
 		Status: agentruntime.StepStatusCompleted, CapabilityName: "edit_schedule",
 		InputJSON: string(payload.TrustedInput), OutputJSON: string(outcomeJSON),
 		ExternalRef: req.InteractionID, StartedAt: req.ResolvedAt,

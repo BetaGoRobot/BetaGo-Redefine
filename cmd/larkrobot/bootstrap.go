@@ -22,6 +22,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages/recording"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	scheduleapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/schedule"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	todoapp "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/todo"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcapability"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
@@ -418,8 +419,21 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			larkchunking.SetExecutor(components.chunkExecutor)
 			todoapp.Init(db.DB())
 			scheduleapp.Init(db.DB(), handlers.BuildSchedulableTools())
-			repository := agentstore.NewRepository(db.DB())
-			agentCardRepository := agentcardstore.NewRepository(db.DB())
+			owner, err := tenant.New(
+				cfg.LarkConfig.AppID,
+				cfg.LarkConfig.BotOpenID,
+			)
+			if err != nil {
+				return fmt.Errorf("derive runtime tenant: %w", err)
+			}
+			repository, err := agentstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create agent repository: %w", err)
+			}
+			agentCardRepository, err := agentcardstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create agent card repository: %w", err)
+			}
 			agentCardCompiler := agentcardcompiler.New()
 			agentCardSurfaceClient := agentcardsurface.NewClient(
 				agentcardsurface.ClientOptions{},
@@ -722,7 +736,17 @@ func addConversationEvaluationModule(
 		Name:     "conversation_evaluation",
 		Critical: false,
 		Start: func(ctx context.Context) error {
-			repository = evaluationstore.NewRepository(db.DB())
+			owner, err := tenant.New(
+				cfg.LarkConfig.AppID,
+				cfg.LarkConfig.BotOpenID,
+			)
+			if err != nil {
+				return fmt.Errorf("derive evaluation tenant: %w", err)
+			}
+			repository, err = evaluationstore.NewRepository(db.DB(), owner)
+			if err != nil {
+				return fmt.Errorf("create evaluation repository: %w", err)
+			}
 			service, err := conversationeval.NewService(conversationeval.ServiceOptions{
 				Repository: repository, PreWindowSource: evaluationwindow.OpenSearchPreWindowSource{},
 				CandidateSubmitter: repository,

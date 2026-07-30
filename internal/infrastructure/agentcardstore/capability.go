@@ -113,6 +113,7 @@ func (r *Repository) BeginCapabilityExecution(
 		case errors.Is(loadErr, gorm.ErrRecordNotFound):
 			if err := tx.Create(&model.AgentCapabilityExecution{
 				IdempotencyKey: effectiveInvocation.IdempotencyKey,
+				TenantID:       r.tenant.ID,
 				RunID:          request.RunID, StepID: request.StepID,
 				CapabilityName: effectiveInvocation.Name, Status: "running",
 				InputJSON: string(inputJSON), OutputJSON: "{}",
@@ -455,8 +456,8 @@ func persistCapabilityOutcome(
 		return nil, nil, nil, err
 	}
 	result := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, resultDedupe),
-		RunID: run.ID, Index: index,
+		ID:       stableCardStepID(run.ID, resultDedupe),
+		TenantID: run.TenantID, RunID: run.ID, Index: index,
 		Kind:           string(agentruntime.StepKindCapabilityResult),
 		Status:         string(agentruntime.StepStatusCompleted),
 		CapabilityName: completion.Request.Invocation.Name,
@@ -470,8 +471,8 @@ func persistCapabilityOutcome(
 	}
 	resumeDedupe := resultDedupe + ":resume"
 	resume := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, resumeDedupe),
-		RunID: run.ID, Index: index + 1,
+		ID:       stableCardStepID(run.ID, resumeDedupe),
+		TenantID: run.TenantID, RunID: run.ID, Index: index + 1,
 		Kind:      string(agentruntime.StepKindResume),
 		Status:    string(agentruntime.StepStatusCompleted),
 		InputJSON: source.InputJSON, OutputJSON: string(outcome),
@@ -489,8 +490,8 @@ func persistCapabilityOutcome(
 		return nil, nil, nil, err
 	}
 	continuation := &model.AgentStep{
-		ID:    stableCardStepID(run.ID, resumeDedupe+":continuation"),
-		RunID: run.ID, Index: index + 2,
+		ID:       stableCardStepID(run.ID, resumeDedupe+":continuation"),
+		TenantID: run.TenantID, RunID: run.ID, Index: index + 2,
 		Kind:      string(agentruntime.StepKindDecide),
 		Status:    string(agentruntime.StepStatusQueued),
 		InputJSON: string(continuationInput), OutputJSON: "{}",

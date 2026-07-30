@@ -122,7 +122,8 @@ func (r *Repository) BeginCardInteraction(
 		}
 		now := time.Now().UTC()
 		wait := &model.AgentStep{
-			ID: request.StepID, RunID: request.RunID, Index: index,
+			ID: request.StepID, TenantID: r.tenant.ID,
+			RunID: request.RunID, Index: index,
 			Kind:      string(agentruntime.StepKindWait),
 			Status:    string(agentruntime.StepStatusCompleted),
 			InputJSON: string(waitInput), OutputJSON: "{}",
@@ -145,7 +146,8 @@ func (r *Repository) BeginCardInteraction(
 			return err
 		}
 		surface := &model.AgentCardSurface{
-			ID: request.SurfaceID, RunID: request.RunID,
+			ID: request.SurfaceID, TenantID: r.tenant.ID,
+			RunID:      request.RunID,
 			WaitStepID: request.StepID, InteractionID: request.InteractionID,
 			ChatID: request.ChatID, ReplyToMessageID: request.ReplyToMessageID,
 			SpecVersion: request.SpecVersion, SpecJSON: request.SpecJSON,
@@ -311,8 +313,13 @@ func insertCardProjectionOutbox(
 	if err := scoped.Validate(); err != nil {
 		return err
 	}
+	var step model.AgentStep
+	if err := tx.Select("tenant_id").First(&step, "id = ?", stepID).Error; err != nil {
+		return err
+	}
 	return tx.Create(&model.AgentProjectionOutbox{
-		ID: "outbox_" + hex.EncodeToString(sum[:]), StepID: stepID,
+		ID:       "outbox_" + hex.EncodeToString(sum[:]),
+		TenantID: step.TenantID, StepID: stepID,
 		IndexAlias: scoped.IndexAlias, DocumentID: scoped.DocumentID,
 		PayloadJSON: string(scoped.Payload), Status: "pending",
 		NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,

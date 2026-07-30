@@ -29,6 +29,11 @@ func (r *Repository) CreateScheduleEditInteraction(
 	var result agentruntime.StartScheduleEditInteractionResult
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		sessionCandidate := agentruntime.NewSessionForRun(req.Run)
+		if sessionCandidate.AppID != r.tenant.AppID ||
+			sessionCandidate.BotOpenID != r.tenant.BotOpenID {
+			return errors.New("schedule interaction belongs to another tenant")
+		}
+		sessionCandidate.TenantID = r.tenant.ID
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).
 			Create(toDBSession(sessionCandidate)).Error; err != nil {
 			return err
@@ -76,6 +81,7 @@ func (r *Repository) CreateScheduleEditInteraction(
 		})
 		run.CreatedAt = now
 		run.UpdatedAt = now
+		run.TenantID = r.tenant.ID
 		if err := tx.Create(toDBRun(run)).Error; err != nil {
 			return err
 		}
@@ -85,6 +91,7 @@ func (r *Repository) CreateScheduleEditInteraction(
 			CapabilityName: "shadow", InputJSON: "{}",
 		})
 		plan.Status = agentruntime.StepStatusCompleted
+		plan.TenantID = r.tenant.ID
 		plan.OutputJSON = "{}"
 		plan.StartedAt = now
 		plan.FinishedAt = now
@@ -108,7 +115,8 @@ func (r *Repository) CreateScheduleEditInteraction(
 			return err
 		}
 		wait := &agentruntime.AgentStep{
-			ID: req.StepID, RunID: run.ID, Index: 1,
+			ID: req.StepID, TenantID: r.tenant.ID,
+			RunID: run.ID, Index: 1,
 			Kind: agentruntime.StepKindWait, Status: agentruntime.StepStatusCompleted,
 			InputJSON: string(waitInput), OutputJSON: "{}", ExternalRef: req.InteractionID,
 			StartedAt: now, FinishedAt: now, CreatedAt: now,
@@ -222,7 +230,9 @@ func replayScheduleEditInteraction(
 		}
 		return agentruntime.StartScheduleEditInteractionResult{}, err
 	}
-	expectedOutbox := newProjectionOutbox(wait.ID, req.Projection, wait.CreatedAt)
+	expectedOutbox := newProjectionOutbox(
+		wait.TenantID, wait.ID, req.Projection, wait.CreatedAt,
+	)
 	if outbox.IndexAlias != expectedOutbox.IndexAlias ||
 		outbox.DocumentID != expectedOutbox.DocumentID ||
 		!equalJSONDocument([]byte(outbox.PayloadJSON), []byte(expectedOutbox.PayloadJSON)) {

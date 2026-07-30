@@ -35,17 +35,19 @@ func (r *Repository) NextJudgeInput(
 		LEFT JOIN LATERAL (
 			SELECT created_at
 			FROM evaluation_judgments
-			WHERE episode_id = e.id AND source = ?
+			WHERE episode_id = e.id AND tenant_id = ? AND source = ?
 			ORDER BY version DESC
 			LIMIT 1
 		) AS latest ON true
 		WHERE e.status IN (?, ?)
+		  AND e.tenant_id = ?
 		  AND e.post_window_end IS NOT NULL
 		  AND e.post_window_end <= ?
 		  AND (
 		      SELECT count(DISTINCT lane)
 		      FROM evaluation_lane_outputs AS output
 		      WHERE output.episode_id = e.id
+		        AND output.tenant_id = ?
 		        AND output.lane IN (?, ?)
 		  ) = 2
 		  AND (
@@ -54,18 +56,22 @@ func (r *Repository) NextJudgeInput(
 		          SELECT 1
 		          FROM evaluation_feedback AS feedback
 		          WHERE feedback.episode_id = e.id
+		            AND feedback.tenant_id = ?
 		            AND feedback.created_at > COALESCE(latest.created_at, to_timestamp(0))
 		      )
 		  )
 		ORDER BY e.post_window_end, e.id
 		LIMIT 1`,
-		string(conversationeval.JudgmentSourceConversationJudge),
+		r.tenant.ID, string(conversationeval.JudgmentSourceConversationJudge),
 		string(conversationeval.EpisodeStatusReadyForJudge),
 		string(conversationeval.EpisodeStatusJudged),
+		r.tenant.ID,
 		at,
+		r.tenant.ID,
 		string(conversationeval.LaneControl),
 		string(conversationeval.LaneCandidate),
 		string(conversationeval.EpisodeStatusReadyForJudge),
+		r.tenant.ID,
 	).Scan(&selected)
 	if result.Error != nil {
 		return nil, result.Error
@@ -73,18 +79,22 @@ func (r *Repository) NextJudgeInput(
 	if result.RowsAffected != 1 {
 		return nil, conversationeval.ErrJudgeInputNotFound
 	}
-	return loadJudgeInput(db.WithContext(ctx), selected.ID)
+	return loadJudgeInput(db.WithContext(ctx), r.tenant.ID, selected.ID)
 }
 
-func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput, error) {
-	episode, err := loadEpisode(db, episodeID, false)
+func loadJudgeInput(
+	db *gorm.DB,
+	tenantID string,
+	episodeID string,
+) (*conversationeval.JudgeInput, error) {
+	episode, err := loadEpisode(db, tenantID, episodeID, false)
 	if err != nil {
 		return nil, err
 	}
 
 	var outputRows []judgeLaneOutputRow
 	if err := db.Raw(`
-		SELECT id, episode_id, lane, output_mode,
+		SELECT id, tenant_id, episode_id, lane, output_mode,
 		       activation_json::text AS activation_json,
 		       relevance_json::text AS relevance_json,
 		       join_decision, topic_relation,
@@ -96,9 +106,9 @@ func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput
 		       error_json::text AS error_json,
 		       created_at, updated_at
 		FROM evaluation_lane_outputs
-		WHERE episode_id = ? AND lane IN (?, ?)
+		WHERE episode_id = ? AND tenant_id = ? AND lane IN (?, ?)
 		ORDER BY lane`,
-		episodeID,
+		episodeID, tenantID,
 		string(conversationeval.LaneControl),
 		string(conversationeval.LaneCandidate),
 	).Scan(&outputRows).Error; err != nil {
@@ -119,11 +129,11 @@ func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput
 	if err := db.Raw(`
 		SELECT payload_json::text AS payload_json
 		FROM evaluation_episode_messages
-		WHERE episode_id = ?
+		WHERE episode_id = ? AND tenant_id = ?
 		ORDER BY
 			CASE position WHEN 'pre' THEN 0 WHEN 'anchor' THEN 1 ELSE 2 END,
 			sequence, occurred_at, event_id`,
-		episodeID,
+		episodeID, tenantID,
 	).Scan(&messageRows).Error; err != nil {
 		return nil, err
 	}
@@ -138,13 +148,13 @@ func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput
 
 	var feedbackRows []judgeFeedbackRow
 	if err := db.Raw(`
-		SELECT id, episode_id, target_lane, target_message_id, feedback_event_id,
+		SELECT id, tenant_id, episode_id, target_lane, target_message_id, feedback_event_id,
 		       feedback_type, explicitness, content_json::text AS content_json,
 		       attribution_confidence, occurred_at, created_at
 		FROM evaluation_feedback
-		WHERE episode_id = ?
+		WHERE episode_id = ? AND tenant_id = ?
 		ORDER BY occurred_at, id`,
-		episodeID,
+		episodeID, tenantID,
 	).Scan(&feedbackRows).Error; err != nil {
 		return nil, err
 	}
@@ -164,10 +174,10 @@ func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput
 	latestResult := db.Raw(`
 		SELECT id, version
 		FROM evaluation_judgments
-		WHERE episode_id = ? AND source = ?
+		WHERE episode_id = ? AND tenant_id = ? AND source = ?
 		ORDER BY version DESC
 		LIMIT 1`,
-		episodeID,
+		episodeID, tenantID,
 		string(conversationeval.JudgmentSourceConversationJudge),
 	).Scan(&latest)
 	if latestResult.Error != nil {
@@ -192,6 +202,7 @@ func loadJudgeInput(db *gorm.DB, episodeID string) (*conversationeval.JudgeInput
 
 type judgeLaneOutputRow struct {
 	ID                  string
+	TenantID            string
 	EpisodeID           string
 	Lane                string
 	OutputMode          string
@@ -228,7 +239,8 @@ func (r judgeLaneOutputRow) domain() (conversationeval.LaneOutput, error) {
 		)
 	}
 	output := conversationeval.LaneOutput{
-		ID: r.ID, EpisodeID: r.EpisodeID, Lane: conversationeval.Lane(r.Lane),
+		ID: r.ID, TenantID: r.TenantID,
+		EpisodeID: r.EpisodeID, Lane: conversationeval.Lane(r.Lane),
 		OutputMode:      conversationeval.OutputMode(r.OutputMode),
 		ActivationJSON:  json.RawMessage(r.ActivationJSON),
 		RelevanceJSON:   json.RawMessage(r.RelevanceJSON),
@@ -253,6 +265,7 @@ func (r judgeLaneOutputRow) domain() (conversationeval.LaneOutput, error) {
 
 type judgeFeedbackRow struct {
 	ID                    string
+	TenantID              string
 	EpisodeID             string
 	TargetLane            string
 	TargetMessageID       string
@@ -267,7 +280,8 @@ type judgeFeedbackRow struct {
 
 func (r judgeFeedbackRow) domain() (conversationeval.Feedback, error) {
 	feedback := conversationeval.Feedback{
-		ID: r.ID, EpisodeID: r.EpisodeID, TargetLane: conversationeval.Lane(r.TargetLane),
+		ID: r.ID, TenantID: r.TenantID,
+		EpisodeID: r.EpisodeID, TargetLane: conversationeval.Lane(r.TargetLane),
 		TargetMessageID: r.TargetMessageID, FeedbackEventID: r.FeedbackEventID,
 		FeedbackType:          conversationeval.FeedbackType(r.FeedbackType),
 		Explicitness:          conversationeval.FeedbackExplicitness(r.Explicitness),

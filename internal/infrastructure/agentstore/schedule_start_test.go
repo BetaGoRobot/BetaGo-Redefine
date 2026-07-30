@@ -103,8 +103,8 @@ func testCreateScheduleEditInteractionRequest(
 	}
 	return agentruntime.CreateScheduleEditInteractionRequest{
 		Run: agentruntime.StartRunRequest{
-			AppID:            "app_atomic",
-			BotOpenID:        "bot_atomic",
+			AppID:            repositoryTestTenant.AppID,
+			BotOpenID:        repositoryTestTenant.BotOpenID,
 			ChatID:           "chat_atomic",
 			ScopeType:        agentruntime.ScopeTypeChat,
 			ScopeID:          "chat_atomic",

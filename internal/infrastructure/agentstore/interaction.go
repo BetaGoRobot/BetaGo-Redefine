@@ -141,7 +141,8 @@ func (r *Repository) StartInteraction(ctx context.Context, req agentruntime.Star
 		}
 		now := time.Now().UTC()
 		wait := &agentruntime.AgentStep{
-			ID: req.StepID, RunID: req.RunID, Index: index,
+			ID: req.StepID, TenantID: r.tenant.ID,
+			RunID: req.RunID, Index: index,
 			Kind: agentruntime.StepKindWait, Status: agentruntime.StepStatusCompleted,
 			InputJSON: string(input), OutputJSON: "{}", ExternalRef: req.InteractionID,
 			StartedAt: now, FinishedAt: now, CreatedAt: now,
@@ -255,7 +256,8 @@ func (r *Repository) ResolveInteraction(ctx context.Context, req agentruntime.Re
 			return err
 		}
 		resume := &agentruntime.AgentStep{
-			ID: stableResumeStepID(req.RunID, dedupeKey), RunID: req.RunID, Index: index,
+			ID:       stableResumeStepID(req.RunID, dedupeKey),
+			TenantID: r.tenant.ID, RunID: req.RunID, Index: index,
 			Kind: agentruntime.StepKindResume, Status: agentruntime.StepStatusCompleted,
 			InputJSON: string(eventJSON), OutputJSON: string(req.Outcome),
 			ExternalRef: req.InteractionID, StartedAt: req.ResolvedAt,

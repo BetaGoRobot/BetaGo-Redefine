@@ -14,7 +14,12 @@ import (
 
 const conversationEventsSchemaVersion = "1"
 
-func newProjectionOutbox(stepID string, projection agentruntime.ProjectionDocument, now time.Time) *model.AgentProjectionOutbox {
+func newProjectionOutbox(
+	tenantID string,
+	stepID string,
+	projection agentruntime.ProjectionDocument,
+	now time.Time,
+) *model.AgentProjectionOutbox {
 	sum := sha256.Sum256([]byte(stepID))
 	documentID := projection.DocumentID
 	if !strings.HasSuffix(documentID, ":"+stepID) {
@@ -22,6 +27,7 @@ func newProjectionOutbox(stepID string, projection agentruntime.ProjectionDocume
 	}
 	return &model.AgentProjectionOutbox{
 		ID:            "outbox_" + hex.EncodeToString(sum[:]),
+		TenantID:      tenantID,
 		StepID:        stepID,
 		IndexAlias:    projection.IndexAlias,
 		DocumentID:    documentID,
@@ -34,7 +40,11 @@ func newProjectionOutbox(stepID string, projection agentruntime.ProjectionDocume
 }
 
 func insertProjectionOutbox(tx *gorm.DB, stepID string, projection agentruntime.ProjectionDocument, now time.Time) error {
-	outbox := newProjectionOutbox(stepID, projection, now)
+	var step model.AgentStep
+	if err := tx.Select("tenant_id").First(&step, "id = ?", stepID).Error; err != nil {
+		return err
+	}
+	outbox := newProjectionOutbox(step.TenantID, stepID, projection, now)
 	scoped := agentruntime.ProjectionDocument{
 		IndexAlias: outbox.IndexAlias,
 		DocumentID: outbox.DocumentID,

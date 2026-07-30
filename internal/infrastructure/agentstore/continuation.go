@@ -52,6 +52,7 @@ func (r *Repository) ClaimContinuationStep(
 			  ON sessions.id = runs.session_id
 			 AND sessions.active_run_id = runs.id
 			WHERE steps.run_id = ?
+			  AND steps.tenant_id = ?
 			  AND (
 			    (
 			      steps.kind = ?
@@ -108,7 +109,7 @@ func (r *Repository) ClaimContinuationStep(
 			ORDER BY steps.index, steps.id
 			FOR UPDATE OF sessions, runs, steps SKIP LOCKED
 			LIMIT 1`,
-			claim.RunID, string(agentruntime.StepKindDecide),
+			claim.RunID, r.tenant.ID, string(agentruntime.StepKindDecide),
 			string(agentruntime.StepKindCapabilityResult), string(agentruntime.StepKindResume),
 			string(agentruntime.StepStatusCompleted), string(agentruntime.StepKindReply),
 			string(agentruntime.StepKindCapabilityCall),
@@ -346,7 +347,8 @@ func (r *Repository) PersistDecision(
 				return err
 			}
 			dbReply := &model.AgentStep{
-				ID: replyID, RunID: run.ID, Index: index, Kind: string(agentruntime.StepKindReply),
+				ID: replyID, TenantID: run.TenantID,
+				RunID: run.ID, Index: index, Kind: string(agentruntime.StepKindReply),
 				Status: string(agentruntime.StepStatusQueued), InputJSON: string(input), OutputJSON: "{}",
 				CreatedAt: req.FinishedAt, DedupeKey: step.DedupeKey + ":reply",
 			}

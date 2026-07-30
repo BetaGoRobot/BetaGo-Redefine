@@ -11,6 +11,7 @@ func toDBSession(session *agentruntime.AgentSession) *model.AgentSession {
 	}
 	return &model.AgentSession{
 		ID:              session.ID,
+		TenantID:        session.TenantID,
 		AppID:           session.AppID,
 		BotOpenID:       session.BotOpenID,
 		ChatID:          session.ChatID,
@@ -32,6 +33,7 @@ func toRuntimeSession(session *model.AgentSession) *agentruntime.AgentSession {
 	}
 	return &agentruntime.AgentSession{
 		ID:              session.ID,
+		TenantID:        session.TenantID,
 		AppID:           session.AppID,
 		BotOpenID:       session.BotOpenID,
 		ChatID:          session.ChatID,
@@ -53,6 +55,7 @@ func toDBRun(run *agentruntime.AgentRun) *model.AgentRun {
 	}
 	return &model.AgentRun{
 		ID:               run.ID,
+		TenantID:         run.TenantID,
 		SessionID:        run.SessionID,
 		TriggerType:      string(run.TriggerType),
 		TriggerMessageID: run.TriggerMessageID,
@@ -89,6 +92,7 @@ func toRuntimeRun(run *model.AgentRun) *agentruntime.AgentRun {
 	}
 	return &agentruntime.AgentRun{
 		ID:               run.ID,
+		TenantID:         run.TenantID,
 		SessionID:        run.SessionID,
 		TriggerType:      agentruntime.TriggerType(run.TriggerType),
 		TriggerMessageID: run.TriggerMessageID,
@@ -125,6 +129,7 @@ func toDBStep(step *agentruntime.AgentStep) *model.AgentStep {
 	}
 	return &model.AgentStep{
 		ID:             step.ID,
+		TenantID:       step.TenantID,
 		RunID:          step.RunID,
 		Index:          step.Index,
 		Kind:           string(step.Kind),
@@ -151,6 +156,7 @@ func toRuntimeStep(step *model.AgentStep) *agentruntime.AgentStep {
 	}
 	return &agentruntime.AgentStep{
 		ID:             step.ID,
+		TenantID:       step.TenantID,
 		RunID:          step.RunID,
 		Index:          step.Index,
 		Kind:           agentruntime.StepKind(step.Kind),

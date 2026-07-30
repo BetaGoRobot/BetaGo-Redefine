@@ -47,7 +47,8 @@ func enqueueContinuationStepTx(
 	}
 	sum := sha256.Sum256([]byte(run.ID + "\x00" + dedupeKey))
 	step := &model.AgentStep{
-		ID: "step_continuation_" + hex.EncodeToString(sum[:]), RunID: run.ID, Index: index,
+		ID:       "step_continuation_" + hex.EncodeToString(sum[:]),
+		TenantID: run.TenantID, RunID: run.ID, Index: index,
 		Kind: string(agentruntime.StepKindDecide), Status: string(agentruntime.StepStatusQueued),
 		InputJSON: string(input), OutputJSON: "{}", CreatedAt: now, DedupeKey: dedupeKey,
 	}
@@ -100,6 +101,7 @@ func (r *Repository) AppendEvent(ctx context.Context, step *agentruntime.AgentSt
 			maxIndex = run.CurrentStepIndex
 		}
 		candidate := *step
+		candidate.TenantID = r.tenant.ID
 		candidate.Index = maxIndex + 1
 		if candidate.CreatedAt.IsZero() {
 			candidate.CreatedAt = time.Now().UTC()
@@ -163,6 +165,7 @@ func (r *Repository) ClaimQueuedStep(ctx context.Context, claim agentruntime.Ste
 			FROM agent_steps AS steps
 			JOIN agent_runs AS runs ON runs.id = steps.run_id
 			WHERE steps.status = ?
+			  AND steps.tenant_id = ?
 			  AND (steps.lease_expires_at IS NULL OR steps.lease_expires_at <= ?)
 			  AND runs.status IN (?, ?)
 			  AND NOT EXISTS (
@@ -174,7 +177,7 @@ func (r *Repository) ClaimQueuedStep(ctx context.Context, claim agentruntime.Ste
 			ORDER BY steps.created_at, steps.id
 			FOR UPDATE OF runs, steps SKIP LOCKED
 			LIMIT 1`,
-			string(agentruntime.StepStatusQueued), claim.Now,
+			string(agentruntime.StepStatusQueued), r.tenant.ID, claim.Now,
 			string(agentruntime.RunStatusQueued), string(agentruntime.RunStatusRunning),
 			string(agentruntime.StepStatusRunning),
 		).Scan(&claimed)
@@ -270,6 +273,7 @@ func (r *Repository) ReclaimStaleSteps(ctx context.Context, req agentruntime.Rec
 				SELECT id
 				FROM agent_steps
 				WHERE status = ?
+				  AND tenant_id = ?
 				  AND lease_expires_at < ?
 				ORDER BY lease_expires_at, id
 				FOR UPDATE SKIP LOCKED
@@ -279,7 +283,7 @@ func (r *Repository) ReclaimStaleSteps(ctx context.Context, req agentruntime.Rec
 			SET status = ?, worker_id = '', lease_expires_at = NULL
 			FROM stale
 			WHERE steps.id = stale.id`,
-			string(agentruntime.StepStatusRunning), req.Now, req.Limit,
+			string(agentruntime.StepStatusRunning), r.tenant.ID, req.Now, req.Limit,
 			string(agentruntime.StepStatusQueued),
 		)
 		if result.Error != nil {
