@@ -211,3 +211,96 @@ func TestAgentCardRolloutModesEnforceShadowAllowlistAndOn(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluationRolloutDefaultsOff(t *testing.T) {
+	t.Parallel()
+
+	settings, err := EvaluationRolloutSettings(&infraConfig.BaseConfig{})
+	if err != nil {
+		t.Fatalf("EvaluationRolloutSettings() error = %v", err)
+	}
+	if settings.Enabled() || settings.Allows("chat-any") {
+		t.Fatalf("default settings = %#v, want fail-closed off", settings)
+	}
+	if settings.CohortDuration != 24*time.Hour {
+		t.Fatalf("default cohort duration = %s, want 24h", settings.CohortDuration)
+	}
+}
+
+func TestEvaluationRolloutAllowlistAndOn(t *testing.T) {
+	t.Parallel()
+
+	allowlist, err := EvaluationRolloutSettings(&infraConfig.BaseConfig{
+		RuntimeConfig: &infraConfig.RuntimeConfig{
+			EvaluationMode:                "allowlist",
+			EvaluationChatIDs:             []string{" chat-a ", "chat-b", "chat-a"},
+			EvaluationCohortDurationHours: 12,
+		},
+	})
+	if err != nil {
+		t.Fatalf("allowlist settings error = %v", err)
+	}
+	if !allowlist.Enabled() || !allowlist.Allows("chat-a") ||
+		!allowlist.Allows(" chat-b ") || allowlist.Allows("chat-c") {
+		t.Fatalf("allowlist settings = %#v", allowlist)
+	}
+	if allowlist.CohortDuration != 12*time.Hour {
+		t.Fatalf("cohort duration = %s, want 12h", allowlist.CohortDuration)
+	}
+
+	on, err := EvaluationRolloutSettings(&infraConfig.BaseConfig{
+		RuntimeConfig: &infraConfig.RuntimeConfig{EvaluationMode: "ON"},
+	})
+	if err != nil {
+		t.Fatalf("on settings error = %v", err)
+	}
+	if !on.Enabled() || !on.Allows("chat-any") {
+		t.Fatalf("on settings = %#v", on)
+	}
+}
+
+func TestEvaluationRolloutRejectsUnsafeConfiguration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config *infraConfig.RuntimeConfig
+	}{
+		{
+			name:   "unknown mode",
+			config: &infraConfig.RuntimeConfig{EvaluationMode: "shadow"},
+		},
+		{
+			name:   "empty allowlist",
+			config: &infraConfig.RuntimeConfig{EvaluationMode: "allowlist"},
+		},
+		{
+			name: "blank allowlist",
+			config: &infraConfig.RuntimeConfig{
+				EvaluationMode: "allowlist", EvaluationChatIDs: []string{" "},
+			},
+		},
+		{
+			name: "duration too large",
+			config: &infraConfig.RuntimeConfig{
+				EvaluationMode: "on", EvaluationCohortDurationHours: 169,
+			},
+		},
+		{
+			name: "negative duration",
+			config: &infraConfig.RuntimeConfig{
+				EvaluationMode: "on", EvaluationCohortDurationHours: -1,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := EvaluationRolloutSettings(&infraConfig.BaseConfig{
+				RuntimeConfig: test.config,
+			}); err == nil {
+				t.Fatal("unsafe evaluation rollout configuration was accepted")
+			}
+		})
+	}
+}

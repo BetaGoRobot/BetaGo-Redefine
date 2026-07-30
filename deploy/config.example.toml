@@ -46,6 +46,9 @@
     conversation_projection_queue_size = 128
     conversation_projection_timeout_seconds = 60
     conversation_event_index = "agent_conversation_events"
+    evaluation_mode = "off" # off | allowlist | on
+    evaluation_chat_ids = []
+    evaluation_cohort_duration_hours = 24
     evaluation_candidate_workers = 2
     evaluation_candidate_lease_seconds = 600
     evaluation_candidate_retry_seconds = 15
