@@ -77,6 +77,9 @@ func toDBRun(run *agentruntime.AgentRun) *model.AgentRun {
 		HeartbeatAt:      run.HeartbeatAt,
 		LeaseExpiresAt:   run.LeaseExpiresAt,
 		RepairAttempts:   run.RepairAttempts,
+		ActivationSource: run.ActivationSource,
+		TopicFingerprint: run.TopicFingerprint,
+		LastRelevantAt:   run.LastRelevantAt,
 	}
 }
 
@@ -110,6 +113,9 @@ func toRuntimeRun(run *model.AgentRun) *agentruntime.AgentRun {
 		HeartbeatAt:      run.HeartbeatAt,
 		LeaseExpiresAt:   run.LeaseExpiresAt,
 		RepairAttempts:   run.RepairAttempts,
+		ActivationSource: run.ActivationSource,
+		TopicFingerprint: run.TopicFingerprint,
+		LastRelevantAt:   run.LastRelevantAt,
 	}
 }
 
@@ -131,6 +137,11 @@ func toDBStep(step *agentruntime.AgentStep) *model.AgentStep {
 		StartedAt:      step.StartedAt,
 		FinishedAt:     step.FinishedAt,
 		CreatedAt:      step.CreatedAt,
+		DedupeKey:      step.DedupeKey,
+		AttemptCount:   step.AttemptCount,
+		WorkerID:       step.WorkerID,
+		LeaseExpiresAt: step.LeaseExpiresAt,
+		RetryOfStepID:  step.RetryOfStepID,
 	}
 }
 
@@ -152,5 +163,10 @@ func toRuntimeStep(step *model.AgentStep) *agentruntime.AgentStep {
 		StartedAt:      step.StartedAt,
 		FinishedAt:     step.FinishedAt,
 		CreatedAt:      step.CreatedAt,
+		DedupeKey:      step.DedupeKey,
+		AttemptCount:   step.AttemptCount,
+		WorkerID:       step.WorkerID,
+		LeaseExpiresAt: step.LeaseExpiresAt,
+		RetryOfStepID:  step.RetryOfStepID,
 	}
 }

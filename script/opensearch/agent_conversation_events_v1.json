@@ -1,0 +1,90 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1
+  },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "schema_version": {
+        "type": "keyword"
+      },
+      "event_id": {
+        "type": "keyword"
+      },
+      "event_type": {
+        "type": "keyword"
+      },
+      "run_id": {
+        "type": "keyword"
+      },
+      "step_id": {
+        "type": "keyword"
+      },
+      "source_step_id": {
+        "type": "keyword"
+      },
+      "parent_step_id": {
+        "type": "keyword"
+      },
+      "session_id": {
+        "type": "keyword"
+      },
+      "chat_id": {
+        "type": "keyword"
+      },
+      "actor_open_id": {
+        "type": "keyword"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "external_ref": {
+        "type": "keyword"
+      },
+      "message_id": {
+        "type": "keyword"
+      },
+      "source_message_id": {
+        "type": "keyword"
+      },
+      "interaction_id": {
+        "type": "keyword"
+      },
+      "capability_name": {
+        "type": "keyword"
+      },
+      "action": {
+        "type": "keyword"
+      },
+      "revision": {
+        "type": "long"
+      },
+      "relevance": {
+        "type": "float"
+      },
+      "step_status": {
+        "type": "keyword"
+      },
+      "outcome_status": {
+        "type": "keyword"
+      },
+      "occurred_at": {
+        "type": "date"
+      },
+      "content": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 1024
+          }
+        }
+      },
+      "structured_payload": {
+        "type": "object",
+        "enabled": false
+      }
+    }
+  }
+}

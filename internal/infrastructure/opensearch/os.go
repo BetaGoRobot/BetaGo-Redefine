@@ -28,9 +28,12 @@ var backend searchBackend = noopBackend{reason: "opensearch not initialized"}
 
 var opensearchDomain = os.Getenv("OPENSEARCH_DOMAIN")
 
+var ErrUnavailable = errors.New("opensearch unavailable")
+
 type searchBackend interface {
 	Reason() string
 	InsertData(ctx context.Context, index string, id string, data any) error
+	UpsertData(ctx context.Context, index string, id string, data any) error
 	SearchData(ctx context.Context, index string, data any) (*opensearchapi.SearchResp, error)
 	SearchDataStr(ctx context.Context, index string, data string) (*opensearchapi.SearchResp, error)
 }
@@ -45,6 +48,10 @@ func (n noopBackend) Reason() string {
 
 func (n noopBackend) InsertData(context.Context, string, string, any) error {
 	return nil
+}
+
+func (n noopBackend) UpsertData(context.Context, string, string, any) error {
+	return fmt.Errorf("%w: %s", ErrUnavailable, n.reason)
 }
 
 func (n noopBackend) SearchData(context.Context, string, any) (*opensearchapi.SearchResp, error) {
@@ -64,6 +71,15 @@ func (l liveBackend) Reason() string {
 }
 
 func (l liveBackend) InsertData(ctx context.Context, index string, id string, data any) (err error) {
+	index += "-" + time.Now().In(utils.UTC8Loc()).Format("2006-01-02")
+	return l.indexData(ctx, index, id, data)
+}
+
+func (l liveBackend) UpsertData(ctx context.Context, index string, id string, data any) error {
+	return l.indexData(ctx, index, id, data)
+}
+
+func (l liveBackend) indexData(ctx context.Context, index string, id string, data any) (err error) {
 	ctx, span := otel.Start(ctx,
 		trace.WithAttributes(
 			attribute.String("index.name", index),
@@ -74,7 +90,6 @@ func (l liveBackend) InsertData(ctx context.Context, index string, id string, da
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
-	index += "-" + time.Now().In(utils.UTC8Loc()).Format("2006-01-02")
 	req := opensearchapi.IndexReq{
 		Index:      index,
 		DocumentID: id,
@@ -162,6 +177,10 @@ func Status() (bool, string) {
 
 func InsertData(ctx context.Context, index string, id string, data any) (err error) {
 	return backend.InsertData(ctx, index, id, data)
+}
+
+func UpsertData(ctx context.Context, index string, id string, data any) error {
+	return backend.UpsertData(ctx, index, id, data)
 }
 
 func SearchData(ctx context.Context, index string, data any) (resp *opensearchapi.SearchResp, err error) {

@@ -12,16 +12,22 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 type Repository struct {
-	q *query.Query
+	db *gorm.DB
+	q  *query.Query
 }
 
 var _ agentruntime.Store = (*Repository)(nil)
 
 func NewRepository(db *gorm.DB) *Repository {
-	return &Repository{q: query.Use(infraDB.WithoutQueryCache(db))}
+	db = infraDB.WithoutQueryCache(db)
+	if db != nil {
+		db = db.Session(&gorm.Session{Logger: logger.Discard})
+	}
+	return &Repository{db: db, q: query.Use(db)}
 }
 
 func (r *Repository) GetOrCreateSession(ctx context.Context, session *agentruntime.AgentSession) (*agentruntime.AgentSession, error) {

@@ -91,6 +91,46 @@ type fakeChatService struct {
 	chats []ChatSummary
 }
 
+type fakeEvaluationWorkbench struct {
+	query           EvaluationListQuery
+	page            EvaluationEpisodePage
+	detail          *EvaluationEpisodeDetail
+	err             error
+	judgmentRequest HumanJudgmentRequest
+}
+
+func (f *fakeEvaluationWorkbench) AppendHumanJudgment(
+	_ context.Context,
+	_, _, _ string,
+	request HumanJudgmentRequest,
+) (*EvaluationJudgmentView, error) {
+	f.judgmentRequest = request
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &EvaluationJudgmentView{
+		ID: "judgment-1", Source: "human", Version: 1,
+		Winner: request.Winner,
+	}, nil
+}
+
+func (f *fakeEvaluationWorkbench) ListEpisodes(
+	_ context.Context,
+	query EvaluationListQuery,
+) (EvaluationEpisodePage, error) {
+	f.query = query
+	return f.page, f.err
+}
+
+func (f *fakeEvaluationWorkbench) GetEpisode(
+	context.Context,
+	string,
+	string,
+	string,
+) (*EvaluationEpisodeDetail, error) {
+	return f.detail, f.err
+}
+
 func (f *fakeChatService) ListChats(context.Context) ([]ChatSummary, error) { return f.chats, nil }
 
 func (f *fakeChatService) GetChat(_ context.Context, chatID string) (*ChatDetail, error) {
@@ -145,6 +185,161 @@ func TestListChats(t *testing.T) {
 	}
 	if resp.Total != 2 || resp.Items[0].Avatar != "https://avatar/1" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestEvaluationSensitiveReadsRequireConfiguredBearerAuth(t *testing.T) {
+	for _, test := range []struct {
+		name, token, authorization string
+		want                       int
+	}{
+		{name: "auth not configured", want: http.StatusServiceUnavailable},
+		{name: "missing bearer", token: "secret", want: http.StatusUnauthorized},
+		{
+			name: "valid bearer", token: "secret",
+			authorization: "Bearer secret", want: http.StatusOK,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workbench := &fakeEvaluationWorkbench{}
+			srv := NewServer(Options{
+				Config: &infraConfig.WebUIConfig{AuthToken: test.token},
+				AppID:  "app-1", BotOpenID: "bot-1",
+				EvaluationWorkbench: workbench,
+				Now: func() time.Time {
+					return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+				},
+			}, nil)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/evaluations", nil)
+			if test.authorization != "" {
+				req.Header.Set("Authorization", test.authorization)
+			}
+			srv.Handler().ServeHTTP(rec, req)
+			if rec.Code != test.want {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if test.want == http.StatusOK &&
+				(workbench.query.AppID != "app-1" ||
+					workbench.query.BotOpenID != "bot-1" ||
+					workbench.query.Limit != 50) {
+				t.Fatalf("query = %#v", workbench.query)
+			}
+		})
+	}
+}
+
+func TestEvaluationListRejectsInvalidBounds(t *testing.T) {
+	srv := NewServer(Options{
+		Config: &infraConfig.WebUIConfig{AuthToken: "secret"},
+		AppID:  "app-1", BotOpenID: "bot-1",
+		EvaluationWorkbench: &fakeEvaluationWorkbench{},
+		Now: func() time.Time {
+			return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		},
+	}, nil)
+	for _, path := range []string{
+		"/api/evaluations?limit=101",
+		"/api/evaluations?from=bad-time",
+		"/api/evaluations?cursor=bad-cursor",
+		"/api/evaluations?needs_review=maybe",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestEvaluationDetailReturnsBotScopedBundle(t *testing.T) {
+	workbench := &fakeEvaluationWorkbench{
+		detail: &EvaluationEpisodeDetail{
+			Episode: EvaluationEpisodeSummary{ID: "episode-1"},
+		},
+	}
+	srv := NewServer(Options{
+		Config: &infraConfig.WebUIConfig{AuthToken: "secret"},
+		AppID:  "app-1", BotOpenID: "bot-1",
+		EvaluationWorkbench: workbench,
+	}, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/evaluations/episode-1",
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"id":"episode-1"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	workbench.detail = nil
+	workbench.err = ErrEvaluationNotFound
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("not found status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEvaluationHumanJudgmentRequiresValidAuthenticatedDocument(t *testing.T) {
+	workbench := &fakeEvaluationWorkbench{}
+	srv := NewServer(Options{
+		Config: &infraConfig.WebUIConfig{AuthToken: "secret"},
+		AppID:  "app-1", BotOpenID: "bot-1",
+		EvaluationWorkbench: workbench,
+	}, nil)
+	valid := `{
+		"evaluator_id":"reviewer-1",
+		"winner":"candidate",
+		"scores":{"response_relevance":9},
+		"problem_tags":["control_missed_context"],
+		"rationale":"Candidate used the relevant constraint.",
+		"confidence":90,
+		"needs_review":false
+	}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/evaluations/episode-1/judgments",
+		strings.NewReader(valid),
+	)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated ||
+		workbench.judgmentRequest.Winner != "candidate" ||
+		workbench.judgmentRequest.EvaluatorID != "reviewer-1" {
+		t.Fatalf(
+			"status=%d body=%s request=%#v",
+			rec.Code,
+			rec.Body.String(),
+			workbench.judgmentRequest,
+		)
+	}
+
+	for _, invalid := range []string{
+		`{"evaluator_id":"reviewer","winner":"bad","scores":{},"rationale":"x","confidence":50}`,
+		`{"evaluator_id":"reviewer","winner":"tie","scores":[],"rationale":"x","confidence":50}`,
+		`{"evaluator_id":"reviewer","winner":"tie","scores":{},"rationale":"","confidence":50}`,
+		`{"evaluator_id":"reviewer","winner":"tie","scores":{},"rationale":"x","confidence":101}`,
+		`{"evaluator_id":"reviewer","winner":"tie","scores":{},"rationale":"x","confidence":50,"unknown":true}`,
+	} {
+		rec = httptest.NewRecorder()
+		req = httptest.NewRequest(
+			http.MethodPost,
+			"/api/evaluations/episode-1/judgments",
+			strings.NewReader(invalid),
+		)
+		req.Header.Set("Authorization", "Bearer secret")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid=%s status=%d body=%s", invalid, rec.Code, rec.Body.String())
+		}
 	}
 }
 

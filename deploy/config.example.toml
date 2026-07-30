@@ -36,6 +36,41 @@
     embedding_model = "ep-xxx"
     chunk_model = "ep-xxx"
 
+# Conversation Runtime 使用有界 executor；动态开关仍在配置管理中按 chat
+# 控制。projection 写入失败只会降级索引，不影响 PostgreSQL 中的回调续接。
+[runtime_config]
+    conversation_workers = 4
+    conversation_queue_size = 128
+    conversation_timeout_seconds = 120
+    conversation_projection_workers = 2
+    conversation_projection_queue_size = 128
+    conversation_projection_timeout_seconds = 60
+    conversation_event_index = "agent_conversation_events"
+    evaluation_candidate_workers = 2
+    evaluation_candidate_lease_seconds = 600
+    evaluation_candidate_retry_seconds = 15
+    evaluation_candidate_poll_millis = 1000
+    evaluation_window_sweep_seconds = 5
+    evaluation_judge_workers = 1
+    evaluation_judge_poll_millis = 1000
+    # 留空时优先使用 ark_config.reasoning_model，其次 normal_model。
+    evaluation_judge_model = ""
+    evaluation_judge_disabled = false
+    evaluation_projection_interval_seconds = 30
+    evaluation_projection_batch_size = 100
+    evaluation_index = "agent_conversation_evaluations"
+
+# Agent 自主卡片默认关闭。shadow 会完整校验与编译，但绝不落库或发送；
+# allowlist 只向指定 chat 暴露工具并允许发送；on 为全量开启。
+[agent_card]
+    enabled = false
+    mode = "off" # off | shadow | allowlist | on
+    allow_chat_ids = []
+    max_repair_attempts = 2
+    default_expiry_seconds = 600
+    patch_worker_count = 1
+    patch_lease_seconds = 30
+
 # 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
 # WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。
 [webui_config]

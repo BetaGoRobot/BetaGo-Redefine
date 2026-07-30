@@ -13,11 +13,13 @@ import (
 	"time"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	otelinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -27,6 +29,30 @@ import (
 type traceCaptureSubmitter struct {
 	mu       sync.Mutex
 	traceIDs []oteltrace.TraceID
+}
+
+type immediateSubmitter struct{}
+
+func (immediateSubmitter) Submit(
+	ctx context.Context,
+	_ string,
+	fn func(context.Context) error,
+) error {
+	return fn(ctx)
+}
+
+type handlerContinuationFake struct {
+	err   error
+	calls int
+}
+
+func (f *handlerContinuationFake) CanHandle(action *cardaction.Parsed) bool {
+	return action != nil
+}
+
+func (f *handlerContinuationFake) Dispatch(context.Context, appcardaction.ContinuationRequest) (*callback.CardActionTriggerResponse, error) {
+	f.calls++
+	return nil, f.err
 }
 
 func (s *traceCaptureSubmitter) Submit(ctx context.Context, _ string, _ func(context.Context) error) error {
@@ -231,7 +257,85 @@ func TestCardActionHandlerStartsNewRootTracePerCall(t *testing.T) {
 	}
 }
 
+func TestCardActionHandlerEmitsFeedbackThroughExecutor(t *testing.T) {
+	installHandlerTestConfig(t)
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	actionName := "test.feedback." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	appcardaction.RegisterSync(actionName, func(
+		context.Context,
+		*appcardaction.Context,
+	) (*callback.CardActionTriggerResponse, error) {
+		return appcardaction.InfoToast("ok"), nil
+	})
+	event := newCardActionEvent("delivered-card", actionName)
+	event.Event.Action.Value[cardaction.TokenField] = "plaintext-callback-token"
+	event.EventV2Base = &larkevent.EventV2Base{Header: &larkevent.EventHeader{
+		EventID: "card-feedback-event", CreateTime: "1785398400123",
+	}}
+	sink := &handlerFeedbackSinkFake{}
+	handlerSet := NewHandlerSet(HandlerSetOptions{
+		ReactionExecutor: immediateSubmitter{},
+		FeedbackSink:     sink,
+	})
+
+	if _, err := handlerSet.CardActionHandler(context.Background(), event); err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if len(sink.cards) != 1 {
+		t.Fatalf("card feedback = %#v, want one item", sink.cards)
+	}
+	got := sink.cards[0]
+	if got.EventID != "card-feedback-event" || got.ChatID != "oc_card_chat" ||
+		got.TargetMessageID != "delivered-card" || got.ActorOpenID != "ou_card_user" ||
+		got.ActionName != actionName ||
+		got.OccurredAt != time.UnixMilli(1785398400123) {
+		t.Fatalf("card feedback = %#v", got)
+	}
+	if strings.Contains(string(got.Value), "plaintext-callback-token") ||
+		!strings.Contains(string(got.Value), "[REDACTED]") {
+		t.Fatalf("card feedback leaked callback token: %s", got.Value)
+	}
+}
+
+type handlerFeedbackSinkFake struct {
+	cards []conversationeval.CardFeedback
+}
+
+func (*handlerFeedbackSinkFake) ObserveMessage(
+	context.Context,
+	conversationeval.MessageFeedback,
+) error {
+	return nil
+}
+
+func (*handlerFeedbackSinkFake) ObserveReaction(
+	context.Context,
+	conversationeval.ReactionFeedback,
+) error {
+	return nil
+}
+
+func (f *handlerFeedbackSinkFake) ObserveCardAction(
+	_ context.Context,
+	event conversationeval.CardFeedback,
+) error {
+	f.cards = append(f.cards, event)
+	return nil
+}
+
 func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
+	installHandlerTestConfig(t)
+
 	prevMetaBuilder := buildCardActionMetaData
 	prevRecorder := recordCardAction
 	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
@@ -261,6 +365,83 @@ func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
 	}
 	if !strings.Contains(resp.Toast.Content, "卡片操作失败") {
 		t.Fatalf("toast content = %q, want contain 卡片操作失败", resp.Toast.Content)
+	}
+	if !strings.Contains(resp.Toast.Content, "resume dispatcher unavailable") {
+		t.Fatalf("legacy toast content = %q, want original V1 error", resp.Toast.Content)
+	}
+}
+
+func TestCardActionHandlerReturnsSafeToastForContinuationFailure(t *testing.T) {
+	installHandlerTestConfig(t)
+
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	actionName := "test.continuation.error." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	dispatcher := &handlerContinuationFake{err: errors.New("token=top-secret; SELECT * FROM credentials")}
+	handlerSet := NewHandlerSet(HandlerSetOptions{ContinuationDispatcher: dispatcher})
+	event := newCardActionEvent("card-msg-continuation-error", actionName)
+	event.Event.Action.Value[cardaction.RunIDField] = "run-1"
+	event.Event.Action.Value[cardaction.StepIDField] = "step-1"
+	event.Event.Action.Value[cardaction.InteractionIDField] = "interaction-1"
+	event.Event.Action.Value[cardaction.RevisionField] = "1"
+	event.Event.Action.Value[cardaction.TokenField] = "opaque-token"
+	event.Event.Action.Value[cardaction.InteractionKindField] = "capability_confirm"
+	event.Event.Action.Value[cardaction.ContinueAgentField] = "true"
+
+	resp, err := handlerSet.CardActionHandler(context.Background(), event)
+	if err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if dispatcher.calls != 1 {
+		t.Fatalf("continuation Dispatch() calls = %d, want 1", dispatcher.calls)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
+		t.Fatalf("expected error toast response, got %+v", resp)
+	}
+	if resp.Toast.Content != "卡片操作失败，请稍后重试" {
+		t.Fatalf("toast content = %q, want fixed continuation error message", resp.Toast.Content)
+	}
+	if strings.Contains(resp.Toast.Content, "top-secret") || strings.Contains(resp.Toast.Content, "SELECT") {
+		t.Fatalf("toast leaked continuation cause: %q", resp.Toast.Content)
+	}
+}
+
+func TestNilHandlerSetCardActionHandlerDoesNotPanic(t *testing.T) {
+	installHandlerTestConfig(t)
+
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	var handlerSet *HandlerSet
+	resp, err := handlerSet.CardActionHandler(
+		context.Background(),
+		newCardActionEvent("card-msg-nil-handler", "test.nil.handler.unregistered"),
+	)
+	if err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "error" {
+		t.Fatalf("expected legacy error toast, got %+v", resp)
+	}
+	if !strings.Contains(resp.Toast.Content, "unhandled card action") {
+		t.Fatalf("toast content = %q, want legacy unhandled error", resp.Toast.Content)
 	}
 }
 

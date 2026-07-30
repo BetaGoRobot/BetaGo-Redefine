@@ -17,16 +17,8 @@ const (
 	ScopeTypeThread ScopeType = "thread"
 )
 
-type Store interface {
-	GetOrCreateSession(context.Context, *AgentSession) (*AgentSession, error)
-	FindRunBySessionAndTriggerMessage(context.Context, string, string) (*AgentRun, error)
-	CreateRun(context.Context, *AgentRun) error
-	UpdateSessionActiveRun(context.Context, string, string, string, string) (*AgentSession, error)
-	CreateStep(context.Context, *AgentStep) error
-}
-
 type RunCoordinator struct {
-	store Store
+	store CoordinatorStore
 }
 
 type StartRunRequest struct {
@@ -49,7 +41,7 @@ type StartRunResult struct {
 	Run     *AgentRun
 }
 
-func NewRunCoordinator(store Store) *RunCoordinator {
+func NewRunCoordinator(store CoordinatorStore) *RunCoordinator {
 	return &RunCoordinator{store: store}
 }
 
@@ -127,6 +119,12 @@ func newSession(req StartRunRequest) *AgentSession {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+}
+
+// NewSessionForRun returns the deterministic session identity used by both the
+// legacy coordinator and atomic interaction creation.
+func NewSessionForRun(req StartRunRequest) *AgentSession {
+	return newSession(req)
 }
 
 func deterministicSessionID(appID, botOpenID, chatID, scopeType, scopeID string) string {

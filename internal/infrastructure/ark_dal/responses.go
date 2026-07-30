@@ -24,6 +24,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var responsesStreamCreator = CreateResponsesStream
+
 // event-handler模式
 
 type (
@@ -45,6 +47,8 @@ type (
 		streamUsage            *responses.Usage
 		streamResponseID       string
 		streamUsageRecorded    bool
+		modelIDOverride        string
+		activeModelID          string
 
 		lastRespID string
 		textOutput textOutput
@@ -183,6 +187,27 @@ func (r *ResponsesImpl[T]) Effort(t responses.ReasoningEffort_Enum) *ResponsesIm
 		Effort: t,
 	}
 	return r
+}
+
+func (r *ResponsesImpl[T]) WithModelID(modelID string) *ResponsesImpl[T] {
+	if r != nil {
+		r.modelIDOverride = strings.TrimSpace(modelID)
+	}
+	return r
+}
+
+func (r *ResponsesImpl[T]) ActiveModelID() string {
+	if r == nil {
+		return ""
+	}
+	return r.activeModelID
+}
+
+func (r *ResponsesImpl[T]) resolveModelID(defaultModelID string) string {
+	if r != nil && strings.TrimSpace(r.modelIDOverride) != "" {
+		return strings.TrimSpace(r.modelIDOverride)
+	}
+	return strings.TrimSpace(defaultModelID)
 }
 
 func (r *ResponsesImpl[T]) WithHandlersOnly(tools *tools.Impl[T]) *ResponsesImpl[T] {
@@ -352,8 +377,13 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		if cfgErr != nil {
 			return nil, cfgErr
 		}
-		resp, err = CreateResponsesStream(ctx, &responses.ResponsesRequest{
-			Model:              cfg.NormalModel,
+		modelID := r.activeModelID
+		if strings.TrimSpace(modelID) == "" {
+			modelID = r.resolveModelID(cfg.NormalModel)
+			r.activeModelID = modelID
+		}
+		resp, err = responsesStreamCreator(ctx, &responses.ResponsesRequest{
+			Model:              modelID,
 			PreviousResponseId: new(r.lastRespID),
 			Input:              message,
 			Store:              new(true),
@@ -554,12 +584,13 @@ func (r *ResponsesImpl[T]) DoSync(ctx context.Context, scope llmusage.Scope, sys
 	ctx, span := otel.StartNamed(ctx, "ark.responses.run_sync")
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
-	defer r.recordStreamUsage(ctx, scope, cfg.NormalModel)
 
 	var (
-		modelID = cfg.NormalModel
+		modelID = r.resolveModelID(cfg.NormalModel)
 		items   = baseInputItem(sysPrompt, userPrompt)
 	)
+	r.activeModelID = modelID
+	defer r.recordStreamUsage(ctx, scope, modelID)
 
 	span.SetAttributes(
 		attribute.Key("model_id").String(modelID),
@@ -584,7 +615,7 @@ func (r *ResponsesImpl[T]) DoSync(ctx context.Context, scope llmusage.Scope, sys
 		Stream:    new(true),
 	}
 
-	resp, err := CreateResponsesStream(ctx, req, scope)
+	resp, err := responsesStreamCreator(ctx, req, scope)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses stream (sync)", zap.Error(err))
 		return "", err
@@ -631,9 +662,10 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysProm
 
 	var (
 		req     *responses.ResponsesRequest
-		modelID = cfg.NormalModel
+		modelID = r.resolveModelID(cfg.NormalModel)
 		items   = baseInputItem(sysPrompt, userPrompt)
 	)
+	r.activeModelID = modelID
 
 	span.SetAttributes(
 		attribute.Key("model_id").String(modelID),
@@ -669,7 +701,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysProm
 		MaxToolCalls:      new(int64(10)),
 	}
 
-	resp, err := CreateResponsesStream(ctx, req, scope)
+	resp, err := responsesStreamCreator(ctx, req, scope)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("failed to create responses stream", zap.Error(err))
 		return nil, err

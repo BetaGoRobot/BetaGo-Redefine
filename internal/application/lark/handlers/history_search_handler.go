@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -31,6 +32,23 @@ type historySearchHandler struct{}
 var SearchHistory historySearchHandler
 
 var historyHybridSearchFn = history.HybridSearch
+
+type candidateHistoryAnchorContextKey struct{}
+
+func withCandidateHistoryAnchor(ctx context.Context, anchor time.Time) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, candidateHistoryAnchorContextKey{}, anchor)
+}
+
+func candidateHistoryAnchor(ctx context.Context) (time.Time, bool) {
+	if ctx == nil {
+		return time.Time{}, false
+	}
+	anchor, ok := ctx.Value(candidateHistoryAnchorContextKey{}).(time.Time)
+	return anchor, ok && !anchor.IsZero()
+}
 
 func (historySearchHandler) ParseTool(raw string) (HistorySearchArgs, error) {
 	parsed := HistorySearchArgs{}
@@ -87,25 +105,59 @@ func (historySearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRe
 	}
 	// 自动应用 history cutoff time
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
-	res, err := historyHybridSearchFn(ctx,
-		history.HybridSearchRequest{
-			QueryText:   splitByComma(arg.Keywords),
-			TopK:        arg.TopK,
-			OpenID:      arg.OpenID,
-			UserName:    strings.TrimSpace(arg.UserName),
-			MessageType: strings.TrimSpace(arg.MessageType),
-			ChatID:      chatID,
-			StartTime:   arg.StartTime,
-			EndTime:     arg.EndTime,
-			CutoffTime:  cutoffTime,
-		}, func(ctx context.Context, text string) ([]float32, model.Usage, error) {
+	request := history.HybridSearchRequest{
+		QueryText:   splitByComma(arg.Keywords),
+		TopK:        arg.TopK,
+		OpenID:      arg.OpenID,
+		UserName:    strings.TrimSpace(arg.UserName),
+		MessageType: strings.TrimSpace(arg.MessageType),
+		ChatID:      chatID,
+		StartTime:   arg.StartTime,
+		EndTime:     arg.EndTime,
+		CutoffTime:  cutoffTime,
+	}
+	causalEnd, strictCausal := candidateHistoryAnchor(ctx)
+	if strictCausal {
+		causalEnd = effectiveCandidateHistoryEnd(arg.EndTime, causalEnd)
+		request.EndTime = causalEnd.Format(time.RFC3339Nano)
+		request.CausalEndMillis = causalEnd.UnixMilli()
+		request.MessageIndexOnly = true
+	}
+	res, err := historyHybridSearchFn(
+		ctx,
+		request,
+		func(ctx context.Context, text string) ([]float32, model.Usage, error) {
 			return ark_dal.EmbeddingText(ctx, text, buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(data, metaData), "", "history_search", llmusage.SourceTypeUser))
-		})
+		},
+	)
 	if err != nil {
 		return err
 	}
+	if strictCausal {
+		filtered := make([]*history.SearchResult, 0, len(res))
+		for _, result := range res {
+			if topicSearchResultAtOrBeforeAnchor(result, causalEnd) {
+				filtered = append(filtered, result)
+			}
+		}
+		res = filtered
+	}
 	metaData.SetExtra("search_result", utils.MustMarshalString(res))
 	return nil
+}
+
+func effectiveCandidateHistoryEnd(value string, anchor time.Time) time.Time {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{time.RFC3339Nano, time.DateTime} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			if parsed.Before(anchor) {
+				return parsed
+			}
+			return anchor
+		}
+	}
+	return anchor
 }
 
 func splitByComma(input string) []string {

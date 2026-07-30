@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
@@ -519,7 +520,50 @@ func (editScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 		return fmt.Errorf("no fields to update: provide specific fields to modify")
 	}
 
-	// 4. 生成 edit token 并存储 pending edit
+	if starter, ok := agentruntime.InteractionStarterFromContext(ctx); ok {
+		envelope, err := starter.StartScheduleEdit(ctx, agentruntime.StartScheduleEditRequest{
+			TaskID:          task.ID,
+			ActorOpenID:     metaData.OpenID,
+			ChatID:          targetChatID,
+			SourceMessageID: scheduleSourceMessageID(data),
+			NewValues:       newValues,
+		}.Clone())
+		if err != nil {
+			return err
+		}
+		if envelope == nil {
+			return errors.New("schedule edit interaction starter returned an empty runtime envelope")
+		}
+		if err := envelope.Validate(); err != nil {
+			return fmt.Errorf("invalid schedule edit runtime envelope: %w", err)
+		}
+		if envelope.InteractionKind != "schedule_edit" {
+			return errors.New("invalid schedule edit runtime envelope: interaction_kind must be schedule_edit")
+		}
+
+		card, err := buildRuntimeEditConfirmCard(ctx, task, newValues, *envelope)
+		if err != nil {
+			return err
+		}
+		if _, err := larkmsg.SendEphemeralCard(ctx, metaData.ChatID, metaData.OpenID, card); err != nil {
+			// The durable interaction has already been persisted. Its expiry/reconciliation
+			// path owns recovery; never create a legacy pending edit or send a second card.
+			return fmt.Errorf("failed to send durable schedule edit confirmation card: %w", err)
+		}
+
+		metaData.SetExtra(scheduleToolResultKey, fmt.Sprintf(
+			"📝 已创建持久化修改确认交互，等待用户操作。\n\n目标: %s\nID: `%s`\nrun_id: `%s`\nstep_id: `%s`\ninteraction_id: `%s`",
+			task.Name,
+			task.ID,
+			envelope.RunID,
+			envelope.StepID,
+			envelope.InteractionID,
+		))
+		return nil
+	}
+
+	// Legacy fallback: only requests without a Conversation Runtime starter use
+	// the in-memory edit token and PendingEdit callback path.
 	editToken := generateEditToken()
 	if err := storePendingEdit(editToken, &PendingEdit{
 		TaskID:      args.ID,
@@ -533,11 +577,13 @@ func (editScheduleHandler) Handle(ctx context.Context, data *larkim.P2MessageRec
 	// 5. 构建确认卡片（ephemeral，仅触发者可见）
 	card, err := buildEditConfirmCard(ctx, task, newValues, editToken)
 	if err != nil {
+		DeletePendingEdit(editToken)
 		return err
 	}
 
 	// 6. 发送 ephemeral card
 	if _, err := larkmsg.SendEphemeralCard(ctx, metaData.ChatID, metaData.OpenID, card); err != nil {
+		DeletePendingEdit(editToken)
 		return fmt.Errorf("failed to send confirmation card: %w", err)
 	}
 

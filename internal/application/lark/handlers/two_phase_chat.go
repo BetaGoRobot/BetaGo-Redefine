@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers/twophase"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
@@ -20,7 +22,6 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
@@ -54,12 +55,27 @@ func GenerateChatSeqTwoPhase(
 		*size = 20
 	}
 	chatID := *event.Event.Message.ChatId
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
+	var anchorAt time.Time
+	if captureEnabled {
+		anchorAt, err = eventAnchorTime(event)
+		if err != nil {
+			return nil, err
+		}
+	}
 	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, metaData))
 	cutoffTime := getHistoryCutoffTime(ctx, chatID)
 
 	// 复用 intent 阶段产出的决策与工具线索
 	intent, hasIntent := metaData.GetIntentAnalysis()
 	if hasIntent && !intent.NeedReply {
+		if captureEnabled {
+			recordStandardChatPlan(ctx, event, StandardChatPlan{
+				ModelID:      modelID,
+				CurrentInput: composeChatInput(metaData, rawTwoPhaseCurrentInput(event, input...)),
+				Files:        append([]string(nil), files...),
+			})
+		}
 		return singleSkipSeq("intent: need_reply=false"), nil
 	}
 
@@ -67,18 +83,7 @@ func GenerateChatSeqTwoPhase(
 	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
 	currentMsgParentID := pointerString(event.Event.Message.ParentId)
 
-	var query *osquery.BoolQuery
-	if cutoffTime != "" {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Gte(cutoffTime),
-		)
-	} else {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Lte(time.Now()),
-		)
-	}
+	query := buildHistoryQueryForMode(chatID, cutoffTime, anchorAt, time.Now(), captureEnabled)
 	messageList, err := history.New(ctx).
 		Query(query).
 		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
@@ -87,11 +92,11 @@ func GenerateChatSeqTwoPhase(
 		return
 	}
 
-	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, currentMsgThreadID, currentMsgParentID)
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, captureEnabled, currentMsgThreadID, currentMsgParentID)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
 	}
-
+	messageList, droppedHistory := filterHistoryForMode(messageList, anchorAt, captureEnabled)
 	userName, err := larkuser.GetUserNameCache(ctx, chatID, *event.Event.Sender.SenderId.OpenId)
 	if err != nil {
 		return
@@ -108,9 +113,36 @@ func GenerateChatSeqTwoPhase(
 	} else if len(historyLines) > historyLimit {
 		historyLines = historyLines[len(historyLines)-historyLimit:]
 	}
+	var (
+		historyItems           []conversationeval.ContextItem
+		excludedItems          []conversationeval.ExcludedContextItem
+		historyDegradedSources []string
+	)
+	runCaptureBuild(ctx, func() {
+		historyItems, excludedItems = captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
+		causalExcluded, causalDegraded := captureDroppedHistory(droppedHistory, anchorAt)
+		excludedItems = append(excludedItems, causalExcluded...)
+		historyDegradedSources = append(historyDegradedSources, causalDegraded...)
+	})
 
 	// 话题召回
-	topicLines := buildTwoPhaseTopicLines(ctx, accessor, chatID, currentInput, cutoffTime)
+	var topicEmbedding history.EmbeddingFunc
+	if captureEnabled {
+		topicEmbedding = topicRecallEmbedding(buildUserLLMUsageScope(
+			ctx,
+			chatID,
+			metaChatName(metaData),
+			currentOpenID(event, metaData),
+			userName,
+			"topic_recall",
+			llmusage.SourceTypeUser,
+		))
+	}
+	topicLines, retrievedItems, retrievedExcluded, degradedSources := buildTwoPhaseTopicContext(
+		ctx, accessor, chatID, currentInput, cutoffTime, anchorAt, captureEnabled, topicEmbedding,
+	)
+	excludedItems = append(excludedItems, retrievedExcluded...)
+	degradedSources = append(historyDegradedSources, degradedSources...)
 
 	extraCtx := getChatExtraContext(ctx, chatID)
 	correctionsCtx := buildCorrectionsContext(ctx, chatID)
@@ -145,6 +177,7 @@ func GenerateChatSeqTwoPhase(
 			logs.L().Ctx(ctx).Warn("tool planner failed, fallback to no hints", zap.Error(planErr))
 		} else {
 			toolHints = hints
+			recordTwoPhaseToolHints(ctx, toolHints)
 		}
 	}
 
@@ -173,11 +206,31 @@ func GenerateChatSeqTwoPhase(
 		extraCtx,
 		correctionsCtx,
 	)
+	if captureEnabled {
+		recordStandardChatPlan(ctx, event, StandardChatPlan{
+			ModelID:         modelID,
+			SystemPrompt:    genSysPrompt,
+			UserPrompt:      genUserPrompt,
+			CurrentInput:    currentInput,
+			HistoryItems:    historyItems,
+			RetrievedItems:  retrievedItems,
+			ExcludedItems:   excludedItems,
+			DegradedSources: degradedSources,
+			Files:           append([]string(nil), files...),
+			chatID:          chatID,
+			openID:          currentOpenID(event, metaData),
+			userName:        userName,
+			messageList:     messageList,
+		})
+	}
 
 	genScope := twophase.BuildGeneratorScope(baseScope)
 	dal := ark_dal.
-		New(chatID, currentOpenID(event, metaData), event).
-		WithTools(BuildRuntimeCapabilityTools())
+		New(chatID, currentOpenID(event, metaData), event)
+	if captureEnabled {
+		dal = dal.WithModelID(modelID)
+	}
+	dal = dal.WithTools(BuildRuntimeCapabilityToolsForContext(ctx))
 	if hasIntent {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}
@@ -189,6 +242,19 @@ func GenerateChatSeqTwoPhase(
 	}
 
 	return wrapTwoPhaseStream(ctx, genStream, intentReason, messageList, chatID), nil
+}
+
+func recordTwoPhaseToolHints(ctx context.Context, hints []intentmeta.ToolHint) {
+	if !conversationeval.CaptureEnabled(ctx) {
+		return
+	}
+	capture := conversationeval.FromContext(ctx)
+	for _, hint := range hints {
+		capture.RecordToolPlan(ctx, conversationeval.ToolTrace{
+			Name:         string(hint),
+			OutputSource: conversationeval.ToolOutputSourcePlanner,
+		})
+	}
 }
 
 // wrapTwoPhaseStream 包装 Reply Generator 流式输出，在流结束时组装完整 FinalResult
@@ -260,35 +326,104 @@ func singleSkipSeq(reason string) iter.Seq[*ark_dal.ModelStreamRespReasoning] {
 
 // buildTwoPhaseTopicLines 构建话题行（从向量检索 + chunk 索引中获取）
 func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, chatID, currentInput, cutoffTime string) []string {
+	lines, _, _, _ := buildTwoPhaseTopicContext(ctx, accessor, chatID, currentInput, cutoffTime, time.Now(), false, nil)
+	return lines
+}
+
+func buildTwoPhaseTopicContext(
+	ctx context.Context,
+	accessor *appconfig.Accessor,
+	chatID, currentInput, cutoffTime string,
+	anchorAt time.Time,
+	captureEnabled bool,
+	embeddingFunc history.EmbeddingFunc,
+) (
+	[]string,
+	[]conversationeval.ContextItem,
+	[]conversationeval.ExcludedContextItem,
+	[]string,
+) {
 	topicLines := make([]string, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
+	retrievedItems := make([]conversationeval.ContextItem, 0)
+	excludedItems := make([]conversationeval.ExcludedContextItem, 0)
+	degradedSources := make([]string, 0)
+	docs, err := recallTopicDocsForMode(
+		ctx, chatID, currentInput, 10, cutoffTime, anchorAt, captureEnabled, embeddingFunc,
+	)
 	if err != nil {
 		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
-		return topicLines
+		if captureEnabled {
+			return topicLines, retrievedItems, excludedItems, []string{conversationeval.ContextSourceRetrieved}
+		}
+		return topicLines, nil, nil, nil
 	}
-	for _, doc := range docs {
-		msgID, ok := doc.Metadata["msg_id"]
-		if !ok {
+	for docIndex, doc := range docs {
+		rawMsgID, ok := doc.Metadata["msg_id"]
+		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
+		if !ok || msgID == "" {
+			if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("document-%d", docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					nil,
+				)
+				item.Score = float64(doc.Score)
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonMissingMsgID,
+					conversationeval.ContextBucketRetrieved,
+				))
+			}
 			continue
 		}
-		chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
-		if cutoffTime != "" {
-			chunkQuery = osquery.Bool().Must(
-				osquery.Term("msg_ids", msgID),
-				osquery.Range("timestamp_v2").Gte(cutoffTime),
-			)
-		}
+		chunkQuery := buildChunkQueryForMode(msgID, cutoffTime, anchorAt, captureEnabled)
 		resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
 			Search().Sort("timestamp_v2", osquery.OrderDesc).
 			Query(chunkQuery).
 			Size(1),
 		)
 		if searchErr != nil {
+			if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					map[string]string{"message_id": msgID},
+				)
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonChunkMissing,
+					conversationeval.ContextBucketRetrieved,
+				))
+			}
 			continue
 		}
 		chunk := &xmodel.MessageChunkLogV3{}
 		if len(resp.Hits.Hits) > 0 {
 			if err := sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk); err != nil {
+				if captureEnabled {
+					item := newContextItem(
+						conversationeval.ContextSourceRetrieved,
+						fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+						conversationeval.ContextKindChunk,
+						doc.PageContent,
+						docIndex+1,
+						time.UnixMilli(1).UTC(),
+						map[string]string{"message_id": msgID},
+					)
+					excludedItems = append(excludedItems, excludedContextItem(
+						item,
+						excludeReasonChunkInvalid,
+						conversationeval.ContextBucketRetrieved,
+					))
+				}
 				continue
 			}
 			t := ""
@@ -297,10 +432,78 @@ func buildTwoPhaseTopicLines(ctx context.Context, accessor *appconfig.Accessor, 
 			} else {
 				t = chunk.Timestamp
 			}
-			topicLines = append(topicLines, "["+t+"]"+chunk.Summary)
+			topicLine := "[" + t + "]" + chunk.Summary
+			sourceID := strings.TrimSpace(chunk.ID)
+			if sourceID == "" {
+				sourceID = msgID
+			}
+			var occurredAt time.Time
+			if captureEnabled {
+				var causalReason string
+				occurredAt, causalReason = contextTimeForMode(t, anchorAt, captureEnabled)
+				if causalReason != "" {
+					excluded, degraded := captureDroppedRetrieved(
+						sourceID, msgID, topicLine, t, causalReason,
+						docIndex+1, float64(doc.Score), anchorAt,
+					)
+					excludedItems = append(excludedItems, excluded)
+					degradedSources = append(degradedSources, degraded)
+					continue
+				}
+			}
+			topicLines = append(topicLines, topicLine)
+			if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					sourceID,
+					conversationeval.ContextKindChunk,
+					topicLine,
+					docIndex+1,
+					occurredAt,
+					map[string]string{"message_id": msgID},
+				)
+				item.Score = float64(doc.Score)
+				retrievedItems = append(retrievedItems, item)
+			}
+		} else if captureEnabled {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				map[string]string{"message_id": msgID},
+			)
+			excludedItems = append(excludedItems, excludedContextItem(
+				item,
+				excludeReasonChunkMissing,
+				conversationeval.ContextBucketRetrieved,
+			))
 		}
 	}
-	return utils.Dedup(topicLines)
+	deduplicated := utils.Dedup(topicLines)
+	if captureEnabled && len(deduplicated) != len(topicLines) {
+		selected := make([]conversationeval.ContextItem, 0, len(deduplicated))
+		seen := make(map[string]struct{}, len(deduplicated))
+		for index, item := range retrievedItems {
+			if _, exists := seen[item.Content]; exists {
+				item.SourceID = fmt.Sprintf("%s-duplicate-%d", item.SourceID, index+1)
+				item.ID = item.Source + ":" + item.SourceID
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonDeduplicated,
+					conversationeval.ContextBucketRetrieved,
+				))
+				continue
+			}
+			seen[item.Content] = struct{}{}
+			item.Rank = len(selected) + 1
+			selected = append(selected, item)
+		}
+		retrievedItems = selected
+	}
+	return deduplicated, retrievedItems, excludedItems, degradedSources
 }
 
 // fmtTwoPhaseInput 格式化当前输入消息
@@ -309,6 +512,21 @@ func fmtTwoPhaseInput(event *larkim.P2MessageReceiveV1, userName, createTime str
 		return "[" + createTime + "](" + *event.Event.Sender.SenderId.OpenId + ") <" + userName + ">: " + strings.TrimSpace(input[0])
 	}
 	return "[" + createTime + "](" + *event.Event.Sender.SenderId.OpenId + ") <" + userName + ">: " + larkmsg.PreGetTextMsg(context.Background(), event).GetText()
+}
+
+func rawTwoPhaseCurrentInput(
+	event *larkim.P2MessageReceiveV1,
+	input ...string,
+) string {
+	if len(input) > 0 {
+		if value := strings.TrimSpace(input[0]); value != "" {
+			return value
+		}
+	}
+	if event == nil {
+		return ""
+	}
+	return strings.TrimSpace(larkmsg.PreGetTextMsg(context.Background(), event).GetText())
 }
 
 // isTwoPhaseEnabled 检查两阶段模式是否启用

@@ -2,9 +2,11 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intent"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -59,6 +61,46 @@ func TestIntentRecognizeOperatorRunStoresAnalysis(t *testing.T) {
 	}
 	if analysis.IntentType != intent.IntentTypeQuestion {
 		t.Fatalf("IntentType = %q, want %q", analysis.IntentType, intent.IntentTypeQuestion)
+	}
+}
+
+func TestIntentRecognizeOperatorCapturesSanitizedAnalysis(t *testing.T) {
+	op := &IntentRecognizeOperator{
+		configAccessor: func(context.Context, *larkim.P2MessageReceiveV1, *xhandler.BaseMetaData) intentRecognizeConfig {
+			return fakeIntentRecognizeAccessor{enabled: true, mode: appconfig.ChatModeStandard}
+		},
+		recentContextLoader: func(context.Context, *larkim.P2MessageReceiveV1, int) ([]string, error) {
+			return nil, nil
+		},
+		analyzer: func(context.Context, string, []string, llmusage.Scope) (*intent.IntentAnalysis, error) {
+			return &intent.IntentAnalysis{
+				IntentType:      "invalid",
+				NeedReply:       true,
+				ReplyConfidence: 180,
+				SuggestAction:   "invalid",
+			}, nil
+		},
+	}
+	recorder := conversationeval.NewCaptureRecorder()
+	ctx := conversationeval.WithCapture(context.Background(), recorder)
+	meta := &xhandler.BaseMetaData{ChatID: "oc_chat", OpenID: "ou_actor"}
+
+	if err := op.Run(ctx, testMessageEvent("group", "oc_chat", "ou_actor"), meta); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var captured intent.IntentAnalysis
+	if err := json.Unmarshal(recorder.Snapshot().IntentJSON, &captured); err != nil {
+		t.Fatalf("captured intent JSON error = %v", err)
+	}
+	if captured.IntentType != intent.IntentTypeChat {
+		t.Fatalf("captured IntentType = %q, want sanitized %q", captured.IntentType, intent.IntentTypeChat)
+	}
+	if captured.ReplyConfidence != 100 {
+		t.Fatalf("captured ReplyConfidence = %d, want 100", captured.ReplyConfidence)
+	}
+	if captured.SuggestAction != intent.SuggestActionIgnore {
+		t.Fatalf("captured SuggestAction = %q, want %q", captured.SuggestAction, intent.SuggestActionIgnore)
 	}
 }
 

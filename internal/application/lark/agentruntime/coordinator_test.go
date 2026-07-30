@@ -90,6 +90,8 @@ func newMemoryStore() *memoryStore {
 	}
 }
 
+var _ CoordinatorStore = (*memoryStore)(nil)
+
 func (s *memoryStore) GetOrCreateSession(_ context.Context, session *AgentSession) (*AgentSession, error) {
 	if existing, ok := s.sessions[session.ID]; ok {
 		return cloneSession(existing), nil

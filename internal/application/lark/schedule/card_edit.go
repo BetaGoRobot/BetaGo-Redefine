@@ -3,9 +3,11 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -15,6 +17,7 @@ const (
 	editConfirmAction = "schedule.edit_confirm"
 	editCancelAction  = "schedule.edit_cancel"
 	editTokenField    = "edit_token"
+	editConfirmTitle  = "📝 Schedule 修改确认"
 )
 
 // Field keys for edit NewValues map
@@ -72,6 +75,63 @@ func buildEditChangeLines(newValues map[string]any, task *model.ScheduledTask, l
 }
 
 func buildEditConfirmCard(ctx context.Context, task *model.ScheduledTask, newValues map[string]any, editToken string) (map[string]any, error) {
+	confirmPayload := cardactionproto.New(editConfirmAction).
+		WithValue(editTokenField, editToken).
+		WithValue(taskCardViewIDField, task.ID).
+		Payload()
+
+	cancelPayload := cardactionproto.New(editCancelAction).
+		WithValue(editTokenField, editToken).
+		Payload()
+
+	elements := buildEditConfirmElements(task, newValues, confirmPayload, cancelPayload)
+	card := larkmsg.NewStandardPanelCard(ctx, editConfirmTitle, elements, larkmsg.StandardCardFooterOptions{
+		RefreshPayload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(TaskCardViewState{
+			Mode: TaskCardViewModeQuery,
+			ID:   task.ID,
+		})),
+	})
+	return map[string]any(card), nil
+}
+
+func buildRuntimeEditConfirmCard(
+	ctx context.Context,
+	task *model.ScheduledTask,
+	newValues map[string]any,
+	envelope agentruntime.RuntimeEnvelope,
+) (map[string]any, error) {
+	if err := envelope.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid schedule edit runtime envelope: %w", err)
+	}
+	if envelope.InteractionKind != "schedule_edit" {
+		return nil, fmt.Errorf("invalid schedule edit runtime envelope: interaction_kind must be schedule_edit")
+	}
+
+	confirmPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditConfirm, envelope)
+	cancelPayload := buildRuntimeEditPayload(cardactionproto.ActionScheduleEditCancel, envelope)
+	elements := buildEditConfirmElements(task, newValues, confirmPayload, cancelPayload)
+	card := larkmsg.NewCardV2(editConfirmTitle, elements, larkmsg.StandardPanelCardV2Options())
+	return map[string]any(card), nil
+}
+
+func buildRuntimeEditPayload(action string, envelope agentruntime.RuntimeEnvelope) map[string]string {
+	return cardactionproto.New(action).
+		WithRunID(envelope.RunID).
+		WithStepID(envelope.StepID).
+		WithInteractionID(envelope.InteractionID).
+		WithRevision(strconv.FormatInt(envelope.Revision, 10)).
+		WithToken(envelope.Token).
+		WithInteractionKind(envelope.InteractionKind).
+		WithContinueAgent(envelope.ContinueAgent).
+		Payload()
+}
+
+func buildEditConfirmElements(
+	task *model.ScheduledTask,
+	newValues map[string]any,
+	confirmPayload map[string]string,
+	cancelPayload map[string]string,
+) []any {
 	loc, err := resolveLocation(task.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -89,15 +149,6 @@ func buildEditConfirmCard(ctx context.Context, task *model.ScheduledTask, newVal
 		larkmsg.HintMarkdown("⚠️ 此操作需要确认，请点击下方按钮。确认后立即执行修改。"),
 	}
 
-	confirmPayload := cardactionproto.New(editConfirmAction).
-		WithValue(editTokenField, editToken).
-		WithValue(taskCardViewIDField, task.ID).
-		Payload()
-
-	cancelPayload := cardactionproto.New(editCancelAction).
-		WithValue(editTokenField, editToken).
-		Payload()
-
 	elements = append(elements, larkmsg.ButtonRow("action",
 		larkmsg.Button("✅ 确认修改", larkmsg.ButtonOptions{
 			Type:    "primary_filled",
@@ -109,11 +160,5 @@ func buildEditConfirmCard(ctx context.Context, task *model.ScheduledTask, newVal
 		}),
 	))
 
-	card := larkmsg.NewStandardPanelCard(ctx, "📝 Schedule 修改确认", elements, larkmsg.StandardCardFooterOptions{
-		RefreshPayload: larkmsg.StringMapToAnyMap(BuildTaskViewValue(TaskCardViewState{
-			Mode: TaskCardViewModeQuery,
-			ID:   task.ID,
-		})),
-	})
-	return map[string]any(card), nil
+	return elements
 }

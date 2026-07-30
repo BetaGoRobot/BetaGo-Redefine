@@ -50,6 +50,9 @@ func newAgentRun(db *gorm.DB, opts ...gen.DOOption) agentRun {
 	_agentRun.HeartbeatAt = field.NewTime(tableName, "heartbeat_at")
 	_agentRun.LeaseExpiresAt = field.NewTime(tableName, "lease_expires_at")
 	_agentRun.RepairAttempts = field.NewInt64(tableName, "repair_attempts")
+	_agentRun.ActivationSource = field.NewString(tableName, "activation_source")
+	_agentRun.TopicFingerprint = field.NewString(tableName, "topic_fingerprint")
+	_agentRun.LastRelevantAt = field.NewTime(tableName, "last_relevant_at")
 
 	_agentRun.fillFieldMap()
 
@@ -85,6 +88,9 @@ type agentRun struct {
 	HeartbeatAt      field.Time
 	LeaseExpiresAt   field.Time
 	RepairAttempts   field.Int64
+	ActivationSource field.String
+	TopicFingerprint field.String
+	LastRelevantAt   field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -126,6 +132,9 @@ func (a *agentRun) updateTableName(table string) *agentRun {
 	a.HeartbeatAt = field.NewTime(table, "heartbeat_at")
 	a.LeaseExpiresAt = field.NewTime(table, "lease_expires_at")
 	a.RepairAttempts = field.NewInt64(table, "repair_attempts")
+	a.ActivationSource = field.NewString(table, "activation_source")
+	a.TopicFingerprint = field.NewString(table, "topic_fingerprint")
+	a.LastRelevantAt = field.NewTime(table, "last_relevant_at")
 
 	a.fillFieldMap()
 
@@ -150,7 +159,7 @@ func (a *agentRun) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *agentRun) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 25)
+	a.fieldMap = make(map[string]field.Expr, 28)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["session_id"] = a.SessionID
 	a.fieldMap["trigger_type"] = a.TriggerType
@@ -176,6 +185,9 @@ func (a *agentRun) fillFieldMap() {
 	a.fieldMap["heartbeat_at"] = a.HeartbeatAt
 	a.fieldMap["lease_expires_at"] = a.LeaseExpiresAt
 	a.fieldMap["repair_attempts"] = a.RepairAttempts
+	a.fieldMap["activation_source"] = a.ActivationSource
+	a.fieldMap["topic_fingerprint"] = a.TopicFingerprint
+	a.fieldMap["last_relevant_at"] = a.LastRelevantAt
 }
 
 func (a agentRun) clone(db *gorm.DB) agentRun {

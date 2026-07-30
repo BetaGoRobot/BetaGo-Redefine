@@ -251,6 +251,15 @@ var runtimeBehaviors = map[string]RuntimeBehavior{
 	"economy_indicator_get": {
 		SideEffectLevel: SideEffectLevelNone,
 	},
+	"search_history": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"get_chat_members": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
+	"get_recent_active_members": {
+		SideEffectLevel: SideEffectLevelNone,
+	},
 	"config_set": {
 		SideEffectLevel: SideEffectLevelAdminWrite,
 		Approval: &ApprovalBehavior{

@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/history"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
@@ -21,14 +22,12 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/retriever"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/xmodel"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	redis "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/osqueryutil"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 
@@ -55,6 +54,23 @@ type ChatArgs struct {
 type (
 	chatHandler struct{}
 )
+
+type StandardChatPlan struct {
+	ModelID         string
+	SystemPrompt    string
+	UserPrompt      string
+	CurrentInput    string
+	HistoryItems    []conversationeval.ContextItem
+	RetrievedItems  []conversationeval.ContextItem
+	ExcludedItems   []conversationeval.ExcludedContextItem
+	DegradedSources []string
+	Files           []string
+
+	chatID      string
+	openID      string
+	userName    string
+	messageList history.OpensearchMsgLogList
+}
 
 var Chat = chatHandler{}
 
@@ -120,7 +136,7 @@ func getChatPersona(ctx context.Context, chatID string) string {
 
 // expandMissingParents fetches missing parent messages for reply chains and
 // expands thread context for the current message if it's a topic or reply.
-func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
+func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogList, index string, cutoffTime string, anchor time.Time, captureEnabled bool, currentMsgThreadID string, currentMsgParentID string) (history.OpensearchMsgLogList, error) {
 	if len(msgList) == 0 && currentMsgThreadID == "" && currentMsgParentID == "" {
 		return msgList, nil
 	}
@@ -157,15 +173,9 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 	// If current message is a topic, fetch all messages in that thread
 	var threadMsgs history.OpensearchMsgLogList
 	if currentMsgThreadID != "" {
-		threadQuery := osquery.Bool().Must(
-			osquery.Term("thread_id", currentMsgThreadID),
+		threadQuery := buildThreadExpansionQueryForMode(
+			currentMsgThreadID, cutoffTime, anchor, captureEnabled,
 		)
-		if cutoffTime != "" {
-			threadQuery = osquery.Bool().Must(
-				osquery.Term("thread_id", currentMsgThreadID),
-				osquery.Range("create_time_v2").Gte(cutoffTime),
-			)
-		}
 		threadMsgs, _ = history.New(ctx).
 			Index(index).
 			Query(threadQuery).
@@ -180,17 +190,9 @@ func expandMissingParents(ctx context.Context, msgList history.OpensearchMsgLogL
 	// Fetch missing parent messages
 	var parentMsgs history.OpensearchMsgLogList
 	if len(uniqueIDs) > 0 {
-		var parentQuery *osquery.BoolQuery
-		if cutoffTime != "" {
-			parentQuery = osquery.Bool().Must(
-				osqueryutil.TermsFromStrings("message_id", uniqueIDs),
-				osquery.Range("create_time_v2").Gte(cutoffTime),
-			)
-		} else {
-			parentQuery = osquery.Bool().Must(
-				osqueryutil.TermsFromStrings("message_id", uniqueIDs),
-			)
-		}
+		parentQuery := buildParentExpansionQueryForMode(
+			uniqueIDs, cutoffTime, anchor, captureEnabled,
+		)
 		parentMsgs, _ = history.New(ctx).
 			Index(index).
 			Query(parentQuery).
@@ -499,11 +501,13 @@ func pointerString(value *string) string {
 }
 
 func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, chatType string, size *int, args ...string) (err error) {
+	startedAt := time.Now()
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(event, nil), currentOpenID(event, nil))
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
 	files := make([]string, 0)
 
 	// 两阶段模式开关
@@ -551,7 +555,16 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 		if seqErr != nil {
 			return seqErr
 		}
-		return larkmsg.SendAndUpdateStreamingCard(ctx, event.Event.Message, msgSeq)
+		if !captureEnabled {
+			return larkmsg.SendAndUpdateStreamingCard(ctx, event.Event.Message, msgSeq)
+		}
+		messageID, sendErr := larkmsg.SendAndUpdateStreamingCardReturning(
+			ctx,
+			event.Event.Message,
+			captureControlStream(ctx, msgSeq, startedAt),
+		)
+		recordDeliveryMessageID(ctx, messageID)
+		return sendErr
 	}
 
 	genFunc := GenerateChatSeq
@@ -561,6 +574,9 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	msgSeq, err := genFunc(ctx, event, metaData, accessor.ChatNormalModel(), size, files, args...)
 	if err != nil {
 		return err
+	}
+	if captureEnabled {
+		msgSeq = captureControlStream(ctx, msgSeq, startedAt)
 	}
 	lastData := &ark_dal.ModelStreamRespReasoning{}
 	for data := range msgSeq {
@@ -588,144 +604,98 @@ func runStandardChat(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 	if !resp.Success() {
 		return errors.New(resp.Error())
 	}
+	if captureEnabled {
+		recordTextDelivery(ctx, lastData.ContentStruct.Reply, resp)
+	}
 	return nil
 }
 
-func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData, modelID string, size *int, files []string, input ...string) (res iter.Seq[*ark_dal.ModelStreamRespReasoning], err error) {
-	ctx, span := otel.Start(ctx)
-	defer span.End()
-	defer func() { otel.RecordError(span, err) }()
-
-	if size == nil {
-		size = new(int)
-		*size = 20
-	}
-	chatID := *event.Event.Message.ChatId
-	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
-	// Apply history cutoff if configured
-	cutoffTime := getHistoryCutoffTime(ctx, chatID)
-
-	// Wait 30s for OpenSearch to index the current message before querying
-	// This handles the indexing delay for reply/thread context
-	// time.Sleep(30 * time.Second)
-
-	// Get current message's thread context for expansion
-	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
-	currentMsgParentID := pointerString(event.Event.Message.ParentId)
-
-	var query *osquery.BoolQuery
-	if cutoffTime != "" {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Gte(cutoffTime),
-		)
-	} else {
-		query = osquery.Bool().Must(
-			osquery.Term("chat_id", chatID),
-			osquery.Range("create_time_v2").Lte(time.Now()),
-		)
-	}
-	messageList, err := history.New(ctx).
-		Query(query).
-		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
-		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
+func GenerateChatSeq(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	modelID string,
+	size *int,
+	files []string,
+	input ...string,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	plan, err := buildStandardChatPlan(ctx, event, metaData, modelID, size, files, input...)
 	if err != nil {
-		return
+		return nil, err
 	}
+	if conversationeval.CaptureEnabled(ctx) {
+		recordStandardChatPlan(ctx, event, plan)
+	}
+	return executeStandardChatPlan(ctx, event, metaData, plan)
+}
 
-	// Expand: fetch missing parent messages and expand thread context for current message
-	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, currentMsgThreadID, currentMsgParentID)
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
-	}
-	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
-	if err != nil {
-		return
-	}
+type standardChatExecutor interface {
+	Do(
+		context.Context,
+		llmusage.Scope,
+		string,
+		string,
+		...string,
+	) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error)
+}
 
-	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
-	currentInput := fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())
-	currentInput = composeChatInput(metaData, currentInput)
-	historyLines := messageList.ToThreadLines()
-	promptMode := resolveStandardPromptMode(event)
-	historyLimit := standardPromptHistoryLimit(promptMode, *size)
-	if historyLimit == 0 {
-		historyLines = nil
-	} else if len(historyLines) > historyLimit {
-		historyLines = historyLines[len(historyLines)-historyLimit:]
-	}
-	systemPrompt := buildStandardChatSystemPrompt(ctx, promptMode, chatID)
-	// 从chunking中拉取话题（应用 cutoff time 过滤）
-	topicLines := make([]string, 0)
-	docs, err := retriever.Cli().RecallDocs(ctx, chatID, currentInput, 10, cutoffTime, "")
-	if err != nil {
-		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
-	}
-	for _, doc := range docs {
-		msgID, ok := doc.Metadata["msg_id"]
-		if ok {
-			// 构建 chunk 查询（应用 cutoff time 过滤）
-			chunkQuery := osquery.Bool().Must(osquery.Term("msg_ids", msgID))
-			if cutoffTime != "" {
-				chunkQuery = osquery.Bool().Must(
-					osquery.Term("msg_ids", msgID),
-					osquery.Range("timestamp_v2").Gte(cutoffTime),
-				)
+type standardChatExecutorFactory func(modelID string) standardChatExecutor
+
+func executeStandardChatPlan(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	plan StandardChatPlan,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	return executeStandardChatPlanWithExecutorFactory(
+		ctx,
+		event,
+		metaData,
+		plan,
+		func(modelID string) standardChatExecutor {
+			dal := ark_dal.
+				New(plan.chatID, plan.openID, event).
+				WithModelID(modelID).
+				WithTools(larktools(ctx)).
+				WithHandlersOnly(BuildInjectableFinanceTools())
+			if intent, ok := metaData.GetIntentAnalysis(); ok {
+				dal = dal.Effort(intent.ReasoningEffort)
 			}
-			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
-				Search().Sort("timestamp_v2", osquery.OrderDesc).
-				Query(chunkQuery).
-				Size(1),
-			)
-			if searchErr != nil {
-				return nil, searchErr
-			}
-			chunk := &xmodel.MessageChunkLogV3{}
-			if len(resp.Hits.Hits) > 0 {
-				err = sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
-				if err != nil {
-					logs.L().Ctx(ctx).Error("got invalid chunk", zap.Error(err), zap.String("raw", string(resp.Hits.Hits[0].Source)))
-					continue
-				}
-				t := ""
-				if chunk.TimestampV2 != nil {
-					t = *chunk.TimestampV2
-				} else {
-					t = chunk.Timestamp
-				}
-				topicLines = append(topicLines, fmt.Sprintf("[%s]%s", t, chunk.Summary))
-			}
-		}
-	}
-	topicLines = utils.Dedup(topicLines)
-
-	userPrompt := buildStandardChatUserPrompt(
-		standardChatBotProfileLoader(ctx),
-		historyLines,
-		topicLines,
-		currentInput,
+			return dal
+		},
 	)
+}
 
-	// Append extra context if any
-	if extraCtx := getChatExtraContext(ctx, chatID); extraCtx != "" {
-		userPrompt += "\n\n=== 额外上下文 ===\n" + extraCtx
+func executeStandardChatPlanWithExecutorFactory(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	plan StandardChatPlan,
+	factory standardChatExecutorFactory,
+) (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+	if factory == nil {
+		return nil, errors.New("nil standard chat executor factory")
 	}
-
-	// Append corrections context if any
-	if correctionsCtx := buildCorrectionsContext(ctx, chatID); correctionsCtx != "" {
-		userPrompt += correctionsCtx
+	modelID := ""
+	if conversationeval.CaptureEnabled(ctx) {
+		modelID = plan.ModelID
 	}
-
-	dal := ark_dal.
-		New(chatID, currentOpenID(event, metaData), event).
-		WithTools(larktools()).
-		WithHandlersOnly(BuildInjectableFinanceTools())
-	if intent, ok := metaData.GetIntentAnalysis(); ok {
-		dal = dal.Effort(intent.ReasoningEffort)
-	}
-	logs.L().Ctx(ctx).Info("calling chat dal", zap.String("sys_prompt", systemPrompt), zap.String("user_prompt", userPrompt))
-	scope := buildUserLLMUsageScope(ctx, chatID, metaChatName(metaData), currentOpenID(event, metaData), userName, "chat", llmusage.SourceTypeUser)
-	iterSeq, err := dal.Do(ctx, scope, systemPrompt, userPrompt, files...)
+	dal := factory(modelID)
+	logs.L().Ctx(ctx).Info(
+		"calling chat dal",
+		zap.String("sys_prompt", plan.SystemPrompt),
+		zap.String("user_prompt", plan.UserPrompt),
+	)
+	scope := buildUserLLMUsageScope(
+		ctx,
+		plan.chatID,
+		metaChatName(metaData),
+		plan.openID,
+		plan.userName,
+		"chat",
+		llmusage.SourceTypeUser,
+	)
+	iterSeq, err := dal.Do(ctx, scope, plan.SystemPrompt, plan.UserPrompt, plan.Files...)
 	if err != nil {
 		return nil, err
 	}
@@ -756,11 +726,288 @@ func GenerateChatSeq(ctx context.Context, event *larkim.P2MessageReceiveV1, meta
 				return
 			}
 		}
-		if normalizedReply, normalizeErr := mention.NormalizeReplyText(ctx, chatID, messageList, lastData.ContentStruct.Reply); normalizeErr == nil {
+		if normalizedReply, normalizeErr := mention.NormalizeReplyText(
+			ctx,
+			plan.chatID,
+			plan.messageList,
+			lastData.ContentStruct.Reply,
+		); normalizeErr == nil {
 			lastData.ContentStruct.Reply = normalizedReply
 		}
 		lastData.ReasoningContent = reasonBuilder.String()
 		yield(lastData)
+	}, nil
+}
+
+func buildStandardChatPlan(
+	ctx context.Context,
+	event *larkim.P2MessageReceiveV1,
+	metaData *xhandler.BaseMetaData,
+	modelID string,
+	size *int,
+	files []string,
+	input ...string,
+) (plan StandardChatPlan, err error) {
+	ctx, span := otel.Start(ctx)
+	defer span.End()
+	defer func() { otel.RecordError(span, err) }()
+
+	if size == nil {
+		size = new(int)
+		*size = 20
+	}
+	chatID := *event.Event.Message.ChatId
+	captureEnabled := conversationeval.CaptureEnabled(ctx)
+	var anchorAt time.Time
+	if captureEnabled {
+		anchorAt, err = eventAnchorTime(event)
+		if err != nil {
+			return StandardChatPlan{}, err
+		}
+	}
+	accessor := appconfig.NewAccessor(ctx, chatID, currentOpenID(event, nil))
+	// Apply history cutoff if configured
+	cutoffTime := getHistoryCutoffTime(ctx, chatID)
+
+	// Wait 30s for OpenSearch to index the current message before querying
+	// This handles the indexing delay for reply/thread context
+	// time.Sleep(30 * time.Second)
+
+	// Get current message's thread context for expansion
+	currentMsgThreadID := pointerString(event.Event.Message.ThreadId)
+	currentMsgParentID := pointerString(event.Event.Message.ParentId)
+
+	query := buildHistoryQueryForMode(chatID, cutoffTime, anchorAt, time.Now(), captureEnabled)
+	messageList, err := history.New(ctx).
+		Query(query).
+		Source("raw_message", "mentions", "create_time", "create_time_v2", "user_id", "chat_id", "user_name", "message_type", "message_id", "parent_id", "root_id", "thread_id").
+		Size(uint64(*size*3)).Sort("create_time_v2", "desc").GetMsg()
+	if err != nil {
+		return
+	}
+
+	// Expand: fetch missing parent messages and expand thread context for current message
+	messageList, err = expandMissingParents(ctx, messageList, accessor.LarkMsgIndex(), cutoffTime, anchorAt, captureEnabled, currentMsgThreadID, currentMsgParentID)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("expandMissingParents error", zap.Error(err))
+	}
+	messageList, droppedHistory := filterHistoryForMode(messageList, anchorAt, captureEnabled)
+	userName, err := larkuser.GetUserNameCache(ctx, *event.Event.Message.ChatId, *event.Event.Sender.SenderId.OpenId)
+	if err != nil {
+		return
+	}
+
+	createTime := utils.EpoMil2DateStr(*event.Event.Message.CreateTime)
+	currentInput := fmt.Sprintf("[%s](%s) <%s>: %s", createTime, *event.Event.Sender.SenderId.OpenId, userName, larkmsg.PreGetTextMsg(ctx, event).GetText())
+	currentInput = composeChatInput(metaData, currentInput)
+	historyLines := messageList.ToThreadLines()
+	promptMode := resolveStandardPromptMode(event)
+	historyLimit := standardPromptHistoryLimit(promptMode, *size)
+	if historyLimit == 0 {
+		historyLines = nil
+	} else if len(historyLines) > historyLimit {
+		historyLines = historyLines[len(historyLines)-historyLimit:]
+	}
+	var (
+		historyItems    []conversationeval.ContextItem
+		excludedItems   []conversationeval.ExcludedContextItem
+		degradedSources []string
+	)
+	runCaptureBuild(ctx, func() {
+		historyItems, excludedItems = captureHistoryPrompt(messageList, historyLines, historyLimit == 0)
+		causalExcluded, causalDegraded := captureDroppedHistory(droppedHistory, anchorAt)
+		excludedItems = append(excludedItems, causalExcluded...)
+		degradedSources = append(degradedSources, causalDegraded...)
+	})
+	systemPrompt := buildStandardChatSystemPrompt(ctx, promptMode, chatID)
+	// 从chunking中拉取话题（应用 cutoff time 过滤）
+	topicLines := make([]string, 0)
+	retrievedItems := make([]conversationeval.ContextItem, 0)
+	var topicEmbedding history.EmbeddingFunc
+	if captureEnabled {
+		topicEmbedding = topicRecallEmbedding(buildUserLLMUsageScope(
+			ctx,
+			chatID,
+			metaChatName(metaData),
+			currentOpenID(event, metaData),
+			userName,
+			"topic_recall",
+			llmusage.SourceTypeUser,
+		))
+	}
+	docs, err := recallTopicDocsForMode(
+		ctx, chatID, currentInput, 10, cutoffTime, anchorAt, captureEnabled, topicEmbedding,
+	)
+	if err != nil {
+		logs.L().Ctx(ctx).Warn("RecallDocs err", zap.Error(err))
+		if captureEnabled {
+			degradedSources = append(degradedSources, conversationeval.ContextSourceRetrieved)
+		}
+	}
+	for docIndex, doc := range docs {
+		rawMsgID, ok := doc.Metadata["msg_id"]
+		msgID := strings.TrimSpace(fmt.Sprint(rawMsgID))
+		if ok && msgID != "" {
+			// 构建 chunk 查询（应用 cutoff time 过滤）
+			chunkQuery := buildChunkQueryForMode(msgID, cutoffTime, anchorAt, captureEnabled)
+			resp, searchErr := opensearch.SearchData(ctx, accessor.LarkChunkIndex(), osquery.
+				Search().Sort("timestamp_v2", osquery.OrderDesc).
+				Query(chunkQuery).
+				Size(1),
+			)
+			if searchErr != nil {
+				return StandardChatPlan{}, searchErr
+			}
+			chunk := &xmodel.MessageChunkLogV3{}
+			if len(resp.Hits.Hits) > 0 {
+				err = sonic.Unmarshal(resp.Hits.Hits[0].Source, &chunk)
+				if err != nil {
+					logs.L().Ctx(ctx).Error("got invalid chunk", zap.Error(err), zap.String("raw", string(resp.Hits.Hits[0].Source)))
+					if captureEnabled {
+						item := newContextItem(
+							conversationeval.ContextSourceRetrieved,
+							fmt.Sprintf("%s-invalid-%d", msgID, docIndex+1),
+							conversationeval.ContextKindChunk,
+							doc.PageContent,
+							docIndex+1,
+							time.UnixMilli(1).UTC(),
+							map[string]string{"message_id": msgID},
+						)
+						excludedItems = append(excludedItems, excludedContextItem(
+							item,
+							excludeReasonChunkInvalid,
+							conversationeval.ContextBucketRetrieved,
+						))
+					}
+					continue
+				}
+				t := ""
+				if chunk.TimestampV2 != nil {
+					t = *chunk.TimestampV2
+				} else {
+					t = chunk.Timestamp
+				}
+				topicLine := fmt.Sprintf("[%s]%s", t, chunk.Summary)
+				sourceID := strings.TrimSpace(chunk.ID)
+				if sourceID == "" {
+					sourceID = msgID
+				}
+				var occurredAt time.Time
+				if captureEnabled {
+					var causalReason string
+					occurredAt, causalReason = contextTimeForMode(t, anchorAt, captureEnabled)
+					if causalReason != "" {
+						excluded, degraded := captureDroppedRetrieved(
+							sourceID, msgID, topicLine, t, causalReason,
+							docIndex+1, float64(doc.Score), anchorAt,
+						)
+						excludedItems = append(excludedItems, excluded)
+						degradedSources = append(degradedSources, degraded)
+						continue
+					}
+				}
+				topicLines = append(topicLines, topicLine)
+				if captureEnabled {
+					item := newContextItem(
+						conversationeval.ContextSourceRetrieved,
+						sourceID,
+						conversationeval.ContextKindChunk,
+						topicLine,
+						docIndex+1,
+						occurredAt,
+						map[string]string{"message_id": msgID},
+					)
+					item.Score = float64(doc.Score)
+					retrievedItems = append(retrievedItems, item)
+				}
+			} else if captureEnabled {
+				item := newContextItem(
+					conversationeval.ContextSourceRetrieved,
+					fmt.Sprintf("%s-missing-%d", msgID, docIndex+1),
+					conversationeval.ContextKindChunk,
+					doc.PageContent,
+					docIndex+1,
+					time.UnixMilli(1).UTC(),
+					map[string]string{"message_id": msgID},
+				)
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonChunkMissing,
+					conversationeval.ContextBucketRetrieved,
+				))
+			}
+		} else if captureEnabled {
+			item := newContextItem(
+				conversationeval.ContextSourceRetrieved,
+				fmt.Sprintf("document-%d", docIndex+1),
+				conversationeval.ContextKindChunk,
+				doc.PageContent,
+				docIndex+1,
+				time.UnixMilli(1).UTC(),
+				nil,
+			)
+			item.Score = float64(doc.Score)
+			excludedItems = append(excludedItems, excludedContextItem(
+				item,
+				excludeReasonMissingMsgID,
+				conversationeval.ContextBucketRetrieved,
+			))
+		}
+	}
+	deduplicatedTopicLines := utils.Dedup(topicLines)
+	if captureEnabled && len(deduplicatedTopicLines) != len(topicLines) {
+		selectedRetrieved := make([]conversationeval.ContextItem, 0, len(deduplicatedTopicLines))
+		seenTopic := make(map[string]struct{}, len(deduplicatedTopicLines))
+		for index, item := range retrievedItems {
+			if _, exists := seenTopic[item.Content]; exists {
+				item.SourceID = fmt.Sprintf("%s-duplicate-%d", item.SourceID, index+1)
+				item.ID = item.Source + ":" + item.SourceID
+				excludedItems = append(excludedItems, excludedContextItem(
+					item,
+					excludeReasonDeduplicated,
+					conversationeval.ContextBucketRetrieved,
+				))
+				continue
+			}
+			seenTopic[item.Content] = struct{}{}
+			item.Rank = len(selectedRetrieved) + 1
+			selectedRetrieved = append(selectedRetrieved, item)
+		}
+		retrievedItems = selectedRetrieved
+	}
+	topicLines = deduplicatedTopicLines
+
+	userPrompt := buildStandardChatUserPrompt(
+		standardChatBotProfileLoader(ctx),
+		historyLines,
+		topicLines,
+		currentInput,
+	)
+
+	// Append extra context if any
+	if extraCtx := getChatExtraContext(ctx, chatID); extraCtx != "" {
+		userPrompt += "\n\n=== 额外上下文 ===\n" + extraCtx
+	}
+
+	// Append corrections context if any
+	if correctionsCtx := buildCorrectionsContext(ctx, chatID); correctionsCtx != "" {
+		userPrompt += correctionsCtx
+	}
+
+	return StandardChatPlan{
+		ModelID:         modelID,
+		SystemPrompt:    systemPrompt,
+		UserPrompt:      userPrompt,
+		CurrentInput:    currentInput,
+		HistoryItems:    historyItems,
+		RetrievedItems:  retrievedItems,
+		ExcludedItems:   excludedItems,
+		DegradedSources: degradedSources,
+		Files:           append([]string(nil), files...),
+		chatID:          chatID,
+		openID:          currentOpenID(event, metaData),
+		userName:        userName,
+		messageList:     messageList,
 	}, nil
 }
 

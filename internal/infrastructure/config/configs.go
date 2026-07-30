@@ -29,10 +29,24 @@ type BaseConfig struct {
 	RedisConfig          *RedisConfig          `json:"redis_config" yaml:"redis_config" toml:"redis_config"`
 	KuttConfig           *KuttConfig           `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
 	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
+	AgentCardConfig      *AgentCardConfig      `json:"agent_card" yaml:"agent_card" toml:"agent_card"`
 	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
 	WebUIConfig          *WebUIConfig          `json:"webui_config" yaml:"webui_config" toml:"webui_config"`
 	VMConfig             *VMConfig             `json:"vm_config" yaml:"vm_config" toml:"vm_config"`
 	LuckinMCPConfig      *LuckinMCPConfig      `json:"luckin_mcp" yaml:"luckin_mcp" toml:"luckin_mcp"`
+}
+
+// AgentCardConfig controls the gradual rollout of Agent-authored interactive
+// cards. It is disabled by default so existing deployments keep their current
+// tool surface and delivery behaviour.
+type AgentCardConfig struct {
+	Enabled              bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Mode                 string   `json:"mode" yaml:"mode" toml:"mode"`
+	AllowChatIDs         []string `json:"allow_chat_ids" yaml:"allow_chat_ids" toml:"allow_chat_ids"`
+	MaxRepairAttempts    int      `json:"max_repair_attempts" yaml:"max_repair_attempts" toml:"max_repair_attempts"`
+	DefaultExpirySeconds int      `json:"default_expiry_seconds" yaml:"default_expiry_seconds" toml:"default_expiry_seconds"`
+	PatchWorkerCount     int      `json:"patch_worker_count" yaml:"patch_worker_count" toml:"patch_worker_count"`
+	PatchLeaseSeconds    int      `json:"patch_lease_seconds" yaml:"patch_lease_seconds" toml:"patch_lease_seconds"`
 }
 
 type LuckinMCPConfig struct {
@@ -48,22 +62,41 @@ type LuckinMCPConfig struct {
 }
 
 type RuntimeConfig struct {
-	ShutdownTimeoutSeconds     int `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
-	MessageWorkers             int `json:"message_workers" yaml:"message_workers" toml:"message_workers"`
-	MessageQueueSize           int `json:"message_queue_size" yaml:"message_queue_size" toml:"message_queue_size"`
-	MessageTimeoutSeconds      int `json:"message_timeout_seconds" yaml:"message_timeout_seconds" toml:"message_timeout_seconds"`
-	ReactionWorkers            int `json:"reaction_workers" yaml:"reaction_workers" toml:"reaction_workers"`
-	ReactionQueueSize          int `json:"reaction_queue_size" yaml:"reaction_queue_size" toml:"reaction_queue_size"`
-	ReactionTimeoutSeconds     int `json:"reaction_timeout_seconds" yaml:"reaction_timeout_seconds" toml:"reaction_timeout_seconds"`
-	RecordingWorkers           int `json:"recording_workers" yaml:"recording_workers" toml:"recording_workers"`
-	RecordingQueueSize         int `json:"recording_queue_size" yaml:"recording_queue_size" toml:"recording_queue_size"`
-	RecordingTimeoutSeconds    int `json:"recording_timeout_seconds" yaml:"recording_timeout_seconds" toml:"recording_timeout_seconds"`
-	ChunkWorkers               int `json:"chunk_workers" yaml:"chunk_workers" toml:"chunk_workers"`
-	ChunkQueueSize             int `json:"chunk_queue_size" yaml:"chunk_queue_size" toml:"chunk_queue_size"`
-	ChunkTimeoutSeconds        int `json:"chunk_timeout_seconds" yaml:"chunk_timeout_seconds" toml:"chunk_timeout_seconds"`
-	ScheduleWorkers            int `json:"schedule_workers" yaml:"schedule_workers" toml:"schedule_workers"`
-	ScheduleQueueSize          int `json:"schedule_queue_size" yaml:"schedule_queue_size" toml:"schedule_queue_size"`
-	ScheduleTaskTimeoutSeconds int `json:"schedule_task_timeout_seconds" yaml:"schedule_task_timeout_seconds" toml:"schedule_task_timeout_seconds"`
+	ShutdownTimeoutSeconds               int    `json:"shutdown_timeout_seconds" yaml:"shutdown_timeout_seconds" toml:"shutdown_timeout_seconds"`
+	MessageWorkers                       int    `json:"message_workers" yaml:"message_workers" toml:"message_workers"`
+	MessageQueueSize                     int    `json:"message_queue_size" yaml:"message_queue_size" toml:"message_queue_size"`
+	MessageTimeoutSeconds                int    `json:"message_timeout_seconds" yaml:"message_timeout_seconds" toml:"message_timeout_seconds"`
+	ReactionWorkers                      int    `json:"reaction_workers" yaml:"reaction_workers" toml:"reaction_workers"`
+	ReactionQueueSize                    int    `json:"reaction_queue_size" yaml:"reaction_queue_size" toml:"reaction_queue_size"`
+	ReactionTimeoutSeconds               int    `json:"reaction_timeout_seconds" yaml:"reaction_timeout_seconds" toml:"reaction_timeout_seconds"`
+	RecordingWorkers                     int    `json:"recording_workers" yaml:"recording_workers" toml:"recording_workers"`
+	RecordingQueueSize                   int    `json:"recording_queue_size" yaml:"recording_queue_size" toml:"recording_queue_size"`
+	RecordingTimeoutSeconds              int    `json:"recording_timeout_seconds" yaml:"recording_timeout_seconds" toml:"recording_timeout_seconds"`
+	ChunkWorkers                         int    `json:"chunk_workers" yaml:"chunk_workers" toml:"chunk_workers"`
+	ChunkQueueSize                       int    `json:"chunk_queue_size" yaml:"chunk_queue_size" toml:"chunk_queue_size"`
+	ChunkTimeoutSeconds                  int    `json:"chunk_timeout_seconds" yaml:"chunk_timeout_seconds" toml:"chunk_timeout_seconds"`
+	ScheduleWorkers                      int    `json:"schedule_workers" yaml:"schedule_workers" toml:"schedule_workers"`
+	ScheduleQueueSize                    int    `json:"schedule_queue_size" yaml:"schedule_queue_size" toml:"schedule_queue_size"`
+	ScheduleTaskTimeoutSeconds           int    `json:"schedule_task_timeout_seconds" yaml:"schedule_task_timeout_seconds" toml:"schedule_task_timeout_seconds"`
+	ConversationWorkers                  int    `json:"conversation_workers" yaml:"conversation_workers" toml:"conversation_workers"`
+	ConversationQueueSize                int    `json:"conversation_queue_size" yaml:"conversation_queue_size" toml:"conversation_queue_size"`
+	ConversationTimeoutSeconds           int    `json:"conversation_timeout_seconds" yaml:"conversation_timeout_seconds" toml:"conversation_timeout_seconds"`
+	ConversationProjectionWorkers        int    `json:"conversation_projection_workers" yaml:"conversation_projection_workers" toml:"conversation_projection_workers"`
+	ConversationProjectionQueueSize      int    `json:"conversation_projection_queue_size" yaml:"conversation_projection_queue_size" toml:"conversation_projection_queue_size"`
+	ConversationProjectionTimeoutSeconds int    `json:"conversation_projection_timeout_seconds" yaml:"conversation_projection_timeout_seconds" toml:"conversation_projection_timeout_seconds"`
+	ConversationEventIndex               string `json:"conversation_event_index" yaml:"conversation_event_index" toml:"conversation_event_index"`
+	EvaluationCandidateWorkers           int    `json:"evaluation_candidate_workers" yaml:"evaluation_candidate_workers" toml:"evaluation_candidate_workers"`
+	EvaluationCandidateLeaseSeconds      int    `json:"evaluation_candidate_lease_seconds" yaml:"evaluation_candidate_lease_seconds" toml:"evaluation_candidate_lease_seconds"`
+	EvaluationCandidateRetrySeconds      int    `json:"evaluation_candidate_retry_seconds" yaml:"evaluation_candidate_retry_seconds" toml:"evaluation_candidate_retry_seconds"`
+	EvaluationCandidatePollMillis        int    `json:"evaluation_candidate_poll_millis" yaml:"evaluation_candidate_poll_millis" toml:"evaluation_candidate_poll_millis"`
+	EvaluationWindowSweepSeconds         int    `json:"evaluation_window_sweep_seconds" yaml:"evaluation_window_sweep_seconds" toml:"evaluation_window_sweep_seconds"`
+	EvaluationJudgeWorkers               int    `json:"evaluation_judge_workers" yaml:"evaluation_judge_workers" toml:"evaluation_judge_workers"`
+	EvaluationJudgePollMillis            int    `json:"evaluation_judge_poll_millis" yaml:"evaluation_judge_poll_millis" toml:"evaluation_judge_poll_millis"`
+	EvaluationJudgeModel                 string `json:"evaluation_judge_model" yaml:"evaluation_judge_model" toml:"evaluation_judge_model"`
+	EvaluationJudgeDisabled              bool   `json:"evaluation_judge_disabled" yaml:"evaluation_judge_disabled" toml:"evaluation_judge_disabled"`
+	EvaluationProjectionIntervalSeconds  int    `json:"evaluation_projection_interval_seconds" yaml:"evaluation_projection_interval_seconds" toml:"evaluation_projection_interval_seconds"`
+	EvaluationProjectionBatchSize        int    `json:"evaluation_projection_batch_size" yaml:"evaluation_projection_batch_size" toml:"evaluation_projection_batch_size"`
+	EvaluationIndex                      string `json:"evaluation_index" yaml:"evaluation_index" toml:"evaluation_index"`
 }
 
 type ManagementHTTPConfig struct {

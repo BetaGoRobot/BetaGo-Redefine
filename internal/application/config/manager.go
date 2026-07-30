@@ -33,8 +33,11 @@ const (
 	KeyIntentReplyThreshold      ConfigKey = "intent_reply_threshold"
 
 	// 开关配置
-	KeyIntentRecognitionEnabled ConfigKey = "intent_recognition_enabled"
-	KeyChunkEnabled             ConfigKey = "chunk_enabled"
+	KeyIntentRecognitionEnabled                ConfigKey = "intent_recognition_enabled"
+	KeyChunkEnabled                            ConfigKey = "chunk_enabled"
+	KeyConversationRuntimeEnabled              ConfigKey = "conversation_runtime_enabled"
+	KeyConversationCallbackContinuationEnabled ConfigKey = "conversation_callback_continuation_enabled"
+	KeyConversationParallelEvaluationEnabled   ConfigKey = "conversation_parallel_evaluation_enabled"
 
 	// 字符串配置
 	KeyChatMode            ConfigKey = "chat_mode"

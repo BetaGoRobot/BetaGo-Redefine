@@ -6,12 +6,42 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type messageInteractionStarterStub struct{}
+
+type messageAgentCardServiceStub struct{}
+
+func (messageAgentCardServiceStub) DiscoverComponents(
+	context.Context,
+	agentcardtool.DiscoverRequest,
+) (agentcardtool.DiscoverResponse, error) {
+	return agentcardtool.DiscoverResponse{}, nil
+}
+
+func (messageAgentCardServiceStub) ComposeCard(
+	context.Context,
+	agentcardtool.ComposeContext,
+	agentcardtool.ComposeRequest,
+) (agentcardtool.ComposeResponse, error) {
+	return agentcardtool.ComposeResponse{}, nil
+}
+
+func (messageInteractionStarterStub) StartScheduleEdit(
+	context.Context,
+	agentruntime.StartScheduleEditRequest,
+) (*agentruntime.RuntimeEnvelope, error) {
+	return nil, nil
+}
 
 func TestResolveChatNameUsesUserNameForP2P(t *testing.T) {
 	oldGetUserNameByID := getUserNameByID
@@ -113,6 +143,184 @@ func TestNewMessageProcessorBuildsUnifiedPipeline(t *testing.T) {
 			t.Fatalf("expected stage %q in unified pipeline, got %+v", want, stageTypes)
 		}
 	}
+}
+
+func TestMessageProcessorInjectsInteractionStarterOnlyWhenChatRuntimeEnabled(t *testing.T) {
+	chatID := "chat-runtime"
+	chatType := "group"
+	openID := "actor-runtime"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{ChatId: &chatID, ChatType: &chatType},
+			Sender:  &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+	enabled := false
+	var gateChatID string
+	starter := messageInteractionStarterStub{}
+	handler := NewMessageProcessorWithOptions(config.NewManager(), MessageHandlerOptions{
+		InteractionStarter: starter,
+		RuntimeEnabled: func(_ context.Context, gotChatID string) bool {
+			gateChatID = gotChatID
+			return enabled
+		},
+	})
+
+	disabledCtx := handler.contextForEvent(context.Background(), event)
+	if _, ok := agentruntime.InteractionStarterFromContext(disabledCtx); ok {
+		t.Fatal("disabled chat received an interaction starter")
+	}
+	if gateChatID != chatID {
+		t.Fatalf("runtime gate chat identity = %q, want %q", gateChatID, chatID)
+	}
+
+	enabled = true
+	enabledCtx := handler.contextForEvent(context.Background(), event)
+	got, ok := agentruntime.InteractionStarterFromContext(enabledCtx)
+	if !ok || got != starter {
+		t.Fatalf("enabled chat starter = %#v, %v", got, ok)
+	}
+}
+
+func TestLegacyMessageProcessorNeverInjectsRuntimeStarter(t *testing.T) {
+	handler := NewMessageProcessor(config.NewManager())
+	ctx := handler.contextForEvent(context.Background(), nil)
+	if _, ok := agentruntime.InteractionStarterFromContext(ctx); ok {
+		t.Fatal("legacy constructor injected an interaction starter")
+	}
+}
+
+func TestMessageProcessorScopesAgentCardServiceByChatGate(t *testing.T) {
+	chatID := "chat-agent-card"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{ChatId: &chatID},
+		},
+	}
+	enabled := false
+	service := messageAgentCardServiceStub{}
+	handler := NewMessageProcessorWithOptions(
+		config.NewManager(),
+		MessageHandlerOptions{
+			AgentCardService: service,
+			AgentCardEnabled: func(_ context.Context, gotChatID string) bool {
+				return enabled && gotChatID == chatID
+			},
+		},
+	)
+	if _, ok := agentcardtool.ServiceFromContext(
+		handler.contextForEvent(context.Background(), event),
+	); ok {
+		t.Fatal("denied chat received agent card tools")
+	}
+	enabled = true
+	got, ok := agentcardtool.ServiceFromContext(
+		handler.contextForEvent(context.Background(), event),
+	)
+	if !ok || got != service {
+		t.Fatalf("enabled chat service = (%v, %v)", got, ok)
+	}
+}
+
+func TestEvaluationMessageInputUsesStableMessageAnchorAndParsedContent(t *testing.T) {
+	chatID := "chat-evaluation"
+	chatType := "group"
+	messageID := "message-evaluation"
+	messageType := larkim.MsgTypeText
+	content := `{"text":"hello evaluation"}`
+	createTime := "1785290400123"
+	threadID := "thread-evaluation"
+	parentID := "parent-evaluation"
+	openID := "actor-evaluation"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatId: &chatID, ChatType: &chatType, MessageId: &messageID,
+				MessageType: &messageType, Content: &content, CreateTime: &createTime,
+				ThreadId: &threadID, ParentId: &parentID,
+			},
+			Sender: &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+
+	got, err := evaluationMessageInput(context.Background(), event)
+	if err != nil {
+		t.Fatalf("evaluationMessageInput() error = %v", err)
+	}
+	if got.EventID != messageID || got.MessageID != messageID ||
+		got.ChatID != chatID || got.TopicID != threadID ||
+		got.ReplyToMessageID != parentID || got.SenderOpenID != openID ||
+		got.Content != "hello evaluation" ||
+		got.OccurredAt.UnixMilli() != 1785290400123 {
+		t.Fatalf("evaluation message input = %#v", got)
+	}
+}
+
+func TestMessageHandlerEmitsFeedbackInput(t *testing.T) {
+	chatID := "chat-feedback"
+	chatType := "group"
+	messageID := "message-feedback"
+	messageType := larkim.MsgTypeText
+	content := `{"text":"不对，应该是明天"}`
+	createTime := "1785398400123"
+	threadID := "thread-feedback"
+	parentID := "delivered-message"
+	openID := "actor-feedback"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatId: &chatID, ChatType: &chatType, MessageId: &messageID,
+				MessageType: &messageType, Content: &content, CreateTime: &createTime,
+				ThreadId: &threadID, ParentId: &parentID,
+			},
+			Sender: &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+	sink := &messageFeedbackSinkFake{}
+	handler := &MessageHandler{
+		processor:      &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{},
+		feedbackSink:   sink,
+		runtimeEnabled: func(context.Context, string) bool { return false },
+	}
+
+	handler.Run(context.Background(), event)
+
+	if len(sink.messages) != 1 {
+		t.Fatalf("message feedback = %#v, want one item", sink.messages)
+	}
+	got := sink.messages[0]
+	if got.EventID != messageID || got.ChatID != chatID ||
+		got.TopicID != threadID || got.ActorOpenID != openID ||
+		got.ReplyToMessageID != parentID || !got.ExplicitCorrection ||
+		got.OccurredAt != time.UnixMilli(1785398400123) {
+		t.Fatalf("message feedback = %#v", got)
+	}
+}
+
+type messageFeedbackSinkFake struct {
+	messages []conversationeval.MessageFeedback
+}
+
+func (f *messageFeedbackSinkFake) ObserveMessage(
+	_ context.Context,
+	event conversationeval.MessageFeedback,
+) error {
+	f.messages = append(f.messages, event)
+	return nil
+}
+
+func (*messageFeedbackSinkFake) ObserveReaction(
+	context.Context,
+	conversationeval.ReactionFeedback,
+) error {
+	return nil
+}
+
+func (*messageFeedbackSinkFake) ObserveCardAction(
+	context.Context,
+	conversationeval.CardFeedback,
+) error {
+	return nil
 }
 
 func asyncStageTypes(processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []string {

@@ -23,8 +23,18 @@ func NewRepository(db *gorm.DB, identity botidentity.Identity) *Repository {
 	return &Repository{q: query.Use(infraDB.WithoutQueryCache(db)), identity: identity}
 }
 
-func (r *Repository) scopedScheduledTask(ctx context.Context) query.IScheduledTaskDo {
-	ins := r.q.ScheduledTask
+func (r *Repository) queryForContext(ctx context.Context) *query.Query {
+	if tx, ok := infraDB.TransactionFromContext(ctx); ok {
+		return query.Use(infraDB.WithoutQueryCache(tx))
+	}
+	return r.q
+}
+
+func (r *Repository) scopedScheduledTask(
+	ctx context.Context,
+	q *query.Query,
+) query.IScheduledTaskDo {
+	ins := q.ScheduledTask
 	do := ins.WithContext(ctx)
 	if r.identity.AppID != "" {
 		do = do.Where(ins.AppID.Eq(r.identity.AppID))
@@ -53,8 +63,9 @@ func (r *Repository) GetTaskByID(ctx context.Context, id string) (*model.Schedul
 	span.SetAttributes(attribute.String("schedule.id", id))
 	defer span.End()
 
-	ins := r.q.ScheduledTask
-	tasks, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Limit(1).Find()
+	q := r.queryForContext(ctx)
+	ins := q.ScheduledTask
+	tasks, err := r.scopedScheduledTask(ctx, q).Where(ins.ID.Eq(id)).Limit(1).Find()
 	if err != nil {
 		otel.RecordError(span, err)
 		return nil, err
@@ -77,7 +88,7 @@ func (r *Repository) ListTasks(ctx context.Context, chatID string, limit, offset
 	defer span.End()
 
 	ins := r.q.ScheduledTask
-	query := r.scopedScheduledTask(ctx)
+	query := r.scopedScheduledTask(ctx, r.q)
 	if chatID != "" {
 		query = query.Where(ins.ChatID.Eq(chatID))
 	}
@@ -106,7 +117,7 @@ func (r *Repository) ListDueTasks(ctx context.Context, now time.Time, limit int)
 	defer span.End()
 
 	ins := r.q.ScheduledTask
-	tasks, err := r.scopedScheduledTask(ctx).
+	tasks, err := r.scopedScheduledTask(ctx, r.q).
 		Where(ins.Status.Eq(model.ScheduleTaskStatusEnabled)).
 		Where(ins.NextRunAt.Lte(now)).
 		Order(ins.NextRunAt.Asc()).
@@ -136,7 +147,7 @@ func (r *Repository) ClaimTaskRun(ctx context.Context, id string, now time.Time,
 	updates["updated_at"] = now
 
 	ins := r.q.ScheduledTask
-	result, err := r.scopedScheduledTask(ctx).
+	result, err := r.scopedScheduledTask(ctx, r.q).
 		Where(ins.ID.Eq(id)).
 		Where(ins.Status.Eq(model.ScheduleTaskStatusEnabled)).
 		Where(ins.NextRunAt.Lte(now)).
@@ -152,7 +163,7 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	span.SetAttributes(attribute.String("schedule.id", id))
 	defer span.End()
 	ins := r.q.ScheduledTask
-	_, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Delete()
+	_, err := r.scopedScheduledTask(ctx, r.q).Where(ins.ID.Eq(id)).Delete()
 	otel.RecordError(span, err)
 	return err
 }
@@ -183,8 +194,9 @@ func (r *Repository) UpdateTaskFields(ctx context.Context, id string, updates ma
 	}
 	updates["updated_at"] = time.Now()
 
-	ins := r.q.ScheduledTask
-	_, err := r.scopedScheduledTask(ctx).Where(ins.ID.Eq(id)).Updates(updates)
+	q := r.queryForContext(ctx)
+	ins := q.ScheduledTask
+	_, err := r.scopedScheduledTask(ctx, q).Where(ins.ID.Eq(id)).Updates(updates)
 	otel.RecordError(span, err)
 	return err
 }

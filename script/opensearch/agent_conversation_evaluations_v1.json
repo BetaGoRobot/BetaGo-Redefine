@@ -1,0 +1,97 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1
+  },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "schema_version": {"type": "keyword"},
+      "episode_id": {"type": "keyword"},
+      "cohort_id": {"type": "keyword"},
+      "chat_id": {"type": "keyword"},
+      "run_id": {"type": "keyword"},
+      "anchor_event_id": {"type": "keyword"},
+      "anchor_message_id": {"type": "keyword"},
+      "topic_id": {"type": "keyword"},
+      "status": {"type": "keyword"},
+      "serving_lane": {"type": "keyword"},
+      "anchor_at": {"type": "date"},
+      "post_window_end": {"type": "date"},
+      "late_feedback_until": {"type": "date"},
+      "updated_at": {"type": "date"},
+      "disagreements": {"type": "keyword"},
+      "feedback_types": {"type": "keyword"},
+      "needs_review": {"type": "boolean"},
+      "pre_messages": {
+        "type": "object",
+        "properties": {
+          "message_id": {"type": "keyword"},
+          "sender_open_id": {"type": "keyword"},
+          "reply_to_message_id": {"type": "keyword"},
+          "content": {"type": "text"},
+          "occurred_at": {"type": "date"}
+        }
+      },
+      "anchor_message": {
+        "type": "object",
+        "properties": {
+          "message_id": {"type": "keyword"},
+          "sender_open_id": {"type": "keyword"},
+          "reply_to_message_id": {"type": "keyword"},
+          "content": {"type": "text"},
+          "occurred_at": {"type": "date"}
+        }
+      },
+      "post_messages": {
+        "type": "object",
+        "properties": {
+          "message_id": {"type": "keyword"},
+          "sender_open_id": {"type": "keyword"},
+          "reply_to_message_id": {"type": "keyword"},
+          "content": {"type": "text"},
+          "occurred_at": {"type": "date"}
+        }
+      },
+      "control": {
+        "type": "object",
+        "properties": {
+          "join_decision": {"type": "keyword"},
+          "topic_relation": {"type": "keyword"},
+          "reply_text": {"type": "text"},
+          "context_text": {"type": "text"},
+          "excluded_text": {"type": "text"},
+          "has_error": {"type": "boolean"}
+        }
+      },
+      "candidate": {
+        "type": "object",
+        "properties": {
+          "join_decision": {"type": "keyword"},
+          "topic_relation": {"type": "keyword"},
+          "reply_text": {"type": "text"},
+          "context_text": {"type": "text"},
+          "excluded_text": {"type": "text"},
+          "has_error": {"type": "boolean"}
+        }
+      },
+      "latest_judgments": {
+        "type": "nested",
+        "properties": {
+          "source": {"type": "keyword"},
+          "version": {"type": "long"},
+          "winner": {"type": "keyword"},
+          "rationale": {"type": "text"},
+          "confidence": {"type": "integer"},
+          "needs_review": {"type": "boolean"},
+          "problem_tags": {"type": "keyword"},
+          "created_at": {"type": "date"}
+        }
+      },
+      "full_snapshot": {
+        "type": "object",
+        "enabled": false
+      }
+    }
+  }
+}

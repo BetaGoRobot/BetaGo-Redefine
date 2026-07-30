@@ -1,6 +1,8 @@
 package xmodel
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
@@ -17,6 +19,7 @@ type MessageIndex struct {
 	ChatName             string          `json:"chat_name"`
 	CreateTime           string          `json:"create_time"`
 	CreateTimeV2         string          `json:"create_time_v2"`
+	CreateTimeUnixMillis int64           `json:"create_time_unix_millis,omitempty"`
 	Message              []float32       `json:"message,omitempty"`
 	MessageV2            []float32       `json:"message_v2,omitempty"`
 	OpenID               string          `json:"user_id"`
@@ -28,6 +31,11 @@ type MessageIndex struct {
 	TokenUsage           ark_model.Usage `json:"token_usage"`
 	IsCommand            bool            `json:"is_command"`
 	MainCommand          string          `json:"main_command"`
+}
+
+func MessageCreateTimeUnixMillis(raw string) int64 {
+	value, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	return value
 }
 
 type CardActionIndex struct {

@@ -3,6 +3,7 @@ package larkmsg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"sort"
 	"strings"
@@ -40,8 +41,8 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 
 	// 用于断言 settings 调用发生在所有 content update 全部返回之后。
 	var (
-		updateDispatched atomic.Int64
-		updateCompleted  atomic.Int64
+		updateDispatched   atomic.Int64
+		updateCompleted    atomic.Int64
 		settingSawInFlight int64
 	)
 
@@ -96,26 +97,36 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	}
 
 	msgID := "origin_msg"
-	errCh := make(chan error, 1)
+	type sendResult struct {
+		messageID string
+		err       error
+	}
+	resultCh := make(chan sendResult, 1)
 	go func() {
-		errCh <- SendAndReplyStreamingCard(context.Background(), &larkim.EventMessage{MessageId: &msgID}, streamOf(
-			&ark_dal.ModelStreamRespReasoning{Content: "first"},
+		messageID, err := SendAndReplyStreamingCardReturning(context.Background(), &larkim.EventMessage{MessageId: &msgID}, streamOf(
+			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "first"}},
 			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "second"}},
-			&ark_dal.ModelStreamRespReasoning{Content: "third"},
+			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "third"}},
 		), true)
+		resultCh <- sendResult{messageID: messageID, err: err}
 	}()
 
 	<-updateStarted
 
 	select {
-	case err := <-errCh:
-		t.Fatalf("stream returned before in-flight updates were released: %v", err)
+	case result := <-resultCh:
+		t.Fatalf("stream returned before in-flight updates were released: %v", result.err)
 	case <-time.After(50 * time.Millisecond):
 	}
 
 	close(releaseUpdate)
-	if err := <-errCh; err != nil {
+	result := <-resultCh
+	if result.err != nil {
+		err := result.err
 		t.Fatalf("SendAndReplyStreamingCard() error = %v", err)
+	}
+	if result.messageID != "reply_msg" {
+		t.Fatalf("SendAndReplyStreamingCardReturning() messageID = %q, want %q", result.messageID, "reply_msg")
 	}
 
 	if settingSawInFlight != 0 {
@@ -172,6 +183,166 @@ func TestSendAndReplyStreamingCardUsesCardKitSequenceUpdates(t *testing.T) {
 	}
 	if settings[0].Sequence <= last.Sequence {
 		t.Fatalf("expected final settings sequence after content updates: settings=%#v updates=%#v", settings, updates)
+	}
+}
+
+func TestSendAndUpdateStreamingCardReturningReturnsMessageID(t *testing.T) {
+	originalCreate := streamingCreateCardEntity
+	originalReply := streamingReplyCardEntity
+	originalSetStreaming := streamingSetCardStreaming
+	t.Cleanup(func() {
+		streamingCreateCardEntity = originalCreate
+		streamingReplyCardEntity = originalReply
+		streamingSetCardStreaming = originalSetStreaming
+	})
+
+	streamingCreateCardEntity = func(context.Context, any) (string, error) {
+		return "card_update", nil
+	}
+	streamingReplyCardEntity = func(_ context.Context, _, cardID, _ string, replyInThread bool) (*larkim.ReplyMessageResp, error) {
+		if cardID != "card_update" {
+			t.Fatalf("cardID = %q, want %q", cardID, "card_update")
+		}
+		if replyInThread {
+			t.Fatal("SendAndUpdateStreamingCardReturning() unexpectedly replied in thread")
+		}
+		messageID := "updated_reply_msg"
+		return &larkim.ReplyMessageResp{
+			CodeError: larkcore.CodeError{Code: 0},
+			Data:      &larkim.ReplyMessageRespData{MessageId: &messageID},
+		}, nil
+	}
+	streamingSetCardStreaming = func(context.Context, streamingSettingsUpdate) error {
+		return nil
+	}
+
+	originMessageID := "origin_msg"
+	messageID, err := SendAndUpdateStreamingCardReturning(
+		context.Background(),
+		&larkim.EventMessage{MessageId: &originMessageID},
+		streamOf(&ark_dal.ModelStreamRespReasoning{
+			ContentStruct: ark_dal.ContentStruct{Reply: "complete"},
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SendAndUpdateStreamingCardReturning() error = %v", err)
+	}
+	if messageID != "updated_reply_msg" {
+		t.Fatalf("SendAndUpdateStreamingCardReturning() messageID = %q, want %q", messageID, "updated_reply_msg")
+	}
+}
+
+func TestSendAndReplyStreamingCardReturningSkipsEmptyStream(t *testing.T) {
+	originMessageID := "origin_msg"
+	messageID, err := SendAndReplyStreamingCardReturning(
+		context.Background(),
+		&larkim.EventMessage{MessageId: &originMessageID},
+		streamOf(
+			nil,
+			&ark_dal.ModelStreamRespReasoning{},
+			&ark_dal.ModelStreamRespReasoning{ContentStruct: ark_dal.ContentStruct{Reply: "  "}},
+		),
+		true,
+	)
+	if err != nil {
+		t.Fatalf("SendAndReplyStreamingCardReturning() error = %v", err)
+	}
+	if messageID != "" {
+		t.Fatalf("SendAndReplyStreamingCardReturning() messageID = %q, want empty", messageID)
+	}
+}
+
+func TestCreateAndReplyCardReturnsLarkMessageIDForInitialAndFinalCards(t *testing.T) {
+	originalCreate := streamingCreateCardEntity
+	originalReply := streamingReplyCardEntity
+	t.Cleanup(func() {
+		streamingCreateCardEntity = originalCreate
+		streamingReplyCardEntity = originalReply
+	})
+
+	streamingCreateCardEntity = func(context.Context, any) (string, error) {
+		return "card_123", nil
+	}
+
+	tests := []struct {
+		name          string
+		isFinal       bool
+		wantSuffix    string
+		wantMessageID string
+	}{
+		{name: "initial", wantSuffix: "_streaming_reply", wantMessageID: "initial_message"},
+		{name: "final", isFinal: true, wantSuffix: "_streaming_reply_final", wantMessageID: "final_message"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			streamingReplyCardEntity = func(_ context.Context, _, cardID, suffix string, _ bool) (*larkim.ReplyMessageResp, error) {
+				if cardID != "card_123" {
+					t.Fatalf("cardID = %q, want %q", cardID, "card_123")
+				}
+				if suffix != tt.wantSuffix {
+					t.Fatalf("suffix = %q, want %q", suffix, tt.wantSuffix)
+				}
+				messageID := tt.wantMessageID
+				return &larkim.ReplyMessageResp{
+					CodeError: larkcore.CodeError{Code: 0},
+					Data:      &larkim.ReplyMessageRespData{MessageId: &messageID},
+				}, nil
+			}
+
+			pusher := newStreamingCardPusher(context.Background())
+			defer pusher.Stop()
+			originMessageID := "origin_msg"
+			messageID, err := createAndReplyCard(
+				context.Background(),
+				&larkim.EventMessage{MessageId: &originMessageID},
+				pusher,
+				"reply",
+				true,
+				tt.isFinal,
+			)
+			if err != nil {
+				t.Fatalf("createAndReplyCard() error = %v", err)
+			}
+			if messageID != tt.wantMessageID {
+				t.Fatalf("createAndReplyCard() messageID = %q, want %q", messageID, tt.wantMessageID)
+			}
+		})
+	}
+}
+
+func TestSendAndReplyStreamingCardReturningDoesNotFabricateMessageIDOnError(t *testing.T) {
+	originalCreate := streamingCreateCardEntity
+	t.Cleanup(func() {
+		streamingCreateCardEntity = originalCreate
+	})
+
+	wantErr := errors.New("create card failed")
+	streamingCreateCardEntity = func(context.Context, any) (string, error) {
+		return "", wantErr
+	}
+
+	originMessageID := "origin_msg"
+	messageID, err := SendAndReplyStreamingCardReturning(
+		context.Background(),
+		&larkim.EventMessage{MessageId: &originMessageID},
+		streamOf(&ark_dal.ModelStreamRespReasoning{
+			ContentStruct: ark_dal.ContentStruct{Reply: "reply"},
+		}),
+		true,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("SendAndReplyStreamingCardReturning() error = %v, want %v", err, wantErr)
+	}
+	if messageID != "" {
+		t.Fatalf("SendAndReplyStreamingCardReturning() messageID = %q, want empty on error", messageID)
+	}
+}
+
+func TestStreamingCardLegacyAPIsKeepErrorOnlySignatures(t *testing.T) {
+	var reply func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning], bool) error = SendAndReplyStreamingCard
+	var update func(context.Context, *larkim.EventMessage, iter.Seq[*ark_dal.ModelStreamRespReasoning]) error = SendAndUpdateStreamingCard
+	if reply == nil || update == nil {
+		t.Fatal("legacy streaming card API is nil")
 	}
 }
 

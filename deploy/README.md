@@ -59,3 +59,82 @@ docker compose down -v         # 停止并清除 pgdata/redisdata
 
 - `betago-bystage-duration.json`：各阶段耗时
 - `betago-llm-token-usage.json`：LLM token 用量
+
+## OpenSearch 会话事件索引
+
+先创建物理索引，再把稳定写别名指向该版本。升级 mapping 时创建新的物理版本，并用一次 `_aliases` 请求原子切换。
+
+```bash
+curl -fsS -X PUT \
+  "${OPENSEARCH_URL}/agent_conversation_events_v1" \
+  -H 'Content-Type: application/json' \
+  --data-binary @../script/opensearch/agent_conversation_events_v1.json
+
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "add": {
+          "index": "agent_conversation_events_v1",
+          "alias": "agent_conversation_events",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```
+
+后续升级到新物理版本并完成数据回填后，在同一次请求中移除旧指向、增加新写索引，避免 alias 出现中间态：
+
+```bash
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "remove": {
+          "index": "agent_conversation_events_v1",
+          "alias": "agent_conversation_events"
+        }
+      },
+      {
+        "add": {
+          "index": "agent_conversation_events_v2",
+          "alias": "agent_conversation_events",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```
+
+## OpenSearch 会话并轨评测索引
+
+并轨评测以 PostgreSQL 为事实源，并把每个 episode 的双 lane、前后向消息、反馈与最新 judgment 汇总成一个 OpenSearch 文档。常用过滤和质量字段可搜索；`full_snapshot` 关闭解析，仅用于完整回放。
+
+```bash
+curl -fsS -X PUT \
+  "${OPENSEARCH_URL}/agent_conversation_evaluations_v1" \
+  -H 'Content-Type: application/json' \
+  --data-binary @../script/opensearch/agent_conversation_evaluations_v1.json
+
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "add": {
+          "index": "agent_conversation_evaluations_v1",
+          "alias": "agent_conversation_evaluations",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```
+
+写入使用 `episode_id` 作为文档 ID，因此反馈补录和 judgment 新版本会覆盖同一个搜索快照，不会产生重复 episode。

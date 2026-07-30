@@ -2,8 +2,15 @@ package reaction
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -25,6 +32,7 @@ var _ Op = &RecordReactionOperator{}
 //	@update 2024-07-17 01:36:07
 type RecordReactionOperator struct {
 	OpBase
+	feedbackSink conversationeval.FeedbackSink
 }
 
 func (r *RecordReactionOperator) Name() string {
@@ -49,6 +57,12 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 	if *event.Event.OperatorType != "user" {
 		return nil
 	}
+	if feedbackErr := r.observeFeedback(ctx, event, chatID); feedbackErr != nil {
+		logs.L().Ctx(ctx).Warn(
+			"record evaluation reaction feedback failed",
+			zap.Error(feedbackErr),
+		)
+	}
 	openID := botidentity.ReactionOpenID(event)
 	if openID == "" {
 		logs.L().Ctx(ctx).Warn("skip reaction record without open_id",
@@ -68,4 +82,57 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 		UserName:   userName,
 		ActionType: "add_reaction",
 	})
+}
+
+func (r *RecordReactionOperator) observeFeedback(
+	ctx context.Context,
+	event *larkim.P2MessageReactionCreatedV1,
+	chatID string,
+) error {
+	if r == nil || r.feedbackSink == nil {
+		return nil
+	}
+	if event == nil || event.Event == nil || event.Event.MessageId == nil ||
+		event.Event.ReactionType == nil || event.Event.ReactionType.EmojiType == nil {
+		return conversationeval.ErrInvalidContract
+	}
+	actionMillis, err := strconv.ParseInt(
+		strings.TrimSpace(valueOrEmpty(event.Event.ActionTime)),
+		10,
+		64,
+	)
+	if err != nil || actionMillis <= 0 {
+		return fmt.Errorf("%w: invalid reaction action_time", conversationeval.ErrInvalidContract)
+	}
+	eventID := ""
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID = strings.TrimSpace(event.EventV2Base.Header.EventID)
+	}
+	if eventID == "" {
+		eventID = stableReactionEventID(
+			*event.Event.MessageId,
+			botidentity.ReactionOpenID(event),
+			*event.Event.ReactionType.EmojiType,
+			valueOrEmpty(event.Event.ActionTime),
+		)
+	}
+	return r.feedbackSink.ObserveReaction(ctx, conversationeval.ReactionFeedback{
+		EventID: eventID, ChatID: strings.TrimSpace(chatID),
+		ActorOpenID:     botidentity.ReactionOpenID(event),
+		TargetMessageID: strings.TrimSpace(*event.Event.MessageId),
+		ReactionType:    strings.TrimSpace(*event.Event.ReactionType.EmojiType),
+		OccurredAt:      time.UnixMilli(actionMillis),
+	})
+}
+
+func stableReactionEventID(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "reaction_feedback_" + hex.EncodeToString(sum[:16])
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

@@ -8,6 +8,7 @@ func TestRunStatusTransitionAllowsNormalLifecycle(t *testing.T) {
 		to   RunStatus
 	}{
 		{RunStatusQueued, RunStatusRunning},
+		{RunStatusRunning, RunStatusQueued},
 		{RunStatusRunning, RunStatusWaitingApproval},
 		{RunStatusWaitingApproval, RunStatusQueued},
 		{RunStatusRunning, RunStatusCompleted},
@@ -39,6 +40,9 @@ func TestStepStatusTransitionAllowsNormalLifecycle(t *testing.T) {
 	}
 	if err := ValidateStepTransition(StepStatusRunning, StepStatusFailed); err != nil {
 		t.Fatalf("running -> failed error = %v", err)
+	}
+	if err := ValidateStepTransition(StepStatusRunning, StepStatusQueued); err != nil {
+		t.Fatalf("running -> queued retry error = %v", err)
 	}
 }
 

@@ -42,6 +42,31 @@ func (a *App) AddModule(module Module) {
 	}
 	a.modules = append(a.modules, module)
 	a.registry.Register(module.Name(), module.Critical())
+	if provider, ok := module.(StatsProvider); ok {
+		a.registry.RegisterProvider(module.Name(), provider)
+	}
+	if provider, ok := module.(DynamicHealthProvider); ok {
+		a.registry.RegisterDynamicHealth(module.Name(), provider)
+	}
+}
+
+// ModuleNames 返回模块的注册顺序，供启动拓扑诊断和测试使用。
+// 返回值不复用 App 的内部切片，调用方可以安全修改。
+func (a *App) ModuleNames() []string {
+	if a == nil {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	names := make([]string, 0, len(a.modules))
+	for _, module := range a.modules {
+		if module != nil {
+			names = append(names, module.Name())
+		}
+	}
+	return names
 }
 
 // Registry 返回管理面使用的共享健康注册表。

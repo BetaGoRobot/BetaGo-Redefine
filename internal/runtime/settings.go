@@ -1,10 +1,90 @@
 package runtime
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 )
+
+type AgentCardMode string
+
+const (
+	AgentCardModeOff       AgentCardMode = "off"
+	AgentCardModeShadow    AgentCardMode = "shadow"
+	AgentCardModeAllowlist AgentCardMode = "allowlist"
+	AgentCardModeOn        AgentCardMode = "on"
+)
+
+// AgentCardSettings is the normalized, fail-closed runtime policy used by
+// both tool exposure and delivery. Callers must not inspect raw config values.
+type AgentCardSettings struct {
+	Mode              AgentCardMode
+	MaxRepairAttempts int
+	DefaultExpiry     time.Duration
+	PatchWorkerCount  int
+	PatchLease        time.Duration
+
+	allowedChats map[string]struct{}
+}
+
+func AgentCardRolloutSettings(cfg *infraConfig.BaseConfig) (AgentCardSettings, error) {
+	settings := AgentCardSettings{
+		Mode:              AgentCardModeOff,
+		MaxRepairAttempts: 2,
+		DefaultExpiry:     10 * time.Minute,
+		PatchWorkerCount:  1,
+		PatchLease:        30 * time.Second,
+		allowedChats:      make(map[string]struct{}),
+	}
+	if cfg == nil || cfg.AgentCardConfig == nil || !cfg.AgentCardConfig.Enabled {
+		return settings, nil
+	}
+
+	raw := cfg.AgentCardConfig
+	mode := AgentCardMode(strings.ToLower(strings.TrimSpace(raw.Mode)))
+	if mode == "" {
+		mode = AgentCardModeOff
+	}
+	switch mode {
+	case AgentCardModeOff, AgentCardModeShadow, AgentCardModeAllowlist, AgentCardModeOn:
+		settings.Mode = mode
+	default:
+		return AgentCardSettings{}, fmt.Errorf("unsupported agent_card mode %q", raw.Mode)
+	}
+
+	settings.MaxRepairAttempts = defaultInt(raw.MaxRepairAttempts, settings.MaxRepairAttempts)
+	settings.DefaultExpiry = defaultDuration(raw.DefaultExpirySeconds, settings.DefaultExpiry)
+	settings.PatchWorkerCount = defaultInt(raw.PatchWorkerCount, settings.PatchWorkerCount)
+	settings.PatchLease = defaultDuration(raw.PatchLeaseSeconds, settings.PatchLease)
+	for _, chatID := range raw.AllowChatIDs {
+		if chatID = strings.TrimSpace(chatID); chatID != "" {
+			settings.allowedChats[chatID] = struct{}{}
+		}
+	}
+	return settings, nil
+}
+
+func (s AgentCardSettings) ToolsAvailable() bool {
+	return s.Mode != AgentCardModeOff
+}
+
+func (s AgentCardSettings) Shadow() bool {
+	return s.Mode == AgentCardModeShadow
+}
+
+func (s AgentCardSettings) CanSend(chatID string) bool {
+	switch s.Mode {
+	case AgentCardModeOn:
+		return true
+	case AgentCardModeAllowlist:
+		_, allowed := s.allowedChats[strings.TrimSpace(chatID)]
+		return allowed
+	default:
+		return false
+	}
+}
 
 // ShutdownTimeout 返回 App.Stop 的总优雅关闭时间。默认值故意保守一些，
 // 让工作池有机会把已接收任务尽量处理完。
@@ -62,7 +142,28 @@ func ExecutorConfigs(cfg *infraConfig.BaseConfig) map[string]ExecutorConfig {
 			QueueSize:   defaultInt(runtimeCfg.ScheduleQueueSize, 128),
 			TaskTimeout: defaultDuration(runtimeCfg.ScheduleTaskTimeoutSeconds, 10*time.Minute),
 		},
+		"conversation": {
+			Name:        "conversation_executor",
+			Workers:     defaultInt(runtimeCfg.ConversationWorkers, 4),
+			QueueSize:   defaultInt(runtimeCfg.ConversationQueueSize, 128),
+			TaskTimeout: defaultDuration(runtimeCfg.ConversationTimeoutSeconds, 2*time.Minute),
+		},
+		"projection": {
+			Name:        "conversation_projection_executor",
+			Workers:     defaultInt(runtimeCfg.ConversationProjectionWorkers, 2),
+			QueueSize:   defaultInt(runtimeCfg.ConversationProjectionQueueSize, 128),
+			TaskTimeout: defaultDuration(runtimeCfg.ConversationProjectionTimeoutSeconds, time.Minute),
+		},
 	}
+}
+
+func ConversationEventIndex(cfg *infraConfig.BaseConfig) string {
+	if cfg != nil && cfg.RuntimeConfig != nil {
+		if index := strings.TrimSpace(cfg.RuntimeConfig.ConversationEventIndex); index != "" {
+			return index
+		}
+	}
+	return "agent_conversation_events"
 }
 
 // defaultInt 为正整数配置应用兜底值。

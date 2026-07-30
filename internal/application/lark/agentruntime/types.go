@@ -53,15 +53,17 @@ const (
 type StepKind string
 
 const (
-	StepKindDecide          StepKind = "decide"
-	StepKindComposeContext  StepKind = "compose_context"
-	StepKindPlan            StepKind = "plan"
-	StepKindCapabilityCall  StepKind = "capability_call"
-	StepKindObserve         StepKind = "observe"
-	StepKindReply           StepKind = "reply"
-	StepKindApprovalRequest StepKind = "approval_request"
-	StepKindWait            StepKind = "wait"
-	StepKindResume          StepKind = "resume"
+	StepKindDecide           StepKind = "decide"
+	StepKindComposeContext   StepKind = "compose_context"
+	StepKindPlan             StepKind = "plan"
+	StepKindCapabilityCall   StepKind = "capability_call"
+	StepKindObserve          StepKind = "observe"
+	StepKindReply            StepKind = "reply"
+	StepKindApprovalRequest  StepKind = "approval_request"
+	StepKindWait             StepKind = "wait"
+	StepKindResume           StepKind = "resume"
+	StepKindCardAction       StepKind = "card_action"
+	StepKindCapabilityResult StepKind = "capability_result"
 )
 
 type AgentSession struct {
@@ -106,6 +108,9 @@ type AgentRun struct {
 	HeartbeatAt      time.Time
 	LeaseExpiresAt   time.Time
 	RepairAttempts   int64
+	ActivationSource string
+	TopicFingerprint string
+	LastRelevantAt   time.Time
 }
 
 type AgentStep struct {
@@ -122,6 +127,11 @@ type AgentStep struct {
 	StartedAt      time.Time
 	FinishedAt     time.Time
 	CreatedAt      time.Time
+	DedupeKey      string
+	AttemptCount   int32
+	WorkerID       string
+	LeaseExpiresAt time.Time
+	RetryOfStepID  string
 }
 
 type NewRunRequest struct {
@@ -189,7 +199,7 @@ func ValidateRunTransition(from, to RunStatus) error {
 			return nil
 		}
 	case RunStatusRunning:
-		if to == RunStatusWaitingApproval || to == RunStatusWaitingSchedule || to == RunStatusWaitingCallback ||
+		if to == RunStatusQueued || to == RunStatusWaitingApproval || to == RunStatusWaitingSchedule || to == RunStatusWaitingCallback ||
 			to == RunStatusCompleted || to == RunStatusFailed || to == RunStatusCancelled {
 			return nil
 		}
@@ -214,7 +224,7 @@ func ValidateStepTransition(from, to StepStatus) error {
 			return nil
 		}
 	case StepStatusRunning:
-		if to == StepStatusCompleted || to == StepStatusFailed || to == StepStatusSkipped {
+		if to == StepStatusQueued || to == StepStatusCompleted || to == StepStatusFailed || to == StepStatusSkipped {
 			return nil
 		}
 	}

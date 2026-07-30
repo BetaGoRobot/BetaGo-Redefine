@@ -58,7 +58,7 @@ type streamingConfig struct {
 var (
 	streamingCreateCardEntity  = createStreamingCardEntity
 	streamingReplyCardEntity   = replyStreamingCardEntity
-	streamingUpdateCardContent = updateStreamingCardContent
+	streamingUpdateCardContent = updateStreamingCard
 	streamingSetCardStreaming  = setStreamingCardMode
 )
 
@@ -153,7 +153,7 @@ func (p *streamingCardPusher) dispatchContent() {
 		Sequence:  sequence,
 	}
 	p.errPool.Go(func(context.Context) error {
-		return updateStreamingCard(p.ctx, update)
+		return streamingUpdateCardContent(p.ctx, update)
 	})
 }
 
@@ -192,12 +192,18 @@ func (p *streamingCardPusher) CloseStreaming() error {
 }
 
 func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (err error) {
+	_, err = SendAndReplyStreamingCardReturning(ctx, msg, msgSeq, inThread)
+	return err
+}
+
+// SendAndReplyStreamingCardReturning 同 SendAndReplyStreamingCard，但返回新发卡片的 message_id。
+func SendAndReplyStreamingCardReturning(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning], inThread bool) (messageID string, err error) {
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
 	if msg == nil || msg.MessageId == nil {
-		return errors.New("nil message")
+		return "", errors.New("nil message")
 	}
 
 	pusher := newStreamingCardPusher(ctx)
@@ -211,8 +217,9 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 		}
 		if pusher.cardID == "" {
 			initialText = chunk
-			if err = createAndReplyCard(ctx, msg, pusher, initialText, inThread, false); err != nil {
-				return err
+			messageID, err = createAndReplyCard(ctx, msg, pusher, initialText, inThread, false)
+			if err != nil {
+				return "", err
 			}
 			continue
 		}
@@ -222,25 +229,25 @@ func SendAndReplyStreamingCard(ctx context.Context, msg *larkim.EventMessage, ms
 
 	if pusher.cardID == "" {
 		if strings.TrimSpace(initialText) == "" {
-			return nil
+			return "", nil
 		}
 		return createAndReplyCard(ctx, msg, pusher, initialText, inThread, true)
 	}
 
 	pusher.Flush()
-	return pusher.CloseStreaming()
+	return messageID, pusher.CloseStreaming()
 }
 
 // createAndReplyCard 构造卡片 entity 并回复到原消息。isFinal 用来区分 "_streaming_reply"
 // 与 "_streaming_reply_final" 两种 suffix（后者只在流结束时才发、没有后续 update）。
-func createAndReplyCard(ctx context.Context, msg *larkim.EventMessage, pusher *streamingCardPusher, content string, inThread, isFinal bool) error {
+func createAndReplyCard(ctx context.Context, msg *larkim.EventMessage, pusher *streamingCardPusher, content string, inThread, isFinal bool) (string, error) {
 	card, err := buildStreamingReplyCard(content)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cardID, err := streamingCreateCardEntity(ctx, card)
 	if err != nil {
-		return err
+		return "", err
 	}
 	suffix := "_streaming_reply"
 	if isFinal {
@@ -248,20 +255,26 @@ func createAndReplyCard(ctx context.Context, msg *larkim.EventMessage, pusher *s
 	}
 	resp, err := streamingReplyCardEntity(ctx, *msg.MessageId, cardID, suffix, inThread)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !resp.Success() {
-		return errors.New(resp.Error())
+		return "", errors.New(resp.Error())
 	}
 	if resp.Data == nil || resp.Data.MessageId == nil || strings.TrimSpace(*resp.Data.MessageId) == "" {
-		return errors.New("empty reply message id")
+		return "", errors.New("empty reply message id")
 	}
 	pusher.cardID = cardID
-	return nil
+	return strings.TrimSpace(*resp.Data.MessageId), nil
 }
 
 func SendAndUpdateStreamingCard(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) error {
-	return SendAndReplyStreamingCard(ctx, msg, msgSeq, false)
+	_, err := SendAndUpdateStreamingCardReturning(ctx, msg, msgSeq)
+	return err
+}
+
+// SendAndUpdateStreamingCardReturning 同 SendAndUpdateStreamingCard，但返回新发卡片的 message_id。
+func SendAndUpdateStreamingCardReturning(ctx context.Context, msg *larkim.EventMessage, msgSeq iter.Seq[*ark_dal.ModelStreamRespReasoning]) (messageID string, err error) {
+	return SendAndReplyStreamingCardReturning(ctx, msg, msgSeq, false)
 }
 
 // CreateMsgTextRaw 需要自行BuildText

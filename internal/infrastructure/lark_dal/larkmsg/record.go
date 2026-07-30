@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -103,16 +104,17 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex, utils.AddrOrNil(resp.Data.MessageId),
 		&xmodel.MessageIndex{
-			MessageLog:      msgLog,
-			ChatName:        chatName,
-			RawMessage:      content,
-			RawMessageJieba: strings.Join(ws, " "),
-			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.DateTime),
-			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
-			MessageV2:       embedded,
-			OpenID:          recordedOpenID,
-			UserName:        recordedUserName,
-			TokenUsage:      usage,
+			MessageLog:           msgLog,
+			ChatName:             chatName,
+			RawMessage:           content,
+			RawMessageJieba:      strings.Join(ws, " "),
+			CreateTime:           utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.DateTime),
+			CreateTimeV2:         utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
+			CreateTimeUnixMillis: xmodel.MessageCreateTimeUnixMillis(*resp.Data.CreateTime),
+			MessageV2:            embedded,
+			OpenID:               recordedOpenID,
+			UserName:             recordedUserName,
+			TokenUsage:           usage,
 		},
 	)
 	if err != nil {
@@ -203,16 +205,17 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 	err = opensearch.InsertData(ctx, config.Get().OpensearchConfig.LarkMsgIndex,
 		utils.AddrOrNil(resp.Data.MessageId),
 		&xmodel.MessageIndex{
-			MessageLog:      msgLog,
-			ChatName:        chatName,
-			RawMessage:      content,
-			RawMessageJieba: strings.Join(ws, " "),
-			CreateTime:      utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.DateTime),
-			CreateTimeV2:    utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
-			MessageV2:       embedded,
-			OpenID:          recordedOpenID,
-			UserName:        recordedUserName,
-			TokenUsage:      usage,
+			MessageLog:           msgLog,
+			ChatName:             chatName,
+			RawMessage:           content,
+			RawMessageJieba:      strings.Join(ws, " "),
+			CreateTime:           utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.DateTime),
+			CreateTimeV2:         utils.Epo2DateZoneMil(utils.MustInt(*resp.Data.CreateTime), utils.UTC8Loc(), time.RFC3339),
+			CreateTimeUnixMillis: xmodel.MessageCreateTimeUnixMillis(*resp.Data.CreateTime),
+			MessageV2:            embedded,
+			OpenID:               recordedOpenID,
+			UserName:             recordedUserName,
+			TokenUsage:           usage,
 		},
 	)
 	if err != nil {
@@ -242,29 +245,34 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 	if cardAction == nil || cardAction.Event == nil || cardAction.Event.Context == nil || cardAction.Event.Operator == nil {
 		return
 	}
+	auditEvent, err := redactedCardActionEvent(cardAction)
+	if err != nil {
+		logs.L().Ctx(ctx).Error("redact card action audit event", zap.Error(err))
+		return
+	}
 
-	chatID := cardAction.Event.Context.OpenChatID
-	openMessageID := strings.TrimSpace(cardAction.Event.Context.OpenMessageID)
-	openID := cardAction.Event.Operator.OpenID
-	userName, err := larkuser.GetUserNameCache(ctx, cardAction.Event.Context.OpenChatID, openID)
+	chatID := auditEvent.Event.Context.OpenChatID
+	openMessageID := strings.TrimSpace(auditEvent.Event.Context.OpenMessageID)
+	openID := auditEvent.Event.Operator.OpenID
+	userName, err := larkuser.GetUserNameCache(ctx, auditEvent.Event.Context.OpenChatID, openID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("GetUserInfo error", zap.Error(err))
 		return
 	}
-	actionName, actionTag, selectedOption := cardActionMetadata(cardAction)
+	actionName, actionTag, selectedOption := cardActionMetadata(auditEvent)
 	createTime := ""
-	if cardAction.EventV2Base != nil && cardAction.EventV2Base.Header != nil {
-		createTime = utils.EpoMicro2DateStr(cardAction.EventV2Base.Header.CreateTime)
+	if auditEvent.EventV2Base != nil && auditEvent.EventV2Base.Header != nil {
+		createTime = utils.EpoMicro2DateStr(auditEvent.EventV2Base.Header.CreateTime)
 	}
 	actionValue := map[string]any(nil)
-	if cardAction.Event.Action != nil {
-		actionValue = cardAction.Event.Action.Value
+	if auditEvent.Event.Action != nil {
+		actionValue = auditEvent.Event.Action.Value
 	}
 	idxData := &xmodel.CardActionIndex{
-		CardActionTriggerEvent: cardAction,
+		CardActionTriggerEvent: auditEvent,
 		ChatName:               larkchat.GetChatName(ctx, chatID),
 		CreateTime:             createTime,
-		CreateTimeUnix:         parseCardActionCreateTime(cardAction),
+		CreateTimeUnix:         parseCardActionCreateTime(auditEvent),
 		OpenID:                 openID,
 		UserName:               userName,
 		OpenMessageID:          openMessageID,
@@ -283,6 +291,52 @@ func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardA
 		logs.L().Ctx(ctx).Error("InsertData", zap.Error(err))
 		return
 	}
+}
+
+func redactedCardActionEvent(
+	cardAction *callback.CardActionTriggerEvent,
+) (*callback.CardActionTriggerEvent, error) {
+	encoded, err := sonic.Marshal(cardAction)
+	if err != nil {
+		return nil, err
+	}
+	var cloned callback.CardActionTriggerEvent
+	if err := sonic.Unmarshal(encoded, &cloned); err != nil {
+		return nil, err
+	}
+	if cloned.Event == nil {
+		return nil, errors.New("cloned card action event is incomplete")
+	}
+	if cloned.Event.Token != "" {
+		cloned.Event.Token = "[REDACTED]"
+	}
+	if cloned.Event.Context != nil && cloned.Event.Context.PreviewToken != "" {
+		cloned.Event.Context.PreviewToken = "[REDACTED]"
+	}
+	if cloned.Event.Action == nil {
+		return &cloned, nil
+	}
+	if cloned.Event.Action.Value != nil {
+		value := make(map[string]any, len(cloned.Event.Action.Value))
+		for key, item := range cloned.Event.Action.Value {
+			value[key] = item
+		}
+		if _, exists := value[cardactionproto.TokenField]; exists {
+			value[cardactionproto.TokenField] = "[REDACTED]"
+		}
+		cloned.Event.Action.Value = value
+	}
+	if cloned.Event.Action.FormValue != nil {
+		form := make(map[string]any, len(cloned.Event.Action.FormValue))
+		for key := range cloned.Event.Action.FormValue {
+			form[key] = "[REDACTED]"
+		}
+		cloned.Event.Action.FormValue = form
+	}
+	if cloned.Event.Action.InputValue != "" {
+		cloned.Event.Action.InputValue = "[REDACTED]"
+	}
+	return &cloned, nil
 }
 
 func cardActionMetadata(cardAction *callback.CardActionTriggerEvent) (actionName, actionTag, selectedOption string) {

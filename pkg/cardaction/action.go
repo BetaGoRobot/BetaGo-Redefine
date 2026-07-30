@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -84,11 +85,15 @@ const (
 	ActionLuckinUnbindToken      = "luckin_unbind_token"
 	ActionLuckinViewScope        = "luckin_view_scope"
 
-	RunIDField    = "run_id"
-	StepIDField   = "step_id"
-	RevisionField = "revision"
-	SourceField   = "source"
-	TokenField    = "token"
+	RunIDField           = "run_id"
+	StepIDField          = "step_id"
+	InteractionIDField   = "interaction_id"
+	RevisionField        = "revision"
+	SourceField          = "source"
+	TokenField           = "token"
+	InteractionKindField = "interaction_kind"
+	ContinueAgentField   = "continue_agent"
+	ActionIDField        = "action_id"
 
 	ApprovalDeliveryField = "approval_delivery"
 	PendingOrderIDField   = "pending_order_id"
@@ -125,8 +130,10 @@ const (
 )
 
 var (
-	ErrNilCardAction = errors.New("card action is nil")
-	ErrMissingAction = errors.New("card action name is missing")
+	ErrNilCardAction            = errors.New("card action is nil")
+	ErrMissingAction            = errors.New("card action name is missing")
+	ErrPartialRuntimeEnvelope   = errors.New("card action has a partial runtime envelope")
+	ErrMalformedRuntimeEnvelope = errors.New("card action has a malformed runtime envelope")
 
 	legacyActionAliases = map[string]string{
 		"song":        ActionMusicPlay,
@@ -148,6 +155,26 @@ type Parsed struct {
 	Option     string
 	Options    []string
 	Checked    bool
+	Runtime    *RuntimeEnvelope
+	Source     CallbackSource
+}
+
+type RuntimeEnvelope struct {
+	RunID           string
+	StepID          string
+	InteractionID   string
+	Revision        int64
+	Token           string
+	InteractionKind string
+	ContinueAgent   bool
+	ActionID        string
+}
+
+type CallbackSource struct {
+	EventID        string
+	MessageID      string
+	ChatID         string
+	OperatorOpenID string
 }
 
 func Parse(event *callback.CardActionTriggerEvent) (*Parsed, error) {
@@ -158,19 +185,33 @@ func Parse(event *callback.CardActionTriggerEvent) (*Parsed, error) {
 	value := maps.Clone(event.Event.Action.Value)
 	formValue := maps.Clone(event.Event.Action.FormValue)
 
+	var name string
+	var found bool
 	if legacyType, ok := stringValue(value, LegacyTypeField); ok {
 		if name, ok := legacyActionName(legacyType, value); ok {
-			return newParsed(name, event, value, formValue), nil
+			parsed := newParsed(name, event, value, formValue)
+			if err := parseRuntimeEnvelope(parsed); err != nil {
+				return nil, err
+			}
+			return parsed, nil
 		}
 	}
 
-	if name, ok := stringValue(value, ActionField); ok {
-		return newParsed(name, event, value, formValue), nil
+	if name, found = stringValue(value, ActionField); found {
+		parsed := newParsed(name, event, value, formValue)
+		if err := parseRuntimeEnvelope(parsed); err != nil {
+			return nil, err
+		}
+		return parsed, nil
 	}
 
 	if len(formValue) > 0 {
 		if _, ok := stringValue(value, CommandField); ok {
-			return newParsed(ActionCommandSubmitTimeRange, event, value, formValue), nil
+			parsed := newParsed(ActionCommandSubmitTimeRange, event, value, formValue)
+			if err := parseRuntimeEnvelope(parsed); err != nil {
+				return nil, err
+			}
+			return parsed, nil
 		}
 	}
 
@@ -223,7 +264,120 @@ func newParsed(name string, event *callback.CardActionTriggerEvent, value, formV
 	parsed.Option = action.Option
 	parsed.Options = append(parsed.Options, action.Options...)
 	parsed.Checked = action.Checked
+	if event.Event.Context != nil {
+		parsed.Source.MessageID = strings.TrimSpace(event.Event.Context.OpenMessageID)
+		parsed.Source.ChatID = strings.TrimSpace(event.Event.Context.OpenChatID)
+	}
+	if event.Event.Operator != nil {
+		parsed.Source.OperatorOpenID = strings.TrimSpace(event.Event.Operator.OpenID)
+	}
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		parsed.Source.EventID = strings.TrimSpace(event.EventV2Base.Header.EventID)
+	}
 	return parsed
+}
+
+func parseRuntimeEnvelope(parsed *Parsed) error {
+	if parsed == nil {
+		return nil
+	}
+	fields := []string{
+		RunIDField, StepIDField, InteractionIDField, RevisionField,
+		TokenField, InteractionKindField, ContinueAgentField,
+	}
+	if parsed.Name == ActionAgentRuntimeResume {
+		fields = append(fields, ActionIDField)
+	}
+	present := 0
+	for _, field := range fields {
+		if _, ok := parsed.Value[field]; ok {
+			present++
+		}
+	}
+	if present == 0 {
+		return nil
+	}
+	if present != len(fields) {
+		return ErrPartialRuntimeEnvelope
+	}
+	runID, ok := nonemptyStringValue(parsed.Value, RunIDField)
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	stepID, ok := nonemptyStringValue(parsed.Value, StepIDField)
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	interactionID, ok := nonemptyStringValue(parsed.Value, InteractionIDField)
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	revision, ok := integerValue(parsed.Value[RevisionField])
+	if !ok || revision <= 0 {
+		return ErrMalformedRuntimeEnvelope
+	}
+	token, ok := nonemptyStringValue(parsed.Value, TokenField)
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	kind, ok := nonemptyStringValue(parsed.Value, InteractionKindField)
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	continues, ok := booleanValue(parsed.Value[ContinueAgentField])
+	if !ok {
+		return ErrMalformedRuntimeEnvelope
+	}
+	actionID := ""
+	if parsed.Name == ActionAgentRuntimeResume {
+		actionID, ok = nonemptyStringValue(parsed.Value, ActionIDField)
+		if !ok {
+			return ErrMalformedRuntimeEnvelope
+		}
+	}
+	parsed.Runtime = &RuntimeEnvelope{
+		RunID: runID, StepID: stepID, InteractionID: interactionID,
+		Revision: revision, Token: token, InteractionKind: kind,
+		ContinueAgent: continues, ActionID: actionID,
+	}
+	return nil
+}
+
+func nonemptyStringValue(values map[string]any, key string) (string, bool) {
+	value, ok := stringValue(values, key)
+	value = strings.TrimSpace(value)
+	return value, ok && value != ""
+}
+
+func integerValue(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case float64:
+		result := int64(typed)
+		return result, float64(result) == typed
+	case string:
+		result, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return result, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func booleanValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		result, err := strconv.ParseBool(strings.TrimSpace(typed))
+		return result, err == nil
+	default:
+		return false, false
+	}
 }
 
 func stringValue(values map[string]any, key string) (string, bool) {
@@ -310,6 +464,10 @@ func (b *Builder) WithStepID(stepID string) *Builder {
 	return b.WithValue(StepIDField, stepID)
 }
 
+func (b *Builder) WithInteractionID(interactionID string) *Builder {
+	return b.WithValue(InteractionIDField, interactionID)
+}
+
 func (b *Builder) WithRevision(revision string) *Builder {
 	return b.WithValue(RevisionField, revision)
 }
@@ -320,6 +478,14 @@ func (b *Builder) WithSource(source string) *Builder {
 
 func (b *Builder) WithToken(token string) *Builder {
 	return b.WithValue(TokenField, token)
+}
+
+func (b *Builder) WithInteractionKind(interactionKind string) *Builder {
+	return b.WithValue(InteractionKindField, interactionKind)
+}
+
+func (b *Builder) WithContinueAgent(continueAgent bool) *Builder {
+	return b.WithValue(ContinueAgentField, strconv.FormatBool(continueAgent))
 }
 
 func (b *Builder) WithCommand(command string) *Builder {
