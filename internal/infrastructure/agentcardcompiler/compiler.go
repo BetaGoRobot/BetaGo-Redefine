@@ -1,6 +1,7 @@
 package agentcardcompiler
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
@@ -46,6 +47,34 @@ func (c *Compiler) CompileRedacted(
 		return nil, err
 	}
 	return redactCard(card).(larkmsg.RawCard), nil
+}
+
+func (c *Compiler) CompileJSON(
+	bound *agentcard.BoundCardSpec,
+) (json.RawMessage, error) {
+	card, err := c.Compile(bound)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(card)
+	if err != nil {
+		return nil, fmt.Errorf("marshal compiled agent card: %w", err)
+	}
+	return encoded, nil
+}
+
+func (c *Compiler) CompileRedactedJSON(
+	bound *agentcard.BoundCardSpec,
+) (json.RawMessage, error) {
+	card, err := c.CompileRedacted(bound)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(card)
+	if err != nil {
+		return nil, fmt.Errorf("marshal redacted agent card: %w", err)
+	}
+	return encoded, nil
 }
 
 func themeTemplate(theme agentcard.Theme) string {
