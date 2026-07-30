@@ -77,6 +77,7 @@ type PostWindowMutation struct {
 type EvaluationRepository interface {
 	Store
 	EpisodeArtifacts
+	FeedbackAttributionStore
 }
 
 type PreWindowSource interface {
@@ -116,6 +117,7 @@ type Service struct {
 	preWindowSource    PreWindowSource
 	boundaryDetector   TopicBoundaryDetector
 	candidateSubmitter CandidateSubmitter
+	feedback           *FeedbackAttributor
 	now                func() time.Time
 }
 
@@ -132,10 +134,16 @@ func NewService(options ServiceOptions) (*Service, error) {
 	if options.Now == nil {
 		options.Now = func() time.Time { return time.Now().UTC() }
 	}
+	feedback, err := NewFeedbackAttributor(options.Repository)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		repository: options.Repository, preWindowSource: options.PreWindowSource,
 		boundaryDetector:   options.BoundaryDetector,
-		candidateSubmitter: options.CandidateSubmitter, now: options.Now,
+		candidateSubmitter: options.CandidateSubmitter,
+		feedback:           feedback,
+		now:                options.Now,
 	}, nil
 }
 
@@ -170,7 +178,7 @@ func (s *Service) BeginMessage(
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
-	if err := s.ObserveMessage(ctx, input); err != nil {
+	if err := s.ObserveWindowMessage(ctx, input); err != nil {
 		return nil, err
 	}
 	cohorts, err := s.repository.ActiveCohorts(ctx, input.ChatID, input.OccurredAt)
@@ -204,7 +212,7 @@ func (s *Service) BeginMessage(
 	}, nil
 }
 
-func (s *Service) ObserveMessage(ctx context.Context, input MessageInput) error {
+func (s *Service) ObserveWindowMessage(ctx context.Context, input MessageInput) error {
 	episodes, err := s.repository.OpenEpisodesForMessage(ctx, input.ChatID, input.OccurredAt)
 	if err != nil {
 		return fmt.Errorf("load open evaluation windows: %w", err)
@@ -235,6 +243,27 @@ func (s *Service) ObserveMessage(ctx context.Context, input MessageInput) error 
 		}
 	}
 	return nil
+}
+
+func (s *Service) ObserveMessage(ctx context.Context, event MessageFeedback) error {
+	if s == nil || s.feedback == nil {
+		return ErrEvaluationUnavailable
+	}
+	return s.feedback.ObserveMessage(ctx, event)
+}
+
+func (s *Service) ObserveReaction(ctx context.Context, event ReactionFeedback) error {
+	if s == nil || s.feedback == nil {
+		return ErrEvaluationUnavailable
+	}
+	return s.feedback.ObserveReaction(ctx, event)
+}
+
+func (s *Service) ObserveCardAction(ctx context.Context, event CardFeedback) error {
+	if s == nil || s.feedback == nil {
+		return ErrEvaluationUnavailable
+	}
+	return s.feedback.ObserveCardAction(ctx, event)
 }
 
 func (s *Service) AdvanceOpenWindows(
@@ -350,7 +379,8 @@ func BuildControlLaneOutput(
 		"join_decision": decision, "topic_relation": relation, "source": "control",
 	})
 	toolPlan := mustObjectJSON(map[string]any{
-		"plans": capture.ToolPlans,
+		"plans":               capture.ToolPlans,
+		"delivery_message_id": capture.DeliveryMessageID,
 		"capability_calls": func() []ToolTrace {
 			if capture.Output == nil {
 				return []ToolTrace{}

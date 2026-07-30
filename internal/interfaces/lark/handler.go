@@ -2,18 +2,24 @@ package lark
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckinaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
+	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -46,6 +52,7 @@ type HandlerSet struct {
 	messageExecutor        taskSubmitter
 	reactionExecutor       taskSubmitter
 	continuationDispatcher appcardaction.ContinuationDispatcher
+	feedbackSink           conversationeval.FeedbackSink
 }
 
 var (
@@ -61,6 +68,7 @@ type HandlerSetOptions struct {
 	MessageExecutor        taskSubmitter
 	ReactionExecutor       taskSubmitter
 	ContinuationDispatcher appcardaction.ContinuationDispatcher
+	FeedbackSink           conversationeval.FeedbackSink
 }
 
 // NewHandlerSet 构造一个 handler 集合。某个 processor 如果没有显式传入，
@@ -72,6 +80,7 @@ func NewHandlerSet(options HandlerSetOptions) *HandlerSet {
 		messageExecutor:        options.MessageExecutor,
 		reactionExecutor:       options.ReactionExecutor,
 		continuationDispatcher: options.ContinuationDispatcher,
+		feedbackSink:           options.FeedbackSink,
 	}
 	if options.MessageProcessor != nil {
 		handlerSet.messageProcessor = options.MessageProcessor
@@ -205,6 +214,9 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 		attribute.String("chat.id", cardAction.Event.Context.OpenChatID),
 		attribute.String("operator.open_id", cardAction.Event.Operator.OpenID),
 	)
+	if feedbackErr := h.submitCardFeedback(ctx, cardAction); feedbackErr != nil {
+		logs.L().Ctx(ctx).Warn("submit card feedback failed", zap.Error(feedbackErr))
+	}
 	metaData := buildCardActionMetaData(ctx, cardAction.Event.Context.OpenChatID, cardAction.Event.Operator.OpenID)
 	// 记录一下操作记录
 	defer func() { go recordCardAction(ctx, cardAction) }()
@@ -226,6 +238,87 @@ func (h *HandlerSet) CardActionHandler(ctx context.Context, cardAction *callback
 		return appcardaction.ErrorToast("卡片操作失败: " + dispatchErr.Error()), nil
 	}
 	return resp, nil
+}
+
+func (h *HandlerSet) submitCardFeedback(
+	ctx context.Context,
+	cardAction *callback.CardActionTriggerEvent,
+) error {
+	if h == nil || h.feedbackSink == nil {
+		return nil
+	}
+	event, err := cardFeedbackFromEvent(cardAction)
+	if err != nil {
+		return err
+	}
+	backgroundCtx := context.WithoutCancel(ctx)
+	run := func(taskCtx context.Context) error {
+		return h.feedbackSink.ObserveCardAction(taskCtx, event)
+	}
+	if h.reactionExecutor == nil {
+		go func() {
+			if runErr := run(backgroundCtx); runErr != nil {
+				logs.L().Ctx(backgroundCtx).Warn(
+					"observe card feedback failed",
+					zap.Error(runErr),
+				)
+			}
+		}()
+		return nil
+	}
+	return h.reactionExecutor.Submit(backgroundCtx, "card_feedback:"+event.EventID, run)
+}
+
+func cardFeedbackFromEvent(
+	cardAction *callback.CardActionTriggerEvent,
+) (conversationeval.CardFeedback, error) {
+	if cardAction == nil || cardAction.Event == nil || cardAction.Event.Context == nil ||
+		cardAction.Event.Operator == nil || cardAction.Event.Action == nil {
+		return conversationeval.CardFeedback{}, conversationeval.ErrInvalidContract
+	}
+	actionName := strings.TrimSpace(cardAction.Event.Action.Name)
+	if actionName == "" {
+		if value, ok := cardAction.Event.Action.Value[cardactionproto.ActionField].(string); ok {
+			actionName = strings.TrimSpace(value)
+		}
+	}
+	value, err := json.Marshal(cardAction.Event.Action.Value)
+	if err != nil {
+		return conversationeval.CardFeedback{}, fmt.Errorf("marshal card action value: %w", err)
+	}
+	occurredAt := time.Now().UTC()
+	eventID := ""
+	if cardAction.EventV2Base != nil && cardAction.EventV2Base.Header != nil {
+		eventID = strings.TrimSpace(cardAction.EventV2Base.Header.EventID)
+		if millis, parseErr := strconv.ParseInt(
+			strings.TrimSpace(cardAction.EventV2Base.Header.CreateTime),
+			10,
+			64,
+		); parseErr == nil && millis > 0 {
+			occurredAt = time.UnixMilli(millis)
+		}
+	}
+	if eventID == "" {
+		eventID = stableCardFeedbackEventID(
+			cardAction.Event.Context.OpenMessageID,
+			cardAction.Event.Operator.OpenID,
+			actionName,
+			string(value),
+		)
+	}
+	return conversationeval.CardFeedback{
+		EventID: eventID, ChatID: strings.TrimSpace(cardAction.Event.Context.OpenChatID),
+		ActorOpenID:     strings.TrimSpace(cardAction.Event.Operator.OpenID),
+		TargetMessageID: strings.TrimSpace(cardAction.Event.Context.OpenMessageID),
+		ActionName:      actionName,
+		Value:           value,
+		OccurredAt:      occurredAt,
+	}, nil
+}
+
+func stableCardFeedbackEventID(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "card_feedback_" + hex.EncodeToString(sum[:16])
 }
 
 // AuditV6Handler 目前只是一个占位实现，用来满足 dispatcher 接线。

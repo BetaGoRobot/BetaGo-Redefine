@@ -273,9 +273,43 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 		return err
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		episode, err := loadEpisode(tx, feedback.EpisodeID, true)
+		episode, err := loadEpisode(tx, feedback.EpisodeID, false)
 		if err != nil {
 			return err
+		}
+		var cohortState struct {
+			Status string
+		}
+		cohortResult := tx.Raw(`
+			SELECT status
+			FROM evaluation_cohorts
+			WHERE id = ?
+			LIMIT 1
+			FOR UPDATE`,
+			episode.CohortID,
+		).Scan(&cohortState)
+		if cohortResult.Error != nil {
+			return cohortResult.Error
+		}
+		if cohortResult.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		episode, err = loadEpisode(tx, feedback.EpisodeID, true)
+		if err != nil {
+			return err
+		}
+		decision := conversationeval.DecideFeedbackWindow(
+			episode,
+			feedback.Explicitness,
+			feedback.OccurredAt,
+			cohortState.Status == string(conversationeval.CohortStatusFinalized),
+		)
+		if !decision.Attach {
+			return fmt.Errorf(
+				"%w: feedback is outside its attribution window: %s",
+				conversationeval.ErrInvalidContract,
+				decision.Reason,
+			)
 		}
 		if feedback.TargetLane != "" {
 			if feedback.TargetLane != episode.ServingLane {
@@ -288,8 +322,10 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 			if err := tx.Raw(`
 				SELECT count(*)
 				FROM evaluation_lane_outputs
-				WHERE episode_id = ? AND lane = ? AND output_mode = ?`,
+				WHERE episode_id = ? AND lane = ? AND output_mode = ?
+				  AND tool_plan_json->>'delivery_message_id' = ?`,
 				episode.ID, string(feedback.TargetLane), string(conversationeval.OutputModeActual),
+				feedback.TargetMessageID,
 			).Scan(&actualCount).Error; err != nil {
 				return err
 			}
@@ -300,7 +336,7 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 				)
 			}
 		}
-		return tx.Exec(`
+		insert := tx.Exec(`
 			INSERT INTO evaluation_feedback (
 				id, episode_id, target_lane, target_message_id, feedback_event_id,
 				feedback_type, explicitness, content_json, attribution_confidence, occurred_at
@@ -309,8 +345,75 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 			feedback.ID, feedback.EpisodeID, string(feedback.TargetLane), feedback.TargetMessageID,
 			feedback.FeedbackEventID, string(feedback.FeedbackType), string(feedback.Explicitness),
 			string(feedback.ContentJSON), feedback.AttributionConfidence, feedback.OccurredAt,
-		).Error
+		)
+		if insert.Error != nil {
+			return insert.Error
+		}
+		if insert.RowsAffected == 1 && decision.IncrementResultVersion {
+			return tx.Exec(`
+				UPDATE evaluation_cohorts
+				SET result_version = result_version + 1, updated_at = now()
+				WHERE id = ?`,
+				episode.CohortID,
+			).Error
+		}
+		return nil
 	})
+}
+
+func (r *Repository) FeedbackCandidates(
+	ctx context.Context,
+	chatID string,
+	occurredAt time.Time,
+) ([]conversationeval.FeedbackCandidate, error) {
+	if err := validateQueryID("chat_id", chatID); err != nil {
+		return nil, err
+	}
+	if occurredAt.IsZero() {
+		return nil, fmt.Errorf(
+			"%w: feedback candidate timestamp must not be zero",
+			conversationeval.ErrInvalidContract,
+		)
+	}
+	db, err := r.database()
+	if err != nil {
+		return nil, err
+	}
+	var rows []feedbackCandidateRow
+	if err := db.WithContext(ctx).Raw(`
+		SELECT e.id, e.cohort_id, e.chat_id, e.run_id, e.anchor_event_id,
+		       e.anchor_message_id, e.topic_id, e.serving_lane, e.status,
+		       e.pre_window_start, e.anchor_at, e.post_window_end,
+		       e.late_feedback_until, e.created_at, e.updated_at,
+		       COALESCE(output.tool_plan_json->>'delivery_message_id', '') AS delivery_message_id
+		FROM evaluation_episodes AS e
+		LEFT JOIN evaluation_lane_outputs AS output
+		  ON output.episode_id = e.id
+		 AND output.lane = e.serving_lane
+		 AND output.output_mode = ?
+		WHERE e.chat_id = ?
+		  AND e.anchor_at <= ?
+		  AND e.late_feedback_until >= ?
+		ORDER BY e.anchor_at DESC, e.id
+		LIMIT 256`,
+		string(conversationeval.OutputModeActual),
+		chatID,
+		occurredAt,
+		occurredAt,
+	).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	candidates := make([]conversationeval.FeedbackCandidate, 0, len(rows))
+	for _, row := range rows {
+		episode, err := row.episode().domain()
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, conversationeval.FeedbackCandidate{
+			Episode: episode, DeliveryMessageID: row.DeliveryMessageID,
+		})
+	}
+	return candidates, nil
 }
 
 func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationeval.Judgment) error {
@@ -516,6 +619,36 @@ type episodeRow struct {
 	LateFeedbackUntil time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type feedbackCandidateRow struct {
+	ID                string
+	CohortID          string
+	ChatID            string
+	RunID             string
+	AnchorEventID     string
+	AnchorMessageID   string
+	TopicID           string
+	ServingLane       string
+	Status            string
+	PreWindowStart    time.Time
+	AnchorAt          time.Time
+	PostWindowEnd     sql.NullTime
+	LateFeedbackUntil time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeliveryMessageID string
+}
+
+func (r feedbackCandidateRow) episode() episodeRow {
+	return episodeRow{
+		ID: r.ID, CohortID: r.CohortID, ChatID: r.ChatID, RunID: r.RunID,
+		AnchorEventID: r.AnchorEventID, AnchorMessageID: r.AnchorMessageID,
+		TopicID: r.TopicID, ServingLane: r.ServingLane, Status: r.Status,
+		PreWindowStart: r.PreWindowStart, AnchorAt: r.AnchorAt,
+		PostWindowEnd: r.PostWindowEnd, LateFeedbackUntil: r.LateFeedbackUntil,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
 }
 
 func (r episodeRow) domain() (conversationeval.Episode, error) {

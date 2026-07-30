@@ -35,7 +35,8 @@ func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T
 		components.conversationRuntime == nil ||
 		components.conversationWorker == nil ||
 		components.conversationProjectionWorker == nil ||
-		components.continuationDispatcher == nil {
+		components.continuationDispatcher == nil ||
+		components.feedbackRouter == nil {
 		t.Fatalf("conversation components are incomplete: %#v", components)
 	}
 	if components.conversationWorker.Critical() ||

@@ -828,6 +828,7 @@ func TestUpsertLaneOutputValidatesEpisodeAnchorAndServingMode(t *testing.T) {
 	}
 	actual := fixture.laneOutput(*storedCandidate, conversationeval.LaneCandidate, "candidate_serving_actual")
 	actual.OutputMode = conversationeval.OutputModeActual
+	actual.ToolPlanJSON = json.RawMessage(`{"delivery_message_id":"candidate_message"}`)
 	if err := fixture.repo.UpsertLaneOutput(ctx, actual); err != nil {
 		t.Fatalf("UpsertLaneOutput(candidate actual) error = %v", err)
 	}
@@ -874,10 +875,9 @@ func TestFeedbackDedupesAndJudgmentsRemainAppendOnlyAndVersioned(t *testing.T) {
 	if err := fixture.repo.AppendFeedback(ctx, episodeOnly); err != nil {
 		t.Fatalf("AppendFeedback(episode-only) error = %v", err)
 	}
-	if err := fixture.repo.UpsertLaneOutput(
-		ctx,
-		fixture.laneOutput(*stored, conversationeval.LaneControl, "feedback_control_actual"),
-	); err != nil {
+	actual := fixture.laneOutput(*stored, conversationeval.LaneControl, "feedback_control_actual")
+	actual.ToolPlanJSON = json.RawMessage(`{"delivery_message_id":"message_reply"}`)
+	if err := fixture.repo.UpsertLaneOutput(ctx, actual); err != nil {
 		t.Fatalf("UpsertLaneOutput(actual) error = %v", err)
 	}
 	if err := fixture.repo.AppendFeedback(ctx, feedback); err != nil {
@@ -967,6 +967,131 @@ func TestFeedbackDedupesAndJudgmentsRemainAppendOnlyAndVersioned(t *testing.T) {
 	}
 	if judgmentCount != 2 {
 		t.Fatalf("judgment count = %d, want 2 immutable versions", judgmentCount)
+	}
+}
+
+func TestFeedbackCandidatesExposeOnlyActualDeliveryIdentity(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"feedback_candidates",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	episode := fixture.episode(
+		cohort.ID,
+		"episode_feedback_candidates_"+fixture.suffix,
+		"anchor_feedback_candidates",
+	)
+	stored, err := fixture.repo.GetOrCreateEpisode(ctx, episode)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	actual := fixture.laneOutput(*stored, conversationeval.LaneControl, "actual_delivery")
+	actual.ToolPlanJSON = json.RawMessage(`{"delivery_message_id":"actual-message"}`)
+	if err := fixture.repo.UpsertLaneOutput(ctx, actual); err != nil {
+		t.Fatalf("UpsertLaneOutput(actual) error = %v", err)
+	}
+	shadow := fixture.laneOutput(*stored, conversationeval.LaneCandidate, "shadow_delivery")
+	shadow.ToolPlanJSON = json.RawMessage(`{"delivery_message_id":"shadow-message"}`)
+	if err := fixture.repo.UpsertLaneOutput(ctx, shadow); err != nil {
+		t.Fatalf("UpsertLaneOutput(shadow) error = %v", err)
+	}
+
+	candidates, err := fixture.repo.FeedbackCandidates(
+		ctx,
+		stored.ChatID,
+		stored.AnchorAt.Add(time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("FeedbackCandidates() error = %v", err)
+	}
+	if len(candidates) != 1 ||
+		candidates[0].Episode.ID != stored.ID ||
+		candidates[0].DeliveryMessageID != "actual-message" {
+		t.Fatalf("FeedbackCandidates() = %#v", candidates)
+	}
+}
+
+func TestAppendFeedbackEnforcesWindowAndVersionsFinalizedCohortOnce(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"feedback_window",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	episode := fixture.episode(
+		cohort.ID,
+		"episode_feedback_window_"+fixture.suffix,
+		"anchor_feedback_window",
+	)
+	stored, err := fixture.repo.GetOrCreateEpisode(ctx, episode)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	postEnd := stored.AnchorAt.Add(10 * time.Minute)
+	if err := fixture.db.Table("evaluation_episodes").
+		Where("id = ?", stored.ID).
+		Update("post_window_end", postEnd).Error; err != nil {
+		t.Fatalf("set post window end: %v", err)
+	}
+
+	expired := conversationeval.Feedback{
+		ID: "feedback_expired_" + fixture.suffix, EpisodeID: stored.ID,
+		FeedbackEventID:       "feedback_expired_event",
+		FeedbackType:          conversationeval.FeedbackTypeCorrection,
+		Explicitness:          conversationeval.FeedbackExplicit,
+		ContentJSON:           json.RawMessage(`{"text":"late"}`),
+		AttributionConfidence: 90,
+		OccurredAt:            stored.LateFeedbackUntil.Add(time.Second),
+	}
+	if err := fixture.repo.AppendFeedback(ctx, expired); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("AppendFeedback(expired) error = %v, want ErrInvalidContract", err)
+	}
+	inferred := expired
+	inferred.ID = "feedback_inferred_" + fixture.suffix
+	inferred.FeedbackEventID = "feedback_inferred_event"
+	inferred.FeedbackType = conversationeval.FeedbackTypeSemanticInference
+	inferred.Explicitness = conversationeval.FeedbackInferred
+	inferred.OccurredAt = postEnd.Add(time.Second)
+	if err := fixture.repo.AppendFeedback(ctx, inferred); !errors.Is(err, conversationeval.ErrInvalidContract) {
+		t.Fatalf("AppendFeedback(inferred after post window) error = %v, want ErrInvalidContract", err)
+	}
+
+	if err := fixture.db.Table("evaluation_cohorts").
+		Where("id = ?", cohort.ID).
+		Updates(map[string]any{
+			"status":         string(conversationeval.CohortStatusFinalized),
+			"result_version": 7,
+		}).Error; err != nil {
+		t.Fatalf("finalize cohort fixture: %v", err)
+	}
+	lateExplicit := expired
+	lateExplicit.ID = "feedback_late_explicit_" + fixture.suffix
+	lateExplicit.FeedbackEventID = "feedback_late_explicit_event"
+	lateExplicit.OccurredAt = stored.AnchorAt.Add(23 * time.Hour)
+	if err := fixture.repo.AppendFeedback(ctx, lateExplicit); err != nil {
+		t.Fatalf("AppendFeedback(late explicit) error = %v", err)
+	}
+	if err := fixture.repo.AppendFeedback(ctx, lateExplicit); err != nil {
+		t.Fatalf("AppendFeedback(duplicate late explicit) error = %v", err)
+	}
+	var resultVersion int64
+	if err := fixture.db.Table("evaluation_cohorts").
+		Select("result_version").
+		Where("id = ?", cohort.ID).
+		Scan(&resultVersion).Error; err != nil {
+		t.Fatalf("read result version: %v", err)
+	}
+	if resultVersion != 8 {
+		t.Fatalf("result_version = %d, want 8", resultVersion)
 	}
 }
 

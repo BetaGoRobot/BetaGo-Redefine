@@ -4,11 +4,16 @@ import (
 	"context"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkchat"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+type ProcessorOptions struct {
+	FeedbackSink conversationeval.FeedbackSink
+}
 
 // Handler 反应处理器模板（保留用于向后兼容）
 var Handler *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]
@@ -19,13 +24,19 @@ type (
 )
 
 func NewReactionProcessor() *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData] {
+	return NewReactionProcessorWithOptions(ProcessorOptions{})
+}
+
+func NewReactionProcessorWithOptions(
+	options ProcessorOptions,
+) *xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData] {
 	return (&xhandler.Processor[larkim.P2MessageReactionCreatedV1, xhandler.BaseMetaData]{}).
 		OnPanic(func(ctx context.Context, err error, event *larkim.P2MessageReactionCreatedV1, metaData *xhandler.BaseMetaData) {
 			larkmsg.SendRecoveredMsg(ctx, err, *event.Event.MessageId)
 		}).
 		WithMetaDataProcess(metaInit).
 		AddAsync(&FollowReactionOperator{}).
-		AddAsync(&RecordReactionOperator{})
+		AddAsync(&RecordReactionOperator{feedbackSink: options.FeedbackSink})
 }
 
 func metaInit(event *larkim.P2MessageReactionCreatedV1) *xhandler.BaseMetaData {

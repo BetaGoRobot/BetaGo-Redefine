@@ -29,6 +29,7 @@ type MessageHandler struct {
 	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	interactionStarter agentruntime.InteractionStarter
 	runtimeEnabled     func(context.Context, string) bool
+	feedbackSink       conversationeval.FeedbackSink
 	evaluationService  atomic.Pointer[conversationeval.Service]
 }
 
@@ -36,6 +37,7 @@ type MessageHandlerOptions struct {
 	InteractionStarter agentruntime.InteractionStarter
 	RuntimeEnabled     func(context.Context, string) bool
 	EvaluationService  *conversationeval.Service
+	FeedbackSink       conversationeval.FeedbackSink
 }
 
 // Handler 消息处理入口。
@@ -73,6 +75,7 @@ func NewMessageProcessorWithOptions(
 	handler := &MessageHandler{
 		interactionStarter: options.InteractionStarter,
 		runtimeEnabled:     options.RuntimeEnabled,
+		feedbackSink:       options.FeedbackSink,
 		processor: newMessageProcessorBase(cfgManager).
 			AddAsync(&ops.ReplyChatOperator{}).
 			AddAsync(&ops.CommandOperator{}).
@@ -96,16 +99,29 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 	ctx = h.contextForEvent(ctx, event)
 	var evaluationSession *conversationeval.MessageSession
 	evaluationService := h.evaluationService.Load()
-	if evaluationService != nil {
+	if evaluationService != nil || h.feedbackSink != nil {
 		input, err := evaluationMessageInput(ctx, event)
 		if err != nil {
 			logs.L().Ctx(ctx).Warn("build evaluation message input failed", zap.Error(err))
 		} else {
-			evaluationSession, err = evaluationService.BeginMessage(ctx, input)
-			if err != nil {
-				logs.L().Ctx(ctx).Warn("begin conversation evaluation failed", zap.Error(err))
-			} else if evaluationSession.Enabled() {
-				ctx = conversationeval.WithCapture(ctx, evaluationSession.Capture())
+			if h.feedbackSink != nil {
+				if feedbackErr := h.feedbackSink.ObserveMessage(
+					ctx,
+					messageFeedbackFromInput(input),
+				); feedbackErr != nil {
+					logs.L().Ctx(ctx).Warn(
+						"observe conversation feedback failed",
+						zap.Error(feedbackErr),
+					)
+				}
+			}
+			if evaluationService != nil {
+				evaluationSession, err = evaluationService.BeginMessage(ctx, input)
+				if err != nil {
+					logs.L().Ctx(ctx).Warn("begin conversation evaluation failed", zap.Error(err))
+				} else if evaluationSession.Enabled() {
+					ctx = conversationeval.WithCapture(ctx, evaluationSession.Capture())
+				}
 			}
 		}
 	}
@@ -114,6 +130,17 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 		if err := evaluationService.CompleteMessage(ctx, evaluationSession); err != nil {
 			logs.L().Ctx(ctx).Warn("complete conversation evaluation failed", zap.Error(err))
 		}
+	}
+}
+
+func messageFeedbackFromInput(input conversationeval.MessageInput) conversationeval.MessageFeedback {
+	return conversationeval.MessageFeedback{
+		EventID: input.EventID, MessageID: input.MessageID, ChatID: input.ChatID,
+		TopicID: input.TopicID, ActorOpenID: input.SenderOpenID,
+		ReplyToMessageID:   input.ReplyToMessageID,
+		Content:            input.Content,
+		ExplicitCorrection: conversationeval.IsExplicitCorrection(input.Content),
+		OccurredAt:         input.OccurredAt,
 	}
 }
 

@@ -89,6 +89,15 @@ func TestServiceCollectsEpisodeAndSubmitsCandidate(t *testing.T) {
 		control.JoinDecision != JoinDecisionJoin || control.ReplyText != "control reply" {
 		t.Fatalf("control output = %#v", control)
 	}
+	var toolPlan struct {
+		DeliveryMessageID string `json:"delivery_message_id"`
+	}
+	if err := json.Unmarshal(control.ToolPlanJSON, &toolPlan); err != nil {
+		t.Fatalf("decode control tool plan: %v", err)
+	}
+	if toolPlan.DeliveryMessageID != "delivered-message" {
+		t.Fatalf("control delivery message ID = %q", toolPlan.DeliveryMessageID)
+	}
 	if len(submitter.tasks) != 1 {
 		t.Fatalf("candidate tasks = %d, want 1", len(submitter.tasks))
 	}
@@ -120,8 +129,8 @@ func TestServiceObserveMessageClosesAtTopicBoundary(t *testing.T) {
 	next.TopicID = "topic-new"
 	next.OccurredAt = input.OccurredAt.Add(time.Minute)
 
-	if err := service.ObserveMessage(context.Background(), next); err != nil {
-		t.Fatalf("ObserveMessage() error = %v", err)
+	if err := service.ObserveWindowMessage(context.Background(), next); err != nil {
+		t.Fatalf("ObserveWindowMessage() error = %v", err)
 	}
 	if len(repository.postMessages) != 0 {
 		t.Fatalf("boundary message was appended: %#v", repository.postMessages)
@@ -214,6 +223,13 @@ func (r *serviceRepositoryFake) UpsertLaneOutput(_ context.Context, output LaneO
 	return nil
 }
 func (r *serviceRepositoryFake) AppendFeedback(context.Context, Feedback) error { return nil }
+func (r *serviceRepositoryFake) FeedbackCandidates(
+	context.Context,
+	string,
+	time.Time,
+) ([]FeedbackCandidate, error) {
+	return nil, nil
+}
 func (r *serviceRepositoryFake) AppendJudgment(context.Context, Judgment) error { return nil }
 func (r *serviceRepositoryFake) EpisodesReadyForJudge(context.Context, time.Time, int) ([]Episode, error) {
 	return nil, nil

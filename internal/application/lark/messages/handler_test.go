@@ -6,10 +6,12 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -202,6 +204,73 @@ func TestEvaluationMessageInputUsesStableMessageAnchorAndParsedContent(t *testin
 		got.OccurredAt.UnixMilli() != 1785290400123 {
 		t.Fatalf("evaluation message input = %#v", got)
 	}
+}
+
+func TestMessageHandlerEmitsFeedbackInput(t *testing.T) {
+	chatID := "chat-feedback"
+	chatType := "group"
+	messageID := "message-feedback"
+	messageType := larkim.MsgTypeText
+	content := `{"text":"不对，应该是明天"}`
+	createTime := "1785398400123"
+	threadID := "thread-feedback"
+	parentID := "delivered-message"
+	openID := "actor-feedback"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatId: &chatID, ChatType: &chatType, MessageId: &messageID,
+				MessageType: &messageType, Content: &content, CreateTime: &createTime,
+				ThreadId: &threadID, ParentId: &parentID,
+			},
+			Sender: &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &openID}},
+		},
+	}
+	sink := &messageFeedbackSinkFake{}
+	handler := &MessageHandler{
+		processor:      &xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]{},
+		feedbackSink:   sink,
+		runtimeEnabled: func(context.Context, string) bool { return false },
+	}
+
+	handler.Run(context.Background(), event)
+
+	if len(sink.messages) != 1 {
+		t.Fatalf("message feedback = %#v, want one item", sink.messages)
+	}
+	got := sink.messages[0]
+	if got.EventID != messageID || got.ChatID != chatID ||
+		got.TopicID != threadID || got.ActorOpenID != openID ||
+		got.ReplyToMessageID != parentID || !got.ExplicitCorrection ||
+		got.OccurredAt != time.UnixMilli(1785398400123) {
+		t.Fatalf("message feedback = %#v", got)
+	}
+}
+
+type messageFeedbackSinkFake struct {
+	messages []conversationeval.MessageFeedback
+}
+
+func (f *messageFeedbackSinkFake) ObserveMessage(
+	_ context.Context,
+	event conversationeval.MessageFeedback,
+) error {
+	f.messages = append(f.messages, event)
+	return nil
+}
+
+func (*messageFeedbackSinkFake) ObserveReaction(
+	context.Context,
+	conversationeval.ReactionFeedback,
+) error {
+	return nil
+}
+
+func (*messageFeedbackSinkFake) ObserveCardAction(
+	context.Context,
+	conversationeval.CardFeedback,
+) error {
+	return nil
 }
 
 func asyncStageTypes(processor *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]) []string {

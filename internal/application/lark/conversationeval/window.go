@@ -219,7 +219,11 @@ func DecideFeedbackWindow(
 			Reason:                 "explicit_feedback",
 		}
 	case FeedbackInferred:
-		if episode.PostWindowEnd == nil || occurredAt.After(*episode.PostWindowEnd) {
+		if episode.PostWindowEnd == nil {
+			if !occurredAt.Before(episode.AnchorAt.Add(PostWindowMaxAge)) {
+				return FeedbackWindowDecision{Reason: "outside_post_window"}
+			}
+		} else if occurredAt.After(*episode.PostWindowEnd) {
 			return FeedbackWindowDecision{Reason: "outside_post_window"}
 		}
 		return FeedbackWindowDecision{

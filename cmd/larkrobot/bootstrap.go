@@ -61,6 +61,7 @@ type appComponents struct {
 	conversationProjectionWorker *agentruntime.ProjectionWorker
 	continuationDispatcher       *appcardaction.ScheduleInteractionDispatcher
 	messageProcessor             *messages.MessageHandler
+	feedbackRouter               *conversationeval.FeedbackRouter
 	handlerSet                   *larkiface.HandlerSet
 	eventDispatcher              *dispatcher.EventDispatcher
 }
@@ -162,17 +163,24 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		return nil, err
 	}
 
+	feedbackRouter := conversationeval.NewFeedbackRouter()
 	messageProcessor := messages.NewMessageProcessorWithOptions(
 		appconfig.GetManager(),
-		messages.MessageHandlerOptions{InteractionStarter: conversationRuntime},
+		messages.MessageHandlerOptions{
+			InteractionStarter: conversationRuntime,
+			FeedbackSink:       feedbackRouter,
+		},
 	)
-	reactionProcessor := reaction.NewReactionProcessor()
+	reactionProcessor := reaction.NewReactionProcessorWithOptions(reaction.ProcessorOptions{
+		FeedbackSink: feedbackRouter,
+	})
 	handlerSet := larkiface.NewHandlerSet(larkiface.HandlerSetOptions{
 		MessageProcessor:       messageProcessor,
 		ReactionProcessor:      reactionProcessor,
 		MessageExecutor:        messageExecutor,
 		ReactionExecutor:       reactionExecutor,
 		ContinuationDispatcher: continuationDispatcher,
+		FeedbackSink:           feedbackRouter,
 	})
 
 	return &appComponents{
@@ -184,6 +192,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		conversationProjectionWorker: conversationProjectionWorker,
 		continuationDispatcher:       continuationDispatcher,
 		messageProcessor:             messageProcessor,
+		feedbackRouter:               feedbackRouter,
 		handlerSet:                   handlerSet,
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
 	}, nil
@@ -616,7 +625,13 @@ func addConversationEvaluationModule(
 				return err
 			}
 			components.messageProcessor.SetEvaluationService(service)
-			return worker.Start(ctx)
+			components.feedbackRouter.Bind(service)
+			if err := worker.Start(ctx); err != nil {
+				components.feedbackRouter.Bind(nil)
+				components.messageProcessor.SetEvaluationService(nil)
+				return err
+			}
+			return nil
 		},
 		Ready: func(context.Context) error {
 			if worker == nil {
@@ -625,6 +640,7 @@ func addConversationEvaluationModule(
 			return nil
 		},
 		Stop: func(ctx context.Context) error {
+			components.feedbackRouter.Bind(nil)
 			components.messageProcessor.SetEvaluationService(nil)
 			if worker == nil {
 				return nil

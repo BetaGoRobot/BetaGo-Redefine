@@ -13,11 +13,13 @@ import (
 	"time"
 
 	appcardaction "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	otelinfra "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -27,6 +29,16 @@ import (
 type traceCaptureSubmitter struct {
 	mu       sync.Mutex
 	traceIDs []oteltrace.TraceID
+}
+
+type immediateSubmitter struct{}
+
+func (immediateSubmitter) Submit(
+	ctx context.Context,
+	_ string,
+	fn func(context.Context) error,
+) error {
+	return fn(ctx)
 }
 
 type handlerContinuationFake struct {
@@ -243,6 +255,77 @@ func TestCardActionHandlerStartsNewRootTracePerCall(t *testing.T) {
 	if traceIDs[0] == parentSpan.SpanContext().TraceID() || traceIDs[1] == parentSpan.SpanContext().TraceID() {
 		t.Fatalf("expected card action traces to ignore parent trace %s", parentSpan.SpanContext().TraceID())
 	}
+}
+
+func TestCardActionHandlerEmitsFeedbackThroughExecutor(t *testing.T) {
+	installHandlerTestConfig(t)
+	prevMetaBuilder := buildCardActionMetaData
+	prevRecorder := recordCardAction
+	buildCardActionMetaData = func(context.Context, string, string) *xhandler.BaseMetaData {
+		return &xhandler.BaseMetaData{ChatID: "chat-card", OpenID: "user-card"}
+	}
+	recordCardAction = func(context.Context, *callback.CardActionTriggerEvent) {}
+	t.Cleanup(func() {
+		buildCardActionMetaData = prevMetaBuilder
+		recordCardAction = prevRecorder
+	})
+
+	actionName := "test.feedback." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	appcardaction.RegisterSync(actionName, func(
+		context.Context,
+		*appcardaction.Context,
+	) (*callback.CardActionTriggerResponse, error) {
+		return appcardaction.InfoToast("ok"), nil
+	})
+	event := newCardActionEvent("delivered-card", actionName)
+	event.EventV2Base = &larkevent.EventV2Base{Header: &larkevent.EventHeader{
+		EventID: "card-feedback-event", CreateTime: "1785398400123",
+	}}
+	sink := &handlerFeedbackSinkFake{}
+	handlerSet := NewHandlerSet(HandlerSetOptions{
+		ReactionExecutor: immediateSubmitter{},
+		FeedbackSink:     sink,
+	})
+
+	if _, err := handlerSet.CardActionHandler(context.Background(), event); err != nil {
+		t.Fatalf("CardActionHandler() error = %v", err)
+	}
+	if len(sink.cards) != 1 {
+		t.Fatalf("card feedback = %#v, want one item", sink.cards)
+	}
+	got := sink.cards[0]
+	if got.EventID != "card-feedback-event" || got.ChatID != "oc_card_chat" ||
+		got.TargetMessageID != "delivered-card" || got.ActorOpenID != "ou_card_user" ||
+		got.ActionName != actionName ||
+		got.OccurredAt != time.UnixMilli(1785398400123) {
+		t.Fatalf("card feedback = %#v", got)
+	}
+}
+
+type handlerFeedbackSinkFake struct {
+	cards []conversationeval.CardFeedback
+}
+
+func (*handlerFeedbackSinkFake) ObserveMessage(
+	context.Context,
+	conversationeval.MessageFeedback,
+) error {
+	return nil
+}
+
+func (*handlerFeedbackSinkFake) ObserveReaction(
+	context.Context,
+	conversationeval.ReactionFeedback,
+) error {
+	return nil
+}
+
+func (f *handlerFeedbackSinkFake) ObserveCardAction(
+	_ context.Context,
+	event conversationeval.CardFeedback,
+) error {
+	f.cards = append(f.cards, event)
+	return nil
 }
 
 func TestCardActionHandlerReturnsErrorToastWhenDispatchFails(t *testing.T) {
