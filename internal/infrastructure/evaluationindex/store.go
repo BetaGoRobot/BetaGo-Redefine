@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/opensearch"
 )
 
@@ -46,6 +47,9 @@ type JudgmentSnapshot struct {
 
 type EvaluationSnapshot struct {
 	SchemaVersion     string             `json:"schema_version"`
+	TenantID          string             `json:"tenant_id"`
+	AppID             string             `json:"app_id"`
+	BotOpenID         string             `json:"bot_open_id"`
 	EpisodeID         string             `json:"episode_id"`
 	CohortID          string             `json:"cohort_id"`
 	ChatID            string             `json:"chat_id"`
@@ -107,6 +111,9 @@ func (s *EvaluationSnapshot) normalize() {
 func (s EvaluationSnapshot) Validate() error {
 	for name, value := range map[string]string{
 		"schema_version":    s.SchemaVersion,
+		"tenant_id":         s.TenantID,
+		"app_id":            s.AppID,
+		"bot_open_id":       s.BotOpenID,
 		"episode_id":        s.EpisodeID,
 		"cohort_id":         s.CohortID,
 		"chat_id":           s.ChatID,
@@ -172,23 +179,27 @@ func NewOpenSearchBackend() Backend {
 }
 
 type Store struct {
+	tenant  tenant.Tenant
 	index   string
 	backend Backend
 }
 
-func NewStore() *Store {
-	return &Store{index: DefaultIndexAlias, backend: openSearchBackend{}}
-}
-
-func NewStoreWithBackend(index string, backend Backend) (*Store, error) {
+func NewStoreWithBackend(
+	owner tenant.Tenant,
+	index string,
+	backend Backend,
+) (*Store, error) {
+	if err := owner.Validate(); err != nil {
+		return nil, fmt.Errorf("evaluation index tenant: %w", err)
+	}
 	if backend == nil {
 		return nil, fmt.Errorf("evaluation index backend is required")
 	}
 	index = strings.TrimSpace(index)
-	if index == "" {
-		index = DefaultIndexAlias
+	if index == "" || !strings.HasSuffix(index, "-"+owner.ID) {
+		return nil, fmt.Errorf("evaluation index alias is not tenant scoped")
 	}
-	return &Store{index: index, backend: backend}, nil
+	return &Store{tenant: owner, index: index, backend: backend}, nil
 }
 
 func (s *Store) Upsert(ctx context.Context, snapshot EvaluationSnapshot) error {
@@ -199,7 +210,16 @@ func (s *Store) Upsert(ctx context.Context, snapshot EvaluationSnapshot) error {
 	if err := snapshot.Validate(); err != nil {
 		return err
 	}
-	if err := s.backend.Upsert(ctx, s.index, snapshot.EpisodeID, snapshot); err != nil {
+	if snapshot.TenantID != s.tenant.ID ||
+		snapshot.AppID != s.tenant.AppID ||
+		snapshot.BotOpenID != s.tenant.BotOpenID {
+		return fmt.Errorf("evaluation snapshot tenant does not match index tenant")
+	}
+	documentID, err := s.tenant.DocumentID(snapshot.EpisodeID)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.Upsert(ctx, s.index, documentID, snapshot); err != nil {
 		return fmt.Errorf("upsert evaluation snapshot: %w", err)
 	}
 	return nil
@@ -215,7 +235,7 @@ func (s *Store) Search(
 	if err := filter.Validate(); err != nil {
 		return nil, err
 	}
-	query := episodeSearchQuery(filter)
+	query := episodeSearchQuery(s.tenant.ID, filter)
 	documents, err := s.backend.Search(ctx, s.index, query)
 	if err != nil {
 		return nil, fmt.Errorf("search evaluation snapshots: %w", err)
@@ -230,13 +250,21 @@ func (s *Store) Search(
 		if err := snapshot.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid indexed evaluation snapshot %q: %w", snapshot.EpisodeID, err)
 		}
+		if snapshot.TenantID != s.tenant.ID ||
+			snapshot.AppID != s.tenant.AppID ||
+			snapshot.BotOpenID != s.tenant.BotOpenID {
+			return nil, fmt.Errorf(
+				"indexed evaluation snapshot %q belongs to another tenant",
+				snapshot.EpisodeID,
+			)
+		}
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots, nil
 }
 
-func episodeSearchQuery(filter EpisodeFilter) map[string]any {
-	filters := make([]any, 0, 6)
+func episodeSearchQuery(tenantID string, filter EpisodeFilter) map[string]any {
+	filters := make([]any, 0, 7)
 	addTerm := func(field string, value any, present bool) {
 		if present {
 			filters = append(filters, map[string]any{
@@ -244,6 +272,7 @@ func episodeSearchQuery(filter EpisodeFilter) map[string]any {
 			})
 		}
 	}
+	addTerm("tenant_id", tenantID, true)
 	addTerm("cohort_id", filter.CohortID, filter.CohortID != "")
 	addTerm("chat_id", filter.ChatID, filter.ChatID != "")
 	addTerm("disagreements", filter.Disagreement, filter.Disagreement != "")

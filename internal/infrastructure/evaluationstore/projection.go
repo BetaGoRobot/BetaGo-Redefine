@@ -49,7 +49,11 @@ func (r *Repository) EvaluationSnapshotsAfter(
 	snapshots := make([]evaluationindex.EvaluationSnapshot, 0, len(rows))
 	for _, row := range rows {
 		snapshot, loadErr := loadEvaluationSnapshot(
-			db.WithContext(ctx), r.tenant.ID, row.ID,
+			db.WithContext(ctx),
+			r.tenant.ID,
+			r.tenant.AppID,
+			r.tenant.BotOpenID,
+			row.ID,
 		)
 		if loadErr != nil {
 			return nil, loadErr
@@ -62,6 +66,8 @@ func (r *Repository) EvaluationSnapshotsAfter(
 func loadEvaluationSnapshot(
 	db *gorm.DB,
 	tenantID string,
+	appID string,
+	botOpenID string,
 	episodeID string,
 ) (evaluationindex.EvaluationSnapshot, error) {
 	input, err := loadJudgeInput(db, tenantID, episodeID)
@@ -143,6 +149,7 @@ func loadEvaluationSnapshot(
 		)
 	}
 	snapshot := evaluationindex.EvaluationSnapshot{
+		TenantID: tenantID, AppID: appID, BotOpenID: botOpenID,
 		EpisodeID: input.Episode.ID, CohortID: input.Episode.CohortID,
 		ChatID: input.Episode.ChatID, RunID: input.Episode.RunID,
 		AnchorEventID:   input.Episode.AnchorEventID,

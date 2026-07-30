@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ func TestRuntimeSchemaIsRegisteredAfterDBBeforeRepositories(t *testing.T) {
 	}
 	names := app.ModuleNames()
 	assertModuleBefore(t, names, "db", "runtime_schema")
+	assertModuleBefore(t, names, "opensearch", "tenant_search_schema")
+	assertModuleBefore(t, names, "tenant_search_schema", "application_services")
 	assertModuleBefore(t, names, "runtime_schema", "application_services")
 	assertModuleBefore(t, names, "runtime_schema", "conversation_evaluation")
 }
@@ -54,6 +57,20 @@ func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T
 	if components.conversationWorker.Critical() ||
 		components.conversationProjectionWorker.Critical() {
 		t.Fatal("dynamic conversation and OpenSearch projection workers must be non-critical")
+	}
+	if components.tenant.ID == "" ||
+		components.conversationIndexAlias == "" ||
+		components.evaluationIndexAlias == "" {
+		t.Fatalf("tenant search resources are incomplete: %#v", components)
+	}
+	suffix := "-" + components.tenant.ID
+	if !strings.HasSuffix(components.conversationIndexAlias, suffix) ||
+		!strings.HasSuffix(components.evaluationIndexAlias, suffix) {
+		t.Fatalf(
+			"search aliases are not tenant scoped: conversation=%q evaluation=%q",
+			components.conversationIndexAlias,
+			components.evaluationIndexAlias,
+		)
 	}
 	if _, err := components.conversationRuntime.StartScheduleEdit(context.Background(), agentruntime.StartScheduleEditRequest{}); err == nil {
 		t.Fatal("conversation runtime should remain unbound before application_services starts")

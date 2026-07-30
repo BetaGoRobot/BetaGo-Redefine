@@ -10,12 +10,27 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+var projectionTestTenant, _ = tenant.New("app-projection-test", "bot-projection-test")
+
+func mustNewStore(database *gorm.DB) *Store {
+	indexAlias, err := projectionTestTenant.IndexAlias("agent_conversation_events")
+	if err != nil {
+		panic(err)
+	}
+	store, err := NewStore(database, projectionTestTenant, indexAlias)
+	if err != nil {
+		panic(err)
+	}
+	return store
+}
 
 func TestClaimProjectionClaimsDuePendingAndFencesCompletion(t *testing.T) {
 	db := newProjectionDB(t)
@@ -27,7 +42,7 @@ func TestClaimProjectionClaimsDuePendingAndFencesCompletion(t *testing.T) {
 		CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
 	})
 
-	store := NewStore(db)
+	store := mustNewStore(db)
 	claimed, err := store.ClaimProjection(context.Background(), agentruntime.ProjectionClaim{
 		WorkerID: "worker-1", LeaseTTL: time.Minute, Now: now,
 	})
@@ -64,6 +79,38 @@ func TestClaimProjectionClaimsDuePendingAndFencesCompletion(t *testing.T) {
 	}
 }
 
+func TestStoreDoesNotClaimAnotherTenantProjection(t *testing.T) {
+	database := newProjectionDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	createProjection(t, database, &model.AgentProjectionOutbox{
+		ID: "outbox-tenant-a", StepID: "step-tenant-a",
+		IndexAlias: "agent_conversation_events", DocumentID: "step-tenant-a",
+		PayloadJSON: `{"event_id":"step-tenant-a"}`,
+		Status:      "pending", NextAttemptAt: now.Add(-time.Second),
+		CreatedAt: now, UpdatedAt: now,
+	})
+	otherTenant, err := tenant.New("app-projection-other", "bot-projection-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAlias, err := otherTenant.IndexAlias("agent_conversation_events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewStore(database, otherTenant, otherAlias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ClaimProjection(
+		context.Background(),
+		agentruntime.ProjectionClaim{
+			WorkerID: "other-worker", LeaseTTL: time.Minute, Now: now,
+		},
+	); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("cross-tenant ClaimProjection() error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestClaimProjectionReclaimsExpiredRunningLease(t *testing.T) {
 	db := newProjectionDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -75,7 +122,7 @@ func TestClaimProjectionReclaimsExpiredRunningLease(t *testing.T) {
 		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
 	})
 
-	claimed, err := NewStore(db).ClaimProjection(context.Background(), agentruntime.ProjectionClaim{
+	claimed, err := mustNewStore(db).ClaimProjection(context.Background(), agentruntime.ProjectionClaim{
 		WorkerID: "reclaimer", LeaseTTL: 30 * time.Second, Now: now,
 	})
 	if err != nil {
@@ -110,7 +157,7 @@ func TestRenewProjectionLeaseFencesExpiredAndExtendsCurrentOwner(t *testing.T) {
 	} {
 		createProjection(t, db, outbox)
 	}
-	store := NewStore(db)
+	store := mustNewStore(db)
 	current := agentruntime.RenewProjectionLeaseRequest{
 		OutboxID: "outbox-renew-current", WorkerID: "worker-renew", AttemptCount: 2,
 		LeaseTTL: time.Minute, Now: now,
@@ -144,7 +191,7 @@ func TestRetryProjectionRequiresCurrentWorkerAndAttempt(t *testing.T) {
 		NextAttemptAt: now.Add(-time.Minute), LeaseExpiresAt: now.Add(time.Minute),
 		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
 	})
-	store := NewStore(db)
+	store := mustNewStore(db)
 	retry := agentruntime.RetryProjectionRequest{
 		OutboxID: "outbox-running", WorkerID: "worker-4", AttemptCount: 3,
 		ErrorText: "temporary", FailedAt: now, RetryAt: now.Add(10 * time.Minute),
@@ -177,7 +224,7 @@ func TestProjectionFinalizeRejectsExpiredOwnerWithoutReclaim(t *testing.T) {
 		NextAttemptAt: now.Add(-time.Minute), LeaseExpiresAt: now.Add(-time.Second),
 		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
 	})
-	store := NewStore(db)
+	store := mustNewStore(db)
 	err := store.CompleteProjection(context.Background(), agentruntime.CompleteProjectionRequest{
 		OutboxID: "outbox-owner-expired", WorkerID: "expired-worker",
 		AttemptCount: 1, FinishedAt: now,
@@ -205,7 +252,7 @@ func TestClaimProjectionUsesIDAsStableTieBreaker(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now,
 		})
 	}
-	claimed, err := NewStore(db).ClaimProjection(context.Background(), agentruntime.ProjectionClaim{
+	claimed, err := mustNewStore(db).ClaimProjection(context.Background(), agentruntime.ProjectionClaim{
 		WorkerID: "worker", LeaseTTL: time.Minute, Now: now,
 	})
 	if err != nil {
@@ -244,6 +291,13 @@ func newProjectionDB(t *testing.T) *gorm.DB {
 	)).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := root.Exec(fmt.Sprintf(
+		`ALTER TABLE %q.agent_projection_outbox
+		 ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT ''`,
+		schema,
+	)).Error; err != nil {
+		t.Fatal(err)
+	}
 	testConfig := *cfg.DBConfig
 	testConfig.SearchPath = schema
 	db, err := gorm.Open(postgres.Open(testConfig.DSN()), &gorm.Config{})
@@ -264,6 +318,7 @@ func newProjectionDB(t *testing.T) *gorm.DB {
 
 func createProjection(t *testing.T, db *gorm.DB, outbox *model.AgentProjectionOutbox) {
 	t.Helper()
+	outbox.TenantID = projectionTestTenant.ID
 	if err := db.Create(outbox).Error; err != nil {
 		t.Fatal(err)
 	}

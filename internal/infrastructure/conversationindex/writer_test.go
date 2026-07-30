@@ -52,7 +52,7 @@ func TestOpenSearchUnavailableLeavesPostgresOutboxDurable(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	projector := agentruntime.NewProjector(
-		NewStore(db), OpenSearchWriter{}, inlineProjectionExecutor{},
+		mustNewStore(db), OpenSearchWriter{}, inlineProjectionExecutor{},
 		agentruntime.ProjectorConfig{
 			WorkerID: "projector", LeaseTTL: time.Minute, Now: func() time.Time { return now },
 		},

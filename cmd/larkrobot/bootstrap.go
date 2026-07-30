@@ -53,6 +53,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhttp"
+	opensearchschema "github.com/BetaGoRobot/BetaGo-Redefine/script/opensearch"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	uuid "github.com/satori/go.uuid"
 )
@@ -75,6 +76,9 @@ type appComponents struct {
 	eventDispatcher              *dispatcher.EventDispatcher
 	agentCardSettings            appruntime.AgentCardSettings
 	evaluationSettings           appruntime.EvaluationSettings
+	tenant                       tenant.Tenant
+	conversationIndexAlias       string
+	evaluationIndexAlias         string
 	agentCardPatchReconciler     *agentcard.PatchReconciler
 }
 
@@ -110,6 +114,7 @@ func buildApp(cfg *infraConfig.BaseConfig) (*appruntime.App, error) {
 	app := appruntime.NewApp()
 
 	addInfrastructureModules(app, cfg)
+	addSearchSchemaModule(app, cfg, components)
 	addExecutorModules(app, components)
 	addApplicationModules(app, cfg, components)
 
@@ -132,6 +137,28 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	evaluationSettings, err := appruntime.EvaluationRolloutSettings(cfg)
 	if err != nil {
 		return nil, err
+	}
+	runtimeTenant, err := tenant.New(
+		cfg.LarkConfig.AppID,
+		cfg.LarkConfig.BotOpenID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive runtime tenant: %w", err)
+	}
+	conversationIndexAlias, err := runtimeTenant.IndexAlias(
+		appruntime.ConversationEventIndex(cfg),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive conversation index alias: %w", err)
+	}
+	evaluationIndexBase := evaluationindex.DefaultIndexAlias
+	if cfg.RuntimeConfig != nil &&
+		strings.TrimSpace(cfg.RuntimeConfig.EvaluationIndex) != "" {
+		evaluationIndexBase = cfg.RuntimeConfig.EvaluationIndex
+	}
+	evaluationIndexAlias, err := runtimeTenant.IndexAlias(evaluationIndexBase)
+	if err != nil {
+		return nil, fmt.Errorf("derive evaluation index alias: %w", err)
 	}
 	if agentCardSettings.ToolsAvailable() && !agentCardSettings.Shadow() &&
 		(strings.TrimSpace(cfg.LarkConfig.AppSecret) == "" ||
@@ -166,7 +193,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	scheduleContinuationDispatcher, err := appcardaction.NewScheduleInteractionDispatcher(
 		conversationRuntime,
 		appcardaction.ScheduleInteractionDispatcherOptions{
-			IndexAlias: appruntime.ConversationEventIndex(cfg),
+			IndexAlias: conversationIndexAlias,
 		},
 	)
 	if err != nil {
@@ -243,6 +270,9 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
 		agentCardSettings:            agentCardSettings,
 		evaluationSettings:           evaluationSettings,
+		tenant:                       runtimeTenant,
+		conversationIndexAlias:       conversationIndexAlias,
+		evaluationIndexAlias:         evaluationIndexAlias,
 	}, nil
 }
 
@@ -397,6 +427,61 @@ func addInfrastructureModules(app *appruntime.App, cfg *infraConfig.BaseConfig) 
 	}))
 }
 
+func addSearchSchemaModule(
+	app *appruntime.App,
+	cfg *infraConfig.BaseConfig,
+	components *appComponents,
+) {
+	configured := cfg != nil && cfg.OpensearchConfig != nil &&
+		strings.TrimSpace(cfg.OpensearchConfig.Domain) != ""
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name: "tenant_search_schema",
+		Critical: configured ||
+			(components != nil && components.evaluationSettings.Enabled()),
+		Start: func(ctx context.Context) error {
+			if !configured {
+				if components != nil && components.evaluationSettings.Enabled() {
+					return errors.New(
+						"conversation evaluation requires opensearch configuration",
+					)
+				}
+				return appruntime.ErrDisabled
+			}
+			if components == nil {
+				return errors.New("runtime components are unavailable")
+			}
+			provisioner, err := opensearch.NewProvisioner()
+			if err != nil {
+				return err
+			}
+			if _, err := provisioner.EnsureTenantIndex(
+				ctx,
+				components.tenant,
+				appruntime.ConversationEventIndex(cfg),
+				"conversation_event.v1",
+				opensearchschema.ConversationEventsV1,
+			); err != nil {
+				return fmt.Errorf("provision conversation event index: %w", err)
+			}
+			evaluationBase := evaluationindex.DefaultIndexAlias
+			if cfg.RuntimeConfig != nil &&
+				strings.TrimSpace(cfg.RuntimeConfig.EvaluationIndex) != "" {
+				evaluationBase = cfg.RuntimeConfig.EvaluationIndex
+			}
+			if _, err := provisioner.EnsureTenantIndex(
+				ctx,
+				components.tenant,
+				evaluationBase,
+				"conversation_evaluation.v1",
+				opensearchschema.ConversationEvaluationsV1,
+			); err != nil {
+				return fmt.Errorf("provision evaluation index: %w", err)
+			}
+			return nil
+		},
+	}))
+}
+
 // addExecutorModules 把受控执行器作为一等运行时模块接入健康检查和关闭
 // 流程，避免“工作池存在但运行时看不见”。
 func addExecutorModules(app *appruntime.App, components *appComponents) {
@@ -516,7 +601,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			if components.agentCardSettings.ToolsAvailable() {
 				composerOptions := agentcard.RolloutAuthoringComposerOptions{
 					Compiler:        agentCardCompiler,
-					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+					ProjectionIndex: components.conversationIndexAlias,
 					Shadow:          components.agentCardSettings.Shadow(),
 					CanSend:         components.agentCardSettings.CanSend,
 				}
@@ -567,7 +652,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 					Store: repository, AppID: appID, BotOpenID: botOpenID,
 					TokenSecret:     []byte(tokenSecret),
 					WaitTTL:         conversationInteractionWaitTTL,
-					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+					ProjectionIndex: components.conversationIndexAlias,
 				},
 			)
 			if err != nil {
@@ -594,8 +679,14 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 					CapabilityProcessor: agentCardCapabilityService,
 				},
 			)
+			projectionStore, err := conversationindex.NewStore(
+				db.DB(), owner, components.conversationIndexAlias,
+			)
+			if err != nil {
+				return fmt.Errorf("create conversation index store: %w", err)
+			}
 			projector := agentruntime.NewProjector(
-				conversationindex.NewStore(db.DB()),
+				projectionStore,
 				conversationindex.OpenSearchWriter{},
 				components.projectionExecutor,
 				agentruntime.ProjectorConfig{
@@ -850,7 +941,8 @@ func addConversationEvaluationModule(
 			}
 			if cfg.OpensearchConfig != nil {
 				indexStore, indexErr := evaluationindex.NewStoreWithBackend(
-					runtimeConfig.EvaluationIndex,
+					components.tenant,
+					components.evaluationIndexAlias,
 					evaluationindex.NewOpenSearchBackend(),
 				)
 				if indexErr != nil {

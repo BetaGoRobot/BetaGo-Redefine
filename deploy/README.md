@@ -60,81 +60,19 @@ docker compose down -v         # 停止并清除 pgdata/redisdata
 - `betago-bystage-duration.json`：各阶段耗时
 - `betago-llm-token-usage.json`：LLM token 用量
 
-## OpenSearch 会话事件索引
+## Conversation Runtime 与并轨评测初始化
 
-先创建物理索引，再把稳定写别名指向该版本。升级 mapping 时创建新的物理版本，并用一次 `_aliases` 请求原子切换。
+部署不需要执行 SQL、生成 GORM 文件或调用 OpenSearch API。应用启动时会：
 
-```bash
-curl -fsS -X PUT \
-  "${OPENSEARCH_URL}/agent_conversation_events_v1" \
-  -H 'Content-Type: application/json' \
-  --data-binary @../script/opensearch/agent_conversation_events_v1.json
+- 在 PostgreSQL advisory lock 下幂等执行内嵌迁移；
+- 根据 `lark_config.app_id + bot_open_id` 派生稳定的 `tenant_id`；
+- 为会话事件和并轨评测自动创建当前 Bot 独占的 physical index 与 write alias；
+- 在 `evaluation_mode` 允许的群首次收到消息时，自动创建滚动 cohort。
 
-curl -fsS -X POST \
-  "${OPENSEARCH_URL}/_aliases" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "actions": [
-      {
-        "add": {
-          "index": "agent_conversation_events_v1",
-          "alias": "agent_conversation_events",
-          "is_write_index": true
-        }
-      }
-    ]
-  }'
-```
+`conversation_event_index` 与 `evaluation_index` 配置的是 base name。多个 Bot
+可以填写同一个 base name，运行时会自动追加不可冲突的租户后缀。应用重启时
+复用已有 schema、index 和 alias，不重复创建。若自动初始化失败，相关模块会
+明确启动失败，避免带着半初始化状态对外服务。
 
-后续升级到新物理版本并完成数据回填后，在同一次请求中移除旧指向、增加新写索引，避免 alias 出现中间态：
-
-```bash
-curl -fsS -X POST \
-  "${OPENSEARCH_URL}/_aliases" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "actions": [
-      {
-        "remove": {
-          "index": "agent_conversation_events_v1",
-          "alias": "agent_conversation_events"
-        }
-      },
-      {
-        "add": {
-          "index": "agent_conversation_events_v2",
-          "alias": "agent_conversation_events",
-          "is_write_index": true
-        }
-      }
-    ]
-  }'
-```
-
-## OpenSearch 会话并轨评测索引
-
-并轨评测以 PostgreSQL 为事实源，并把每个 episode 的双 lane、前后向消息、反馈与最新 judgment 汇总成一个 OpenSearch 文档。常用过滤和质量字段可搜索；`full_snapshot` 关闭解析，仅用于完整回放。
-
-```bash
-curl -fsS -X PUT \
-  "${OPENSEARCH_URL}/agent_conversation_evaluations_v1" \
-  -H 'Content-Type: application/json' \
-  --data-binary @../script/opensearch/agent_conversation_evaluations_v1.json
-
-curl -fsS -X POST \
-  "${OPENSEARCH_URL}/_aliases" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "actions": [
-      {
-        "add": {
-          "index": "agent_conversation_evaluations_v1",
-          "alias": "agent_conversation_evaluations",
-          "is_write_index": true
-        }
-      }
-    ]
-  }'
-```
-
-写入使用 `episode_id` 作为文档 ID，因此反馈补录和 judgment 新版本会覆盖同一个搜索快照，不会产生重复 episode。
+并轨评测仍以 PostgreSQL 为事实源；OpenSearch 保存可重建的检索快照。文档
+包含 `tenant_id/app_id/bot_open_id`，文档 ID 也带租户前缀。

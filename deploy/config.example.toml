@@ -45,6 +45,7 @@
     conversation_projection_workers = 2
     conversation_projection_queue_size = 128
     conversation_projection_timeout_seconds = 60
+    # 以下两个索引名都是 base name；启动时自动追加当前 Bot 的租户后缀并建 alias。
     conversation_event_index = "agent_conversation_events"
     evaluation_mode = "off" # off | allowlist | on
     evaluation_chat_ids = []

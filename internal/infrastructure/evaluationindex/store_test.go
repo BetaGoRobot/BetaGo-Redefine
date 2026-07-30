@@ -6,11 +6,14 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 )
 
 func TestStoreUpsertsExactEpisodeDocument(t *testing.T) {
 	backend := &indexBackendFake{}
-	store, err := NewStoreWithBackend("", backend)
+	owner, index := evaluationIndexTestTenant(t)
+	store, err := NewStoreWithBackend(owner, index, backend)
 	if err != nil {
 		t.Fatalf("NewStoreWithBackend() error = %v", err)
 	}
@@ -20,8 +23,8 @@ func TestStoreUpsertsExactEpisodeDocument(t *testing.T) {
 	if err := store.Upsert(context.Background(), snapshot); err != nil {
 		t.Fatalf("Upsert() error = %v", err)
 	}
-	if backend.upsertIndex != DefaultIndexAlias ||
-		backend.upsertID != snapshot.EpisodeID {
+	if backend.upsertIndex != index ||
+		backend.upsertID != snapshot.TenantID+":"+snapshot.EpisodeID {
 		t.Fatalf(
 			"upsert target = %q/%q",
 			backend.upsertIndex,
@@ -36,7 +39,8 @@ func TestStoreUpsertsExactEpisodeDocument(t *testing.T) {
 
 func TestStoreSearchBuildsTimeChatCohortQualityFilters(t *testing.T) {
 	backend := &indexBackendFake{}
-	store, err := NewStoreWithBackend("evaluations-test", backend)
+	owner, index := evaluationIndexTestTenant(t)
+	store, err := NewStoreWithBackend(owner, index, backend)
 	if err != nil {
 		t.Fatalf("NewStoreWithBackend() error = %v", err)
 	}
@@ -55,7 +59,7 @@ func TestStoreSearchBuildsTimeChatCohortQualityFilters(t *testing.T) {
 	if len(got) != 1 || got[0].EpisodeID != "episode-1" {
 		t.Fatalf("Search() = %#v", got)
 	}
-	if backend.searchIndex != "evaluations-test" {
+	if backend.searchIndex != index {
 		t.Fatalf("search index = %q", backend.searchIndex)
 	}
 	encoded, err := json.Marshal(backend.searchQuery)
@@ -75,9 +79,10 @@ func TestStoreSearchBuildsTimeChatCohortQualityFilters(t *testing.T) {
 		t.Fatalf("decode query: %v", err)
 	}
 	if query.Size != DefaultSearchSize || len(query.Sort) != 2 ||
-		len(query.Query.Bool.Filter) != 6 {
+		len(query.Query.Bool.Filter) != 7 {
 		t.Fatalf("query = %s", encoded)
 	}
+	assertTermFilter(t, query.Query.Bool.Filter, "tenant_id", owner.ID)
 	assertTermFilter(t, query.Query.Bool.Filter, "cohort_id", "cohort-1")
 	assertTermFilter(t, query.Query.Bool.Filter, "chat_id", "chat-1")
 	assertTermFilter(t, query.Query.Bool.Filter, "disagreements", "reply")
@@ -87,7 +92,8 @@ func TestStoreSearchBuildsTimeChatCohortQualityFilters(t *testing.T) {
 }
 
 func TestStoreRejectsInvalidSnapshotAndFilter(t *testing.T) {
-	store, err := NewStoreWithBackend("", &indexBackendFake{})
+	owner, index := evaluationIndexTestTenant(t)
+	store, err := NewStoreWithBackend(owner, index, &indexBackendFake{})
 	if err != nil {
 		t.Fatalf("NewStoreWithBackend() error = %v", err)
 	}
@@ -101,9 +107,37 @@ func TestStoreRejectsInvalidSnapshotAndFilter(t *testing.T) {
 	}); err == nil {
 		t.Fatal("Search(inverted range) error = nil")
 	}
-	if _, err := NewStoreWithBackend("", nil); err == nil {
+	if _, err := NewStoreWithBackend(owner, index, nil); err == nil {
 		t.Fatal("NewStoreWithBackend(nil backend) error = nil")
 	}
+	other, _ := tenant.New("app-other", "bot-other")
+	otherSnapshot := evaluationSnapshotFixture()
+	otherSnapshot.TenantID = other.ID
+	otherSnapshot.AppID = other.AppID
+	otherSnapshot.BotOpenID = other.BotOpenID
+	if err := store.Upsert(context.Background(), otherSnapshot); err == nil {
+		t.Fatal("Upsert(other tenant snapshot) error = nil")
+	}
+	if _, err := NewStoreWithBackend(
+		owner,
+		DefaultIndexAlias,
+		&indexBackendFake{},
+	); err == nil {
+		t.Fatal("NewStoreWithBackend(shared alias) error = nil")
+	}
+}
+
+func evaluationIndexTestTenant(t *testing.T) (tenant.Tenant, string) {
+	t.Helper()
+	owner, err := tenant.New("app-1", "bot-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := owner.IndexAlias(DefaultIndexAlias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return owner, index
 }
 
 type indexBackendFake struct {
@@ -140,9 +174,11 @@ func (f *indexBackendFake) Search(
 func evaluationSnapshotFixture() EvaluationSnapshot {
 	anchor := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
 	postEnd := anchor.Add(10 * time.Minute)
+	owner, _ := tenant.New("app-1", "bot-1")
 	return EvaluationSnapshot{
 		SchemaVersion: "conversation_evaluation.v1",
-		EpisodeID:     "episode-1", CohortID: "cohort-1", ChatID: "chat-1",
+		TenantID:      owner.ID, AppID: owner.AppID, BotOpenID: owner.BotOpenID,
+		EpisodeID: "episode-1", CohortID: "cohort-1", ChatID: "chat-1",
 		RunID: "run-1", AnchorEventID: "event-1", AnchorMessageID: "message-1",
 		TopicID: "topic-1", Status: "judged", ServingLane: "control",
 		AnchorAt: anchor, PostWindowEnd: &postEnd,

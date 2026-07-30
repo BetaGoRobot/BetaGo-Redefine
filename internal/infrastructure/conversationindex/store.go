@@ -2,8 +2,12 @@ package conversationindex
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"gorm.io/gorm"
 )
@@ -11,11 +15,25 @@ import (
 var _ agentruntime.ProjectionOutboxStore = (*Store)(nil)
 
 type Store struct {
-	db *gorm.DB
+	db         *gorm.DB
+	tenant     tenant.Tenant
+	indexAlias string
 }
 
-func NewStore(db *gorm.DB) *Store {
-	return &Store{db: db}
+func NewStore(
+	db *gorm.DB,
+	owner tenant.Tenant,
+	indexAlias string,
+) (*Store, error) {
+	if err := owner.Validate(); err != nil {
+		return nil, fmt.Errorf("conversation index tenant: %w", err)
+	}
+	indexAlias = strings.TrimSpace(indexAlias)
+	if indexAlias == "" ||
+		!strings.HasSuffix(indexAlias, "-"+owner.ID) {
+		return nil, fmt.Errorf("conversation index alias is not tenant scoped")
+	}
+	return &Store{db: db, tenant: owner, indexAlias: indexAlias}, nil
 }
 
 func (s *Store) ClaimProjection(
@@ -30,15 +48,15 @@ func (s *Store) ClaimProjection(
 		result := tx.Raw(`
 			SELECT *
 			FROM agent_projection_outbox
-			WHERE (
+			WHERE tenant_id = ? AND ((
 				status = ? AND next_attempt_at <= ?
 			) OR (
 				status = ? AND lease_expires_at <= ?
-			)
+			))
 			ORDER BY next_attempt_at, id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1`,
-			string(agentruntime.ProjectionStatusPending), claim.Now,
+			s.tenant.ID, string(agentruntime.ProjectionStatusPending), claim.Now,
 			string(agentruntime.ProjectionStatusRunning), claim.Now,
 		).Scan(&claimed)
 		if result.Error != nil {
@@ -49,7 +67,8 @@ func (s *Store) ClaimProjection(
 		}
 		leaseUntil := claim.Now.Add(claim.LeaseTTL)
 		result = tx.Model(&model.AgentProjectionOutbox{}).
-			Where("id = ? AND status = ?", claimed.ID, claimed.Status).
+			Where("id = ? AND tenant_id = ? AND status = ?",
+				claimed.ID, s.tenant.ID, claimed.Status).
 			Updates(map[string]any{
 				"status":           string(agentruntime.ProjectionStatusRunning),
 				"attempt_count":    gorm.Expr("attempt_count + 1"),
@@ -73,7 +92,7 @@ func (s *Store) ClaimProjection(
 	if err != nil {
 		return nil, err
 	}
-	return toProjectionOutbox(&claimed), nil
+	return s.toProjectionOutbox(&claimed)
 }
 
 func (s *Store) CompleteProjection(
@@ -85,8 +104,8 @@ func (s *Store) CompleteProjection(
 	}
 	result := s.db.WithContext(ctx).Model(&model.AgentProjectionOutbox{}).
 		Where(
-			"id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
-			req.OutboxID, string(agentruntime.ProjectionStatusRunning),
+			"id = ? AND tenant_id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
+			req.OutboxID, s.tenant.ID, string(agentruntime.ProjectionStatusRunning),
 			req.WorkerID, req.AttemptCount, req.FinishedAt,
 		).
 		Updates(map[string]any{
@@ -114,8 +133,8 @@ func (s *Store) RenewProjectionLease(
 	}
 	result := s.db.WithContext(ctx).Model(&model.AgentProjectionOutbox{}).
 		Where(
-			"id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
-			req.OutboxID, string(agentruntime.ProjectionStatusRunning),
+			"id = ? AND tenant_id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
+			req.OutboxID, s.tenant.ID, string(agentruntime.ProjectionStatusRunning),
 			req.WorkerID, req.AttemptCount, req.Now,
 		).
 		Updates(map[string]any{
@@ -140,8 +159,8 @@ func (s *Store) RetryProjection(
 	}
 	result := s.db.WithContext(ctx).Model(&model.AgentProjectionOutbox{}).
 		Where(
-			"id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
-			req.OutboxID, string(agentruntime.ProjectionStatusRunning),
+			"id = ? AND tenant_id = ? AND status = ? AND worker_id = ? AND attempt_count = ? AND lease_expires_at > ?",
+			req.OutboxID, s.tenant.ID, string(agentruntime.ProjectionStatusRunning),
 			req.WorkerID, req.AttemptCount, req.FailedAt,
 		).
 		Updates(map[string]any{
@@ -161,16 +180,34 @@ func (s *Store) RetryProjection(
 	return nil
 }
 
-func toProjectionOutbox(outbox *model.AgentProjectionOutbox) *agentruntime.ProjectionOutbox {
+func (s *Store) toProjectionOutbox(
+	outbox *model.AgentProjectionOutbox,
+) (*agentruntime.ProjectionOutbox, error) {
 	if outbox == nil {
-		return nil
+		return nil, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(outbox.PayloadJSON), &payload); err != nil ||
+		payload == nil {
+		return nil, fmt.Errorf("conversation projection payload must be a JSON object")
+	}
+	payload["tenant_id"] = s.tenant.ID
+	payload["app_id"] = s.tenant.AppID
+	payload["bot_open_id"] = s.tenant.BotOpenID
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode tenant conversation projection: %w", err)
+	}
+	documentID, err := s.tenant.DocumentID(outbox.DocumentID)
+	if err != nil {
+		return nil, err
 	}
 	return &agentruntime.ProjectionOutbox{
-		ID: outbox.ID, StepID: outbox.StepID,
-		IndexAlias: outbox.IndexAlias, DocumentID: outbox.DocumentID,
-		Payload: []byte(outbox.PayloadJSON), Status: agentruntime.ProjectionStatus(outbox.Status),
+		ID: outbox.ID, TenantID: outbox.TenantID, StepID: outbox.StepID,
+		IndexAlias: s.indexAlias, DocumentID: documentID,
+		Payload: encoded, Status: agentruntime.ProjectionStatus(outbox.Status),
 		AttemptCount: outbox.AttemptCount, NextAttemptAt: outbox.NextAttemptAt,
 		WorkerID: outbox.WorkerID, LeaseExpiresAt: outbox.LeaseExpiresAt,
 		LastError: outbox.LastError,
-	}
+	}, nil
 }

@@ -24,68 +24,20 @@
 
 进程启动时会拒绝不满足上述 executor/lease 关系的配置。修改 `[runtime_config]` 时不要让执行超时触及或超过 lease。
 
-## 七步上线流程
+## 上线流程
 
-### 1. 执行 SQL 并重新生成 GORM model/query
+### 1. 配置并启动
 
-新环境按顺序执行已有 runtime SQL；已经应用过的环境只执行尚未应用的文件：
+不需要人工执行 SQL、重新生成 GORM 文件或创建 OpenSearch index/alias。应用
+启动时会幂等执行内嵌 PostgreSQL migration，并为当前 Bot 自动创建租户专属
+的会话事件 physical index 和 write alias。
 
-```bash
-psql "$DATABASE_URL" -f script/sql/20260318_agent_runtime_tables.sql
-psql "$DATABASE_URL" -f script/sql/20260325_agent_runtime_stale_run_recovery.sql
-psql "$DATABASE_URL" -f script/sql/20260728_conversation_callback_runtime.sql
-go run ./cmd/generate
-```
+`[runtime_config].conversation_event_index` 是 base name。多个 Bot 可以使用
+相同值，最终 alias 会自动追加由 `app_id + bot_open_id` 派生的租户后缀。
+初始化失败时 `runtime_schema` 或 `tenant_search_schema` 会令启动失败，不会
+静默进入共享或半初始化状态。
 
-`20260728_conversation_callback_runtime.sql` 包含 `CREATE INDEX CONCURRENTLY`，不能放进单个显式 transaction block。生成器读取 `.dev/config.toml` 的数据库连接；运行前确认它指向刚完成变更的 schema。
-
-至少确认以下对象存在：
-
-- `betago.agent_sessions`
-- `betago.agent_runs`
-- `betago.agent_steps`
-- `betago.agent_capability_executions`
-- `betago.agent_projection_outbox`
-- `idx_agent_runs_session_last_relevant`
-- `idx_agent_steps_run_dedupe_unique`
-- `idx_agent_steps_queue_claim`
-- `idx_agent_steps_running_reclaim`
-
-### 2. 创建 OpenSearch v1 物理索引和写 alias
-
-从仓库根目录执行：
-
-```bash
-curl -fsS -X PUT \
-  "${OPENSEARCH_URL}/agent_conversation_events_v1" \
-  -H 'Content-Type: application/json' \
-  --data-binary @script/opensearch/agent_conversation_events_v1.json
-
-curl -fsS -X POST \
-  "${OPENSEARCH_URL}/_aliases" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "actions": [
-      {
-        "add": {
-          "index": "agent_conversation_events_v1",
-          "alias": "agent_conversation_events",
-          "is_write_index": true
-        }
-      }
-    ]
-  }'
-```
-
-检查 alias：
-
-```bash
-curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
-```
-
-运行时默认写 `agent_conversation_events`；如果 `[runtime_config].conversation_event_index` 使用了其他名字，dispatcher、starter 和 projector 必须使用同一个 alias。
-
-### 3. 两个动态开关均为 false 时部署
+### 两个动态开关均为 false 时部署
 
 两个开关代码默认值都是 `false`。部署前还应确认全局值为 false，且没有遗留 chat=true override。可用现有配置命令设置全局值：
 
@@ -103,7 +55,7 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 - 如果配置了 `[management_http_config].addr`，`/healthz` 中 `conversation_runtime_worker` 和 `conversation_projection_worker` 可见；
 - OpenSearch 不可用最多使 projection worker 降级，不应让 PostgreSQL callback runtime 不 ready。
 
-### 4. 只为一个测试群启用 runtime
+### 只为一个测试群启用 runtime
 
 在目标测试群执行：
 
@@ -115,7 +67,7 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 
 该开关按 chat ID 解析。即使同一用户在其他群或私聊配置了 user=true，也不会激活目标群。
 
-### 5. 再为同一测试群启用 callback continuation
+### 再为同一测试群启用 callback continuation
 
 在同一目标群执行：
 
@@ -125,7 +77,7 @@ curl -fsS "${OPENSEARCH_URL}/_alias/agent_conversation_events"
 
 这一步只改变 callback mutation 完成后的续接策略。确认按钮的鉴权、幂等 mutation 和 durable event 写入不依赖 LLM 开关。
 
-### 6. 验证重复回调、续接、projection 和 worker health
+### 验证重复回调、续接、projection 和 worker health
 
 完成一次人工验收：
 
@@ -194,7 +146,7 @@ curl -fsS "${MANAGEMENT_URL}/metrics" |
 
 worker 连续三次执行错误会显示为 `degraded`，成功一轮后恢复为 `ready`。目前没有独立命名的 duplicate-callback 或 continuation 业务 counter；应使用上面的 PostgreSQL 幂等记录、step/outbox 状态和最终用户行为检查，不要假设不存在的 metric。
 
-### 7. 回滚：先禁止新 interaction，再排空已有 waiting 卡
+### 回滚：先禁止新 interaction，再排空已有 waiting 卡
 
 在所有已灰度群先关闭新 interaction 创建：
 
