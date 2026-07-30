@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
@@ -15,7 +16,55 @@ import (
 var (
 	_ agentcard.LifecycleStore = (*Repository)(nil)
 	_ agentcard.PatchStore     = (*Repository)(nil)
+	_ agentcard.PatchCatalog   = (*Repository)(nil)
 )
+
+func (r *Repository) ListDuePatches(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) ([]agentcard.PatchTarget, error) {
+	if r == nil || r.db == nil || now.IsZero() || limit <= 0 {
+		return nil, errors.New("invalid due patch query")
+	}
+	var rows []struct {
+		ID       string
+		Revision int64
+	}
+	result := r.db.WithContext(ctx).
+		Model(&model.AgentCardSurface{}).
+		Select("id", "revision").
+		Where("message_id <> ''").
+		Where(
+			`(
+				(patch_status IN ? AND next_patch_at <= ?)
+				OR
+				(patch_status = ? AND patch_lease_expires_at <= ?)
+			)`,
+			[]string{
+				string(agentcard.PatchStatusPending),
+				string(agentcard.PatchStatusFailed),
+			},
+			now.UTC(),
+			string(agentcard.PatchStatusRunning),
+			now.UTC(),
+		).
+		Order("next_patch_at ASC").
+		Order("id ASC").
+		Limit(limit).
+		Scan(&rows)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	targets := make([]agentcard.PatchTarget, 0, len(rows))
+	for _, row := range rows {
+		targets = append(targets, agentcard.PatchTarget{
+			SurfaceID: row.ID,
+			Revision:  row.Revision,
+		})
+	}
+	return targets, nil
+}
 
 func (r *Repository) TransitionSurface(
 	ctx context.Context,

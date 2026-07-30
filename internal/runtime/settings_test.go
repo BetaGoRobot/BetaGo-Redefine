@@ -118,3 +118,96 @@ func TestExecutorConfigsRespectsRuntimeConfig(t *testing.T) {
 		t.Fatalf("ConversationEventIndex() = %q", got)
 	}
 }
+
+func TestAgentCardRolloutDefaultsOffAndValidatesModes(t *testing.T) {
+	settings, err := AgentCardRolloutSettings(&infraConfig.BaseConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Mode != AgentCardModeOff || settings.ToolsAvailable() ||
+		settings.CanSend("chat-1") {
+		t.Fatalf("default settings = %#v", settings)
+	}
+	if _, err := AgentCardRolloutSettings(&infraConfig.BaseConfig{
+		AgentCardConfig: &infraConfig.AgentCardConfig{
+			Enabled: true, Mode: "invalid",
+		},
+	}); err == nil {
+		t.Fatal("invalid agent card mode was accepted")
+	}
+}
+
+func TestAgentCardRolloutModesEnforceShadowAllowlistAndOn(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         *infraConfig.AgentCardConfig
+		chatID         string
+		wantTools      bool
+		wantSend       bool
+		wantShadow     bool
+		wantRepairs    int
+		wantExpiry     time.Duration
+		wantWorkers    int
+		wantPatchLease time.Duration
+	}{
+		{
+			name: "shadow",
+			config: &infraConfig.AgentCardConfig{
+				Enabled: true, Mode: "shadow",
+			},
+			chatID: "chat-1", wantTools: true, wantShadow: true,
+			wantRepairs: 2, wantExpiry: 10 * time.Minute,
+			wantWorkers: 1, wantPatchLease: 30 * time.Second,
+		},
+		{
+			name: "allowlist allowed",
+			config: &infraConfig.AgentCardConfig{
+				Enabled: true, Mode: "allowlist",
+				AllowChatIDs:      []string{"chat-1"},
+				MaxRepairAttempts: 3, DefaultExpirySeconds: 900,
+				PatchWorkerCount: 2, PatchLeaseSeconds: 45,
+			},
+			chatID: "chat-1", wantTools: true, wantSend: true,
+			wantRepairs: 3, wantExpiry: 15 * time.Minute,
+			wantWorkers: 2, wantPatchLease: 45 * time.Second,
+		},
+		{
+			name: "allowlist denied",
+			config: &infraConfig.AgentCardConfig{
+				Enabled: true, Mode: "allowlist",
+				AllowChatIDs: []string{"chat-2"},
+			},
+			chatID: "chat-1", wantTools: true,
+			wantRepairs: 2, wantExpiry: 10 * time.Minute,
+			wantWorkers: 1, wantPatchLease: 30 * time.Second,
+		},
+		{
+			name: "on",
+			config: &infraConfig.AgentCardConfig{
+				Enabled: true, Mode: "on",
+			},
+			chatID: "chat-any", wantTools: true, wantSend: true,
+			wantRepairs: 2, wantExpiry: 10 * time.Minute,
+			wantWorkers: 1, wantPatchLease: 30 * time.Second,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings, err := AgentCardRolloutSettings(&infraConfig.BaseConfig{
+				AgentCardConfig: test.config,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if settings.ToolsAvailable() != test.wantTools ||
+				settings.CanSend(test.chatID) != test.wantSend ||
+				settings.Shadow() != test.wantShadow ||
+				settings.MaxRepairAttempts != test.wantRepairs ||
+				settings.DefaultExpiry != test.wantExpiry ||
+				settings.PatchWorkerCount != test.wantWorkers ||
+				settings.PatchLease != test.wantPatchLease {
+				t.Fatalf("settings = %#v", settings)
+			}
+		})
+	}
+}

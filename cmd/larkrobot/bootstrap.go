@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcapability"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardcompiler"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardstore"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentcardsurface"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/agentstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -69,6 +71,8 @@ type appComponents struct {
 	feedbackRouter               *conversationeval.FeedbackRouter
 	handlerSet                   *larkiface.HandlerSet
 	eventDispatcher              *dispatcher.EventDispatcher
+	agentCardSettings            appruntime.AgentCardSettings
+	agentCardPatchReconciler     *agentcard.PatchReconciler
 }
 
 const (
@@ -117,6 +121,18 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	}
 	if cfg.LarkConfig == nil {
 		return nil, errors.New("lark config is nil")
+	}
+	agentCardSettings, err := appruntime.AgentCardRolloutSettings(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if agentCardSettings.ToolsAvailable() && !agentCardSettings.Shadow() &&
+		(strings.TrimSpace(cfg.LarkConfig.AppSecret) == "" ||
+			strings.TrimSpace(cfg.LarkConfig.AppID) == "" ||
+			strings.TrimSpace(cfg.LarkConfig.BotOpenID) == "") {
+		return nil, errors.New(
+			"agent card delivery requires complete lark bot identity and secret",
+		)
 	}
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
 	if err := validateConversationRuntimeBudgets(executorConfigs); err != nil {
@@ -180,6 +196,12 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		messages.MessageHandlerOptions{
 			InteractionStarter: conversationRuntime,
 			FeedbackSink:       feedbackRouter,
+			AgentCardEnabled: func(_ context.Context, chatID string) bool {
+				if agentCardSettings.Shadow() {
+					return true
+				}
+				return agentCardSettings.CanSend(chatID)
+			},
 		},
 	)
 	reactionProcessor := reaction.NewReactionProcessorWithOptions(reaction.ProcessorOptions{
@@ -206,6 +228,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		feedbackRouter:               feedbackRouter,
 		handlerSet:                   handlerSet,
 		eventDispatcher:              newEventDispatcher(cfg, handlerSet),
+		agentCardSettings:            agentCardSettings,
 	}, nil
 }
 
@@ -230,6 +253,11 @@ func validateConversationRuntimeBudgets(configs map[string]appruntime.ExecutorCo
 		)
 	}
 	return nil
+}
+
+func agentCardBindingKey(secret string) []byte {
+	returnKey := sha256.Sum256([]byte("betago-agent-card-binding\x00" + secret))
+	return returnKey[:]
 }
 
 // addInfrastructureModules 注册基础设施层模块。顺序严格反映依赖方向：
@@ -378,6 +406,33 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			repository := agentstore.NewRepository(db.DB())
 			agentCardRepository := agentcardstore.NewRepository(db.DB())
 			agentCardCompiler := agentcardcompiler.New()
+			agentCardSurfaceClient := agentcardsurface.NewClient(
+				agentcardsurface.ClientOptions{},
+			)
+			patchProcessors := make([]agentcard.PatchProcessor, 0,
+				components.agentCardSettings.PatchWorkerCount)
+			for range components.agentCardSettings.PatchWorkerCount {
+				patchWorker, patchErr := agentcard.NewPatchWorker(
+					agentcard.PatchWorkerOptions{
+						Store: agentCardRepository, Client: agentCardSurfaceClient,
+						WorkerID: "agent-card-patch-" + uuid.NewV4().String(),
+						LeaseTTL: components.agentCardSettings.PatchLease,
+					},
+				)
+				if patchErr != nil {
+					return patchErr
+				}
+				patchProcessors = append(patchProcessors, patchWorker)
+			}
+			agentCardPatchReconciler, err :=
+				agentcard.NewPatchReconciler(agentcard.PatchReconcilerOptions{
+					Catalog: agentCardRepository, Processors: patchProcessors,
+					BatchSize: 64, Interval: time.Second,
+				})
+			if err != nil {
+				return err
+			}
+			components.agentCardPatchReconciler = agentCardPatchReconciler
 			agentCardCallback, err := agentcard.NewCallbackDispatcher(
 				agentcard.CallbackDispatcherOptions{
 					Store:    agentCardRepository,
@@ -416,6 +471,55 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 				appID = cfg.LarkConfig.AppID
 				botOpenID = cfg.LarkConfig.BotOpenID
 				tokenSecret = cfg.LarkConfig.AppSecret
+			}
+			if components.agentCardSettings.ToolsAvailable() {
+				composerOptions := agentcard.RolloutAuthoringComposerOptions{
+					Compiler:        agentCardCompiler,
+					ProjectionIndex: appruntime.ConversationEventIndex(cfg),
+					Shadow:          components.agentCardSettings.Shadow(),
+					CanSend:         components.agentCardSettings.CanSend,
+				}
+				if !components.agentCardSettings.Shadow() {
+					binder, binderErr := agentcard.NewBinder(
+						agentcard.BinderOptions{
+							Store: agentCardRepository, Compiler: agentCardCompiler,
+							BindingKey: agentCardBindingKey(tokenSecret),
+							Policy:     agentcard.PolicyConfig{},
+						},
+					)
+					if binderErr != nil {
+						return binderErr
+					}
+					runResolver, resolverErr :=
+						agentcard.NewDurableAuthoringRunResolver(
+							agentcard.DurableAuthoringRunResolverOptions{
+								Store: repository, AppID: appID,
+								BotOpenID: botOpenID,
+							},
+						)
+					if resolverErr != nil {
+						return resolverErr
+					}
+					composerOptions.RunResolver = runResolver
+					composerOptions.Delivery = agentcard.NewService(
+						binder,
+						agentCardRepository,
+						agentCardSurfaceClient,
+					)
+				}
+				authoringComposer, composerErr :=
+					agentcard.NewRolloutAuthoringComposer(composerOptions)
+				if composerErr != nil {
+					return composerErr
+				}
+				components.messageProcessor.SetAgentCardService(
+					agentcard.NewToolService(agentcard.ToolServiceOptions{
+						Catalog: agentcard.NewCatalog(), Composer: authoringComposer,
+						Policy:            agentcard.PolicyConfig{},
+						MaxRepairAttempts: components.agentCardSettings.MaxRepairAttempts,
+						DefaultExpiry:     components.agentCardSettings.DefaultExpiry,
+					}),
+				)
 			}
 			starter, err := agentruntime.NewDurableScheduleEditStarter(
 				agentruntime.DurableScheduleEditStarterOptions{
@@ -483,6 +587,22 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 				return errors.New("todo service unavailable")
 			}
 			return nil
+		},
+	}))
+	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
+		Name:     "agent_card_patch_reconciler",
+		Critical: false,
+		Start: func(ctx context.Context) error {
+			if components.agentCardPatchReconciler == nil {
+				return errors.New("agent card patch reconciler unavailable")
+			}
+			return components.agentCardPatchReconciler.Start(ctx)
+		},
+		Stop: func(ctx context.Context) error {
+			if components.agentCardPatchReconciler == nil {
+				return nil
+			}
+			return components.agentCardPatchReconciler.Stop(ctx)
 		},
 	}))
 	app.AddModule(components.conversationWorker)

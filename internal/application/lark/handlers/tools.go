@@ -71,7 +71,13 @@ func BuildInjectableFinanceTools() *tools.Impl[larkim.P2MessageReceiveV1] {
 }
 
 func BuildRuntimeCapabilityTools() *tools.Impl[larkim.P2MessageReceiveV1] {
-	ins := BuildLarkTools()
+	return BuildRuntimeCapabilityToolsForContext(context.Background())
+}
+
+func BuildRuntimeCapabilityToolsForContext(
+	ctx context.Context,
+) *tools.Impl[larkim.P2MessageReceiveV1] {
+	ins := larktools(ctx)
 	registerInjectableFinanceTools(ins)
 	return ins
 }
@@ -147,8 +153,9 @@ func BuildCandidateShadowRegistry(
 	return registry, nil
 }
 
-func larktools() *tools.Impl[larkim.P2MessageReceiveV1] {
-	return BuildLarkTools()
+func larktools(ctx context.Context) *tools.Impl[larkim.P2MessageReceiveV1] {
+	service, _ := agentcardtool.ServiceFromContext(ctx)
+	return BuildLarkToolsWithAgentCardService(service)
 }
 
 func BuildSchedulableTools() *tools.Impl[larkim.P2MessageReceiveV1] {

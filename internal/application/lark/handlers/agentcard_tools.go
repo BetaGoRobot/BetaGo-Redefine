@@ -135,7 +135,7 @@ func (h composeCardHandler) Handle(
 func (composeCardHandler) ToolSpec() xcommand.ToolSpec {
 	return xcommand.ToolSpec{
 		Name: "compose_card",
-		Desc: "Compose and send a typed semantic Agent Card only when interaction or information hierarchy materially benefits. Prefer text for simple answers. Never request secrets, passwords, tokens, OTPs, identity, or payment data. Choose the action mode that matches the interaction. The sent card is the response; avoid a duplicate post-card summary.",
+		Desc: "Compose and send a typed semantic Agent Card only when interaction or information hierarchy materially benefits. Prefer text for simple answers. Never request secrets, passwords, tokens, OTPs, identity, or payment data. Choose the action mode that matches the interaction. When status is sent, the card is the response and needs no duplicate summary. When status is shadow, no card was sent and the returned fallback instruction must be followed.",
 		Params: arktools.NewParams("object").
 			AddProp("purpose", &arktools.Prop{
 				Type: "string", Desc: "Concise semantic purpose such as confirmation or collect_reason",

@@ -196,11 +196,16 @@ func (s *ToolService) ComposeCard(
 			"agent card composer returned no surface",
 		)
 	}
-	return agentcardtool.ComposeResponse{
+	response := agentcardtool.ComposeResponse{
 		Status: string(surface.Status), CardRef: surface.ID,
 		MessageID: surface.MessageID, InteractionID: surface.InteractionID,
 		Revision: surface.Revision,
-	}, nil
+	}
+	if surface.Status == SurfaceStatusShadow {
+		response.Fallback =
+			"卡片仅完成了 shadow 校验与编译，并未发送给用户；必须继续用简洁文本完成本次回复。"
+	}
+	return response, nil
 }
 
 func decodeToolCard(input agentcardtool.Card) (CardSpec, []ValidationIssue) {

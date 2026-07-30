@@ -21,6 +21,10 @@ type PatchStore interface {
 	RetryPatch(context.Context, RetryPatchRequest) error
 }
 
+type PatchCatalog interface {
+	ListDuePatches(context.Context, time.Time, int) ([]PatchTarget, error)
+}
+
 type LifecycleManager struct {
 	store    LifecycleStore
 	compiler ArtifactCompiler

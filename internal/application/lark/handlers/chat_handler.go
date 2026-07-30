@@ -656,7 +656,7 @@ func executeStandardChatPlan(
 			dal := ark_dal.
 				New(plan.chatID, plan.openID, event).
 				WithModelID(modelID).
-				WithTools(larktools()).
+				WithTools(larktools(ctx)).
 				WithHandlersOnly(BuildInjectableFinanceTools())
 			if intent, ok := metaData.GetIntentAnalysis(); ok {
 				dal = dal.Effort(intent.ReasoningEffort)

@@ -230,7 +230,7 @@ func GenerateChatSeqTwoPhase(
 	if captureEnabled {
 		dal = dal.WithModelID(modelID)
 	}
-	dal = dal.WithTools(BuildRuntimeCapabilityTools())
+	dal = dal.WithTools(BuildRuntimeCapabilityToolsForContext(ctx))
 	if hasIntent {
 		dal = dal.Effort(intent.ReasoningEffort)
 	}

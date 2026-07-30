@@ -44,6 +44,18 @@ func TestPatchReconciliationFencesStaleLeaseAndConverges(t *testing.T) {
 	}
 
 	firstNow := sentAt.Add(2 * time.Second)
+	due, err := fixture.repo.ListDuePatches(
+		context.Background(),
+		firstNow,
+		8,
+	)
+	if err != nil {
+		t.Fatalf("ListDuePatches(pending) error = %v", err)
+	}
+	if len(due) != 1 || due[0].SurfaceID != begin.SurfaceID ||
+		due[0].Revision != begin.Revision {
+		t.Fatalf("pending due patches = %#v", due)
+	}
 	first, err := fixture.repo.ClaimPatch(context.Background(), agentcard.ClaimPatchRequest{
 		SurfaceID: begin.SurfaceID, ExpectedRevision: begin.Revision,
 		WorkerID: "worker-1", LeaseTTL: time.Second, Now: firstNow,
@@ -55,7 +67,29 @@ func TestPatchReconciliationFencesStaleLeaseAndConverges(t *testing.T) {
 		first.PatchStatus != agentcard.PatchStatusRunning {
 		t.Fatalf("first claim = %#v", first)
 	}
+	due, err = fixture.repo.ListDuePatches(
+		context.Background(),
+		firstNow,
+		8,
+	)
+	if err != nil {
+		t.Fatalf("ListDuePatches(running) error = %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("unexpired running patches = %#v", due)
+	}
 	secondNow := firstNow.Add(2 * time.Second)
+	due, err = fixture.repo.ListDuePatches(
+		context.Background(),
+		secondNow,
+		8,
+	)
+	if err != nil {
+		t.Fatalf("ListDuePatches(expired) error = %v", err)
+	}
+	if len(due) != 1 || due[0].SurfaceID != begin.SurfaceID {
+		t.Fatalf("expired due patches = %#v", due)
+	}
 	second, err := fixture.repo.ClaimPatch(context.Background(), agentcard.ClaimPatchRequest{
 		SurfaceID: begin.SurfaceID, ExpectedRevision: begin.Revision,
 		WorkerID: "worker-2", LeaseTTL: time.Second, Now: secondNow,

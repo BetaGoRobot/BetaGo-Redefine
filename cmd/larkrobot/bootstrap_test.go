@@ -59,6 +59,30 @@ func TestNewAppComponentsRejectsUnsafeConversationBudgets(t *testing.T) {
 	}
 }
 
+func TestNewAppComponentsRejectsInvalidOrUnsecuredAgentCardRollout(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	cfg.AgentCardConfig = &infraConfig.AgentCardConfig{
+		Enabled: true, Mode: "invalid",
+	}
+	if _, err := newAppComponents(cfg); err == nil {
+		t.Fatal("newAppComponents() accepted an invalid agent card mode")
+	}
+
+	cfg = testConversationRuntimeConfig()
+	cfg.LarkConfig.AppSecret = ""
+	cfg.AgentCardConfig = &infraConfig.AgentCardConfig{
+		Enabled: true, Mode: "on",
+	}
+	if _, err := newAppComponents(cfg); err == nil {
+		t.Fatal("newAppComponents() accepted delivery without a binding secret")
+	}
+
+	cfg.AgentCardConfig.Mode = "shadow"
+	if _, err := newAppComponents(cfg); err != nil {
+		t.Fatalf("shadow rollout should not require delivery credentials: %v", err)
+	}
+}
+
 func TestBuildAppAllowsMissingArkConfigWhenRuntimeIsDisabledByDefault(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	cfg.ArkConfig = nil
@@ -108,6 +132,8 @@ func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 	assertModuleBefore(t, names, "conversation_executor", "application_services")
 	assertModuleBefore(t, names, "conversation_projection_executor", "application_services")
 	assertModuleBefore(t, names, "application_services", "conversation_runtime_worker")
+	assertModuleBefore(t, names, "application_services", "agent_card_patch_reconciler")
+	assertModuleBefore(t, names, "agent_card_patch_reconciler", "lark_ws")
 	assertModuleBefore(t, names, "application_services", "conversation_projection_worker")
 	assertModuleBefore(t, names, "conversation_projection_worker", "conversation_evaluation")
 	assertModuleBefore(t, names, "conversation_evaluation", "lark_ws")

@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -17,6 +18,23 @@ import (
 )
 
 type messageInteractionStarterStub struct{}
+
+type messageAgentCardServiceStub struct{}
+
+func (messageAgentCardServiceStub) DiscoverComponents(
+	context.Context,
+	agentcardtool.DiscoverRequest,
+) (agentcardtool.DiscoverResponse, error) {
+	return agentcardtool.DiscoverResponse{}, nil
+}
+
+func (messageAgentCardServiceStub) ComposeCard(
+	context.Context,
+	agentcardtool.ComposeContext,
+	agentcardtool.ComposeRequest,
+) (agentcardtool.ComposeResponse, error) {
+	return agentcardtool.ComposeResponse{}, nil
+}
 
 func (messageInteractionStarterStub) StartScheduleEdit(
 	context.Context,
@@ -169,6 +187,38 @@ func TestLegacyMessageProcessorNeverInjectsRuntimeStarter(t *testing.T) {
 	ctx := handler.contextForEvent(context.Background(), nil)
 	if _, ok := agentruntime.InteractionStarterFromContext(ctx); ok {
 		t.Fatal("legacy constructor injected an interaction starter")
+	}
+}
+
+func TestMessageProcessorScopesAgentCardServiceByChatGate(t *testing.T) {
+	chatID := "chat-agent-card"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{ChatId: &chatID},
+		},
+	}
+	enabled := false
+	service := messageAgentCardServiceStub{}
+	handler := NewMessageProcessorWithOptions(
+		config.NewManager(),
+		MessageHandlerOptions{
+			AgentCardService: service,
+			AgentCardEnabled: func(_ context.Context, gotChatID string) bool {
+				return enabled && gotChatID == chatID
+			},
+		},
+	)
+	if _, ok := agentcardtool.ServiceFromContext(
+		handler.contextForEvent(context.Background(), event),
+	); ok {
+		t.Fatal("denied chat received agent card tools")
+	}
+	enabled = true
+	got, ok := agentcardtool.ServiceFromContext(
+		handler.contextForEvent(context.Background(), event),
+	)
+	if !ok || got != service {
+		t.Fatalf("enabled chat service = (%v, %v)", got, ok)
 	}
 }
 

@@ -32,6 +32,9 @@ const (
 	SurfaceStatusCancelled  SurfaceStatus = "cancelled"
 	SurfaceStatusExpired    SurfaceStatus = "expired"
 	SurfaceStatusFailed     SurfaceStatus = "failed"
+	// SurfaceStatusShadow is an ephemeral authoring result. It is returned to
+	// the Agent after full validation/compilation and is never persisted.
+	SurfaceStatusShadow SurfaceStatus = "shadow"
 )
 
 type PatchStatus string
@@ -276,6 +279,11 @@ type RetryPatchRequest struct {
 	RetryAt          time.Time
 }
 
+type PatchTarget struct {
+	SurfaceID string
+	Revision  int64
+}
+
 // InteractionStore is the minimum atomic persistence port required by Binder.
 type InteractionStore interface {
 	BeginCardInteraction(context.Context, BeginCardInteractionRequest) (*CardSurface, error)
@@ -291,6 +299,7 @@ type Store interface {
 	GetByInteraction(context.Context, GetSurfaceRequest) (*CardSurface, error)
 	ClaimAction(context.Context, ClaimActionRequest) (*ActionClaim, error)
 	TransitionSurface(context.Context, TransitionSurfaceRequest) (*CardSurface, error)
+	ListDuePatches(context.Context, time.Time, int) ([]PatchTarget, error)
 	ClaimPatch(context.Context, ClaimPatchRequest) (*CardSurface, error)
 	CompletePatch(context.Context, CompletePatchRequest) error
 	RetryPatch(context.Context, RetryPatchRequest) error

@@ -29,10 +29,24 @@ type BaseConfig struct {
 	RedisConfig          *RedisConfig          `json:"redis_config" yaml:"redis_config" toml:"redis_config"`
 	KuttConfig           *KuttConfig           `json:"kutt_config" yaml:"kutt_config" toml:"kutt_config"`
 	RuntimeConfig        *RuntimeConfig        `json:"runtime_config" yaml:"runtime_config" toml:"runtime_config"`
+	AgentCardConfig      *AgentCardConfig      `json:"agent_card" yaml:"agent_card" toml:"agent_card"`
 	ManagementHTTPConfig *ManagementHTTPConfig `json:"management_http_config" yaml:"management_http_config" toml:"management_http_config"`
 	WebUIConfig          *WebUIConfig          `json:"webui_config" yaml:"webui_config" toml:"webui_config"`
 	VMConfig             *VMConfig             `json:"vm_config" yaml:"vm_config" toml:"vm_config"`
 	LuckinMCPConfig      *LuckinMCPConfig      `json:"luckin_mcp" yaml:"luckin_mcp" toml:"luckin_mcp"`
+}
+
+// AgentCardConfig controls the gradual rollout of Agent-authored interactive
+// cards. It is disabled by default so existing deployments keep their current
+// tool surface and delivery behaviour.
+type AgentCardConfig struct {
+	Enabled              bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Mode                 string   `json:"mode" yaml:"mode" toml:"mode"`
+	AllowChatIDs         []string `json:"allow_chat_ids" yaml:"allow_chat_ids" toml:"allow_chat_ids"`
+	MaxRepairAttempts    int      `json:"max_repair_attempts" yaml:"max_repair_attempts" toml:"max_repair_attempts"`
+	DefaultExpirySeconds int      `json:"default_expiry_seconds" yaml:"default_expiry_seconds" toml:"default_expiry_seconds"`
+	PatchWorkerCount     int      `json:"patch_worker_count" yaml:"patch_worker_count" toml:"patch_worker_count"`
+	PatchLeaseSeconds    int      `json:"patch_lease_seconds" yaml:"patch_lease_seconds" toml:"patch_lease_seconds"`
 }
 
 type LuckinMCPConfig struct {

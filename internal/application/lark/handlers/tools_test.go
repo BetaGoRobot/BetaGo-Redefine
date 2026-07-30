@@ -50,7 +50,7 @@ func useWorkspaceConfigPath(t *testing.T) {
 func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	schedulable := BuildSchedulableTools()
-	allTools := larktools()
+	allTools := larktools(context.Background())
 
 	excluded := map[string]struct{}{
 		"create_schedule":   {},
@@ -260,7 +260,7 @@ func TestBuildSchedulableToolsRestrictsSendMessageChatOverride(t *testing.T) {
 
 func TestLarkToolsIncludeResearchHelpers(t *testing.T) {
 	useWorkspaceConfigPath(t)
-	allTools := larktools()
+	allTools := larktools(context.Background())
 	schedulable := BuildSchedulableTools()
 
 	for _, name := range []string{
@@ -282,7 +282,7 @@ func TestLarkToolsIncludeResearchHelpers(t *testing.T) {
 
 func TestLarkToolsExposeSearchHistoryMetadataFilters(t *testing.T) {
 	useWorkspaceConfigPath(t)
-	allTools := larktools()
+	allTools := larktools(context.Background())
 
 	searchHistory, ok := allTools.Get("search_history")
 	if !ok {
@@ -297,7 +297,7 @@ func TestLarkToolsExposeSearchHistoryMetadataFilters(t *testing.T) {
 
 func TestLarkToolsExposeMemberLookupTools(t *testing.T) {
 	useWorkspaceConfigPath(t)
-	allTools := larktools()
+	allTools := larktools(context.Background())
 	schedulable := BuildSchedulableTools()
 
 	for _, name := range []string{"get_chat_members", "get_recent_active_members"} {
@@ -332,7 +332,7 @@ func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 	})
 	defer appconfig.SetGetFeaturesFunc(nil)
 
-	allTools := larktools()
+	allTools := larktools(context.Background())
 
 	configSetUnit, ok := allTools.Get("config_set")
 	if !ok {
@@ -361,7 +361,7 @@ func TestLarkToolsExposeTypedConfigAndFeatureEnums(t *testing.T) {
 
 func TestLarkToolsEmitStrictCompatibleSchemas(t *testing.T) {
 	useWorkspaceConfigPath(t)
-	allTools := larktools()
+	allTools := larktools(context.Background())
 
 	for _, tool := range allTools.Tools() {
 		fn := tool.GetToolFunction()

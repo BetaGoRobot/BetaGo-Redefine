@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	larkchunking "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/chunking"
@@ -28,14 +29,22 @@ import (
 type MessageHandler struct {
 	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	interactionStarter agentruntime.InteractionStarter
+	agentCardService   atomic.Pointer[agentCardServiceHolder]
+	agentCardEnabled   func(context.Context, string) bool
 	runtimeEnabled     func(context.Context, string) bool
 	evaluationEnabled  func(context.Context, string) bool
 	feedbackSink       conversationeval.FeedbackSink
 	evaluationService  atomic.Pointer[conversationeval.Service]
 }
 
+type agentCardServiceHolder struct {
+	service agentcardtool.Service
+}
+
 type MessageHandlerOptions struct {
 	InteractionStarter agentruntime.InteractionStarter
+	AgentCardService   agentcardtool.Service
+	AgentCardEnabled   func(context.Context, string) bool
 	RuntimeEnabled     func(context.Context, string) bool
 	EvaluationEnabled  func(context.Context, string) bool
 	EvaluationService  *conversationeval.Service
@@ -86,6 +95,7 @@ func NewMessageProcessorWithOptions(
 	}
 	handler := &MessageHandler{
 		interactionStarter: options.InteractionStarter,
+		agentCardEnabled:   options.AgentCardEnabled,
 		runtimeEnabled:     options.RuntimeEnabled,
 		evaluationEnabled:  options.EvaluationEnabled,
 		feedbackSink:       options.FeedbackSink,
@@ -94,6 +104,7 @@ func NewMessageProcessorWithOptions(
 			AddAsync(&ops.CommandOperator{}).
 			AddAsync(&ops.ChatMsgOperator{}),
 	}
+	handler.SetAgentCardService(options.AgentCardService)
 	handler.evaluationService.Store(options.EvaluationService)
 	cfgManager.SetGetFeaturesFunc(func() []appconfig.Feature {
 		return collectMessageFeatures(handler.processor)
@@ -163,6 +174,17 @@ func (h *MessageHandler) SetEvaluationService(service *conversationeval.Service)
 	}
 }
 
+func (h *MessageHandler) SetAgentCardService(service agentcardtool.Service) {
+	if h == nil {
+		return
+	}
+	if service == nil {
+		h.agentCardService.Store(nil)
+		return
+	}
+	h.agentCardService.Store(&agentCardServiceHolder{service: service})
+}
+
 func evaluationMessageInput(
 	ctx context.Context,
 	event *larkim.P2MessageReceiveV1,
@@ -219,18 +241,23 @@ func (h *MessageHandler) contextForEvent(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if h == nil || h.interactionStarter == nil || h.runtimeEnabled == nil ||
-		event == nil || event.Event == nil {
+	if h == nil || event == nil || event.Event == nil {
 		return ctx
 	}
 	chatID := ""
 	if event.Event.Message != nil && event.Event.Message.ChatId != nil {
 		chatID = *event.Event.Message.ChatId
 	}
-	if !h.runtimeEnabled(ctx, chatID) {
-		return ctx
+	agentCardHolder := h.agentCardService.Load()
+	if agentCardHolder != nil && agentCardHolder.service != nil &&
+		h.agentCardEnabled != nil && h.agentCardEnabled(ctx, chatID) {
+		ctx = agentcardtool.WithService(ctx, agentCardHolder.service)
 	}
-	return agentruntime.WithInteractionStarter(ctx, h.interactionStarter)
+	if h.interactionStarter != nil && h.runtimeEnabled != nil &&
+		h.runtimeEnabled(ctx, chatID) {
+		ctx = agentruntime.WithInteractionStarter(ctx, h.interactionStarter)
+	}
+	return ctx
 }
 
 func newMessageProcessorBase(cfgManager *appconfig.Manager) *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData] {

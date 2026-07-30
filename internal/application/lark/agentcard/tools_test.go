@@ -128,3 +128,40 @@ func TestToolServiceComposesValidatedTypedCard(t *testing.T) {
 		t.Fatalf("response=%#v compose=%#v", response, composer.request)
 	}
 }
+
+func TestToolServiceShadowResultRequiresVisibleTextFallback(t *testing.T) {
+	composer := &authoringComposerFake{surface: &CardSurface{
+		ID: "shadow-surface", Status: SurfaceStatusShadow, Revision: 1,
+	}}
+	service := NewToolService(ToolServiceOptions{
+		Catalog: NewCatalog(), Composer: composer,
+	})
+	response, err := service.ComposeCard(
+		context.Background(),
+		agentcardtool.ComposeContext{
+			ChatID: "chat-1", ActorOpenID: "owner-1",
+			ReplyToMessageID: "message-1", TriggerEventID: "event-1",
+		},
+		agentcardtool.ComposeRequest{
+			Purpose: "show choice",
+			Card: agentcardtool.Card{
+				Title: "Choice",
+				Blocks: []agentcardtool.Block{{
+					Kind: "plain_text", ID: "body", Text: "Choose",
+				}},
+				Actions: []agentcardtool.Action{{
+					Kind: "button", ID: "choose", Label: "Choose",
+					Mode: "ui_action", Intent: "choose",
+				}},
+			},
+			Interaction: agentcardtool.Interaction{Mode: "ui_action"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "shadow" || response.Fallback == "" ||
+		response.MessageID != "" || response.CardRef != "shadow-surface" {
+		t.Fatalf("shadow response = %#v", response)
+	}
+}
