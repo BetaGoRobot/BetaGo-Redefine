@@ -27,6 +27,7 @@ type EvaluationEpisode struct {
 	LateFeedbackUntil time.Time `gorm:"column:late_feedback_until;not null" json:"late_feedback_until"`
 	CreatedAt         time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
 	UpdatedAt         time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+	PostWindowReason  string    `gorm:"column:post_window_reason;not null" json:"post_window_reason"`
 }
 
 // TableName EvaluationEpisode's table name

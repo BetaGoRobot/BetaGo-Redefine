@@ -19,6 +19,7 @@ var (
 	Q                        = new(Query)
 	Administrator            *administrator
 	AgentCapabilityExecution *agentCapabilityExecution
+	AgentCardSurface         *agentCardSurface
 	AgentProjectionOutbox    *agentProjectionOutbox
 	AgentRun                 *agentRun
 	AgentSession             *agentSession
@@ -34,8 +35,10 @@ var (
 	CopyWritingGeneral       *copyWritingGeneral
 	CronCmdTask              *cronCmdTask
 	DynamicConfig            *dynamicConfig
+	EvaluationCandidateTask  *evaluationCandidateTask
 	EvaluationCohort         *evaluationCohort
 	EvaluationEpisode        *evaluationEpisode
+	EvaluationEpisodeMessage *evaluationEpisodeMessage
 	EvaluationFeedback       *evaluationFeedback
 	EvaluationJudgment       *evaluationJudgment
 	EvaluationLaneOutput     *evaluationLaneOutput
@@ -71,6 +74,7 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	*Q = *Use(db, opts...)
 	Administrator = &Q.Administrator
 	AgentCapabilityExecution = &Q.AgentCapabilityExecution
+	AgentCardSurface = &Q.AgentCardSurface
 	AgentProjectionOutbox = &Q.AgentProjectionOutbox
 	AgentRun = &Q.AgentRun
 	AgentSession = &Q.AgentSession
@@ -86,8 +90,10 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	CopyWritingGeneral = &Q.CopyWritingGeneral
 	CronCmdTask = &Q.CronCmdTask
 	DynamicConfig = &Q.DynamicConfig
+	EvaluationCandidateTask = &Q.EvaluationCandidateTask
 	EvaluationCohort = &Q.EvaluationCohort
 	EvaluationEpisode = &Q.EvaluationEpisode
+	EvaluationEpisodeMessage = &Q.EvaluationEpisodeMessage
 	EvaluationFeedback = &Q.EvaluationFeedback
 	EvaluationJudgment = &Q.EvaluationJudgment
 	EvaluationLaneOutput = &Q.EvaluationLaneOutput
@@ -124,6 +130,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		db:                       db,
 		Administrator:            newAdministrator(db, opts...),
 		AgentCapabilityExecution: newAgentCapabilityExecution(db, opts...),
+		AgentCardSurface:         newAgentCardSurface(db, opts...),
 		AgentProjectionOutbox:    newAgentProjectionOutbox(db, opts...),
 		AgentRun:                 newAgentRun(db, opts...),
 		AgentSession:             newAgentSession(db, opts...),
@@ -139,8 +146,10 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		CopyWritingGeneral:       newCopyWritingGeneral(db, opts...),
 		CronCmdTask:              newCronCmdTask(db, opts...),
 		DynamicConfig:            newDynamicConfig(db, opts...),
+		EvaluationCandidateTask:  newEvaluationCandidateTask(db, opts...),
 		EvaluationCohort:         newEvaluationCohort(db, opts...),
 		EvaluationEpisode:        newEvaluationEpisode(db, opts...),
+		EvaluationEpisodeMessage: newEvaluationEpisodeMessage(db, opts...),
 		EvaluationFeedback:       newEvaluationFeedback(db, opts...),
 		EvaluationJudgment:       newEvaluationJudgment(db, opts...),
 		EvaluationLaneOutput:     newEvaluationLaneOutput(db, opts...),
@@ -178,6 +187,7 @@ type Query struct {
 
 	Administrator            administrator
 	AgentCapabilityExecution agentCapabilityExecution
+	AgentCardSurface         agentCardSurface
 	AgentProjectionOutbox    agentProjectionOutbox
 	AgentRun                 agentRun
 	AgentSession             agentSession
@@ -193,8 +203,10 @@ type Query struct {
 	CopyWritingGeneral       copyWritingGeneral
 	CronCmdTask              cronCmdTask
 	DynamicConfig            dynamicConfig
+	EvaluationCandidateTask  evaluationCandidateTask
 	EvaluationCohort         evaluationCohort
 	EvaluationEpisode        evaluationEpisode
+	EvaluationEpisodeMessage evaluationEpisodeMessage
 	EvaluationFeedback       evaluationFeedback
 	EvaluationJudgment       evaluationJudgment
 	EvaluationLaneOutput     evaluationLaneOutput
@@ -235,6 +247,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		db:                       db,
 		Administrator:            q.Administrator.clone(db),
 		AgentCapabilityExecution: q.AgentCapabilityExecution.clone(db),
+		AgentCardSurface:         q.AgentCardSurface.clone(db),
 		AgentProjectionOutbox:    q.AgentProjectionOutbox.clone(db),
 		AgentRun:                 q.AgentRun.clone(db),
 		AgentSession:             q.AgentSession.clone(db),
@@ -250,8 +263,10 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		CopyWritingGeneral:       q.CopyWritingGeneral.clone(db),
 		CronCmdTask:              q.CronCmdTask.clone(db),
 		DynamicConfig:            q.DynamicConfig.clone(db),
+		EvaluationCandidateTask:  q.EvaluationCandidateTask.clone(db),
 		EvaluationCohort:         q.EvaluationCohort.clone(db),
 		EvaluationEpisode:        q.EvaluationEpisode.clone(db),
+		EvaluationEpisodeMessage: q.EvaluationEpisodeMessage.clone(db),
 		EvaluationFeedback:       q.EvaluationFeedback.clone(db),
 		EvaluationJudgment:       q.EvaluationJudgment.clone(db),
 		EvaluationLaneOutput:     q.EvaluationLaneOutput.clone(db),
@@ -297,6 +312,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		db:                       db,
 		Administrator:            q.Administrator.replaceDB(db),
 		AgentCapabilityExecution: q.AgentCapabilityExecution.replaceDB(db),
+		AgentCardSurface:         q.AgentCardSurface.replaceDB(db),
 		AgentProjectionOutbox:    q.AgentProjectionOutbox.replaceDB(db),
 		AgentRun:                 q.AgentRun.replaceDB(db),
 		AgentSession:             q.AgentSession.replaceDB(db),
@@ -312,8 +328,10 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		CopyWritingGeneral:       q.CopyWritingGeneral.replaceDB(db),
 		CronCmdTask:              q.CronCmdTask.replaceDB(db),
 		DynamicConfig:            q.DynamicConfig.replaceDB(db),
+		EvaluationCandidateTask:  q.EvaluationCandidateTask.replaceDB(db),
 		EvaluationCohort:         q.EvaluationCohort.replaceDB(db),
 		EvaluationEpisode:        q.EvaluationEpisode.replaceDB(db),
+		EvaluationEpisodeMessage: q.EvaluationEpisodeMessage.replaceDB(db),
 		EvaluationFeedback:       q.EvaluationFeedback.replaceDB(db),
 		EvaluationJudgment:       q.EvaluationJudgment.replaceDB(db),
 		EvaluationLaneOutput:     q.EvaluationLaneOutput.replaceDB(db),
@@ -349,6 +367,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 type queryCtx struct {
 	Administrator            IAdministratorDo
 	AgentCapabilityExecution IAgentCapabilityExecutionDo
+	AgentCardSurface         IAgentCardSurfaceDo
 	AgentProjectionOutbox    IAgentProjectionOutboxDo
 	AgentRun                 IAgentRunDo
 	AgentSession             IAgentSessionDo
@@ -364,8 +383,10 @@ type queryCtx struct {
 	CopyWritingGeneral       ICopyWritingGeneralDo
 	CronCmdTask              ICronCmdTaskDo
 	DynamicConfig            IDynamicConfigDo
+	EvaluationCandidateTask  IEvaluationCandidateTaskDo
 	EvaluationCohort         IEvaluationCohortDo
 	EvaluationEpisode        IEvaluationEpisodeDo
+	EvaluationEpisodeMessage IEvaluationEpisodeMessageDo
 	EvaluationFeedback       IEvaluationFeedbackDo
 	EvaluationJudgment       IEvaluationJudgmentDo
 	EvaluationLaneOutput     IEvaluationLaneOutputDo
@@ -401,6 +422,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
 		Administrator:            q.Administrator.WithContext(ctx),
 		AgentCapabilityExecution: q.AgentCapabilityExecution.WithContext(ctx),
+		AgentCardSurface:         q.AgentCardSurface.WithContext(ctx),
 		AgentProjectionOutbox:    q.AgentProjectionOutbox.WithContext(ctx),
 		AgentRun:                 q.AgentRun.WithContext(ctx),
 		AgentSession:             q.AgentSession.WithContext(ctx),
@@ -416,8 +438,10 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		CopyWritingGeneral:       q.CopyWritingGeneral.WithContext(ctx),
 		CronCmdTask:              q.CronCmdTask.WithContext(ctx),
 		DynamicConfig:            q.DynamicConfig.WithContext(ctx),
+		EvaluationCandidateTask:  q.EvaluationCandidateTask.WithContext(ctx),
 		EvaluationCohort:         q.EvaluationCohort.WithContext(ctx),
 		EvaluationEpisode:        q.EvaluationEpisode.WithContext(ctx),
+		EvaluationEpisodeMessage: q.EvaluationEpisodeMessage.WithContext(ctx),
 		EvaluationFeedback:       q.EvaluationFeedback.WithContext(ctx),
 		EvaluationJudgment:       q.EvaluationJudgment.WithContext(ctx),
 		EvaluationLaneOutput:     q.EvaluationLaneOutput.WithContext(ctx),

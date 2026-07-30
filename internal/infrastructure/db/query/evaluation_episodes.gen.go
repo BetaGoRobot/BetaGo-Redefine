@@ -40,6 +40,7 @@ func newEvaluationEpisode(db *gorm.DB, opts ...gen.DOOption) evaluationEpisode {
 	_evaluationEpisode.LateFeedbackUntil = field.NewTime(tableName, "late_feedback_until")
 	_evaluationEpisode.CreatedAt = field.NewTime(tableName, "created_at")
 	_evaluationEpisode.UpdatedAt = field.NewTime(tableName, "updated_at")
+	_evaluationEpisode.PostWindowReason = field.NewString(tableName, "post_window_reason")
 
 	_evaluationEpisode.fillFieldMap()
 
@@ -65,6 +66,7 @@ type evaluationEpisode struct {
 	LateFeedbackUntil field.Time
 	CreatedAt         field.Time
 	UpdatedAt         field.Time
+	PostWindowReason  field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -96,6 +98,7 @@ func (e *evaluationEpisode) updateTableName(table string) *evaluationEpisode {
 	e.LateFeedbackUntil = field.NewTime(table, "late_feedback_until")
 	e.CreatedAt = field.NewTime(table, "created_at")
 	e.UpdatedAt = field.NewTime(table, "updated_at")
+	e.PostWindowReason = field.NewString(table, "post_window_reason")
 
 	e.fillFieldMap()
 
@@ -124,7 +127,7 @@ func (e *evaluationEpisode) GetFieldByName(fieldName string) (field.OrderExpr, b
 }
 
 func (e *evaluationEpisode) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 15)
+	e.fieldMap = make(map[string]field.Expr, 16)
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["cohort_id"] = e.CohortID
 	e.fieldMap["chat_id"] = e.ChatID
@@ -140,6 +143,7 @@ func (e *evaluationEpisode) fillFieldMap() {
 	e.fieldMap["late_feedback_until"] = e.LateFeedbackUntil
 	e.fieldMap["created_at"] = e.CreatedAt
 	e.fieldMap["updated_at"] = e.UpdatedAt
+	e.fieldMap["post_window_reason"] = e.PostWindowReason
 }
 
 func (e evaluationEpisode) clone(db *gorm.DB) evaluationEpisode {
