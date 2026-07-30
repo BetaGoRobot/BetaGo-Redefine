@@ -128,6 +128,7 @@ type SectionBlock struct {
 
 type InputField struct {
 	FieldID  string `json:"field_id"`
+	FormID   string `json:"form_id"`
 	Label    string `json:"label"`
 	Required bool   `json:"required,omitempty"`
 	Purpose  string `json:"purpose,omitempty"`

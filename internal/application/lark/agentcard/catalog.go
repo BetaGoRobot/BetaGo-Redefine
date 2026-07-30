@@ -114,7 +114,7 @@ func NewCatalog() *Catalog {
 			Name: "text_input", Category: CategoryInput, Version: VersionV1,
 			Purpose: "Collect a short, non-sensitive text value",
 			Fields: []string{
-				"id", "field_id", "label", "required", "purpose",
+				"id", "field_id", "form_id", "label", "required", "purpose",
 				"placeholder", "multiline", "min_length", "max_length",
 			},
 			BudgetCost:             1,
@@ -147,7 +147,7 @@ func catalogSelect(name, purpose string) CatalogEntry {
 		Name: name, Category: CategoryInput, Version: VersionV1,
 		Purpose: purpose,
 		Fields: []string{
-			"id", "field_id", "label", "required", "purpose",
+			"id", "field_id", "form_id", "label", "required", "purpose",
 			"placeholder", "options",
 		},
 		BudgetCost:             1,
