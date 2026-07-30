@@ -110,3 +110,31 @@ curl -fsS -X POST \
     ]
   }'
 ```
+
+## OpenSearch 会话并轨评测索引
+
+并轨评测以 PostgreSQL 为事实源，并把每个 episode 的双 lane、前后向消息、反馈与最新 judgment 汇总成一个 OpenSearch 文档。常用过滤和质量字段可搜索；`full_snapshot` 关闭解析，仅用于完整回放。
+
+```bash
+curl -fsS -X PUT \
+  "${OPENSEARCH_URL}/agent_conversation_evaluations_v1" \
+  -H 'Content-Type: application/json' \
+  --data-binary @../script/opensearch/agent_conversation_evaluations_v1.json
+
+curl -fsS -X POST \
+  "${OPENSEARCH_URL}/_aliases" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actions": [
+      {
+        "add": {
+          "index": "agent_conversation_evaluations_v1",
+          "alias": "agent_conversation_evaluations",
+          "is_write_index": true
+        }
+      }
+    ]
+  }'
+```
+
+写入使用 `episode_id` 作为文档 ID，因此反馈补录和 judgment 新版本会覆盖同一个搜索快照，不会产生重复 episode。
