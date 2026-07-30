@@ -15,6 +15,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/evaluationindex"
 	uuid "github.com/satori/go.uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -1140,6 +1141,194 @@ func TestEpisodesReadyForJudgeRequiresClosedWindowAndBothLanes(t *testing.T) {
 	}
 	if _, err := fixture.repo.EpisodesReadyForJudge(ctx, fixture.now, 10); !errors.Is(err, conversationeval.ErrInvalidContract) {
 		t.Fatalf("EpisodesReadyForJudge(corrupt episode) error = %v, want ErrInvalidContract", err)
+	}
+}
+
+func TestNextJudgeInputLoadsBundleAndAppendMarksJudged(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"judge_bundle",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	ready := fixture.episode(
+		cohort.ID,
+		"episode_judge_bundle_"+fixture.suffix,
+		"anchor_judge_bundle",
+	)
+	ready.Status = conversationeval.EpisodeStatusReadyForJudge
+	postEnd := fixture.now
+	ready.PostWindowEnd = &postEnd
+	stored, err := fixture.repo.GetOrCreateEpisode(ctx, ready)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	anchor := conversationeval.WindowMessage{
+		EventID: stored.AnchorEventID, MessageID: stored.AnchorMessageID,
+		ChatID: stored.ChatID, TopicID: stored.TopicID, SenderOpenID: "sender",
+		Content: "anchor", OccurredAt: stored.AnchorAt,
+		Position: conversationeval.WindowPositionAnchor,
+	}
+	if err := fixture.repo.SaveWindowMessages(ctx, stored.ID, []conversationeval.WindowMessage{anchor}); err != nil {
+		t.Fatalf("SaveWindowMessages() error = %v", err)
+	}
+	for _, lane := range []conversationeval.Lane{
+		conversationeval.LaneControl,
+		conversationeval.LaneCandidate,
+	} {
+		if err := fixture.repo.UpsertLaneOutput(
+			ctx,
+			fixture.laneOutput(*stored, lane, "judge_"+string(lane)),
+		); err != nil {
+			t.Fatalf("UpsertLaneOutput(%s) error = %v", lane, err)
+		}
+	}
+
+	input, err := fixture.repo.NextJudgeInput(ctx, fixture.now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("NextJudgeInput() error = %v", err)
+	}
+	if input.Episode.ID != stored.ID || input.Version != 1 ||
+		input.PreviousJudgmentID != "" || len(input.Messages) != 1 ||
+		input.ControlOutput.Lane != conversationeval.LaneControl ||
+		input.CandidateOutput.Lane != conversationeval.LaneCandidate {
+		t.Fatalf("judge input = %#v", input)
+	}
+	judgment := conversationeval.Judgment{
+		ID: "judge_bundle_v1_" + fixture.suffix, EpisodeID: stored.ID, Version: 1,
+		Source: conversationeval.JudgmentSourceConversationJudge, EvaluatorID: "judge-model",
+		Winner: conversationeval.JudgmentWinnerTie, ScoresJSON: json.RawMessage(`{"ok":true}`),
+		Rationale: "tie", Confidence: 80, CreatedAt: fixture.now.Add(time.Second),
+	}
+	if err := fixture.repo.AppendJudgment(ctx, judgment); err != nil {
+		t.Fatalf("AppendJudgment() error = %v", err)
+	}
+	var status string
+	if err := fixture.db.Table("evaluation_episodes").
+		Select("status").
+		Where("id = ?", stored.ID).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("read episode status: %v", err)
+	}
+	if status != string(conversationeval.EpisodeStatusJudged) {
+		t.Fatalf("episode status = %q, want judged", status)
+	}
+	snapshots, err := fixture.repo.EvaluationSnapshotsAfter(
+		ctx,
+		evaluationindex.ProjectionCursor{},
+		10,
+	)
+	if err != nil {
+		t.Fatalf("EvaluationSnapshotsAfter() error = %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].EpisodeID != stored.ID ||
+		snapshots[0].AnchorMessage.MessageID != stored.AnchorMessageID ||
+		len(snapshots[0].LatestJudgments) != 1 ||
+		snapshots[0].LatestJudgments[0].Version != 1 {
+		t.Fatalf("evaluation snapshots = %#v", snapshots)
+	}
+	metrics, err := fixture.repo.EvaluationMetrics(
+		ctx,
+		evaluationindex.ProjectionCursor{},
+	)
+	if err != nil {
+		t.Fatalf("EvaluationMetrics() error = %v", err)
+	}
+	episodeMetrics, ok := metrics["episodes"].(map[string]int64)
+	if !ok || episodeMetrics[string(conversationeval.EpisodeStatusJudged)] != 1 ||
+		metrics["projection_backlog"] != int64(1) {
+		t.Fatalf("evaluation metrics = %#v", metrics)
+	}
+	after := evaluationindex.ProjectionCursor{
+		UpdatedAt: snapshots[0].UpdatedAt,
+		EpisodeID: snapshots[0].EpisodeID,
+	}
+	if snapshots, err := fixture.repo.EvaluationSnapshotsAfter(ctx, after, 10); err != nil {
+		t.Fatalf("EvaluationSnapshotsAfter(cursor) error = %v", err)
+	} else if len(snapshots) != 0 {
+		t.Fatalf("EvaluationSnapshotsAfter(cursor) = %#v, want empty", snapshots)
+	}
+	if _, err := fixture.repo.NextJudgeInput(
+		ctx,
+		fixture.now.Add(2*time.Second),
+	); !errors.Is(err, conversationeval.ErrJudgeInputNotFound) {
+		t.Fatalf("NextJudgeInput(after judge) error = %v, want ErrJudgeInputNotFound", err)
+	}
+}
+
+func TestNextJudgeInputRejudgesAfterNewFeedback(t *testing.T) {
+	fixture := newRepositoryFixture(t)
+	ctx := context.Background()
+	cohort := fixture.cohort(
+		"judge_feedback",
+		fixture.now.Add(-time.Hour),
+		fixture.now.Add(time.Hour),
+	)
+	if err := fixture.repo.CreateCohort(ctx, cohort); err != nil {
+		t.Fatalf("CreateCohort() error = %v", err)
+	}
+	ready := fixture.episode(
+		cohort.ID,
+		"episode_judge_feedback_"+fixture.suffix,
+		"anchor_judge_feedback",
+	)
+	ready.Status = conversationeval.EpisodeStatusReadyForJudge
+	postEnd := fixture.now
+	ready.PostWindowEnd = &postEnd
+	stored, err := fixture.repo.GetOrCreateEpisode(ctx, ready)
+	if err != nil {
+		t.Fatalf("GetOrCreateEpisode() error = %v", err)
+	}
+	anchor := conversationeval.WindowMessage{
+		EventID: stored.AnchorEventID, MessageID: stored.AnchorMessageID,
+		ChatID: stored.ChatID, Content: "anchor", OccurredAt: stored.AnchorAt,
+		Position: conversationeval.WindowPositionAnchor,
+	}
+	if err := fixture.repo.SaveWindowMessages(ctx, stored.ID, []conversationeval.WindowMessage{anchor}); err != nil {
+		t.Fatalf("SaveWindowMessages() error = %v", err)
+	}
+	for _, lane := range []conversationeval.Lane{
+		conversationeval.LaneControl,
+		conversationeval.LaneCandidate,
+	} {
+		if err := fixture.repo.UpsertLaneOutput(
+			ctx,
+			fixture.laneOutput(*stored, lane, "feedback_"+string(lane)),
+		); err != nil {
+			t.Fatalf("UpsertLaneOutput(%s) error = %v", lane, err)
+		}
+	}
+	first := conversationeval.Judgment{
+		ID: "judge_feedback_v1_" + fixture.suffix, EpisodeID: stored.ID, Version: 1,
+		Source: conversationeval.JudgmentSourceConversationJudge, EvaluatorID: "judge-model",
+		Winner:     conversationeval.JudgmentWinnerControl,
+		ScoresJSON: json.RawMessage(`{"ok":true}`), Rationale: "control",
+		Confidence: 80,
+	}
+	if err := fixture.repo.AppendJudgment(ctx, first); err != nil {
+		t.Fatalf("AppendJudgment(v1) error = %v", err)
+	}
+	feedback := conversationeval.Feedback{
+		ID: "judge_feedback_event_" + fixture.suffix, EpisodeID: stored.ID,
+		FeedbackEventID: "judge_feedback_event", FeedbackType: conversationeval.FeedbackTypeCorrection,
+		Explicitness:          conversationeval.FeedbackExplicit,
+		ContentJSON:           json.RawMessage(`{"text":"不对"}`),
+		AttributionConfidence: 95, OccurredAt: stored.AnchorAt.Add(time.Minute),
+	}
+	if err := fixture.repo.AppendFeedback(ctx, feedback); err != nil {
+		t.Fatalf("AppendFeedback() error = %v", err)
+	}
+	input, err := fixture.repo.NextJudgeInput(ctx, fixture.now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("NextJudgeInput(rejudge) error = %v", err)
+	}
+	if input.Version != 2 || input.PreviousJudgmentID != first.ID ||
+		len(input.Feedback) != 1 || input.Episode.Status != conversationeval.EpisodeStatusJudged {
+		t.Fatalf("rejudge input = %#v", input)
 	}
 }
 

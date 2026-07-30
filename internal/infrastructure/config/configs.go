@@ -76,6 +76,12 @@ type RuntimeConfig struct {
 	EvaluationCandidateRetrySeconds      int    `json:"evaluation_candidate_retry_seconds" yaml:"evaluation_candidate_retry_seconds" toml:"evaluation_candidate_retry_seconds"`
 	EvaluationCandidatePollMillis        int    `json:"evaluation_candidate_poll_millis" yaml:"evaluation_candidate_poll_millis" toml:"evaluation_candidate_poll_millis"`
 	EvaluationWindowSweepSeconds         int    `json:"evaluation_window_sweep_seconds" yaml:"evaluation_window_sweep_seconds" toml:"evaluation_window_sweep_seconds"`
+	EvaluationJudgeWorkers               int    `json:"evaluation_judge_workers" yaml:"evaluation_judge_workers" toml:"evaluation_judge_workers"`
+	EvaluationJudgePollMillis            int    `json:"evaluation_judge_poll_millis" yaml:"evaluation_judge_poll_millis" toml:"evaluation_judge_poll_millis"`
+	EvaluationJudgeModel                 string `json:"evaluation_judge_model" yaml:"evaluation_judge_model" toml:"evaluation_judge_model"`
+	EvaluationProjectionIntervalSeconds  int    `json:"evaluation_projection_interval_seconds" yaml:"evaluation_projection_interval_seconds" toml:"evaluation_projection_interval_seconds"`
+	EvaluationProjectionBatchSize        int    `json:"evaluation_projection_batch_size" yaml:"evaluation_projection_batch_size" toml:"evaluation_projection_batch_size"`
+	EvaluationIndex                      string `json:"evaluation_index" yaml:"evaluation_index" toml:"evaluation_index"`
 }
 
 type ManagementHTTPConfig struct {

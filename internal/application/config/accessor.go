@@ -111,6 +111,15 @@ func (a *Accessor) ConversationCallbackContinuationEnabled() bool {
 	return a.manager.GetBool(a.ctx, KeyConversationCallbackContinuationEnabled, a.chatID, a.openID)
 }
 
+func (a *Accessor) ConversationParallelEvaluationEnabled() bool {
+	return a.manager.GetBool(
+		a.ctx,
+		KeyConversationParallelEvaluationEnabled,
+		a.chatID,
+		a.openID,
+	)
+}
+
 // MusicCardInThread 检查音乐卡片是否默认回帖中发送
 func (a *Accessor) MusicCardInThread() bool {
 	return a.manager.GetBool(a.ctx, KeyMusicCardInThread, a.chatID, a.openID)
@@ -214,6 +223,10 @@ func IsConversationRuntimeEnabled(ctx context.Context, chatID, openID string) bo
 
 func IsConversationCallbackContinuationEnabled(ctx context.Context, chatID, openID string) bool {
 	return GetManager().GetBool(ctx, KeyConversationCallbackContinuationEnabled, chatID, openID)
+}
+
+func IsConversationParallelEvaluationEnabled(ctx context.Context, chatID, openID string) bool {
+	return GetManager().GetBool(ctx, KeyConversationParallelEvaluationEnabled, chatID, openID)
 }
 
 func GetMusicCardInThread(ctx context.Context, chatID, openID string) bool {

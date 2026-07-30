@@ -37,6 +37,7 @@ const (
 	KeyChunkEnabled                            ConfigKey = "chunk_enabled"
 	KeyConversationRuntimeEnabled              ConfigKey = "conversation_runtime_enabled"
 	KeyConversationCallbackContinuationEnabled ConfigKey = "conversation_callback_continuation_enabled"
+	KeyConversationParallelEvaluationEnabled   ConfigKey = "conversation_parallel_evaluation_enabled"
 
 	// 字符串配置
 	KeyChatMode            ConfigKey = "chat_mode"

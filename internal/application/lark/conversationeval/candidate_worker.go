@@ -196,16 +196,20 @@ func (w *CandidateWorker) run(ctx context.Context, done chan struct{}) {
 	var group sync.WaitGroup
 	group.Add(w.options.Workers + 1)
 	for range w.options.Workers {
-		go func() {
-			defer group.Done()
-			w.loop(ctx)
-		}()
+		go w.runCandidateLoop(ctx, &group)
 	}
-	go func() {
-		defer group.Done()
-		w.windowLoop(ctx)
-	}()
+	go w.runWindowLoop(ctx, &group)
 	group.Wait()
+}
+
+func (w *CandidateWorker) runCandidateLoop(ctx context.Context, group *sync.WaitGroup) {
+	defer group.Done()
+	w.loop(ctx)
+}
+
+func (w *CandidateWorker) runWindowLoop(ctx context.Context, group *sync.WaitGroup) {
+	defer group.Done()
+	w.windowLoop(ctx)
 }
 
 func (w *CandidateWorker) loop(ctx context.Context) {

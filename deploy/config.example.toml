@@ -46,6 +46,18 @@
     conversation_projection_queue_size = 128
     conversation_projection_timeout_seconds = 60
     conversation_event_index = "agent_conversation_events"
+    evaluation_candidate_workers = 2
+    evaluation_candidate_lease_seconds = 600
+    evaluation_candidate_retry_seconds = 15
+    evaluation_candidate_poll_millis = 1000
+    evaluation_window_sweep_seconds = 5
+    evaluation_judge_workers = 1
+    evaluation_judge_poll_millis = 1000
+    # 留空时优先使用 ark_config.reasoning_model，其次 normal_model。
+    evaluation_judge_model = ""
+    evaluation_projection_interval_seconds = 30
+    evaluation_projection_batch_size = 100
+    evaluation_index = "agent_conversation_evaluations"
 
 # 管理后台 WebUI。addr 为空则禁用；auth_token 为空则写操作不鉴权（仅内网）。
 # WebUI 容器通过 BACKEND_URL=http://larkrobot:8090 反代到这里。

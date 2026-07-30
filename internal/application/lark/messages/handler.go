@@ -29,6 +29,7 @@ type MessageHandler struct {
 	processor          *xhandler.Processor[larkim.P2MessageReceiveV1, xhandler.BaseMetaData]
 	interactionStarter agentruntime.InteractionStarter
 	runtimeEnabled     func(context.Context, string) bool
+	evaluationEnabled  func(context.Context, string) bool
 	feedbackSink       conversationeval.FeedbackSink
 	evaluationService  atomic.Pointer[conversationeval.Service]
 }
@@ -36,6 +37,7 @@ type MessageHandler struct {
 type MessageHandlerOptions struct {
 	InteractionStarter agentruntime.InteractionStarter
 	RuntimeEnabled     func(context.Context, string) bool
+	EvaluationEnabled  func(context.Context, string) bool
 	EvaluationService  *conversationeval.Service
 	FeedbackSink       conversationeval.FeedbackSink
 }
@@ -72,9 +74,20 @@ func NewMessageProcessorWithOptions(
 			)
 		}
 	}
+	if options.EvaluationEnabled == nil {
+		options.EvaluationEnabled = func(ctx context.Context, chatID string) bool {
+			return cfgManager.GetBool(
+				ctx,
+				appconfig.KeyConversationParallelEvaluationEnabled,
+				chatID,
+				"",
+			)
+		}
+	}
 	handler := &MessageHandler{
 		interactionStarter: options.InteractionStarter,
 		runtimeEnabled:     options.RuntimeEnabled,
+		evaluationEnabled:  options.EvaluationEnabled,
 		feedbackSink:       options.FeedbackSink,
 		processor: newMessageProcessorBase(cfgManager).
 			AddAsync(&ops.ReplyChatOperator{}).
@@ -115,7 +128,7 @@ func (h *MessageHandler) Run(ctx context.Context, event *larkim.P2MessageReceive
 					)
 				}
 			}
-			if evaluationService != nil {
+			if evaluationService != nil && h.evaluationEnabled(ctx, input.ChatID) {
 				evaluationSession, err = evaluationService.BeginMessage(ctx, input)
 				if err != nil {
 					logs.L().Ctx(ctx).Warn("begin conversation evaluation failed", zap.Error(err))

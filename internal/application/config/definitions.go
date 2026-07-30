@@ -90,6 +90,11 @@ var configDefinitions = []ConfigDefinition{
 		ValueType:   "bool",
 	},
 	{
+		Key:         KeyConversationParallelEvaluationEnabled,
+		Description: "是否为当前群聊启用 Control/Candidate 并轨评测",
+		ValueType:   "bool",
+	},
+	{
 		Key:         KeyMusicCardInThread,
 		Description: "音乐卡片是否默认在话题内回复",
 		ValueType:   "bool",

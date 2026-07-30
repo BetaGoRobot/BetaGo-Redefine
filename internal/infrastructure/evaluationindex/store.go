@@ -167,6 +167,10 @@ type Backend interface {
 	Search(context.Context, string, map[string]any) ([]json.RawMessage, error)
 }
 
+func NewOpenSearchBackend() Backend {
+	return openSearchBackend{}
+}
+
 type Store struct {
 	index   string
 	backend Backend

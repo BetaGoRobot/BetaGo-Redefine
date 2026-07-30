@@ -349,6 +349,16 @@ func (r *Repository) AppendFeedback(ctx context.Context, feedback conversationev
 		if insert.Error != nil {
 			return insert.Error
 		}
+		if insert.RowsAffected == 1 {
+			if err := tx.Exec(`
+				UPDATE evaluation_episodes
+				SET updated_at = now()
+				WHERE id = ?`,
+				episode.ID,
+			).Error; err != nil {
+				return err
+			}
+		}
 		if insert.RowsAffected == 1 && decision.IncrementResultVersion {
 			return tx.Exec(`
 				UPDATE evaluation_cohorts
@@ -458,7 +468,7 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 				)
 			}
 		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			INSERT INTO evaluation_judgments (
 				id, episode_id, version, source, evaluator_id, winner, scores_json,
 				problem_tags_json, rationale, confidence, needs_review, supersedes_id
@@ -467,7 +477,21 @@ func (r *Repository) AppendJudgment(ctx context.Context, judgment conversationev
 			judgment.EvaluatorID, string(judgment.Winner), string(judgment.ScoresJSON),
 			string(problemTagsJSON), judgment.Rationale, judgment.Confidence,
 			judgment.NeedsReview, judgment.SupersedesID,
-		).Error
+		).Error; err != nil {
+			return err
+		}
+		if judgment.Source == conversationeval.JudgmentSourceConversationJudge {
+			return tx.Exec(`
+				UPDATE evaluation_episodes
+				SET status = CASE WHEN status = ? THEN ? ELSE status END,
+				    updated_at = now()
+				WHERE id = ?`,
+				string(conversationeval.EpisodeStatusReadyForJudge),
+				string(conversationeval.EpisodeStatusJudged),
+				judgment.EpisodeID,
+			).Error
+		}
+		return nil
 	})
 }
 

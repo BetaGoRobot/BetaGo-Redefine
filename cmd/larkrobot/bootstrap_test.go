@@ -67,6 +67,26 @@ func TestBuildAppAllowsMissingArkConfigWhenRuntimeIsDisabledByDefault(t *testing
 	}
 }
 
+func TestEvaluationJudgeModelPrefersExplicitThenReasoningFallback(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	runtimeConfig := cfg.RuntimeConfig
+	runtimeConfig.EvaluationJudgeModel = " explicit-judge "
+	if got := evaluationJudgeModelID(cfg, runtimeConfig); got != "explicit-judge" {
+		t.Fatalf("explicit judge model = %q", got)
+	}
+	runtimeConfig.EvaluationJudgeModel = ""
+	if got := evaluationJudgeModelID(cfg, runtimeConfig); got != "reasoning-test" {
+		t.Fatalf("reasoning judge model = %q", got)
+	}
+	cfg.ArkConfig.ReasoningModel = ""
+	if got := evaluationJudgeModelID(cfg, runtimeConfig); got != "normal-test" {
+		t.Fatalf("normal judge model = %q", got)
+	}
+	if got := evaluationJudgeModelID(&infraConfig.BaseConfig{}, nil); got != "" {
+		t.Fatalf("missing Ark config judge model = %q", got)
+	}
+}
+
 func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	app, err := buildApp(cfg)
