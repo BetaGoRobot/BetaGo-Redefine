@@ -278,14 +278,7 @@ func AnalyzeIndex(ctx context.Context, client *opensearchapi.Client, index strin
 		}, nil, nil
 	}
 
-	mappingInfo := make(map[string]any)
-	for _, item := range mappingResp.Indices {
-		var raw map[string]any
-		if err := sonic.Unmarshal(item.Mappings, &raw); err == nil {
-			mappingInfo = raw
-		}
-		break
-	}
+	mappingInfo := mappingInfo(mappingResp.GetIndices(), index)
 
 	return AnalyzeStats{
 		TotalDocs:          totalDocs,
@@ -293,6 +286,30 @@ func AnalyzeIndex(ctx context.Context, client *opensearchapi.Client, index strin
 		WithMessageV2Field: withMessageV2Field,
 		MissingMessageV2:   missingMessageV2,
 	}, mappingInfo, nil
+}
+
+func mappingInfo(
+	indices map[string]opensearchapi.MappingGetRespIndex,
+	index string,
+) map[string]any {
+	item, ok := indices[index]
+	if !ok {
+		names := make([]string, 0, len(indices))
+		for name := range indices {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if len(names) == 0 {
+			return map[string]any{}
+		}
+		item = indices[names[0]]
+	}
+
+	var mapping map[string]any
+	if err := sonic.Unmarshal(item.Mappings, &mapping); err != nil {
+		return map[string]any{}
+	}
+	return mapping
 }
 
 func Run(ctx context.Context, osClient *opensearchapi.Client, arkClient *arkruntime.Client, opts RunOptions) (RunSummary, error) {
