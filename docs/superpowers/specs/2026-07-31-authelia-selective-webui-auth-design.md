@@ -52,7 +52,7 @@ the Bot without traversing Traefik.
 Traefik exposes two routers for the same WebUI host and service:
 
 1. A high-priority protected router matches:
-   - write HTTP methods under `/api` and `/bot/<id>/api`;
+   - write HTTP methods under `/api` and `/bot/{id}/api`;
    - the explicit sensitive GET path set;
    - `/auth/session` and `/auth/login`.
    It applies the configured Authelia ForwardAuth middleware.
@@ -139,7 +139,7 @@ Secure mode is opt-in:
 ```yaml
 WEBUI_AUTH_MODE: authelia
 AUTHELIA_MIDDLEWARE: authelia@docker
-BACKEND_AUTH_TOKEN: <same value as the default Bot webui_config.auth_token>
+BACKEND_AUTH_TOKEN: "${BOT_WEBUI_AUTH_TOKEN}"
 ```
 
 The protected Traefik router references the operator-provided middleware name.
