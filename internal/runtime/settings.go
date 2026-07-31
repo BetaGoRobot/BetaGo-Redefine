@@ -196,25 +196,25 @@ func ExecutorConfigs(cfg *infraConfig.BaseConfig) map[string]ExecutorConfig {
 			Name:        "message_executor",
 			Workers:     defaultInt(runtimeCfg.MessageWorkers, 8),
 			QueueSize:   defaultInt(runtimeCfg.MessageQueueSize, 256),
-			TaskTimeout: defaultDuration(runtimeCfg.MessageTimeoutSeconds, 10*time.Minute),
+			TaskTimeout: optionalDuration(runtimeCfg.MessageTimeoutSeconds),
 		},
 		"reaction": {
 			Name:        "reaction_executor",
 			Workers:     defaultInt(runtimeCfg.ReactionWorkers, 4),
 			QueueSize:   defaultInt(runtimeCfg.ReactionQueueSize, 128),
-			TaskTimeout: defaultDuration(runtimeCfg.ReactionTimeoutSeconds, 30*time.Second),
+			TaskTimeout: optionalDuration(runtimeCfg.ReactionTimeoutSeconds),
 		},
 		"recording": {
 			Name:        "recording_executor",
 			Workers:     defaultInt(runtimeCfg.RecordingWorkers, 4),
 			QueueSize:   defaultInt(runtimeCfg.RecordingQueueSize, 128),
-			TaskTimeout: defaultDuration(runtimeCfg.RecordingTimeoutSeconds, 2*time.Minute),
+			TaskTimeout: optionalDuration(runtimeCfg.RecordingTimeoutSeconds),
 		},
 		"chunk": {
 			Name:        "chunk_executor",
 			Workers:     defaultInt(runtimeCfg.ChunkWorkers, 2),
 			QueueSize:   defaultInt(runtimeCfg.ChunkQueueSize, 64),
-			TaskTimeout: defaultDuration(runtimeCfg.ChunkTimeoutSeconds, 5*time.Minute),
+			TaskTimeout: optionalDuration(runtimeCfg.ChunkTimeoutSeconds),
 		},
 		"schedule": {
 			Name:        "schedule_executor",
@@ -260,4 +260,13 @@ func defaultDuration(seconds int, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
+}
+
+// optionalDuration keeps legacy side-effect executors unbounded by default.
+// A positive operator-supplied value opts back into an executor deadline.
+func optionalDuration(seconds int) time.Duration {
+	if seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return 0
 }

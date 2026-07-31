@@ -37,16 +37,16 @@ func TestShutdownTimeoutRespectsConfig(t *testing.T) {
 func TestExecutorConfigsDefaults(t *testing.T) {
 	configs := ExecutorConfigs(&infraConfig.BaseConfig{})
 
-	if got := configs["message"]; got.Workers != 8 || got.QueueSize != 256 || got.TaskTimeout != 10*time.Minute {
+	if got := configs["message"]; got.Workers != 8 || got.QueueSize != 256 || got.TaskTimeout != 0 {
 		t.Fatalf("message executor config = %+v", got)
 	}
-	if got := configs["reaction"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 30*time.Second {
+	if got := configs["reaction"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 0 {
 		t.Fatalf("reaction executor config = %+v", got)
 	}
-	if got := configs["recording"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 2*time.Minute {
+	if got := configs["recording"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 0 {
 		t.Fatalf("recording executor config = %+v", got)
 	}
-	if got := configs["chunk"]; got.Workers != 2 || got.QueueSize != 64 || got.TaskTimeout != 5*time.Minute {
+	if got := configs["chunk"]; got.Workers != 2 || got.QueueSize != 64 || got.TaskTimeout != 0 {
 		t.Fatalf("chunk executor config = %+v", got)
 	}
 	if got := configs["schedule"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 10*time.Minute {

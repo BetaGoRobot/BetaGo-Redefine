@@ -11,6 +11,7 @@ import (
 )
 
 func AddTrace2DB(ctx context.Context, msgID string) {
+	ctx = DurableContext(ctx)
 	ctx, span := otel.Start(ctx)
 	defer span.End()
 

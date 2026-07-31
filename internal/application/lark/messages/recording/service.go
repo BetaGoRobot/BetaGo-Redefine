@@ -48,6 +48,7 @@ func getBackgroundSubmitter() taskSubmitter {
 }
 
 func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaData *xhandler.BaseMetaData) {
+	ctx = utils.DurableContext(ctx)
 	recordFunc := func(taskCtx context.Context) (err error) {
 		ctx = taskCtx
 		ctx, span := otel.Start(ctx)

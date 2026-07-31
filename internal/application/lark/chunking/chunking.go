@@ -7,6 +7,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xchunk"
 	"go.uber.org/zap"
 )
@@ -68,6 +69,7 @@ func SubmitMessage(ctx context.Context, msg xchunk.GenericMsg) error {
 	if msg == nil {
 		return nil
 	}
+	ctx = utils.DurableContext(ctx)
 	chatID := strings.TrimSpace(msg.GroupID())
 	if chatID != "" && !enabledForChat(ctx, chatID) {
 		logs.L().Ctx(ctx).Debug("Chunk submission skipped by config", zap.String("chat_id", chatID))
