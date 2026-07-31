@@ -1,5 +1,9 @@
 import axios, { AxiosInstance } from 'axios'
 import type {
+  AgenticBatchRequest,
+  AgenticBatchResult,
+  AgenticChatState,
+  AgenticUpdateRequest,
   ChatActivity,
   ChatCommands,
   ChatCommandTrend,
@@ -176,6 +180,40 @@ export class BotApi {
     return this.http
       .delete(`/chats/${encodeURIComponent(chatID)}/configs/${encodeURIComponent(key)}`)
       .then((r) => r.data)
+  }
+  async getAgenticRollout(chatID: string): Promise<AgenticChatState> {
+    return this.http
+      .get<AgenticChatState>(
+        `/chats/${encodeURIComponent(chatID)}/agentic-rollout`,
+      )
+      .then((response) => response.data)
+  }
+  async getAgenticRollouts(
+    chatIDs: string[],
+  ): Promise<ListResponse<AgenticChatState>> {
+    return this.http
+      .get<ListResponse<AgenticChatState>>('/agentic-rollouts', {
+        params: { chat_ids: chatIDs.join(',') },
+      })
+      .then((response) => response.data)
+  }
+  async updateAgenticRollout(
+    chatID: string,
+    request: AgenticUpdateRequest,
+  ): Promise<AgenticBatchResult> {
+    return this.http
+      .put<AgenticBatchResult>(
+        `/chats/${encodeURIComponent(chatID)}/agentic-rollout`,
+        request,
+      )
+      .then((response) => response.data)
+  }
+  async batchAgenticRollout(
+    request: AgenticBatchRequest,
+  ): Promise<AgenticBatchResult> {
+    return this.http
+      .post<AgenticBatchResult>('/agentic-rollouts/batch', request)
+      .then((response) => response.data)
   }
 }
 

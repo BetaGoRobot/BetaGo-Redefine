@@ -69,7 +69,73 @@ export interface ConfigView {
   int_max?: number
   read_only: boolean
   allow_custom: boolean
+  management_surface?: 'agentic_rollout' | string
   enum_options?: ConfigEnumOption[]
+}
+
+export type AgenticCapabilityKey =
+  | 'conversation_runtime'
+  | 'callback_continuation'
+  | 'parallel_evaluation'
+  | 'agent_card'
+
+export type AgenticOverride = 'inherit' | 'enabled' | 'disabled'
+
+export type AgenticSource =
+  | 'default'
+  | 'toml'
+  | 'global_config'
+  | 'chat_override'
+
+export interface AgenticBot {
+  id: string
+  name: string
+}
+
+export interface AgenticCapabilityState {
+  key: AgenticCapabilityKey
+  label: string
+  override: AgenticOverride
+  baseline: boolean
+  effective: boolean
+  source: AgenticSource
+  available: boolean
+  reason?: string
+}
+
+export interface AgenticChatState {
+  bot: AgenticBot
+  chat_id: string
+  revision: string
+  capabilities: AgenticCapabilityState[]
+}
+
+export type AgenticChanges = Partial<
+  Record<AgenticCapabilityKey, AgenticOverride>
+>
+
+export interface AgenticUpdateRequest {
+  expected_revision: string
+  changes: AgenticChanges
+}
+
+export interface AgenticBatchRequest {
+  dry_run: boolean
+  chat_ids: string[]
+  expected_revisions: Record<string, string>
+  changes: AgenticChanges
+}
+
+export interface AgenticBatchItem {
+  chat_id: string
+  before: AgenticChatState
+  after: AgenticChatState
+}
+
+export interface AgenticBatchResult {
+  bot?: AgenticBot
+  dry_run: boolean
+  items: AgenticBatchItem[]
 }
 
 export interface TokenTotals {
