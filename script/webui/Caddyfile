@@ -10,25 +10,29 @@
 :80 {
 	root * /usr/share/caddy
 
-	# Secure mode writes fail-closed request matchers and auth bridge responses
-	# here. Legacy mode leaves the imported file empty.
-	import auth-gate.caddy
+	# route 保留这里写下的处理顺序。鉴权拒绝必须先于代理和 SPA fallback；
+	# 否则 Caddy 的默认 directive 排序会把 handle 放在 respond 前面。
+	route {
+		# Secure mode writes fail-closed request matchers and auth bridge responses
+		# here. Legacy mode leaves the imported file empty.
+		import auth-gate.caddy
 
-	# 各 bot 后端反代：由 docker-entrypoint.sh 从 VITE_BOTS 渲染到 bots.caddy。
-	# 该文件也包含默认 /api 上游；安全模式下由 Caddy 注入服务端 bearer。
-	import bots.caddy
+		# 各 bot 后端反代：由 docker-entrypoint.sh 从 VITE_BOTS 渲染到 bots.caddy。
+		# 该文件也包含默认 /api 上游；安全模式下由 Caddy 注入服务端 bearer。
+		import bots.caddy
 
-	# /config.js 由 entrypoint 在容器启动时渲染，关掉缓存确保改 env 重启即生效。
-	@configjs path /config.js
-	handle @configjs {
-		header Cache-Control "no-store, must-revalidate"
-		header Pragma "no-cache"
-		file_server
-	}
+		# /config.js 由 entrypoint 在容器启动时渲染，关掉缓存确保改 env 重启即生效。
+		@configjs path /config.js
+		handle @configjs {
+			header Cache-Control "no-store, must-revalidate"
+			header Pragma "no-cache"
+			file_server
+		}
 
-	# 其余请求走静态文件，未命中回退到 index.html（SPA 路由）。
-	handle {
-		try_files {path} /index.html
-		file_server
+		# 其余请求走静态文件，未命中回退到 index.html（SPA 路由）。
+		handle {
+			try_files {path} /index.html
+			file_server
+		}
 	}
 }

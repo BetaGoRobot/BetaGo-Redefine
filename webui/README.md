@@ -38,6 +38,11 @@ npm run dev
   内注入上游请求；
 - 页面以「只读模式」启动，显式登录后进入「管理模式」。
 
+登录态由 Authelia 的会话 Cookie 维持。Cookie 由 Authelia 设置并随请求自动
+携带，WebUI JavaScript 只探测 `/auth/session`，不会读取 Cookie 内容。登录门户
+与 WebUI 分属不同子域时，需让 Authelia 的 `session.cookies` domain 覆盖共同
+父域，并保持 Cookie 为 `HttpOnly`、全站 HTTPS。
+
 `legacy` 模式保留原有浏览器 Token 行为，用于兼容可信内网中的历史部署。
 
 ## 构建

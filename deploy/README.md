@@ -23,7 +23,7 @@ docker compose up -d
 ```
 
 - WebUI：`https://${WEBUI_HOST}`（经前置 Traefik，websecure/443 + TLS）
-- 后端管理 API（直连调试）：`http://localhost:8090/api/...`（`WEBUI_BACKEND_PORT`）
+- 后端管理 API 默认只在 Compose 网络内提供，不暴露宿主端口
 
 ### Traefik 反代
 
@@ -71,6 +71,29 @@ access_control:
     - domain: webui.example.com
       policy: one_factor
 ```
+
+Authelia 的 Traefik ForwardAuth middleware 应使用当前授权端点
+`/api/authz/forward-auth`，并把可信身份头传回上游：
+
+```yaml
+http:
+  middlewares:
+    authelia:
+      forwardAuth:
+        address: http://authelia:9091/api/authz/forward-auth
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Name
+          - Remote-Email
+```
+
+浏览器保存的是 Authelia 自己签发的会话 Cookie，不是 Bot Token。若登录门户与
+WebUI 使用不同子域，请在 Authelia `session.cookies` 中把 Cookie domain 配成
+二者共同的父域，并保持 HTTPS；否则弹窗虽然完成登录，WebUI 的 `/auth/session`
+仍会判断为未登录。会话 Cookie 应保持 `HttpOnly`，前端只通过同源探测判断状态，
+不会读取 Cookie 内容。
 
 Compose 默认不再把 Bot 后端 `8090` 暴露到宿主。需要本机调试时，仅绑定回环
 地址：
