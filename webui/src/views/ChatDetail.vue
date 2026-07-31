@@ -38,9 +38,13 @@ import {
 import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
 import AgenticRolloutPanel from '../components/AgenticRolloutPanel.vue'
+import ManagementGate from '../components/ManagementGate.vue'
+import { managementSession } from '../auth/session'
+import { isAutheliaMode } from '../auth/runtime'
 
 const props = defineProps<{ chatID: string; botID?: string }>()
 const store = useFilterStore()
+const secureAuthMode = isAutheliaMode()
 
 const bot = computed<BotInstance | undefined>(() => {
   const id = props.botID || store.currentBotID || store.selectedBots[0]?.id
@@ -878,6 +882,36 @@ const deepCrossOption = computed<EChartsOption>(() => {
   })
 })
 
+async function loadProtectedIdentityInsights() {
+  if (secureAuthMode && !managementSession.authenticated.value) return
+  await Promise.all([loadTopSenders(), loadTopMentions()])
+}
+
+async function loadProtectedTab(tab = activeTab.value) {
+  if (secureAuthMode && !managementSession.authenticated.value) return
+  switch (tab) {
+    case 'members':
+      await loadMembers()
+      break
+    case 'features':
+      await loadFeatures()
+      break
+    case 'configs':
+      await loadConfigs()
+      break
+  }
+}
+
+function hideProtectedData() {
+  topSenders.value = null
+  topSendersError.value = ''
+  topMentions.value = null
+  topMentionsError.value = ''
+  members.value = []
+  features.value = []
+  configs.value = []
+}
+
 async function initAll() {
   if (!bot.value) return
   try {
@@ -890,18 +924,19 @@ async function initAll() {
   }
   await Promise.all([
     loadStats(),
-    loadFeatures(),
-    loadConfigs(),
-    loadMembers(),
     loadActivity(),
     loadKeywords(),
     loadCommands(),
-    loadTopSenders(),
     loadMessageKinds(),
     loadCommandTrend(),
-    loadTopMentions(),
     loadTopicTrend(),
   ])
+  if (!secureAuthMode || managementSession.authenticated.value) {
+    await Promise.all([
+      loadProtectedIdentityInsights(),
+      loadProtectedTab(),
+    ])
+  }
 }
 
 onMounted(initAll)
@@ -910,11 +945,23 @@ watch(() => store.window, () => {
   loadActivity()
   loadKeywords()
   loadCommands()
-  loadTopSenders()
   loadMessageKinds()
   loadCommandTrend()
-  loadTopMentions()
   loadTopicTrend()
+  void loadProtectedIdentityInsights()
+})
+watch(activeTab, (tab) => {
+  void loadProtectedTab(tab)
+})
+watch(managementSession.authenticated, async (authenticated) => {
+  if (!authenticated) {
+    hideProtectedData()
+    return
+  }
+  await Promise.all([
+    loadProtectedIdentityInsights(),
+    loadProtectedTab(),
+  ])
 })
 watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => {
   if (!props.chatID) return
@@ -1118,19 +1165,25 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           </div>
         </el-card>
 
-        <el-card v-loading="topSendersLoading" shadow="never" class="panel" style="margin-bottom: 12px">
-          <EChart
-            v-if="topSenders && topSenders.items.length > 0"
-            :option="sendersBar"
-            :height="`${Math.min(Math.max(topSenders.items.length, 6), 20) * 24 + 80}px`"
-          />
-          <div v-else-if="topSendersError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
-            发言排行不可用：{{ topSendersError }}
-          </div>
-          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
-            当前窗口内没有发言记录
-          </div>
-        </el-card>
+        <ManagementGate
+          title="登录后查看成员发言排行"
+          description="排行包含群成员身份与活跃度信息，公开模式下不读取这部分数据。"
+          compact
+        >
+          <el-card v-loading="topSendersLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+            <EChart
+              v-if="topSenders && topSenders.items.length > 0"
+              :option="sendersBar"
+              :height="`${Math.min(Math.max(topSenders.items.length, 6), 20) * 24 + 80}px`"
+            />
+            <div v-else-if="topSendersError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+              发言排行不可用：{{ topSendersError }}
+            </div>
+            <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+              当前窗口内没有发言记录
+            </div>
+          </el-card>
+        </ManagementGate>
 
         <el-card v-loading="messageKindsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
           <EChart
@@ -1160,19 +1213,25 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           </div>
         </el-card>
 
-        <el-card v-loading="topMentionsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
-          <EChart
-            v-if="topMentions && topMentions.items.length > 0"
-            :option="mentionsBar"
-            :height="`${Math.min(Math.max(topMentions.items.length, 6), 20) * 24 + 80}px`"
-          />
-          <div v-else-if="topMentionsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
-            被 @ 排行不可用：{{ topMentionsError }}
-          </div>
-          <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
-            当前窗口内没有 @ 互动
-          </div>
-        </el-card>
+        <ManagementGate
+          title="登录后查看被 @ 排行"
+          description="排行包含群成员身份与互动关系，公开模式下不读取这部分数据。"
+          compact
+        >
+          <el-card v-loading="topMentionsLoading" shadow="never" class="panel" style="margin-bottom: 12px">
+            <EChart
+              v-if="topMentions && topMentions.items.length > 0"
+              :option="mentionsBar"
+              :height="`${Math.min(Math.max(topMentions.items.length, 6), 20) * 24 + 80}px`"
+            />
+            <div v-else-if="topMentionsError" style="padding: 24px; text-align: center; color: #c45656; font-size: 12px">
+              被 @ 排行不可用：{{ topMentionsError }}
+            </div>
+            <div v-else style="padding: 24px; text-align: center; color: #909399; font-size: 12px">
+              当前窗口内没有 @ 互动
+            </div>
+          </el-card>
+        </ManagementGate>
 
         <el-card v-loading="topicTrendLoading" shadow="never" class="panel" style="margin-bottom: 12px">
           <EChart
@@ -1190,6 +1249,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
       </el-tab-pane>
 
       <el-tab-pane :label="`群成员${members.length ? ' (' + members.length + ')' : ''}`" name="members">
+        <ManagementGate title="登录后查看群成员">
         <div class="detail-control-row">
           <el-input v-model="memberKeyword" class="detail-member-search" placeholder="按名字或 open_id 搜索" clearable />
           <el-button :loading="memberLoading" @click="loadMembers">刷新</el-button>
@@ -1206,9 +1266,11 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           <el-table-column prop="open_id" label="Open ID" min-width="240" show-overflow-tooltip />
           <el-table-column prop="tenant_key" label="租户" min-width="160" show-overflow-tooltip />
         </el-table>
+        </ManagementGate>
       </el-tab-pane>
 
       <el-tab-pane label="功能开关" name="features">
+        <ManagementGate title="登录后管理功能开关">
         <el-table v-loading="featLoading" :data="features" stripe>
           <el-table-column prop="name" label="功能" min-width="160" />
           <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
@@ -1223,17 +1285,21 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
             </template>
           </el-table-column>
         </el-table>
+        </ManagementGate>
       </el-tab-pane>
 
       <el-tab-pane label="Agentic 灰度" name="agentic">
+        <ManagementGate title="登录后管理 Agentic 灰度">
         <AgenticRolloutPanel
           v-if="bot"
           :bot="bot"
           :chat-id="props.chatID"
         />
+        </ManagementGate>
       </el-tab-pane>
 
       <el-tab-pane label="配置" name="configs">
+        <ManagementGate title="登录后编辑机器人配置">
         <el-table v-loading="cfgLoading" :data="genericConfigs" stripe>
           <el-table-column prop="key" label="键" min-width="200" />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -1273,6 +1339,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
             </template>
           </el-table-column>
         </el-table>
+        </ManagementGate>
       </el-tab-pane>
     </el-tabs>
   </div>

@@ -25,4 +25,14 @@ describe('ChatDetail agentic integration', () => {
     expect(source).toContain('class="chat-detail-header"')
     expect(source).toContain('--ops-pine-900')
   })
+
+  it('keeps protected data behind management mode', () => {
+    expect(source).toContain('<ManagementGate')
+    expect(source).toContain('loadProtectedIdentityInsights')
+    expect(source).toContain('loadProtectedTab')
+    expect(source).toContain('managementSession.authenticated')
+    expect(source).not.toMatch(
+      /await Promise\.all\(\[[\s\S]*loadStats\(\),[\s\S]*loadMembers\(\),[\s\S]*\]\)/,
+    )
+  })
 })

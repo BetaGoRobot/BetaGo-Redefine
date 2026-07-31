@@ -90,6 +90,16 @@ export function createManagementSession(
     popup = null
   }
 
+  function startPolling() {
+    stopPolling()
+    pollTimer = window.setInterval(async () => {
+      if (popup?.closed) {
+        popup = null
+      }
+      if (await probe()) completeLogin()
+    }, pollIntervalMs)
+  }
+
   function beginLogin(): boolean {
     if (!secure) {
       authenticated.value = true
@@ -105,18 +115,14 @@ export function createManagementSession(
       'popup=yes,width=520,height=720,resizable=yes,scrollbars=yes',
     )
     if (!popup) {
-      loginBusy.value = false
+      // Keep probing while the gate offers a user-initiated new-tab fallback.
+      // No write callback is retained or replayed.
+      loginBusy.value = true
+      startPolling()
       return false
     }
     loginBusy.value = true
-    stopPolling()
-    pollTimer = window.setInterval(async () => {
-      if (!popup || popup.closed) {
-        completeLogin()
-        return
-      }
-      if (await probe()) completeLogin()
-    }, pollIntervalMs)
+    startPolling()
     return true
   }
 

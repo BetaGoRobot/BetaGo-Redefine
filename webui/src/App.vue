@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useFilterStore } from './stores/filter'
+import { isAutheliaMode } from './auth/runtime'
+import { managementSession } from './auth/session'
 
 const route = useRoute()
 const store = useFilterStore()
+const autheliaMode = isAutheliaMode()
+const management = managementSession
 
 const selectedBots = computed(() => store.selectedBots)
 const activeCount = computed(() =>
@@ -13,6 +17,10 @@ const activeCount = computed(() =>
 const chatsActive = computed(() =>
   route.name === 'chats' || route.name === 'chat-detail',
 )
+
+onMounted(() => {
+  if (autheliaMode) void management.probe()
+})
 </script>
 
 <template>
@@ -53,19 +61,36 @@ const chatsActive = computed(() =>
           </router-link>
         </nav>
 
-        <div
-          class="app-runtime-status"
-          :class="{ 'is-ready': activeCount > 0, 'is-empty': !selectedBots.length }"
-        >
-          <span class="app-runtime-status__pulse" aria-hidden="true" />
-          <span v-if="selectedBots.length">
-            {{ selectedBots.length }} 个 Bot
-            <small>· {{ activeCount }} 在线</small>
-          </span>
-          <span v-else>
-            尚未连接 Bot
-            <small>· 等待配置</small>
-          </span>
+        <div class="app-header__actions">
+          <button
+            v-if="autheliaMode"
+            class="app-auth-status"
+            :class="{ 'is-authenticated': management.authenticated.value }"
+            type="button"
+            :disabled="management.checking.value"
+            @click="!management.authenticated.value && management.beginLogin()"
+          >
+            <span class="app-auth-status__mark" aria-hidden="true" />
+            <span>
+              {{ management.authenticated.value ? '管理模式' : '只读模式' }}
+              <small v-if="!management.authenticated.value">· 登录管理</small>
+            </span>
+          </button>
+
+          <div
+            class="app-runtime-status"
+            :class="{ 'is-ready': activeCount > 0, 'is-empty': !selectedBots.length }"
+          >
+            <span class="app-runtime-status__pulse" aria-hidden="true" />
+            <span v-if="selectedBots.length">
+              {{ selectedBots.length }} 个 Bot
+              <small>· {{ activeCount }} 在线</small>
+            </span>
+            <span v-else>
+              尚未连接 Bot
+              <small>· 等待配置</small>
+            </span>
+          </div>
         </div>
       </div>
     </header>
@@ -255,6 +280,58 @@ const chatsActive = computed(() =>
   font-weight: 740;
 }
 
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 0.45rem;
+}
+
+.app-auth-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #e1c997;
+  border-radius: 999px;
+  background: #fff8e9;
+  color: #835a20;
+  font-size: 0.72rem;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.app-auth-status:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.app-auth-status.is-authenticated {
+  border-color: #bdd5cc;
+  background: #eef7f2;
+  color: var(--ops-pine-700);
+  cursor: default;
+}
+
+.app-auth-status__mark {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: var(--ops-amber);
+  box-shadow: 0 0 0 0.2rem rgb(215 154 71 / 13%);
+}
+
+.app-auth-status.is-authenticated .app-auth-status__mark {
+  background: var(--ops-teal);
+  box-shadow: 0 0 0 0.2rem rgb(74 143 121 / 13%);
+}
+
+.app-auth-status small {
+  font-size: inherit;
+  font-weight: 600;
+}
+
 .app-runtime-status small {
   color: var(--ops-muted);
   font-size: inherit;
@@ -294,10 +371,16 @@ const chatsActive = computed(() =>
   }
 
   .app-brand__copy small,
-  .app-runtime-status small {
+  .app-runtime-status small,
+  .app-auth-status small {
     display: none;
   }
 
+  .app-header__actions {
+    gap: 0.3rem;
+  }
+
+  .app-auth-status,
   .app-runtime-status {
     min-height: 2.4rem;
     padding-inline: 0.65rem;
