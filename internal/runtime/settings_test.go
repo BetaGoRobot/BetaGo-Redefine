@@ -212,6 +212,22 @@ func TestAgentCardRolloutModesEnforceShadowAllowlistAndOn(t *testing.T) {
 	}
 }
 
+func TestEvaluationAllowlistMayStartEmptyForDynamicRollout(t *testing.T) {
+	settings, err := EvaluationRolloutSettings(&infraConfig.BaseConfig{
+		RuntimeConfig: &infraConfig.RuntimeConfig{
+			EvaluationMode:    "allowlist",
+			EvaluationChatIDs: []string{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("empty evaluation allowlist should be ready for dynamic rollout: %v", err)
+	}
+	if !settings.Enabled() || settings.Allows("oc_any") ||
+		settings.AllowedChatCount() != 0 {
+		t.Fatalf("settings = %#v", settings)
+	}
+}
+
 func TestEvaluationRolloutDefaultsOff(t *testing.T) {
 	t.Parallel()
 
@@ -269,16 +285,6 @@ func TestEvaluationRolloutRejectsUnsafeConfiguration(t *testing.T) {
 		{
 			name:   "unknown mode",
 			config: &infraConfig.RuntimeConfig{EvaluationMode: "shadow"},
-		},
-		{
-			name:   "empty allowlist",
-			config: &infraConfig.RuntimeConfig{EvaluationMode: "allowlist"},
-		},
-		{
-			name: "blank allowlist",
-			config: &infraConfig.RuntimeConfig{
-				EvaluationMode: "allowlist", EvaluationChatIDs: []string{" "},
-			},
 		},
 		{
 			name: "duration too large",

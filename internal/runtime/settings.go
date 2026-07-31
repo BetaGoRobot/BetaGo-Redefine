@@ -86,12 +86,6 @@ func EvaluationRolloutSettings(
 			settings.allowedChats[chatID] = struct{}{}
 		}
 	}
-	if settings.Mode == EvaluationModeAllowlist &&
-		len(settings.allowedChats) == 0 {
-		return EvaluationSettings{}, fmt.Errorf(
-			"evaluation allowlist mode requires at least one chat id",
-		)
-	}
 	return settings, nil
 }
 

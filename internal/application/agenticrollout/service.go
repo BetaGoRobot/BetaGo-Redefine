@@ -14,8 +14,6 @@ import (
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 )
 
-const keyAgentCardEnabled appconfig.ConfigKey = "agent_card_enabled"
-
 type ServiceOptions struct {
 	Store     ConfigStore
 	Static    StaticPolicies
@@ -475,7 +473,7 @@ func configKey(capability Capability) appconfig.ConfigKey {
 	case ParallelEvaluation:
 		return appconfig.KeyConversationParallelEvaluationEnabled
 	case AgentCard:
-		return keyAgentCardEnabled
+		return appconfig.KeyAgentCardEnabled
 	default:
 		return ""
 	}

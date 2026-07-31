@@ -249,6 +249,21 @@ func TestConversationRuntimeFlagsDefaultOffAndHonorChatScope(t *testing.T) {
 	}
 }
 
+func TestAgenticRolloutDefinitionsUseDedicatedManagementSurface(t *testing.T) {
+	for _, key := range []ConfigKey{
+		KeyConversationRuntimeEnabled,
+		KeyConversationCallbackContinuationEnabled,
+		KeyConversationParallelEvaluationEnabled,
+		KeyAgentCardEnabled,
+	} {
+		def, ok := GetConfigDefinition(key)
+		if !ok || def.ValueType != "bool" ||
+			def.ManagementSurface != ManagementSurfaceAgenticRollout {
+			t.Fatalf("definition %q = %#v, %v", key, def, ok)
+		}
+	}
+}
+
 func TestGetBoolOverrideDistinguishesExplicitFalseFromMissing(t *testing.T) {
 	manager := NewManager()
 	ctx := context.Background()

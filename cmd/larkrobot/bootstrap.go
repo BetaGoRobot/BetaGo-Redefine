@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/agenticrollout"
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcard"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
@@ -87,6 +88,7 @@ type appComponents struct {
 	evaluationSearchMu           sync.Mutex
 	evaluationSearchReady        bool
 	agentCardPatchReconciler     *agentcard.PatchReconciler
+	agenticRollouts              *agenticrollout.Service
 }
 
 const (
@@ -206,6 +208,25 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 			"agent card delivery requires complete lark bot identity and secret",
 		)
 	}
+	agenticRollouts, err := agenticrollout.NewService(
+		agenticrollout.ServiceOptions{
+			Store:     appconfig.GetManager(),
+			Namespace: runtimeTenant.ID,
+			Static: agenticrollout.StaticPolicies{
+				EvaluationAvailable: evaluationSettings.Enabled(),
+				EvaluationAllows:    evaluationSettings.Allows,
+				AgentCardAvailable: agentCardSettings.ToolsAvailable() &&
+					!agentCardSettings.Shadow(),
+				AgentCardAllows: agentCardSettings.CanSend,
+				AgentCardUnavailableReason: agentCardUnavailableReason(
+					agentCardSettings,
+				),
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create agentic rollout service: %w", err)
+	}
 	executorConfigs := appruntime.ExecutorConfigs(cfg)
 	if err := validateConversationRuntimeBudgets(executorConfigs); err != nil {
 		return nil, err
@@ -222,7 +243,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 	conversationRuntime, err := agentruntime.NewRuntime(agentruntime.RuntimeOptions{
 		ConversationExecutor: conversationExecutor,
 		CallbackContinuationEnabled: func(ctx context.Context, chatID string) bool {
-			return appconfig.IsConversationCallbackContinuationEnabled(ctx, chatID, "")
+			return agenticRollouts.CallbackContinuationEnabled(ctx, chatID)
 		},
 	})
 	if err != nil {
@@ -269,14 +290,15 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		messages.MessageHandlerOptions{
 			InteractionStarter: conversationRuntime,
 			FeedbackSink:       feedbackRouter,
-			AgentCardEnabled: func(_ context.Context, chatID string) bool {
+			RuntimeEnabled:     agenticRollouts.RuntimeEnabled,
+			AgentCardEnabled: func(ctx context.Context, chatID string) bool {
 				if agentCardSettings.Shadow() {
 					return true
 				}
-				return agentCardSettings.CanSend(chatID)
+				return agenticRollouts.AgentCardEnabled(ctx, chatID)
 			},
 			EvaluationEnabled: func(ctx context.Context, chatID string) bool {
-				if !evaluationRolloutAllows(ctx, evaluationSettings, chatID) {
+				if !agenticRollouts.EvaluationEnabled(ctx, chatID) {
 					return false
 				}
 				if err := ensureEvaluationSearchIndex(ctx, cfg, components); err != nil {
@@ -321,6 +343,7 @@ func newAppComponents(cfg *infraConfig.BaseConfig) (*appComponents, error) {
 		evaluationIndexAlias:         evaluationIndexAlias,
 		schemaBootstrap:              schemaBootstrap,
 		searchBootstrap:              searchBootstrap,
+		agenticRollouts:              agenticRollouts,
 	}
 	return components, nil
 }
@@ -348,20 +371,17 @@ func validateConversationRuntimeBudgets(configs map[string]appruntime.ExecutorCo
 	return nil
 }
 
-func evaluationRolloutAllows(
-	ctx context.Context,
-	settings appruntime.EvaluationSettings,
-	chatID string,
-) bool {
-	if enabled, configured := appconfig.GetManager().GetBoolOverride(
-		ctx,
-		appconfig.KeyConversationParallelEvaluationEnabled,
-		chatID,
-		"",
-	); configured {
-		return enabled
+func agentCardUnavailableReason(
+	settings appruntime.AgentCardSettings,
+) string {
+	switch {
+	case settings.Shadow():
+		return "agent_card_shadow_mode"
+	case !settings.ToolsAvailable():
+		return "agent_card_off"
+	default:
+		return ""
 	}
-	return settings.Allows(chatID)
 }
 
 func ensureEvaluationSearchIndex(
@@ -765,7 +785,12 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 					Compiler:        agentCardCompiler,
 					ProjectionIndex: components.conversationIndexAlias,
 					Shadow:          components.agentCardSettings.Shadow(),
-					CanSend:         components.agentCardSettings.CanSend,
+					CanSend: func(chatID string) bool {
+						return components.agenticRollouts.AgentCardEnabled(
+							context.Background(),
+							chatID,
+						)
+					},
 				}
 				if !components.agentCardSettings.Shadow() {
 					binder, binderErr := agentcard.NewBinder(
@@ -1016,9 +1041,8 @@ func addConversationEvaluationModule(
 				Repository: repository, PreWindowSource: evaluationwindow.OpenSearchPreWindowSource{},
 				CandidateSubmitter: repository,
 				EnsureCohortForChat: func(chatID string) bool {
-					return evaluationRolloutAllows(
+					return components.agenticRollouts.EvaluationEnabled(
 						context.Background(),
-						components.evaluationSettings,
 						chatID,
 					)
 				},

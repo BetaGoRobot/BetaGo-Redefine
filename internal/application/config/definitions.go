@@ -15,16 +15,24 @@ type ConfigEnumOption struct {
 }
 
 type ConfigDefinition struct {
-	Key             ConfigKey
-	Description     string
-	ValueType       string
-	IntMin          int
-	IntMax          int
-	EnumGroup       string
-	EnumOptionsFunc func() []ConfigEnumOption
-	AllowCustom     bool
-	ReadOnly        bool
+	Key               ConfigKey
+	Description       string
+	ValueType         string
+	IntMin            int
+	IntMax            int
+	EnumGroup         string
+	EnumOptionsFunc   func() []ConfigEnumOption
+	AllowCustom       bool
+	ReadOnly          bool
+	ManagementSurface ManagementSurface
 }
+
+type ManagementSurface string
+
+const (
+	ManagementSurfaceGeneric        ManagementSurface = ""
+	ManagementSurfaceAgenticRollout ManagementSurface = "agentic_rollout"
+)
 
 var configDefinitions = []ConfigDefinition{
 	{
@@ -80,19 +88,28 @@ var configDefinitions = []ConfigDefinition{
 		ValueType:   "bool",
 	},
 	{
-		Key:         KeyConversationRuntimeEnabled,
-		Description: "是否为当前群聊启用 Conversation Runtime",
-		ValueType:   "bool",
+		Key:               KeyConversationRuntimeEnabled,
+		Description:       "是否为当前群聊启用 Conversation Runtime",
+		ValueType:         "bool",
+		ManagementSurface: ManagementSurfaceAgenticRollout,
 	},
 	{
-		Key:         KeyConversationCallbackContinuationEnabled,
-		Description: "是否为当前群聊启用 Conversation Callback LLM 续接",
-		ValueType:   "bool",
+		Key:               KeyConversationCallbackContinuationEnabled,
+		Description:       "是否为当前群聊启用 Conversation Callback LLM 续接",
+		ValueType:         "bool",
+		ManagementSurface: ManagementSurfaceAgenticRollout,
 	},
 	{
-		Key:         KeyConversationParallelEvaluationEnabled,
-		Description: "是否为当前群聊启用 Control/Candidate 并轨评测",
-		ValueType:   "bool",
+		Key:               KeyConversationParallelEvaluationEnabled,
+		Description:       "是否为当前群聊启用 Control/Candidate 并轨评测",
+		ValueType:         "bool",
+		ManagementSurface: ManagementSurfaceAgenticRollout,
+	},
+	{
+		Key:               KeyAgentCardEnabled,
+		Description:       "是否为当前群聊启用 Agent Card 实时投递",
+		ValueType:         "bool",
+		ManagementSurface: ManagementSurfaceAgenticRollout,
 	},
 	{
 		Key:         KeyMusicCardInThread,

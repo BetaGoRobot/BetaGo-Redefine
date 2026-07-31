@@ -39,6 +39,7 @@ const (
 	KeyConversationRuntimeEnabled              ConfigKey = "conversation_runtime_enabled"
 	KeyConversationCallbackContinuationEnabled ConfigKey = "conversation_callback_continuation_enabled"
 	KeyConversationParallelEvaluationEnabled   ConfigKey = "conversation_parallel_evaluation_enabled"
+	KeyAgentCardEnabled                        ConfigKey = "agent_card_enabled"
 
 	// 字符串配置
 	KeyChatMode            ConfigKey = "chat_mode"

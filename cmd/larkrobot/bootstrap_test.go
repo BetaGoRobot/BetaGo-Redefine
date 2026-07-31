@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/agenticrollout"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentruntime"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/tenant"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
@@ -57,6 +58,21 @@ func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T
 		components.feedbackRouter == nil {
 		t.Fatalf("conversation components are incomplete: %#v", components)
 	}
+	if components.agenticRollouts == nil {
+		t.Fatal("agentic rollout service is unavailable")
+	}
+	state, err := components.agenticRollouts.ResolveChat(
+		context.Background(),
+		"oc_default",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Capability(agenticrollout.ConversationRuntime).Available ||
+		state.Capability(agenticrollout.ConversationRuntime).Effective ||
+		state.Capability(agenticrollout.ParallelEvaluation).Available {
+		t.Fatalf("default rollout state = %#v", state)
+	}
 	if components.conversationWorker.Critical() ||
 		components.conversationProjectionWorker.Critical() {
 		t.Fatal("dynamic conversation and OpenSearch projection workers must be non-critical")
@@ -77,6 +93,39 @@ func TestNewAppComponentsBuildsConversationRuntimeBeforeLateBinding(t *testing.T
 	}
 	if _, err := components.conversationRuntime.StartScheduleEdit(context.Background(), agentruntime.StartScheduleEditRequest{}); err == nil {
 		t.Fatal("conversation runtime should remain unbound before application_services starts")
+	}
+}
+
+func TestNewAppComponentsSupportsEmptyStaticAllowlistsForWebUIRollout(
+	t *testing.T,
+) {
+	cfg := testConversationRuntimeConfig()
+	cfg.RuntimeConfig.EvaluationMode = "allowlist"
+	cfg.RuntimeConfig.EvaluationChatIDs = []string{}
+	cfg.AgentCardConfig = &infraConfig.AgentCardConfig{
+		Enabled: true,
+		Mode:    "allowlist",
+	}
+
+	components, err := newAppComponents(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := components.agenticRollouts.ResolveChat(
+		context.Background(),
+		"oc_ready",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range []agenticrollout.Capability{
+		agenticrollout.ParallelEvaluation,
+		agenticrollout.AgentCard,
+	} {
+		got := state.Capability(capability)
+		if !got.Available || got.Effective || got.Override != agenticrollout.OverrideInherit {
+			t.Fatalf("%s state = %#v", capability, got)
+		}
 	}
 }
 
