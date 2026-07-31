@@ -27,8 +27,18 @@ npm run dev
 
 ## 鉴权
 
-后端配置 `webui_config.auth_token` 后，写操作（开关 / 配置修改）需要 Bearer Token。
-首次进行写操作时，前端会提示输入 Token，保存在浏览器 localStorage（key: `betago_webui_token`）。
+生产部署推荐设置 `WEBUI_AUTH_MODE=authelia`，由 Traefik 只对写操作和敏感读取
+应用 Authelia ForwardAuth。普通 Dashboard、会话列表和匿名统计读取不要求登录。
+
+安全模式下：
+
+- 浏览器不保存、展示或发送 Bot Bearer Token；
+- `/config.js` 只包含 Bot 的公开展示字段；
+- Caddy 从 `BACKEND_AUTH_TOKEN` 或多 Bot `VITE_BOTS[].token` 读取凭据并在容器
+  内注入上游请求；
+- 页面以「只读模式」启动，显式登录后进入「管理模式」。
+
+`legacy` 模式保留原有浏览器 Token 行为，用于兼容可信内网中的历史部署。
 
 ## 构建
 
@@ -70,4 +80,3 @@ docker run -d --name betago-webui \
 ```
 
 若前后端在同一 docker 网络，`BACKEND_URL` 可直接用后端容器名，例如 `http://larkrobot:8090`。
-

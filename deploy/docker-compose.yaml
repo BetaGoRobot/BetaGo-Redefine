@@ -57,9 +57,6 @@ services:
       BETAGO_CONFIG_PATH: /app/config.toml
     volumes:
       - ./config.toml:/app/config.toml:ro
-    ports:
-      # 把后端 WebUI API 端口暴露到宿主，方便直接调试（与 config.toml 的 webui_config.addr 对应）。
-      - "${WEBUI_BACKEND_PORT:-8090}:8090"
 
   webui:
     image: ${WEBUI_IMAGE:-kevinmatt/betago_webui:latest}
@@ -70,9 +67,12 @@ services:
     environment:
       # 同一 compose 网络内用服务名直连后端（Caddy 反代上游）。
       BACKEND_URL: "http://larkrobot:8090"
+      # legacy 保持历史浏览器 bearer；authelia 将 bearer 留在 Caddy 内。
+      WEBUI_AUTH_MODE: "${WEBUI_AUTH_MODE:-legacy}"
+      BACKEND_AUTH_TOKEN: "${BOT_WEBUI_AUTH_TOKEN:-}"
       # 多 bot 预设：JSON 数组字符串，运行时由 entrypoint 渲染到 /config.js。
-      # baseURL 必须是浏览器可达的地址（compose 服务名仅 Caddy 反代用，不要写在这里）。
-      # 留空走默认 default-local（同源 /api）。
+      # baseURL 仅供容器内 Caddy 访问；authelia 模式不会把它或 token 下发浏览器。
+      # 留空时使用默认同源 /api 上游。
       # VITE_BOTS: '[{"id":"main","name":"主机器人","baseURL":"","token":""}]'
       # VITE_API_BASE: ""
     # 前面已有 Traefik(docker provider, labels 方式)做反代。
@@ -80,9 +80,25 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.betago-webui.rule=Host(`${WEBUI_HOST:-webui.example.com}`)"
+      - "traefik.http.routers.betago-webui.priority=10"
+      - "traefik.http.routers.betago-webui.middlewares=betago-webui-strip-auth-headers@docker"
       - "traefik.http.routers.betago-webui.entrypoints=websecure"
       - "traefik.http.routers.betago-webui.tls=true"
       - "traefik.http.routers.betago-webui.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le}"
+      # 写方法、敏感 GET 和登录桥使用更高优先级，并交给 Authelia。
+      - "traefik.http.routers.betago-webui-protected.rule=Host(`${WEBUI_HOST:-webui.example.com}`) && ((((PathPrefix(`/api/`) || PathPrefix(`/bot/`)) && (Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))) || Path(`/auth/session`) || Path(`/auth/login`) || PathRegexp(`^/(bot/[^/]+/)?api/(evaluations(/.*)?|agentic-rollouts(/.*)?|chats/[^/]+/(members|configs|features|agentic-rollout)(/.*)?|chats/[^/]+/insights/(top_senders|top_mentions)(/.*)?)$$`)))"
+      - "traefik.http.routers.betago-webui-protected.priority=100"
+      - "traefik.http.routers.betago-webui-protected.entrypoints=websecure"
+      - "traefik.http.routers.betago-webui-protected.tls=true"
+      - "traefik.http.routers.betago-webui-protected.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le}"
+      - "traefik.http.routers.betago-webui-protected.middlewares=betago-webui-strip-auth-headers@docker,${AUTHELIA_MIDDLEWARE:-authelia@docker}"
+      - "traefik.http.routers.betago-webui-protected.service=betago-webui"
+      # 无论走公开还是受保护路由，都先丢弃客户端伪造的身份头；
+      # protected 路由随后由 ForwardAuth 写入可信 Remote-*。
+      - "traefik.http.middlewares.betago-webui-strip-auth-headers.headers.customrequestheaders.Remote-User="
+      - "traefik.http.middlewares.betago-webui-strip-auth-headers.headers.customrequestheaders.Remote-Groups="
+      - "traefik.http.middlewares.betago-webui-strip-auth-headers.headers.customrequestheaders.Remote-Name="
+      - "traefik.http.middlewares.betago-webui-strip-auth-headers.headers.customrequestheaders.Remote-Email="
       - "traefik.http.services.betago-webui.loadbalancer.server.port=80"
     # 经 Traefik 访问时无需再把端口暴露到宿主；如需本地直连可取消下面注释。
     # ports:

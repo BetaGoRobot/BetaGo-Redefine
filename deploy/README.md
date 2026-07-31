@@ -51,7 +51,39 @@ docker compose down -v         # 停止并清除 pgdata/redisdata
 
 ### 鉴权
 
-后端 `config.toml` 配了 `webui_config.auth_token` 后，前端写操作（改开关 / 配置）需要在页面右上角「设置 Token」填入同一值；只读浏览不需要。
+推荐使用现有 Traefik + Authelia 部署选择性鉴权：
+
+```dotenv
+WEBUI_AUTH_MODE=authelia
+AUTHELIA_MIDDLEWARE=authelia@docker
+BOT_WEBUI_AUTH_TOKEN=与后端_webui_config.auth_token_相同的值
+```
+
+普通统计读取保持匿名开放；全部写操作以及成员、配置、Agentic 灰度和评测等
+敏感读取要求 Authelia `one_factor` Session。Bot Token 只进入 WebUI 容器内的
+Caddy 上游配置，不会写入浏览器可读的 `/config.js` 或 localStorage。
+
+Authelia 中需确保该 WebUI 域名采用 `one_factor` 策略，例如：
+
+```yaml
+access_control:
+  rules:
+    - domain: webui.example.com
+      policy: one_factor
+```
+
+Compose 默认不再把 Bot 后端 `8090` 暴露到宿主。需要本机调试时，仅绑定回环
+地址：
+
+```yaml
+services:
+  larkrobot:
+    ports:
+      - "127.0.0.1:8090:8090"
+```
+
+未设置 `WEBUI_AUTH_MODE=authelia` 时保留历史 legacy 行为，仅用于已有可信内网
+部署。
 
 ## Grafana 大盘
 
