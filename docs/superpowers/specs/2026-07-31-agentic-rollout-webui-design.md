@@ -255,8 +255,8 @@ Response:
       "key": "conversation_runtime",
       "label": "Conversation Runtime",
       "override": "inherit",
-      "baseline": "disabled",
-      "effective": "disabled",
+      "baseline": false,
+      "effective": false,
       "source": "default",
       "available": true,
       "reason": ""
@@ -479,6 +479,25 @@ override exists. With these baselines, every chat initially displays
 
 The evaluation tenant index is created automatically on the first effective
 evaluation enable. Existing PostgreSQL schema bootstrap remains automatic.
+
+The shipped deployment example uses these ready-but-empty allowlists. This is
+intentional: `allowlist + []` initializes each optional capability without
+enabling any chat. The WebUI then writes an explicit tenant-scoped chat
+override. No tenant identity is accepted from the browser request.
+
+## 12.1 Implemented compatibility contract
+
+- Existing TOML allowlists remain baselines and continue to work.
+- Existing global dynamic values remain higher-priority baselines.
+- Missing chat overrides remain `inherit`; they do not create database rows.
+- Restoring `inherit` deletes the chat override instead of persisting a third
+  sentinel value.
+- The generic Config API still returns all keys, now with
+  `management_surface="agentic_rollout"` so the refreshed WebUI can avoid
+  rendering duplicate controls.
+- Rollout reads remain unauthenticated for compatibility with existing WebUI
+  reads. PUT/POST use the existing Bearer middleware when
+  `webui_config.auth_token` is configured.
 
 ## 13. Observability
 

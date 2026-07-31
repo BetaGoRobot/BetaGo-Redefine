@@ -47,7 +47,9 @@
     conversation_projection_timeout_seconds = 60
     # 以下两个索引名都是 base name；启动时自动追加当前 Bot 的租户后缀并建 alias。
     conversation_event_index = "agent_conversation_events"
-    evaluation_mode = "off" # off | allowlist | on
+    # 保持基础设施 ready，但空 allowlist 仍让所有 chat 默认关闭；
+    # 之后可在 WebUI 按当前 Bot + chat 显式开启。
+    evaluation_mode = "allowlist" # off | allowlist | on
     evaluation_chat_ids = []
     evaluation_cohort_duration_hours = 24
     evaluation_candidate_workers = 2
@@ -64,11 +66,12 @@
     evaluation_projection_batch_size = 100
     evaluation_index = "agent_conversation_evaluations"
 
-# Agent 自主卡片默认关闭。shadow 会完整校验与编译，但绝不落库或发送；
-# allowlist 只向指定 chat 暴露工具并允许发送；on 为全量开启。
+# Agent Card 基础设施保持 ready，但空 allowlist 仍让所有 chat 默认关闭；
+# 之后可在 WebUI 按当前 Bot + chat 显式开启。shadow 会完整校验与编译，
+# 但绝不落库或发送；on 为全量开启。
 [agent_card]
-    enabled = false
-    mode = "off" # off | shadow | allowlist | on
+    enabled = true
+    mode = "allowlist" # off | shadow | allowlist | on
     allow_chat_ids = []
     max_repair_attempts = 2
     default_expiry_seconds = 600
