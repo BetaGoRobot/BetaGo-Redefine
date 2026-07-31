@@ -57,6 +57,7 @@ type Options struct {
 	AppID               string
 	BotOpenID           string
 	EvaluationWorkbench EvaluationWorkbench
+	AgenticRollouts     AgenticRolloutService
 }
 
 // Module 承载 WebUI 的 HTTP 服务生命周期，实现 runtime.Module 契约。

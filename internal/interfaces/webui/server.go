@@ -40,6 +40,7 @@ type Server struct {
 	appID       string
 	botOpenID   string
 	evaluations EvaluationWorkbench
+	rollouts    AgenticRolloutService
 }
 
 // NewServer 根据注入的依赖构造 Server。db 由模块在 Init 阶段惰性解析后传入。
@@ -90,6 +91,7 @@ func NewServer(opts Options, db *gorm.DB) *Server {
 		appID:            strings.TrimSpace(opts.AppID),
 		botOpenID:        strings.TrimSpace(opts.BotOpenID),
 		evaluations:      evaluations,
+		rollouts:         opts.AgenticRollouts,
 	}
 }
 
@@ -115,6 +117,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats/{chatID}/configs", s.handleListConfigs)
 	mux.HandleFunc("PUT /api/chats/{chatID}/configs/{key}", s.handleSetConfig)
 	mux.HandleFunc("DELETE /api/chats/{chatID}/configs/{key}", s.handleDeleteConfig)
+	mux.HandleFunc("GET /api/chats/{chatID}/agentic-rollout", s.handleGetAgenticRollout)
+	mux.HandleFunc("PUT /api/chats/{chatID}/agentic-rollout", s.handlePutAgenticRollout)
+	mux.HandleFunc("GET /api/agentic-rollouts", s.handleListAgenticRollouts)
+	mux.HandleFunc("POST /api/agentic-rollouts/batch", s.handleBatchAgenticRollouts)
 	mux.HandleFunc("GET /api/evaluations", s.handleListEvaluations)
 	mux.HandleFunc("GET /api/evaluations/{episodeID}", s.handleGetEvaluation)
 	mux.HandleFunc("POST /api/evaluations/{episodeID}/judgments", s.handleAppendEvaluationJudgment)

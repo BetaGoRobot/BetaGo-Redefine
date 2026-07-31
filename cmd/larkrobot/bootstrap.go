@@ -969,8 +969,9 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 			}
 			return ""
 		}(),
-		AppID:     cfg.LarkConfig.AppID,
-		BotOpenID: cfg.LarkConfig.BotOpenID,
+		AppID:           cfg.LarkConfig.AppID,
+		BotOpenID:       cfg.LarkConfig.BotOpenID,
+		AgenticRollouts: components.agenticRollouts,
 	}))
 	app.AddModule(appruntime.NewFuncModule(appruntime.FuncModuleOptions{
 		Name:     "scheduler",

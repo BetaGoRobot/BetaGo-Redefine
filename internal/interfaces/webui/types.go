@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/agenticrollout"
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 )
 
@@ -21,6 +22,37 @@ type ConfigManager interface {
 	GetBool(ctx context.Context, key appconfig.ConfigKey, chatID, openID string) bool
 	SetString(ctx context.Context, key appconfig.ConfigKey, scope appconfig.ConfigScope, chatID, openID, value string) error
 	DeleteConfig(ctx context.Context, key appconfig.ConfigKey, scope appconfig.ConfigScope, chatID, openID string) error
+}
+
+// AgenticRolloutService is the single policy surface shared by the WebUI and
+// the live runtime. Bot and tenant identities are deliberately absent from
+// every method: the injected service is already bound to the current process.
+type AgenticRolloutService interface {
+	ResolveChat(
+		context.Context,
+		string,
+	) (agenticrollout.ChatState, error)
+	ResolveChats(
+		context.Context,
+		[]string,
+	) ([]agenticrollout.ChatState, error)
+	Apply(
+		context.Context,
+		agenticrollout.BatchRequest,
+	) (agenticrollout.BatchResult, error)
+}
+
+// AgenticBotView identifies the bot instance that owns a rollout response.
+// It is informational only and is never accepted in mutation payloads.
+type AgenticBotView struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// AgenticRolloutView decorates domain state with the server-bound bot.
+type AgenticRolloutView struct {
+	agenticrollout.ChatState
+	Bot AgenticBotView `json:"bot"`
 }
 
 // ChatSummary 是群列表项，强调头像 ID/URL 等基础信息。
@@ -141,9 +173,9 @@ type ChatTopicTrendFunc func(ctx context.Context, chatID string, since time.Time
 
 // ChatActivity 是发言活跃度热力图的聚合结果。
 type ChatActivity struct {
-	WindowDays  int                  `json:"window_days"`
-	Total       int64                `json:"total"`
-	HourOfWeek  []HourOfWeekBucket   `json:"hour_of_week"`
+	WindowDays int                `json:"window_days"`
+	Total      int64              `json:"total"`
+	HourOfWeek []HourOfWeekBucket `json:"hour_of_week"`
 }
 
 // HourOfWeekBucket 描述「周 N · 第 H 小时」一格的发言量。
@@ -156,8 +188,8 @@ type HourOfWeekBucket struct {
 
 // ChatKeywords 是关键词云聚合结果。
 type ChatKeywords struct {
-	WindowDays int              `json:"window_days"`
-	Items      []KeywordCount   `json:"items"`
+	WindowDays int            `json:"window_days"`
+	Items      []KeywordCount `json:"items"`
 }
 
 // KeywordCount 描述一个词在窗口内出现的文档数（一条消息只算一次）。
@@ -228,10 +260,10 @@ type ChatCommandTrend struct {
 // ChatTopMentions 是 @ 互动榜聚合结果。Sampled 为本次实际扫描的消息数，
 // Truncated 表示是否还有未覆盖到的样本（窗口内 mentions 非空消息数 > sampleSize）。
 type ChatTopMentions struct {
-	WindowDays int             `json:"window_days"`
-	Sampled    int64           `json:"sampled"`
-	Truncated  bool            `json:"truncated"`
-	Items      []MentionRank   `json:"items"`
+	WindowDays int           `json:"window_days"`
+	Sampled    int64         `json:"sampled"`
+	Truncated  bool          `json:"truncated"`
+	Items      []MentionRank `json:"items"`
 }
 
 // MentionRank 描述一个用户在窗口样本中被 @ 的次数。
@@ -248,9 +280,9 @@ type MentionRank struct {
 // Days 长度等于桶数（按时间升序）；Series 每条对应一个词性大类，
 // values 数组下标与 Days 对齐。前端直接堆叠面积图渲染。
 type ChatTopicTrend struct {
-	WindowDays int                 `json:"window_days"`
-	Days       []string            `json:"days"`
-	Series     []TopicTrendSeries  `json:"series"`
+	WindowDays int                `json:"window_days"`
+	Days       []string           `json:"days"`
+	Series     []TopicTrendSeries `json:"series"`
 }
 
 // TopicTrendSeries 是一个词性大类（名词 / 动词 / 形容词 / 其它）的每日词频。
@@ -283,26 +315,27 @@ type ConfigEnumOptionView struct {
 
 // ConfigView 是单条配置在 WebUI 中的展示与生效值。
 type ConfigView struct {
-	Key         string                 `json:"key"`
-	Description string                 `json:"description"`
-	ValueType   string                 `json:"value_type"`
-	Value       string                 `json:"value"`
-	IntMin      int                    `json:"int_min,omitempty"`
-	IntMax      int                    `json:"int_max,omitempty"`
-	ReadOnly    bool                   `json:"read_only"`
-	AllowCustom bool                   `json:"allow_custom"`
-	EnumOptions []ConfigEnumOptionView `json:"enum_options,omitempty"`
+	Key               string                 `json:"key"`
+	Description       string                 `json:"description"`
+	ValueType         string                 `json:"value_type"`
+	Value             string                 `json:"value"`
+	IntMin            int                    `json:"int_min,omitempty"`
+	IntMax            int                    `json:"int_max,omitempty"`
+	ReadOnly          bool                   `json:"read_only"`
+	AllowCustom       bool                   `json:"allow_custom"`
+	ManagementSurface string                 `json:"management_surface,omitempty"`
+	EnumOptions       []ConfigEnumOptionView `json:"enum_options,omitempty"`
 }
 
 // TokenStats 是 token 消耗的多维聚合结果。
 type TokenStats struct {
-	WindowDays int                `json:"window_days"`
-	Total      TokenTotals        `json:"total"`
-	ByModel    []TokenGroupCount  `json:"by_model"`
-	ByKind     []TokenGroupCount  `json:"by_kind"`
-	BySource   []TokenGroupCount  `json:"by_source_type"`
-	ByStatus   []TokenGroupCount  `json:"by_status"`
-	ByDay      []TokenDailyPoint  `json:"by_day"`
+	WindowDays int               `json:"window_days"`
+	Total      TokenTotals       `json:"total"`
+	ByModel    []TokenGroupCount `json:"by_model"`
+	ByKind     []TokenGroupCount `json:"by_kind"`
+	BySource   []TokenGroupCount `json:"by_source_type"`
+	ByStatus   []TokenGroupCount `json:"by_status"`
+	ByDay      []TokenDailyPoint `json:"by_day"`
 }
 
 // TokenTotals 是窗口内的总量汇总。
@@ -331,10 +364,10 @@ type TokenDailyPoint struct {
 
 // MessageStats 是消息量统计（依赖 OpenSearch，可能降级）。
 type MessageStats struct {
-	WindowDays   int    `json:"window_days"`
-	Available    bool   `json:"available"`
-	RecentCount  int    `json:"recent_count"`
-	Unavailable  string `json:"unavailable_reason,omitempty"`
+	WindowDays  int    `json:"window_days"`
+	Available   bool   `json:"available"`
+	RecentCount int    `json:"recent_count"`
+	Unavailable string `json:"unavailable_reason,omitempty"`
 }
 
 // StatsResponse 是统计聚合接口的总返回。

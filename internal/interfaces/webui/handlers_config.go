@@ -110,14 +110,15 @@ func (s *Server) handleListConfigs(w http.ResponseWriter, r *http.Request) {
 		}
 		value := s.resolveConfigValue(r, def, scopedChatID)
 		view := ConfigView{
-			Key:         string(def.Key),
-			Description: def.Description,
-			ValueType:   def.ValueType,
-			Value:       value,
-			IntMin:      def.IntMin,
-			IntMax:      def.IntMax,
-			ReadOnly:    def.ReadOnly,
-			AllowCustom: def.AllowCustom,
+			Key:               string(def.Key),
+			Description:       def.Description,
+			ValueType:         def.ValueType,
+			Value:             value,
+			IntMin:            def.IntMin,
+			IntMax:            def.IntMax,
+			ReadOnly:          def.ReadOnly,
+			AllowCustom:       def.AllowCustom,
+			ManagementSurface: string(def.ManagementSurface),
 		}
 		for _, opt := range def.EnumOptions(value) {
 			view.EnumOptions = append(view.EnumOptions, ConfigEnumOptionView{Text: opt.Text, Value: opt.Value})

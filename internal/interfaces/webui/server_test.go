@@ -469,6 +469,33 @@ func TestSetConfigValidation(t *testing.T) {
 	}
 }
 
+func TestListConfigsMarksAgenticRolloutManagementSurface(t *testing.T) {
+	srv, _, _ := newTestServer(t, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/oc_1/configs", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Items []ConfigView `json:"items"`
+	}
+	if err := sonic.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode configs: %v", err)
+	}
+	for _, item := range response.Items {
+		if item.Key == string(appconfig.KeyConversationRuntimeEnabled) {
+			if item.ManagementSurface != string(appconfig.ManagementSurfaceAgenticRollout) {
+				t.Fatalf("unexpected management surface: %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatal("conversation runtime config was not returned")
+}
+
 func TestStatsGracefulWithoutDB(t *testing.T) {
 	srv, _, _ := newTestServer(t, "")
 	rec := httptest.NewRecorder()
