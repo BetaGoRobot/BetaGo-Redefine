@@ -408,6 +408,11 @@ func validateMappingSubset(actual, expected any, path string) error {
 			childActual, found := actualValue[key]
 			childPath := path + "." + key
 			if !found {
+				// OpenSearch serializes ordinary object mappings implicitly:
+				// their properties remain, but "type":"object" may be omitted.
+				if key == "type" && childExpected == "object" {
+					continue
+				}
 				return fmt.Errorf("%s is missing", childPath)
 			}
 			if err := validateMappingSubset(

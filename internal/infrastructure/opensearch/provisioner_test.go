@@ -285,6 +285,59 @@ func TestValidateMappingSubsetAcceptsOpenSearchBooleanStrings(t *testing.T) {
 	}
 }
 
+func TestValidateMappingSubsetAcceptsImplicitOpenSearchObjectType(t *testing.T) {
+	actual := map[string]any{
+		"properties": map[string]any{
+			"pre_messages": map[string]any{
+				"properties": map[string]any{
+					"message_id": map[string]any{"type": "keyword"},
+				},
+			},
+		},
+	}
+	expected := map[string]any{
+		"properties": map[string]any{
+			"pre_messages": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"message_id": map[string]any{"type": "keyword"},
+				},
+			},
+		},
+	}
+
+	if err := validateMappingSubset(actual, expected, "mappings"); err != nil {
+		t.Fatalf("implicit object mapping rejected: %v", err)
+	}
+}
+
+func TestValidateMappingSubsetRejectsMissingNestedType(t *testing.T) {
+	actual := map[string]any{
+		"properties": map[string]any{
+			"latest_judgments": map[string]any{
+				"properties": map[string]any{
+					"winner": map[string]any{"type": "keyword"},
+				},
+			},
+		},
+	}
+	expected := map[string]any{
+		"properties": map[string]any{
+			"latest_judgments": map[string]any{
+				"type": "nested",
+				"properties": map[string]any{
+					"winner": map[string]any{"type": "keyword"},
+				},
+			},
+		},
+	}
+
+	err := validateMappingSubset(actual, expected, "mappings")
+	if err == nil || !strings.Contains(err.Error(), "latest_judgments.type is missing") {
+		t.Fatalf("missing nested type error = %v", err)
+	}
+}
+
 func TestProvisionerAdoptsCompatibleOrphanPhysicalIndex(t *testing.T) {
 	owner, _ := tenant.New("app-a", "bot-a")
 	alias, _ := owner.IndexAlias("events")
