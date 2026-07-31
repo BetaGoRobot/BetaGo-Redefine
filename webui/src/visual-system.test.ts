@@ -44,4 +44,15 @@ describe('WebUI visual system', () => {
     expect(chatList).toContain('class="mobile-chat-list"')
     expect(chatList).toContain('class="mobile-chat-card"')
   })
+
+  it('keeps management login controls touch-friendly on mobile', () => {
+    const app = source('src/App.vue')
+    const gate = source('src/components/ManagementGate.vue')
+
+    expect(app).toMatch(
+      /\.app-auth-status,[\s\S]*\.app-runtime-status \{[\s\S]*min-height: 2\.75rem/,
+    )
+    expect(gate).toContain('min-height: 2.75rem')
+    expect(gate).toContain('font-size: 0.875rem')
+  })
 })

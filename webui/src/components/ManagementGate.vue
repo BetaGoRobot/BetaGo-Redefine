@@ -115,14 +115,14 @@ function login() {
 
 .management-gate__copy strong {
   color: var(--ops-pine-950);
-  font-size: 0.95rem;
+  font-size: 1rem;
 }
 
 .management-gate__copy p {
   max-width: 58ch;
   margin: 0.32rem 0 0;
   color: var(--ops-muted);
-  font-size: 0.76rem;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -134,9 +134,13 @@ function login() {
 
 .management-gate__actions a {
   color: var(--ops-pine-700);
-  font-size: 0.72rem;
+  font-size: 0.875rem;
   font-weight: 700;
   text-underline-offset: 0.18rem;
+}
+
+.management-gate__actions :deep(.el-button) {
+  min-height: 2.75rem;
 }
 
 @media (max-width: 767px) {

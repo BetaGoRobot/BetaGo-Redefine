@@ -382,7 +382,7 @@ onMounted(() => {
 
   .app-auth-status,
   .app-runtime-status {
-    min-height: 2.4rem;
+    min-height: 2.75rem;
     padding-inline: 0.65rem;
   }
 
