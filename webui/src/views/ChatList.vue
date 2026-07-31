@@ -3,8 +3,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
-import type { ChatSummary } from '../api/types'
+import type { AgenticChatState, ChatSummary } from '../api/types'
 import { BotApi, aggregate, type WithBot } from '../api/client'
+import {
+  chunkChatIDs,
+  summarizeRollout,
+} from '../api/agentic'
 import {
   useFilterStore,
   METRIC_LABEL,
@@ -14,6 +18,7 @@ import {
 import { buildSparkline, buildDonut } from '../composables/useChartOptions'
 import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
+import AgenticBatchDrawer from '../components/AgenticBatchDrawer.vue'
 
 const router = useRouter()
 const store = useFilterStore()
@@ -22,6 +27,12 @@ const loading = ref(false)
 type BotChat = WithBot<ChatSummary>
 const chats = ref<BotChat[]>([])
 const keyword = ref('')
+const tableRef = ref<{ clearSelection: () => void }>()
+const selectedRows = ref<BotChat[]>([])
+const batchDrawerOpen = ref(false)
+const rolloutMap = ref<Record<string, AgenticChatState>>({})
+const rolloutLoading = ref(false)
+const rolloutErrors = ref<Record<string, string>>({})
 
 // ---------- 过滤面板 ----------
 const typeFilter = ref<'all' | 'p2p' | 'group' | 'unknown'>('all')
@@ -46,6 +57,32 @@ const botOptions = computed(() => [
   { value: 'all', label: '全部机器人' },
   ...store.selectedBots.map((b) => ({ value: b.id, label: `${b.robotName || b.name} · ${b.id}` })),
 ])
+
+const rolloutBotID = computed(() => {
+  if (store.currentBotID) return store.currentBotID
+  if (botFilter.value !== 'all') return botFilter.value
+  if (store.selectedBots.length === 1) return store.selectedBots[0].id
+  return ''
+})
+
+const rolloutBot = computed(() =>
+  rolloutBotID.value ? store.getBot(rolloutBotID.value) : undefined,
+)
+
+function rowKey(row: BotChat): string {
+  return `${row.bot_id}::${row.chat_id}`
+}
+
+const selectedStates = computed(() =>
+  selectedRows.value
+    .map((row) => rolloutMap.value[rowKey(row)])
+    .filter((state): state is AgenticChatState => !!state),
+)
+
+const hiddenSelectionCount = computed(() => {
+  const visible = new Set(filtered.value.map(rowKey))
+  return selectedRows.value.filter((row) => !visible.has(rowKey(row))).length
+})
 
 const filtered = computed<BotChat[]>(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -171,6 +208,64 @@ function open(c: BotChat) {
   })
 }
 
+function handleRowClick(
+  row: BotChat,
+  column?: { type?: string },
+  event?: MouseEvent,
+) {
+  if (
+    column?.type === 'selection' ||
+    (event?.target as HTMLElement | null)?.closest?.('.el-checkbox')
+  ) {
+    return
+  }
+  open(row)
+}
+
+function handleSelectionChange(rows: BotChat[]) {
+  if (!rolloutBotID.value) {
+    selectedRows.value = []
+    return
+  }
+  selectedRows.value = rows.filter(
+    (row) => row.bot_id === rolloutBotID.value,
+  )
+}
+
+function openBatchDrawer() {
+  const botIDs = new Set(selectedRows.value.map((row) => row.bot_id))
+  if (
+    !rolloutBot.value ||
+    botIDs.size !== 1 ||
+    !botIDs.has(rolloutBot.value.id)
+  ) {
+    ElMessage.error('批量灰度只能作用于当前选择的单个 Bot')
+    return
+  }
+  if (selectedStates.value.length !== selectedRows.value.length) {
+    ElMessage.warning('部分会话的灰度状态仍在加载，请稍后重试')
+    return
+  }
+  batchDrawerOpen.value = true
+}
+
+async function refreshRolloutsAfterConflict() {
+  await loadRollouts()
+}
+
+async function handleBatchCommitted() {
+  await loadRollouts()
+  tableRef.value?.clearSelection()
+  selectedRows.value = []
+}
+
+function rolloutSummary(row: BotChat): string {
+  const state = rolloutMap.value[rowKey(row)]
+  if (state) return summarizeRollout(state)
+  if (rolloutErrors.value[row.bot_id]) return '灰度状态不可用'
+  return rolloutLoading.value ? '灰度状态加载中…' : '尚未读取灰度状态'
+}
+
 // ---------- 加载 ----------
 const MAX_CHATS_WITH_SPARK = 30
 
@@ -229,7 +324,7 @@ async function load() {
   } finally {
     loading.value = false
   }
-  await loadSparks()
+  await Promise.all([loadSparks(), loadRollouts()])
 }
 
 async function loadSparks() {
@@ -280,17 +375,58 @@ async function loadSparks() {
   }
 }
 
+async function loadRollouts() {
+  rolloutLoading.value = true
+  rolloutErrors.value = {}
+  const next: Record<string, AgenticChatState> = {}
+  const groups = new Map<string, BotChat[]>()
+  for (const chat of chats.value) {
+    const rows = groups.get(chat.bot_id) || []
+    rows.push(chat)
+    groups.set(chat.bot_id, rows)
+  }
+  await Promise.all(
+    [...groups.entries()].map(async ([botID, rows]) => {
+      const bot = store.getBot(botID)
+      if (!bot) return
+      try {
+        const uniqueIDs = [...new Set(rows.map((row) => row.chat_id))]
+        for (const chunk of chunkChatIDs(uniqueIDs)) {
+          const response = await new BotApi(bot).getAgenticRollouts(chunk)
+          for (const state of response.items) {
+            next[`${botID}::${state.chat_id}`] = state
+          }
+        }
+      } catch (error: any) {
+        rolloutErrors.value = {
+          ...rolloutErrors.value,
+          [botID]:
+            error?.response?.data?.error ||
+            error?.message ||
+            '灰度状态读取失败',
+        }
+      }
+    }),
+  )
+  rolloutMap.value = next
+  rolloutLoading.value = false
+}
+
 onMounted(load)
 watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')], load)
+watch(rolloutBotID, () => {
+  tableRef.value?.clearSelection()
+  selectedRows.value = []
+})
 </script>
 
 <template>
-  <div>
+  <div class="chat-ops-page">
     <GlobalFilterBar />
 
     <div v-loading="loading">
       <!-- 摘要卡片 -->
-      <el-row :gutter="12" style="margin-bottom: 12px">
+      <el-row :gutter="12" class="chat-ops-summary">
         <el-col :span="6">
           <el-card shadow="hover" class="kpi-card">
             <el-statistic title="匹配会话数" :value="summary.count" />
@@ -318,7 +454,7 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
       </el-row>
 
       <!-- 过滤面板 + 分布摘要 -->
-      <el-card shadow="never" class="panel" style="margin-bottom: 12px">
+      <el-card shadow="never" class="chat-ops-toolbar panel">
         <div style="display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap">
           <div style="flex: 1; min-width: 520px">
             <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
@@ -411,22 +547,60 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
       </el-card>
 
       <!-- 主数据表格 -->
-      <el-card shadow="never" class="panel">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-          <span style="font-weight: 600; color: #303133">
-            共 {{ filtered.length }} 个会话
-          </span>
-          <el-tag v-if="sparkLoading" type="info" size="small">迷你趋势加载中…</el-tag>
+      <el-card shadow="never" class="panel chat-ops-table">
+        <div class="chat-ops-table__header">
+          <div>
+            <strong>共 {{ filtered.length }} 个会话</strong>
+            <span v-if="rolloutBotID">
+              当前 Bot 可批量灰度
+              <template v-if="selectedRows.length">
+                · 已选 {{ selectedRows.length }} 项
+              </template>
+              <template v-if="hiddenSelectionCount">
+                · {{ hiddenSelectionCount }} 项被过滤器隐藏
+              </template>
+            </span>
+            <span v-else>全部 Bot 视图仅支持查看，选择一个 Bot 后可批量灰度。</span>
+          </div>
+          <div class="chat-ops-table__actions">
+            <el-tag v-if="sparkLoading" type="info" size="small">
+              迷你趋势加载中…
+            </el-tag>
+            <el-tag v-if="rolloutLoading" type="info" size="small">
+              Agentic 状态加载中…
+            </el-tag>
+            <el-button
+              v-if="rolloutBotID"
+              class="chat-ops-agentic-action"
+              :disabled="
+                !selectedRows.length ||
+                selectedStates.length !== selectedRows.length
+              "
+              @click="openBatchDrawer"
+            >
+              批量 Agentic 灰度
+            </el-button>
+          </div>
         </div>
 
         <el-table
+          ref="tableRef"
           v-loading="loading"
           :data="filtered"
+          :row-key="rowKey"
           stripe
           :default-sort="{ prop: 'total_tokens', order: 'descending' }"
-          @row-click="open"
+          @selection-change="handleSelectionChange"
+          @row-click="handleRowClick"
           style="cursor: pointer"
         >
+          <el-table-column
+            v-if="rolloutBotID"
+            type="selection"
+            reserve-selection
+            width="48"
+            fixed="left"
+          />
           <el-table-column label="Bot" width="200" fixed="left">
             <template #default="{ row }">
               <div style="display: flex; align-items: center; gap: 6px">
@@ -445,7 +619,25 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
               <el-avatar :src="row.avatar" :size="32" shape="square">{{ row.name?.[0] }}</el-avatar>
             </template>
           </el-table-column>
-          <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">
+              <div class="chat-identity">
+                <strong>{{ row.name }}</strong>
+                <span>{{ row.chat_id }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="Agentic 灰度" min-width="190">
+            <template #default="{ row }">
+              <div
+                class="rollout-summary"
+                :class="{ 'is-ready': !!rolloutMap[rowKey(row)] }"
+              >
+                <span class="rollout-summary__dot" aria-hidden="true" />
+                <span>{{ rolloutSummary(row) }}</span>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="类型" width="110">
             <template #default="{ row }">
               <el-tag v-if="chatKind(row) === 'p2p'" size="small" type="info" effect="plain">单聊</el-tag>
@@ -540,10 +732,64 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
         </el-table>
       </el-card>
     </div>
+
+    <AgenticBatchDrawer
+      v-if="rolloutBot"
+      v-model="batchDrawerOpen"
+      :bot="rolloutBot"
+      :states="selectedStates"
+      @refresh="refreshRolloutsAfterConflict"
+      @committed="handleBatchCommitted"
+    />
   </div>
 </template>
 
 <style scoped>
+.chat-ops-page {
+  --ops-pine-900: #143b36;
+  --ops-pine-700: #25534d;
+  --ops-lime: #d7ff73;
+  --ops-canvas: #f8f7f3;
+  --ops-surface: #ffffff;
+  --ops-border: #e6e3da;
+  --ops-muted: #737d78;
+  min-height: 100%;
+  padding: clamp(0.25rem, 1vw, 0.75rem);
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(215 255 115 / 13%), transparent 25rem),
+    linear-gradient(180deg, var(--ops-canvas), transparent 22rem);
+}
+
+.chat-ops-summary {
+  margin-bottom: 0.85rem;
+  padding: 0.35rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 1rem;
+  background: var(--ops-pine-900);
+  box-shadow: 0 1rem 2.5rem rgb(20 59 54 / 10%);
+}
+
+.chat-ops-summary :deep(.el-col) {
+  display: flex;
+}
+
+.chat-ops-summary .kpi-card {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #fff;
+}
+
+.chat-ops-summary .kpi-card :deep(.el-statistic__head),
+.chat-ops-summary .kpi-card .kpi-sub {
+  color: #a9beb7;
+}
+
+.chat-ops-summary .kpi-card :deep(.el-statistic__number) {
+  color: #fff;
+}
+
 .kpi-card :deep(.el-card__body) {
   padding: 14px 20px;
 }
@@ -553,16 +799,165 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
   color: #909399;
 }
 .panel {
-  border: 1px solid #f2f6fc;
+  border: 1px solid var(--ops-border);
+  border-radius: 1rem;
+  background: var(--ops-surface);
 }
 .panel :deep(.el-card__body) {
   padding: 14px 16px;
 }
+
+.chat-ops-toolbar {
+  margin-bottom: 0.85rem;
+  box-shadow: 0 0.7rem 2rem rgb(20 59 54 / 5%);
+}
+
+.chat-ops-table {
+  overflow: hidden;
+}
+
+.chat-ops-table__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.chat-ops-table__header > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.chat-ops-table__header strong {
+  color: var(--ops-pine-900);
+}
+
+.chat-ops-table__header span {
+  color: var(--ops-muted);
+  font-size: 0.76rem;
+}
+
+.chat-ops-table__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.chat-ops-agentic-action {
+  --el-button-bg-color: var(--ops-lime);
+  --el-button-border-color: var(--ops-lime);
+  --el-button-text-color: #173b35;
+  --el-button-hover-bg-color: #c9f158;
+  --el-button-hover-border-color: #c9f158;
+  font-weight: 750;
+}
+
+.chat-identity {
+  display: grid;
+  min-width: 0;
+}
+
+.chat-identity strong,
+.chat-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-identity strong {
+  color: #263f3b;
+  font-size: 0.86rem;
+}
+
+.chat-identity span {
+  color: #8a938e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+
+.rollout-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #7b847f;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.rollout-summary__dot {
+  flex: 0 0 auto;
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: #b8beb9;
+}
+
+.rollout-summary.is-ready {
+  color: #285a50;
+}
+
+.rollout-summary.is-ready .rollout-summary__dot {
+  background: #4a8f79;
+  box-shadow: 0 0 0 0.2rem rgb(74 143 121 / 12%);
+}
+
 .bot-dot {
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+@media (max-width: 1023px) {
+  .chat-ops-summary :deep(.el-col) {
+    width: 50%;
+    max-width: 50%;
+    flex: 0 0 50%;
+  }
+
+  .chat-ops-toolbar :deep(.el-card__body) > div {
+    display: grid !important;
+  }
+
+  .chat-ops-toolbar :deep(.el-card__body) > div > div {
+    min-width: 0 !important;
+  }
+
+  .chat-ops-table :deep(.el-card__body) {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .chat-ops-page {
+    padding: 0;
+  }
+
+  .chat-ops-summary :deep(.el-col) {
+    width: 100%;
+    max-width: 100%;
+    flex-basis: 100%;
+  }
+
+  .chat-ops-table__header,
+  .chat-ops-table__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-ops-table__actions :deep(.el-button) {
+    min-height: 2.75rem;
+    width: 100%;
+    margin: 0;
+  }
+
+  .chat-ops-toolbar :deep(.el-input),
+  .chat-ops-toolbar :deep(.el-select),
+  .chat-ops-toolbar :deep(.el-input-number) {
+    width: 100% !important;
+    max-width: none !important;
+  }
 }
 </style>

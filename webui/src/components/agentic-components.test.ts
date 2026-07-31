@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AgenticCapabilityCard from './AgenticCapabilityCard.vue'
+import AgenticBatchDrawer from './AgenticBatchDrawer.vue'
 import AgenticRolloutPanel from './AgenticRolloutPanel.vue'
 import { BotApi } from '../api/client'
 import type {
@@ -203,5 +204,138 @@ describe('AgenticRolloutPanel', () => {
         .findAllComponents({ name: 'AgenticCapabilityCard' })
         .map((card) => card.props('modelValue')),
     ).toEqual(['enabled', 'enabled', 'enabled', 'enabled'])
+  })
+})
+
+describe('AgenticBatchDrawer', () => {
+  const drawerStubs = {
+    ElDrawer: {
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template: '<section><slot /><slot name="footer" /></section>',
+    },
+    ElSegmented: {
+      props: ['modelValue', 'options', 'disabled'],
+      emits: ['update:modelValue'],
+      template: '<div />',
+    },
+    ElButton: {
+      props: ['disabled', 'loading'],
+      emits: ['click'],
+      template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>',
+    },
+    ElAlert: {
+      props: ['title', 'description'],
+      template: '<div>{{ title }} {{ description }}</div>',
+    },
+    ElTable: true,
+    ElTableColumn: true,
+  }
+
+  it('expands Full Agentic and restore presets for a batch', async () => {
+    const wrapper = mount(AgenticBatchDrawer, {
+      props: {
+        modelValue: true,
+        bot,
+        states: [chatState()],
+      },
+      global: { stubs: drawerStubs },
+    })
+
+    await wrapper.get('[data-test="batch-full-agentic"]').trigger('click')
+    expect(wrapper.get('[data-test="batch-draft"]').text()).toContain(
+      '"conversation_runtime":"enabled"',
+    )
+    expect(wrapper.get('[data-test="batch-draft"]').text()).toContain(
+      '"agent_card":"enabled"',
+    )
+
+    await wrapper.get('[data-test="batch-restore-inherit"]').trigger('click')
+    expect(wrapper.get('[data-test="batch-draft"]').text()).toContain(
+      '"parallel_evaluation":"inherit"',
+    )
+  })
+
+  it('previews first and commits with revisions from the preview', async () => {
+    const previewState = chatState('r1')
+    const previewAfter = chatState('projected')
+    const batch = vi
+      .spyOn(BotApi.prototype, 'batchAgenticRollout')
+      .mockResolvedValueOnce({
+        dry_run: true,
+        items: [{
+          chat_id: 'oc_1',
+          before: previewState,
+          after: previewAfter,
+        }],
+      })
+      .mockResolvedValueOnce({
+        dry_run: false,
+        items: [{
+          chat_id: 'oc_1',
+          before: previewState,
+          after: previewAfter,
+        }],
+      })
+    const wrapper = mount(AgenticBatchDrawer, {
+      props: {
+        modelValue: true,
+        bot,
+        states: [previewState],
+      },
+      global: { stubs: drawerStubs },
+    })
+
+    await wrapper.get('[data-test="batch-full-agentic"]').trigger('click')
+    await wrapper.get('[data-test="batch-preview"]').trigger('click')
+    await flushPromises()
+    expect(batch.mock.calls[0][0]).toMatchObject({
+      dry_run: true,
+      expected_revisions: { oc_1: 'r1' },
+    })
+
+    await wrapper.get('[data-test="batch-commit"]').trigger('click')
+    await flushPromises()
+    expect(batch.mock.calls[1][0]).toMatchObject({
+      dry_run: false,
+      expected_revisions: { oc_1: 'r1' },
+    })
+    expect(wrapper.emitted('committed')).toHaveLength(1)
+  })
+
+  it('keeps the draft and requests refresh on commit conflict', async () => {
+    const previewState = chatState('r1')
+    vi.spyOn(BotApi.prototype, 'batchAgenticRollout')
+      .mockResolvedValueOnce({
+        dry_run: true,
+        items: [{
+          chat_id: 'oc_1',
+          before: previewState,
+          after: chatState('projected'),
+        }],
+      })
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: 'stale_revision' } },
+      })
+    const wrapper = mount(AgenticBatchDrawer, {
+      props: {
+        modelValue: true,
+        bot,
+        states: [previewState],
+      },
+      global: { stubs: drawerStubs },
+    })
+
+    await wrapper.get('[data-test="batch-full-agentic"]').trigger('click')
+    await wrapper.get('[data-test="batch-preview"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="batch-commit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+    expect(wrapper.text()).toContain('状态已变化')
+    expect(wrapper.get('[data-test="batch-draft"]').text()).toContain(
+      '"agent_card":"enabled"',
+    )
   })
 })
