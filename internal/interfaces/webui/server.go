@@ -128,11 +128,11 @@ func (s *Server) Handler() http.Handler {
 	return s.withMetrics(s.withCORS(s.withAuth(mux)))
 }
 
-// withAuth 对写操作强制 Bearer Token 鉴权；未配置 token 时全部放行。
-// GET 与 CORS 预检（OPTIONS）始终放行，便于前端只读浏览。
+// withAuth 对写操作和敏感读取强制 Bearer Token 鉴权；未配置 token 时保留
+// 历史放行行为。评测接口会在自己的 handler 中额外要求 token 必须已配置。
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.authToken == "" || r.Method == http.MethodGet || r.Method == http.MethodOptions {
+		if s.authToken == "" || !requiresWebUIAuth(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -142,6 +142,39 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requiresWebUIAuth 是 WebUI 的服务端纵深鉴权边界。公开统计读取保持匿名，
+// 身份、评测和管理配置读取与所有非 GET 写请求必须鉴权。
+func requiresWebUIAuth(method, path string) bool {
+	if method == http.MethodOptions {
+		return false
+	}
+	if method != http.MethodGet {
+		return true
+	}
+
+	path = strings.TrimSpace(path)
+	if path == "/api/evaluations" ||
+		strings.HasPrefix(path, "/api/evaluations/") ||
+		path == "/api/agentic-rollouts" ||
+		strings.HasPrefix(path, "/api/agentic-rollouts/") {
+		return true
+	}
+
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 4 || parts[0] != "api" || parts[1] != "chats" {
+		return false
+	}
+	switch parts[3] {
+	case "members", "configs", "features", "agentic-rollout":
+		return true
+	case "insights":
+		return len(parts) >= 5 &&
+			(parts[4] == "top_senders" || parts[4] == "top_mentions")
+	default:
+		return false
+	}
 }
 
 func (s *Server) checkBearer(r *http.Request) bool {
@@ -161,7 +194,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if allowed := s.resolveAllowedOrigin(origin); allowed != "" {
 			w.Header().Set("Access-Control-Allow-Origin", allowed)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}

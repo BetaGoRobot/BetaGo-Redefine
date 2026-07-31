@@ -533,6 +533,89 @@ func TestParseWindowDays(t *testing.T) {
 	}
 }
 
+func TestWebUIAuthRouteClassification(t *testing.T) {
+	tests := []struct {
+		method    string
+		path      string
+		protected bool
+	}{
+		{http.MethodGet, "/api/health", false},
+		{http.MethodGet, "/api/chats", false},
+		{http.MethodGet, "/api/chats/oc_1", false},
+		{http.MethodGet, "/api/chats/oc_1/stats", false},
+		{http.MethodGet, "/api/chats/oc_1/insights/activity", false},
+		{http.MethodGet, "/api/chats/oc_1/members", true},
+		{http.MethodGet, "/api/chats/oc_1/configs", true},
+		{http.MethodGet, "/api/chats/oc_1/features", true},
+		{http.MethodGet, "/api/chats/oc_1/agentic-rollout", true},
+		{http.MethodGet, "/api/chats/oc_1/insights/top_senders", true},
+		{http.MethodGet, "/api/chats/oc_1/insights/top_mentions", true},
+		{http.MethodGet, "/api/agentic-rollouts", true},
+		{http.MethodGet, "/api/evaluations", true},
+		{http.MethodGet, "/api/evaluations/episode-1", true},
+		{http.MethodPut, "/api/chats/oc_1/configs/key", true},
+		{http.MethodPost, "/api/agentic-rollouts/batch", true},
+		{http.MethodPatch, "/api/future", true},
+		{http.MethodDelete, "/api/chats/oc_1/configs/key", true},
+		{http.MethodOptions, "/api/chats/oc_1/configs/key", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			if got := requiresWebUIAuth(test.method, test.path); got != test.protected {
+				t.Fatalf("requiresWebUIAuth(%q, %q) = %t, want %t",
+					test.method, test.path, got, test.protected)
+			}
+		})
+	}
+}
+
+func TestSensitiveRoutesRequireBearer(t *testing.T) {
+	protected := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/chats/oc_1/members"},
+		{http.MethodGet, "/api/chats/oc_1/configs"},
+		{http.MethodGet, "/api/chats/oc_1/features"},
+		{http.MethodGet, "/api/chats/oc_1/agentic-rollout"},
+		{http.MethodGet, "/api/chats/oc_1/insights/top_senders"},
+		{http.MethodGet, "/api/chats/oc_1/insights/top_mentions"},
+		{http.MethodGet, "/api/agentic-rollouts"},
+		{http.MethodGet, "/api/evaluations/episode-1"},
+		{http.MethodPut, "/api/chats/oc_1/configs/key"},
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := (&Server{authToken: "secret"}).withAuth(next)
+
+	for _, test := range protected {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			for _, authorization := range []string{"", "Bearer wrong"} {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(test.method, test.path, nil)
+				if authorization != "" {
+					req.Header.Set("Authorization", authorization)
+				}
+				handler.ServeHTTP(rec, req)
+				if rec.Code != http.StatusUnauthorized {
+					t.Fatalf("authorization=%q status=%d, want 401",
+						authorization, rec.Code)
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(test.method, test.path, nil)
+			req.Header.Set("Authorization", "Bearer secret")
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("valid bearer status=%d, want 204", rec.Code)
+			}
+		})
+	}
+}
+
 func TestCORSPreflight(t *testing.T) {
 	srv, _, _ := newTestServer(t, "secret")
 	rec := httptest.NewRecorder()
