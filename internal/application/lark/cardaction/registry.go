@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
+	"go.uber.org/zap"
 )
 
 var ErrUnhandledAction = errors.New("unhandled card action")
@@ -99,7 +102,7 @@ func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaD
 			return nil, err
 		}
 		if task != nil {
-			go task(context.WithoutCancel(ctx))
+			go runAsyncTask(context.WithoutCancel(ctx), action.Name, task)
 		}
 		return nil, nil
 	case ModeSync:
@@ -107,6 +110,18 @@ func Dispatch(ctx context.Context, event *callback.CardActionTriggerEvent, metaD
 	default:
 		return nil, fmt.Errorf("unsupported card action mode: %s", handler.mode)
 	}
+}
+
+func runAsyncTask(ctx context.Context, action string, task AsyncTask) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logs.L().Ctx(ctx).Error("panic in async card action",
+				zap.String("action", action),
+				zap.Any("panic", recovered),
+				zap.ByteString("stack", debug.Stack()))
+		}
+	}()
+	task(ctx)
 }
 
 func (c *Context) MessageID() string {
