@@ -21,6 +21,12 @@ interface BetaGoRuntimeConfig {
   bots?: string | unknown[]
   /** 同源 /api 之外的默认 baseURL，可选。 */
   apiBase?: string
+  /** legacy 保持浏览器 bearer；authelia 使用服务端凭据与管理 Session。 */
+  authMode?: 'legacy' | 'authelia'
+  /** 受 Authelia 保护的管理 Session 探测路径。 */
+  sessionPath?: string
+  /** 受 Authelia 保护的弹窗登录桥接路径。 */
+  loginPath?: string
 }
 
 interface Window {

@@ -10,14 +10,13 @@
 :80 {
 	root * /usr/share/caddy
 
-	# 各 bot 后端反代：由 docker-entrypoint.sh 从 VITE_BOTS 渲染到 bots.caddy。
-	# 文件不存在时 Caddy 直接跳过（不会启动失败）。
-	import bots.caddy
+	# Secure mode writes fail-closed request matchers and auth bridge responses
+	# here. Legacy mode leaves the imported file empty.
+	import auth-gate.caddy
 
-	# 主后端：浏览器走同源 /api，作为单 bot 部署/调试的兜底入口。
-	handle /api/* {
-		reverse_proxy {$BACKEND_URL}
-	}
+	# 各 bot 后端反代：由 docker-entrypoint.sh 从 VITE_BOTS 渲染到 bots.caddy。
+	# 该文件也包含默认 /api 上游；安全模式下由 Caddy 注入服务端 bearer。
+	import bots.caddy
 
 	# /config.js 由 entrypoint 在容器启动时渲染，关掉缓存确保改 env 重启即生效。
 	@configjs path /config.js
