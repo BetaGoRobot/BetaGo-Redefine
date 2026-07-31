@@ -398,104 +398,117 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
 </script>
 
 <template>
-  <div>
+  <div class="dashboard-page">
+    <header class="page-intro">
+      <div>
+        <p class="page-intro__eyebrow">Fleet intelligence</p>
+        <h1>运营总览</h1>
+        <p class="page-intro__copy">
+          聚合所有已选 Bot 的会话、请求与 Token 趋势，从全局信号快速进入异常维度。
+        </p>
+      </div>
+      <div v-if="store.selectedBots.length" class="dashboard-live-note">
+        <span aria-hidden="true" />
+        {{ store.selectedBots.filter((bot) => bot.healthy === true).length }}
+        个实例在线
+      </div>
+    </header>
+
     <GlobalFilterBar />
 
-    <div v-loading="loading" style="opacity: loading ? 0.6 : 1">
-      <!-- KPI 行 -->
-      <el-row :gutter="12" style="margin-bottom: 12px">
-        <el-col :span="6">
-          <el-card shadow="hover" class="kpi-card">
-            <el-statistic title="机器人实例数" :value="store.selectedBots.length" />
-            <div class="kpi-sub">在线 {{ store.selectedBots.filter(b => b.healthy === true).length }}</div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="hover" class="kpi-card">
-            <el-statistic title="总 Token" :value="agg.total.total_tokens" />
-            <div class="kpi-sub">
+    <section v-if="!store.selectedBots.length" class="dashboard-empty">
+      <div class="dashboard-empty__art" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+      <p class="dashboard-empty__eyebrow">No signal yet</p>
+      <h2>先连接一个机器人源</h2>
+      <p>
+        从上方“机器人源”添加或选择实例。连接后，这里会自动汇总会话、
+        Token、模型与请求质量信号。
+      </p>
+      <div class="dashboard-empty__steps">
+        <span><b>01</b> 添加地址</span>
+        <span><b>02</b> 完成探活</span>
+        <span><b>03</b> 选择分析窗口</span>
+      </div>
+    </section>
+
+    <div v-else v-loading="loading" class="dashboard-content">
+      <section class="metric-grid" aria-label="关键指标">
+        <el-card shadow="never" class="metric-card">
+          <span class="metric-card__index">01</span>
+          <el-statistic title="机器人实例" :value="store.selectedBots.length" />
+          <div class="metric-card__foot">
+            在线 {{ store.selectedBots.filter((bot) => bot.healthy === true).length }}
+          </div>
+        </el-card>
+        <el-card shadow="never" class="metric-card">
+          <span class="metric-card__index">02</span>
+          <el-statistic title="总 Token" :value="agg.total.total_tokens" />
+          <div class="metric-card__foot">
               Prompt {{ agg.total.prompt_tokens.toLocaleString() }} ·
               Completion {{ agg.total.completion_tokens.toLocaleString() }}
-            </div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="hover" class="kpi-card">
-            <el-statistic title="总请求数" :value="agg.total.requests" />
-            <div class="kpi-sub">
-              单请求平均 Token
-              {{ agg.total.requests ? Math.round(agg.total.total_tokens / agg.total.requests) : 0 }}
-            </div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="hover" class="kpi-card">
-            <el-statistic title="拉取会话 / Top N" :value="totalFetches" />
-            <div class="kpi-sub">每实例最多 {{ MAX_CHATS_PER_BOT }} 个按 Token 排序</div>
-          </el-card>
-        </el-col>
-      </el-row>
+          </div>
+        </el-card>
+        <el-card shadow="never" class="metric-card">
+          <span class="metric-card__index">03</span>
+          <el-statistic title="总请求数" :value="agg.total.requests" />
+          <div class="metric-card__foot">
+            单请求平均
+            {{ agg.total.requests ? Math.round(agg.total.total_tokens / agg.total.requests) : 0 }}
+            Token
+          </div>
+        </el-card>
+        <el-card shadow="never" class="metric-card">
+          <span class="metric-card__index">04</span>
+          <el-statistic title="已拉取会话" :value="totalFetches" />
+          <div class="metric-card__foot">
+            每实例 Top {{ MAX_CHATS_PER_BOT }} 会话
+          </div>
+        </el-card>
+      </section>
 
-      <!-- 全局趋势 -->
-      <el-card shadow="never" class="panel" style="margin-bottom: 12px">
+      <el-card shadow="never" class="chart-panel chart-panel--hero">
         <EChart :option="trendOption" height="340px" />
       </el-card>
 
-      <!-- 四维度饼图 -->
-      <el-row :gutter="12" style="margin-bottom: 12px">
-        <el-col :span="6">
-          <el-card shadow="never" class="panel donut-panel">
-            <EChart :option="modelDonut" height="300px" @click="drillDonut('model')" />
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="never" class="panel donut-panel">
-            <EChart :option="kindDonut" height="300px" @click="drillDonut('kind')" />
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="never" class="panel donut-panel">
-            <EChart :option="sourceDonut" height="300px" @click="drillDonut('source_type')" />
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card shadow="never" class="panel donut-panel">
-            <EChart :option="statusDonut" height="300px" @click="drillDonut('status')" />
-          </el-card>
-        </el-col>
-      </el-row>
+      <section class="chart-grid chart-grid--four">
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="modelDonut" height="300px" @click="drillDonut('model')" />
+        </el-card>
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="kindDonut" height="300px" @click="drillDonut('kind')" />
+        </el-card>
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="sourceDonut" height="300px" @click="drillDonut('source_type')" />
+        </el-card>
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="statusDonut" height="300px" @click="drillDonut('status')" />
+        </el-card>
+      </section>
 
-      <!-- 按机器人排行 + 漏斗 -->
-      <el-row :gutter="12" style="margin-bottom: 12px">
-        <el-col :span="16">
-          <el-card shadow="never" class="panel">
-            <EChart :option="perBotBar" height="360px" @click="onTopBotClick" />
-            <div class="chart-hint">💡 点击条形可跳转到该机器人的会话列表</div>
-          </el-card>
-        </el-col>
-        <el-col :span="8">
-          <el-card shadow="never" class="panel">
-            <EChart :option="funnelOption" height="360px" />
-          </el-card>
-        </el-col>
-      </el-row>
+      <section class="chart-grid chart-grid--primary">
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="perBotBar" height="360px" @click="onTopBotClick" />
+          <div class="chart-hint">点击条形进入该 Bot 的会话列表</div>
+        </el-card>
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="funnelOption" height="360px" />
+        </el-card>
+      </section>
 
-      <!-- Top 模型雷达 + 机器人×类型旭日 -->
-      <el-row :gutter="12" style="margin-bottom: 12px">
-        <el-col :span="12">
-          <el-card shadow="never" class="panel">
-            <EChart :option="radarOption" height="360px" />
-          </el-card>
-        </el-col>
-        <el-col :span="12">
-          <el-card shadow="never" class="panel">
-            <EChart :option="sunburstOption" height="360px" />
-          </el-card>
-        </el-col>
-      </el-row>
+      <section class="chart-grid chart-grid--split">
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="radarOption" height="360px" />
+        </el-card>
+        <el-card shadow="never" class="chart-panel">
+          <EChart :option="sunburstOption" height="360px" />
+        </el-card>
+      </section>
 
-      <!-- 机器人 × 日 热力 -->
-      <el-card shadow="never" class="panel" style="margin-bottom: 12px">
+      <el-card shadow="never" class="chart-panel">
         <EChart :option="heatmapOption" height="400px" />
       </el-card>
     </div>
@@ -503,29 +516,303 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
 </template>
 
 <style scoped>
-.kpi-card :deep(.el-card__body) {
-  padding: 16px 20px;
+.dashboard-page {
+  min-height: 70vh;
 }
-.kpi-sub {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #909399;
+
+.dashboard-live-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.48rem 0.7rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 999px;
+  background: var(--ops-surface);
+  color: var(--ops-pine-700);
+  font-size: 0.72rem;
+  font-weight: 750;
 }
-.panel {
-  border: 1px solid #f2f6fc;
+
+.dashboard-live-note span {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: var(--ops-teal);
+  box-shadow: 0 0 0 0.22rem rgb(74 143 121 / 14%);
+}
+
+.dashboard-empty {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  min-height: 28rem;
+  overflow: hidden;
+  padding: clamp(2rem, 8vw, 5rem) 1.5rem;
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-lg);
+  background:
+    radial-gradient(circle at 50% 0%, rgb(215 255 115 / 22%), transparent 18rem),
+    var(--ops-surface);
+  box-shadow: var(--ops-shadow-md);
+  text-align: center;
+}
+
+.dashboard-empty::before {
+  position: absolute;
+  inset: 0;
+  opacity: 0.32;
+  background-image:
+    linear-gradient(rgb(20 59 54 / 6%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(20 59 54 / 6%) 1px, transparent 1px);
+  background-size: 2.4rem 2.4rem;
+  content: "";
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+  pointer-events: none;
+}
+
+.dashboard-empty > * {
   position: relative;
 }
-.panel :deep(.el-card__body) {
-  padding: 8px 8px 12px 8px;
+
+.dashboard-empty__art {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  width: 5rem;
+  height: 4.5rem;
+  margin-bottom: 1.2rem;
+  padding: 0.8rem;
+  border-radius: 1.25rem 1.25rem 1.25rem 0.4rem;
+  background: var(--ops-pine-900);
+  box-shadow: 0 1rem 2rem rgb(20 59 54 / 20%);
 }
-.donut-panel {
-  min-height: 300px;
+
+.dashboard-empty__art span {
+  flex: 1;
+  border-radius: 999px 999px 0.2rem 0.2rem;
+  background: var(--ops-lime);
 }
+
+.dashboard-empty__art span:nth-child(1) {
+  height: 42%;
+  opacity: 0.58;
+}
+
+.dashboard-empty__art span:nth-child(2) {
+  height: 78%;
+}
+
+.dashboard-empty__art span:nth-child(3) {
+  height: 58%;
+  opacity: 0.78;
+}
+
+.dashboard-empty__eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--ops-teal);
+  font-size: 0.67rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dashboard-empty h2 {
+  margin: 0;
+  color: var(--ops-pine-950);
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  letter-spacing: -0.03em;
+}
+
+.dashboard-empty > p:not(.dashboard-empty__eyebrow) {
+  max-width: 34rem;
+  margin: 0.8rem 0 1.5rem;
+  color: var(--ops-muted);
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.dashboard-empty__steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.dashboard-empty__steps span {
+  padding: 0.48rem 0.7rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 999px;
+  background: rgb(255 254 250 / 78%);
+  color: #52615c;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.dashboard-empty__steps b {
+  margin-right: 0.3rem;
+  color: var(--ops-teal);
+  font-family: var(--ops-font-mono);
+  font-size: 0.62rem;
+}
+
+.dashboard-content {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  padding: 0.35rem;
+  border: 1px solid var(--ops-pine-800);
+  border-radius: var(--ops-radius-md);
+  background: var(--ops-pine-900);
+  box-shadow: var(--ops-shadow-md);
+}
+
+.metric-card {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 0;
+  background: transparent;
+}
+
+.metric-card:last-child {
+  border-right: 0;
+}
+
+.metric-card :deep(.el-card__body) {
+  padding: 1rem 1.15rem;
+}
+
+.metric-card :deep(.el-statistic__head),
+.metric-card__foot {
+  color: #a9beb7;
+  font-size: 0.72rem;
+}
+
+.metric-card :deep(.el-statistic__number) {
+  color: #fff;
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+}
+
+.metric-card__index {
+  position: absolute;
+  top: 0.9rem;
+  right: 1rem;
+  color: rgb(215 255 115 / 48%);
+  font-family: var(--ops-font-mono);
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.metric-card__foot {
+  margin-top: 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.chart-grid--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.chart-grid--primary {
+  grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
+}
+
+.chart-grid--split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-panel {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-color: var(--ops-border);
+  background: var(--ops-surface);
+  box-shadow: var(--ops-shadow-sm);
+}
+
+.chart-panel :deep(.el-card__body) {
+  padding: 0.55rem;
+}
+
+.chart-panel--hero :deep(.el-card__body) {
+  padding: 0.75rem;
+}
+
 .chart-hint {
   position: absolute;
-  right: 16px;
-  top: 14px;
-  font-size: 12px;
-  color: #909399;
+  top: 0.9rem;
+  right: 1rem;
+  color: var(--ops-muted-light);
+  font-size: 0.68rem;
+}
+
+@media (max-width: 1199px) {
+  .chart-grid--four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1023px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-card:nth-child(2) {
+    border-right: 0;
+  }
+
+  .metric-card:nth-child(-n + 2) {
+    border-bottom: 1px solid rgb(255 255 255 / 10%);
+  }
+
+  .chart-grid--primary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .dashboard-live-note {
+    display: none;
+  }
+
+  .dashboard-empty {
+    min-height: 24rem;
+    padding-inline: 1rem;
+  }
+
+  .metric-grid,
+  .chart-grid--four,
+  .chart-grid--split {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-card,
+  .metric-card:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid rgb(255 255 255 / 10%);
+  }
+
+  .metric-card:last-child {
+    border-bottom: 0;
+  }
+
+  .chart-hint {
+    position: static;
+    padding: 0 0.75rem 0.75rem;
+  }
 }
 </style>

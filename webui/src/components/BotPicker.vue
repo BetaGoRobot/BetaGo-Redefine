@@ -124,20 +124,26 @@ onMounted(async () => {
 
 <template>
   <el-dropdown trigger="click" @command="(c: any) => c()">
-    <el-button type="primary" plain>
-      <el-icon style="vertical-align: -2px"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M832 512a32 32 0 1 1 64 0v320a64 64 0 0 1-64 64H192a64 64 0 0 1-64-64V192a64 64 0 0 1 64-64h320a32 32 0 1 1 0 64H192v640h640V512zM384 448a32 32 0 0 1-32-32V160a32 32 0 0 1 64 0v137.376L724.672 148.704a32 32 0 1 1 34.656 54.592L449.984 351.936 724.672 500.64a32 32 0 1 1-34.656 54.592L416 414.656V416a32 32 0 0 1-32 32z"/></svg></el-icon>
-      <span style="margin-left: 4px">机器人源</span>
-      <el-tag size="small" style="margin-left: 8px">{{ selectedBotIDs.length }}/{{ bots.length }}</el-tag>
+    <el-button class="bot-picker-trigger" plain>
+      <span class="bot-picker-trigger__icon" aria-hidden="true">
+        <span />
+        <span />
+      </span>
+      <span>机器人源</span>
+      <span class="bot-picker-trigger__count">
+        {{ selectedBotIDs.length }}/{{ bots.length }}
+      </span>
     </el-button>
     <template #dropdown>
-      <el-dropdown-menu style="min-width: 480px; padding: 8px">
-        <div style="padding: 4px 8px 8px; display: flex; gap: 6px; align-items: center; border-bottom: 1px solid #f2f6fc; margin-bottom: 4px">
+      <el-dropdown-menu class="bot-picker-menu">
+        <div class="bot-picker-menu__toolbar">
           <el-checkbox
             :model-value="allSelected"
             :indeterminate="!allSelected && selectedBotIDs.length > 0"
             @change="toggleAll"
           >全选</el-checkbox>
-          <el-button size="small" @click.stop="probeAll">🔍 全部探活</el-button>
+          <span class="bot-picker-menu__spacer" />
+          <el-button size="small" @click.stop="probeAll">全部探活</el-button>
           <el-button size="small" type="primary" plain @click.stop="openAdd">+ 添加机器人</el-button>
         </div>
         <div v-for="bot in bots" :key="bot.id" class="bot-row">
@@ -160,7 +166,7 @@ onMounted(async () => {
             <div class="bot-sub">
               <code class="code">{{ bot.baseURL || '(同源 /api)' }}</code>
               <span v-if="bot.remark" class="subtle">· {{ bot.remark }}</span>
-              <span v-if="bot.token" class="subtle">· 🔑 Token 已配置</span>
+              <span v-if="bot.token" class="subtle">· Token 已配置</span>
             </div>
           </div>
           <div class="bot-actions" @click.stop>
@@ -171,8 +177,9 @@ onMounted(async () => {
             <el-button size="small" link type="danger" @click="tryRemove(bot)">移除</el-button>
           </div>
         </div>
-        <div v-if="!bots.length" style="padding: 12px; text-align: center; color: #909399; font-size: 12px">
-          还没有配置机器人，点击右上角「添加机器人」开始。
+        <div v-if="!bots.length" class="bot-picker-empty">
+          <strong>还没有机器人源</strong>
+          <span>添加一个 WebUI 地址后即可开始查看运营数据。</span>
         </div>
       </el-dropdown-menu>
     </template>
@@ -181,8 +188,9 @@ onMounted(async () => {
   <!-- 新增/编辑 dialog -->
   <el-dialog
     v-model="dialogVisible"
+    class="bot-picker-dialog"
     :title="isEdit ? '编辑机器人' : '添加机器人'"
-    width="520px"
+    width="min(32rem, calc(100vw - 2rem))"
   >
     <el-form :model="editing" label-width="100px">
       <el-form-item label="名称" required>
@@ -214,17 +222,102 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.bot-picker-trigger {
+  justify-content: flex-start;
+  border-color: var(--ops-border-strong);
+  background: var(--ops-surface);
+  color: var(--ops-pine-900);
+}
+
+.bot-picker-trigger__icon {
+  position: relative;
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+}
+
+.bot-picker-trigger__icon::before,
+.bot-picker-trigger__icon::after,
+.bot-picker-trigger__icon span {
+  position: absolute;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 0.13rem;
+  background: currentColor;
+  content: "";
+}
+
+.bot-picker-trigger__icon::before {
+  top: 0.05rem;
+  left: 0.05rem;
+}
+
+.bot-picker-trigger__icon::after {
+  right: 0.05rem;
+  bottom: 0.05rem;
+}
+
+.bot-picker-trigger__icon span:first-child {
+  top: 0.05rem;
+  right: 0.05rem;
+  opacity: 0.45;
+}
+
+.bot-picker-trigger__icon span:last-child {
+  bottom: 0.05rem;
+  left: 0.05rem;
+  opacity: 0.45;
+}
+
+.bot-picker-trigger__count {
+  margin-left: auto;
+  padding: 0.17rem 0.42rem;
+  border-radius: 999px;
+  background: var(--ops-pine-100);
+  color: var(--ops-pine-700);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.bot-picker-menu {
+  width: min(31rem, calc(100vw - 1rem));
+  padding: 0.55rem;
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-md);
+  background: var(--ops-surface);
+  box-shadow: var(--ops-shadow-md);
+}
+
+.bot-picker-menu__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 3rem;
+  margin-bottom: 0.3rem;
+  padding: 0.35rem 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--ops-border);
+}
+
+.bot-picker-menu__spacer {
+  flex: 1;
+}
+
 .bot-row {
   display: flex;
-  gap: 10px;
+  gap: 0.65rem;
   align-items: center;
-  padding: 8px 4px;
-  border-radius: 6px;
+  min-height: 3.6rem;
+  padding: 0.55rem 0.45rem;
+  border-radius: var(--ops-radius-sm);
   cursor: pointer;
-  transition: background 0.15s;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
 }
 .bot-row:hover {
-  background: #f2f6fc;
+  background: #f0f5f2;
+  transform: translateX(1px);
 }
 .dot {
   flex: 0 0 auto;
@@ -241,9 +334,9 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
+  color: var(--ops-ink);
+  font-size: 0.8rem;
+  font-weight: 720;
 }
 .name {
   overflow: hidden;
@@ -251,28 +344,93 @@ onMounted(async () => {
   white-space: nowrap;
 }
 .bot-sub {
-  margin-top: 2px;
-  font-size: 11px;
-  color: #909399;
   display: flex;
-  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+  color: var(--ops-muted);
+  font-size: 0.68rem;
 }
 .code {
-  background: #f2f6fc;
-  padding: 0 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  color: #606266;
+  max-width: 18rem;
+  overflow: hidden;
+  padding: 0.08rem 0.35rem;
+  border-radius: 0.3rem;
+  background: #eff1ec;
+  color: #56645f;
+  font-family: var(--ops-font-mono);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .subtle {
-  font-size: 11px;
-  color: #a8abb2;
+  color: var(--ops-muted-light);
+  font-size: 0.68rem;
 }
 .bot-actions {
   flex: 0 0 auto;
   display: flex;
   gap: 2px;
+}
+
+.bot-picker-empty {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  padding: 2rem 1rem;
+  color: var(--ops-muted);
+  text-align: center;
+}
+
+.bot-picker-empty::before {
+  display: grid;
+  place-items: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  margin-bottom: 0.35rem;
+  border-radius: 0.9rem;
+  background: var(--ops-pine-100);
+  color: var(--ops-pine-700);
+  content: "+";
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+.bot-picker-empty strong {
+  color: var(--ops-pine-900);
+  font-size: 0.85rem;
+}
+
+.bot-picker-empty span {
+  max-width: 28ch;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 767px) {
+  .bot-picker-menu__toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .bot-picker-menu__spacer {
+    display: none;
+  }
+
+  .bot-picker-menu__toolbar :deep(.el-button) {
+    flex: 1;
+    margin: 0;
+  }
+
+  .bot-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .bot-actions {
+    width: 100%;
+    padding-left: 3rem;
+  }
 }
 </style>

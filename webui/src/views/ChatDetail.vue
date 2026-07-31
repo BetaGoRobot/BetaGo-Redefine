@@ -932,16 +932,19 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
       @back="$router.push({ name: 'chats' })"
     >
       <template #content>
-        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
-          <el-tag v-if="botLabel" type="info" effect="plain">
+        <div class="chat-detail-identity">
+          <el-tag v-if="botLabel" class="chat-detail-identity__bot" type="info" effect="plain">
             <span
               class="bot-dot"
               :style="{ background: bot?.color || '#909399' }"
             />
-            <span style="margin-left: 4px">{{ botLabel }}</span>
+            <span>{{ botLabel }}</span>
           </el-tag>
-          <el-avatar v-if="detail?.avatar" :src="detail.avatar" :size="32" shape="square" />
-          <h2 style="margin: 0; font-size: 18px">{{ detail?.name || '会话详情' }}</h2>
+          <el-avatar v-if="detail?.avatar" :src="detail.avatar" :size="40" shape="square" />
+          <div class="chat-detail-identity__title">
+            <p>Conversation intelligence</p>
+            <h1>{{ detail?.name || '会话详情' }}</h1>
+          </div>
           <el-tag v-if="detail?.chat_status === 'p2p'" type="info" size="small" effect="plain">单聊</el-tag>
           <el-tag v-else-if="detail?.chat_status === 'group'" type="success" size="small" effect="plain">
             群聊 · {{ detail?.member_count }}人
@@ -949,11 +952,8 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           <el-tag v-else size="small" type="warning" effect="dark">元信息不可用</el-tag>
           <el-tag v-if="detail?.membership === 'left'" type="danger" size="small" effect="plain">已离开</el-tag>
           <el-tag v-else-if="detail?.membership === 'unknown'" type="info" size="small" effect="plain">归属未知</el-tag>
-          <el-text type="info" size="small">{{ chatID }}</el-text>
-          <span
-            v-if="detail?.owner_id"
-            style="display: flex; align-items: center; gap: 4px; color: #909399; font-size: 12px; margin-left: 8px"
-          >
+          <code class="chat-detail-identity__id">{{ chatID }}</code>
+          <span v-if="detail?.owner_id" class="chat-detail-owner">
             群主：
             <el-avatar
               v-if="detail.owner_avatar"
@@ -970,36 +970,36 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
     <GlobalFilterBar />
 
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="📊 统计 & Token" name="stats">
+      <el-tab-pane label="统计与 Token" name="stats">
         <div
           v-if="viewMode === 'deep' && focusValue"
-          style="margin-bottom: 12px; padding: 10px 14px; background: #ecf5ff; border: 1px solid #d9ecff; border-radius: 6px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap"
+          class="detail-drill-banner"
         >
-          <span>🔍 正在下钻：
+          <span>正在下钻：
             <el-tag type="info" effect="dark">{{ DIMENSION_LABEL[focusDimension] }} = {{ focusValue }}</el-tag>
           </span>
           <el-button size="small" @click="clearFocus">返回总览</el-button>
-          <span style="flex: 1" />
-          <span style="color: #909399; font-size: 12px">💡 点击其他饼图/条形可切换聚焦维度</span>
+          <span class="detail-drill-banner__spacer" />
+          <small>点击其他饼图或条形可切换聚焦维度</small>
         </div>
 
-        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center; flex-wrap: wrap">
+        <div class="detail-control-row">
           <el-radio-group v-model="viewMode">
             <el-radio-button value="overview">总览模式</el-radio-button>
             <el-radio-button value="deep">下钻模式</el-radio-button>
           </el-radio-group>
           <template v-if="viewMode === 'overview'">
-            <span style="color: #909399">堆叠分解维度</span>
-            <el-select v-model="focusDimension" style="width: 140px">
+            <span>堆叠分解维度</span>
+            <el-select v-model="focusDimension" class="detail-control-row__select">
               <el-option v-for="d of (['model','kind','source_type','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
             </el-select>
           </template>
           <template v-else>
-            <span style="color: #909399">聚焦维度</span>
-            <el-select v-model="focusDimension" style="width: 140px">
+            <span>聚焦维度</span>
+            <el-select v-model="focusDimension" class="detail-control-row__select">
               <el-option v-for="d of (['model','kind','source_type','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
             </el-select>
-            <el-select v-model="focusValue" placeholder="选择聚焦值" filterable style="width: 220px" clearable>
+            <el-select v-model="focusValue" class="detail-control-row__focus" placeholder="选择聚焦值" filterable clearable>
               <el-option
                 v-for="g of getGroup(focusDimension)"
                 :key="g.group"
@@ -1047,7 +1047,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 
         <el-card shadow="never" class="panel" style="margin-bottom: 12px">
           <EChart :option="trendOption" height="360px" />
-          <div class="chart-hint">💡 滚动滚轮缩放 · 拖动底部滑块切换区间</div>
+          <div class="chart-hint">滚轮缩放 · 拖动底部滑块切换区间</div>
         </el-card>
 
         <el-row :gutter="12" style="margin-bottom: 12px">
@@ -1065,7 +1065,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           <el-col :span="16">
             <el-card shadow="never" class="panel">
               <EChart :option="topModelBar" height="360px" @click="onTopClick" />
-              <div class="chart-hint">💡 点击条形进入下钻模式</div>
+              <div class="chart-hint">点击条形进入下钻模式</div>
             </el-card>
           </el-col>
           <el-col :span="8"><el-card shadow="never" class="panel"><EChart :option="funnelOption" height="360px" /></el-card></el-col>
@@ -1189,11 +1189,11 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane :label="`👥 群成员${members.length ? ' (' + members.length + ')' : ''}`" name="members">
-        <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center">
-          <el-input v-model="memberKeyword" placeholder="按名字或 open_id 搜索" clearable style="max-width: 280px" />
+      <el-tab-pane :label="`群成员${members.length ? ' (' + members.length + ')' : ''}`" name="members">
+        <div class="detail-control-row">
+          <el-input v-model="memberKeyword" class="detail-member-search" placeholder="按名字或 open_id 搜索" clearable />
           <el-button :loading="memberLoading" @click="loadMembers">刷新</el-button>
-          <span style="color: #909399">共 {{ members.length }} 名成员</span>
+          <span>共 {{ members.length }} 名成员</span>
         </div>
         <el-table v-loading="memberLoading" :data="filteredMembers()" stripe>
           <el-table-column type="index" label="#" width="60" />
@@ -1208,14 +1208,14 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="🔌 功能开关" name="features">
+      <el-tab-pane label="功能开关" name="features">
         <el-table v-loading="featLoading" :data="features" stripe>
           <el-table-column prop="name" label="功能" min-width="160" />
           <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
           <el-table-column prop="category" label="分类" width="120" />
           <el-table-column label="状态" width="200">
             <template #default="{ row }">
-              <div style="display: flex; align-items: center; gap: 8px">
+              <div class="feature-status">
                 <el-switch :model-value="row.enabled" @update:model-value="(v: boolean) => toggleFeature(row, v)" />
                 <el-tag v-if="!row.enabled && row.default_enabled" size="small" type="warning" effect="plain">覆盖默认</el-tag>
                 <el-tag v-else-if="row.enabled && !row.default_enabled" size="small" type="success" effect="plain">已启用</el-tag>
@@ -1233,7 +1233,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
         />
       </el-tab-pane>
 
-      <el-tab-pane label="⚙️ 配置" name="configs">
+      <el-tab-pane label="配置" name="configs">
         <el-table v-loading="cfgLoading" :data="genericConfigs" stripe>
           <el-table-column prop="key" label="键" min-width="200" />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
@@ -1283,28 +1283,93 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   --ops-pine-900: #143b36;
   --ops-pine-700: #25534d;
   --ops-lime: #d7ff73;
-  --ops-canvas: #f8f7f3;
-  --ops-surface: #ffffff;
-  --ops-border: #e6e3da;
-  --ops-muted: #737d78;
+  --ops-canvas: #f4f2ec;
+  --ops-surface: #fffefa;
+  --ops-border: #dfddd4;
+  --ops-muted: #6f7b76;
   min-height: 100%;
-  padding: clamp(0.25rem, 1vw, 0.75rem);
+  padding: clamp(0.2rem, 0.8vw, 0.65rem);
   border-radius: 1.25rem;
   background:
-    linear-gradient(180deg, rgb(248 247 243 / 85%), transparent 18rem);
+    radial-gradient(circle at 100% 0%, rgb(215 255 115 / 10%), transparent 24rem),
+    linear-gradient(180deg, rgb(244 242 236 / 82%), transparent 18rem);
 }
 
 .chat-detail-header {
   margin-bottom: 0.85rem;
-  padding: 1rem 1.15rem;
+  padding: 1rem 1.15rem 1.05rem;
   border: 1px solid var(--ops-border);
   border-radius: 1rem;
   background: var(--ops-surface);
-  box-shadow: 0 0.75rem 2.4rem rgb(20 59 54 / 6%);
+  box-shadow: var(--ops-shadow-sm);
 }
 
 .chat-detail-ops :deep(.el-page-header__left) {
   color: var(--ops-pine-700);
+}
+
+.chat-detail-ops :deep(.el-page-header__content) {
+  min-width: 0;
+}
+
+.chat-detail-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.chat-detail-identity__bot :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chat-detail-identity__title {
+  display: grid;
+  min-width: min(15rem, 42vw);
+}
+
+.chat-detail-identity__title p {
+  margin: 0 0 0.14rem;
+  color: var(--ops-teal);
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.chat-detail-identity__title h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ops-pine-950);
+  font-size: 1.08rem;
+  font-weight: 780;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-detail-identity__id {
+  max-width: 16rem;
+  overflow: hidden;
+  padding: 0.27rem 0.45rem;
+  border-radius: 0.4rem;
+  background: #f0f1ec;
+  color: var(--ops-muted);
+  font-family: var(--ops-font-mono);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-detail-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--ops-muted);
+  font-size: 0.7rem;
 }
 
 .chat-detail-ops :deep(.el-tabs__header) {
@@ -1313,6 +1378,7 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   border: 1px solid var(--ops-border);
   border-radius: 0.85rem;
   background: var(--ops-surface);
+  box-shadow: var(--ops-shadow-sm);
 }
 
 .chat-detail-ops :deep(.el-tabs__item) {
@@ -1331,6 +1397,62 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   background: var(--ops-pine-700);
 }
 
+.detail-drill-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.8rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #cfded8;
+  border-radius: 0.7rem;
+  background: #eef5f1;
+  color: var(--ops-pine-700);
+  font-size: 0.76rem;
+}
+
+.detail-drill-banner__spacer {
+  flex: 1;
+}
+
+.detail-drill-banner small {
+  color: var(--ops-muted);
+  font-size: 0.68rem;
+}
+
+.detail-control-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.8rem;
+  padding: 0.65rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 0.75rem;
+  background: var(--ops-surface);
+}
+
+.detail-control-row > span {
+  color: var(--ops-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.detail-control-row__select {
+  width: 9rem;
+}
+
+.detail-control-row__focus,
+.detail-member-search {
+  width: min(100%, 16rem);
+}
+
+.feature-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .bot-dot {
   display: inline-block;
   width: 8px;
@@ -1339,32 +1461,87 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   border: 1px solid rgba(0, 0, 0, 0.08);
   vertical-align: middle;
 }
+
+.kpi-card {
+  height: 100%;
+  border-color: var(--ops-pine-800);
+  background: var(--ops-pine-900);
+}
+
 .kpi-card :deep(.el-card__body) {
-  padding: 14px 20px;
+  padding: 0.9rem 1rem;
 }
+
+.kpi-card :deep(.el-statistic__head),
+.kpi-sub,
+.kpi-card :deep(.el-text) {
+  color: #a9beb7;
+}
+
+.kpi-card :deep(.el-statistic__number) {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
 .kpi-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #909399;
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
 }
+
 .panel {
-  border: 1px solid #f2f6fc;
   position: relative;
+  overflow: hidden;
+  margin-bottom: 0.8rem !important;
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-md);
+  background: var(--ops-surface);
+  box-shadow: var(--ops-shadow-sm);
 }
+
 .panel :deep(.el-card__body) {
-  padding: 10px 8px 14px 8px;
+  padding: 0.55rem;
 }
+
 .chart-hint {
   position: absolute;
-  right: 16px;
-  top: 14px;
-  font-size: 12px;
-  color: #909399;
+  top: 0.9rem;
+  right: 1rem;
+  color: var(--ops-muted-light);
+  font-size: 0.68rem;
+}
+
+.chat-detail-ops :deep(.el-tab-pane > .el-table) {
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-md);
+}
+
+@media (max-width: 1023px) {
+  .chat-detail-ops :deep(.el-row > .el-col-6) {
+    flex: 0 0 50%;
+    max-width: 50%;
+    margin-bottom: 0.75rem;
+  }
+
+  .chat-detail-ops :deep(.el-row > .el-col-16),
+  .chat-detail-ops :deep(.el-row > .el-col-8) {
+    flex: 0 0 100%;
+    max-width: 100%;
+    margin-bottom: 0.75rem;
+  }
 }
 
 @media (max-width: 767px) {
   .chat-detail-ops {
     padding: 0;
+  }
+
+  .chat-detail-ops :deep(.el-page-header__title) {
+    display: none;
+  }
+
+  .chat-detail-ops :deep(.el-page-header__left) {
+    margin-right: 0.5rem;
   }
 
   .chat-detail-ops :deep(.el-tabs__nav-wrap) {
@@ -1379,6 +1556,63 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   .chat-detail-header {
     align-items: flex-start;
     padding: 0.85rem;
+  }
+
+  .chat-detail-ops :deep(.el-page-header__main) {
+    align-items: flex-start;
+  }
+
+  .chat-detail-ops :deep(.el-page-header__content) {
+    width: calc(100% - 2.5rem);
+  }
+
+  .chat-detail-identity__title {
+    min-width: 0;
+    width: calc(100% - 3.25rem);
+  }
+
+  .chat-detail-identity__id {
+    max-width: 100%;
+  }
+
+  .detail-control-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .detail-control-row :deep(.el-radio-group),
+  .detail-control-row :deep(.el-select),
+  .detail-control-row :deep(.el-input),
+  .detail-control-row :deep(.el-button) {
+    width: 100%;
+    margin: 0;
+  }
+
+  .detail-control-row :deep(.el-radio-button) {
+    flex: 1;
+  }
+
+  .detail-control-row :deep(.el-radio-button__inner) {
+    width: 100%;
+  }
+
+  .detail-drill-banner__spacer {
+    display: none;
+  }
+
+  .chat-detail-ops :deep(.el-row > [class*="el-col-"]) {
+    flex: 0 0 100%;
+    max-width: 100%;
+    margin-bottom: 0.65rem;
+  }
+
+  .chart-hint {
+    position: static;
+    padding: 0 0.75rem 0.75rem;
+  }
+
+  .chat-detail-ops :deep(.el-tab-pane > .el-table) {
+    overflow-x: auto;
   }
 }
 </style>

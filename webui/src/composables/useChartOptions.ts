@@ -3,14 +3,14 @@ import type { TokenDailyPoint, TokenGroupCount } from '../api/types'
 import type { MetricKey } from '../stores/filter'
 import { METRIC_LABEL } from '../stores/filter'
 
-/** 通用调色板（现代、中性） */
+/** 与温润 Agent 运营台一致的分析调色板。 */
 const PALETTE = [
-  '#5B8FF9', '#5AD8A6', '#F6BD16', '#E86452', '#6DC8EC',
-  '#945FB9', '#FF9845', '#1E9493', '#FF99C3', '#5D7092',
+  '#255B52', '#4A8F79', '#A6C94D', '#D79A47', '#D36F5E',
+  '#78A8B4', '#6F7C8F', '#79A87B', '#B98472', '#8A928C',
 ]
 
 function baseAxisLabelStyle() {
-  return { color: '#606266', fontSize: 11 }
+  return { color: '#6F7B76', fontSize: 11 }
 }
 
 function baseGrid(padding = { left: 52, right: 56, top: 48, bottom: 48 }) {
@@ -42,13 +42,13 @@ export function buildDonut(opt: DonutOption): EChartsOption {
       text: opt.title,
       left: 'center',
       top: 8,
-      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+      textStyle: { fontSize: 14, fontWeight: 700, color: '#1B2E2A' },
     },
     tooltip: {
       trigger: 'item',
-      backgroundColor: 'rgba(255,255,255,0.96)',
-      borderColor: '#ebeef5',
-      textStyle: { color: '#303133' },
+      backgroundColor: 'rgba(255,254,250,0.97)',
+      borderColor: '#dfddd4',
+      textStyle: { color: '#1b2e2a' },
       formatter: (p: any) => {
         const v = p.value as number
         const pct = sum ? ((v / sum) * 100).toFixed(1) : 0
@@ -68,8 +68,8 @@ export function buildDonut(opt: DonutOption): EChartsOption {
       top: '42%',
       style: {
         rich: {
-          a: { fontSize: 22, fontWeight: 700, fill: '#303133' },
-          b: { fontSize: 11, fill: '#909399', padding: [4, 0, 0, 0] },
+          a: { fontSize: 22, fontWeight: 750, fill: '#143b36' },
+          b: { fontSize: 11, fill: '#6f7b76', padding: [4, 0, 0, 0] },
         },
         text: centerText,
         textAlign: 'center' as const,
@@ -85,13 +85,13 @@ export function buildDonut(opt: DonutOption): EChartsOption {
         avoidLabelOverlap: true,
         itemStyle: {
           borderRadius: 6,
-          borderColor: '#fff',
+          borderColor: '#fffefa',
           borderWidth: 2,
         },
         label: {
           show: raw.length <= 8,
           formatter: '{b}\n{d}%',
-          color: '#606266',
+          color: '#6f7b76',
           fontSize: 11,
           lineHeight: 14,
         },
@@ -188,8 +188,8 @@ export function buildTrend(opt: TrendOption): EChartsOption {
       barWidth: 16,
       itemStyle: {
         color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
-          { offset: 0, color: '#5B8FF9' },
-          { offset: 1, color: 'rgba(91,143,249,0.35)' },
+          { offset: 0, color: '#255B52' },
+          { offset: 1, color: 'rgba(74,143,121,0.30)' },
         ]},
         borderRadius: [4, 4, 0, 0],
       },
@@ -205,9 +205,9 @@ export function buildTrend(opt: TrendOption): EChartsOption {
       smooth: true,
       symbol: 'circle',
       symbolSize: 6,
-      lineStyle: { width: 2, color: '#E86452' },
-      itemStyle: { color: '#E86452' },
-      areaStyle: { color: 'rgba(232,100,82,0.12)' },
+      lineStyle: { width: 2, color: '#D36F5E' },
+      itemStyle: { color: '#D36F5E' },
+      areaStyle: { color: 'rgba(211,111,94,0.12)' },
       yAxisIndex: 1,
       emphasis: { focus: 'series' },
       data: points.map((p) => (p as any)[opt.secondary] as number),
@@ -220,14 +220,14 @@ export function buildTrend(opt: TrendOption): EChartsOption {
       text: opt.title,
       left: 16,
       top: 10,
-      textStyle: { fontSize: 14, fontWeight: 600, color: '#303133' },
+      textStyle: { fontSize: 14, fontWeight: 700, color: '#1B2E2A' },
     },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross', crossStyle: { color: '#dcdfe6' } },
-      backgroundColor: 'rgba(255,255,255,0.96)',
-      borderColor: '#ebeef5',
-      textStyle: { color: '#303133' },
+      axisPointer: { type: 'cross', crossStyle: { color: '#cbcfc5' } },
+      backgroundColor: 'rgba(255,254,250,0.97)',
+      borderColor: '#dfddd4',
+      textStyle: { color: '#1b2e2a' },
       valueFormatter: (v: any) => (typeof v === 'number' ? v.toLocaleString() : v),
     },
     grid: baseGrid({ left: 56, right: 56, top: 52, bottom: 56 }),
@@ -242,7 +242,7 @@ export function buildTrend(opt: TrendOption): EChartsOption {
       type: 'category',
       data: days,
       boundaryGap: true,
-      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisLine: { lineStyle: { color: '#dfddd4' } },
       axisTick: { show: false },
       axisLabel: { ...baseAxisLabelStyle(), hideOverlap: true },
     },
@@ -250,10 +250,10 @@ export function buildTrend(opt: TrendOption): EChartsOption {
       {
         type: 'value',
         name: primaryLabel,
-        nameTextStyle: { ...baseAxisLabelStyle(), color: '#909399' },
+        nameTextStyle: { ...baseAxisLabelStyle(), color: '#6f7b76' },
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: { lineStyle: { color: '#f2f6fc', type: 'dashed' } },
+        splitLine: { lineStyle: { color: '#ebe9e2', type: 'dashed' } },
         axisLabel: { ...baseAxisLabelStyle(), formatter: formatNumber },
       },
       sameAxis || opt.seriesMap ? undefined : {

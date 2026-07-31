@@ -27,7 +27,10 @@ const loading = ref(false)
 type BotChat = WithBot<ChatSummary>
 const chats = ref<BotChat[]>([])
 const keyword = ref('')
-const tableRef = ref<{ clearSelection: () => void }>()
+const tableRef = ref<{
+  clearSelection: () => void
+  toggleRowSelection: (row: BotChat, selected?: boolean) => void
+}>()
 const selectedRows = ref<BotChat[]>([])
 const batchDrawerOpen = ref(false)
 const rolloutMap = ref<Record<string, AgenticChatState>>({})
@@ -232,6 +235,15 @@ function handleSelectionChange(rows: BotChat[]) {
   )
 }
 
+function isRowSelected(row: BotChat): boolean {
+  const key = rowKey(row)
+  return selectedRows.value.some((selected) => rowKey(selected) === key)
+}
+
+function toggleMobileSelection(row: BotChat, selected: boolean) {
+  tableRef.value?.toggleRowSelection(row, selected)
+}
+
 function openBatchDrawer() {
   const botIDs = new Set(selectedRows.value.map((row) => row.bot_id))
   if (
@@ -422,6 +434,16 @@ watch(rolloutBotID, () => {
 
 <template>
   <div class="chat-ops-page">
+    <header class="page-intro">
+      <div>
+        <p class="page-intro__eyebrow">Conversation operations</p>
+        <h1>会话运营</h1>
+        <p class="page-intro__copy">
+          在同一视角下筛选多 Bot 会话、定位消耗趋势，并安全推进 Agentic 灰度。
+        </p>
+      </div>
+    </header>
+
     <GlobalFilterBar />
 
     <div v-loading="loading">
@@ -455,11 +477,16 @@ watch(rolloutBotID, () => {
 
       <!-- 过滤面板 + 分布摘要 -->
       <el-card shadow="never" class="chat-ops-toolbar panel">
-        <div style="display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap">
-          <div style="flex: 1; min-width: 520px">
-            <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
-              <el-input v-model="keyword" placeholder="按群名或 chat_id 搜索" clearable style="max-width: 280px" />
-              <el-select v-model="botFilter" placeholder="机器人" style="width: 200px">
+        <div class="chat-filter-layout">
+          <div class="chat-filter-main">
+            <div class="chat-filter-controls">
+              <el-input
+                v-model="keyword"
+                class="chat-filter-control chat-filter-control--search"
+                placeholder="按群名或 chat_id 搜索"
+                clearable
+              />
+              <el-select v-model="botFilter" class="chat-filter-control chat-filter-control--bot" placeholder="机器人">
                 <el-option
                   v-for="o in botOptions"
                   :key="o.value"
@@ -467,18 +494,18 @@ watch(rolloutBotID, () => {
                   :label="o.label"
                 />
               </el-select>
-              <el-select v-model="typeFilter" placeholder="会话类型" style="width: 140px">
+              <el-select v-model="typeFilter" class="chat-filter-control" placeholder="会话类型">
                 <el-option value="all" label="全部类型" />
                 <el-option value="group" label="群聊" />
                 <el-option value="p2p" label="单聊" />
                 <el-option value="unknown" label="未知" />
               </el-select>
-              <el-select v-model="extFilter" placeholder="内外群" style="width: 140px">
+              <el-select v-model="extFilter" class="chat-filter-control" placeholder="内外群">
                 <el-option value="all" label="全部" />
                 <el-option value="internal" label="内部" />
                 <el-option value="external" label="外部" />
               </el-select>
-              <el-select v-model="membershipFilter" placeholder="是否在群" style="width: 140px">
+              <el-select v-model="membershipFilter" class="chat-filter-control" placeholder="是否在群">
                 <el-option value="all" label="全部" />
                 <el-option value="active" label="仅看在群" />
                 <el-option value="left" label="仅看已离开" />
@@ -488,14 +515,14 @@ watch(rolloutBotID, () => {
                 placeholder="最小 Token"
                 :min="0"
                 :controls="false"
-                style="width: 160px"
+                class="chat-filter-control chat-filter-control--number"
               />
               <el-input-number
                 v-model="maxTokens"
                 placeholder="最大 Token"
                 :min="0"
                 :controls="false"
-                style="width: 160px"
+                class="chat-filter-control chat-filter-control--number"
               />
               <el-button
                 @click="() => { keyword = ''; typeFilter = 'all'; extFilter = 'all'; membershipFilter = 'all'; botFilter = 'all'; minTokens = undefined; maxTokens = undefined }"
@@ -504,8 +531,8 @@ watch(rolloutBotID, () => {
             </div>
 
             <!-- 下钻激活过滤器 -->
-            <div v-if="store.currentDimensionFilters.length" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
-              <span style="color: #909399; font-size: 12px">激活的维度过滤：</span>
+            <div v-if="store.currentDimensionFilters.length" class="active-filters">
+              <span>激活的维度过滤</span>
               <el-tag
                 v-for="(f, i) in store.currentDimensionFilters"
                 :key="i"
@@ -518,8 +545,8 @@ watch(rolloutBotID, () => {
             </div>
 
             <!-- 快速筛选 -->
-            <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
-              <span style="color: #909399; font-size: 12px">快速筛选（可叠加）：</span>
+            <div class="quick-filters">
+              <span>可叠加维度</span>
               <el-button
                 v-for="dim of (['model','kind','source_type','status'] as DimensionKey[])"
                 :key="dim"
@@ -532,14 +559,14 @@ watch(rolloutBotID, () => {
           </div>
 
           <!-- 分布饼图 -->
-          <div style="display: flex; gap: 8px; min-width: 520px">
-            <div style="width: 170px">
+          <div class="chat-distributions">
+            <div class="chat-distributions__chart">
               <EChart :option="perBotDistribution" height="180px" :dataZoom="false" :toolbox="false" />
             </div>
-            <div style="width: 170px">
+            <div class="chat-distributions__chart">
               <EChart :option="topModelDistribution" height="180px" :dataZoom="false" :toolbox="false" />
             </div>
-            <div style="width: 170px">
+            <div class="chat-distributions__chart">
               <EChart :option="statusDistribution" height="180px" :dataZoom="false" :toolbox="false" />
             </div>
           </div>
@@ -583,17 +610,17 @@ watch(rolloutBotID, () => {
           </div>
         </div>
 
-        <el-table
-          ref="tableRef"
-          v-loading="loading"
-          :data="filtered"
-          :row-key="rowKey"
-          stripe
-          :default-sort="{ prop: 'total_tokens', order: 'descending' }"
-          @selection-change="handleSelectionChange"
-          @row-click="handleRowClick"
-          style="cursor: pointer"
-        >
+        <div class="desktop-chat-table">
+          <el-table
+            ref="tableRef"
+            v-loading="loading"
+            :data="filtered"
+            :row-key="rowKey"
+            stripe
+            :default-sort="{ prop: 'total_tokens', order: 'descending' }"
+            @selection-change="handleSelectionChange"
+            @row-click="handleRowClick"
+          >
           <el-table-column
             v-if="rolloutBotID"
             type="selection"
@@ -729,7 +756,86 @@ watch(rolloutBotID, () => {
               <el-button size="small" type="primary" link @click.stop="open(row)">查看详情 →</el-button>
             </template>
           </el-table-column>
-        </el-table>
+          </el-table>
+        </div>
+
+        <div v-if="filtered.length" class="mobile-chat-list">
+          <article
+            v-for="row in filtered"
+            :key="rowKey(row)"
+            class="mobile-chat-card"
+            :class="{ 'is-selected': isRowSelected(row) }"
+          >
+            <header class="mobile-chat-card__header">
+              <el-checkbox
+                v-if="rolloutBotID"
+                :model-value="isRowSelected(row)"
+                :aria-label="`选择 ${row.name}`"
+                @change="(value: boolean) => toggleMobileSelection(row, value)"
+              />
+              <el-avatar :src="row.avatar" :size="42" shape="square">
+                {{ row.name?.[0] }}
+              </el-avatar>
+              <div class="mobile-chat-card__identity">
+                <strong>{{ row.name }}</strong>
+                <span>{{ row.chat_id }}</span>
+              </div>
+              <span class="mobile-chat-card__type">
+                {{ chatKind(row) === 'group' ? '群聊' : chatKind(row) === 'p2p' ? '单聊' : '未知' }}
+              </span>
+            </header>
+
+            <div class="mobile-chat-card__bot">
+              <span
+                class="bot-dot"
+                :style="{ background: row.bot_color || '#909399' }"
+              />
+              <span>{{ row.bot_name }}</span>
+              <span class="mobile-chat-card__membership">
+                {{ row.membership === 'left' ? '已离开' : row.membership === 'unknown' ? '归属未知' : '在群' }}
+              </span>
+            </div>
+
+            <div
+              class="rollout-summary mobile-chat-card__rollout"
+              :class="{ 'is-ready': !!rolloutMap[rowKey(row)] }"
+            >
+              <span class="rollout-summary__dot" aria-hidden="true" />
+              <span>{{ rolloutSummary(row) }}</span>
+            </div>
+
+            <dl class="mobile-chat-card__metrics">
+              <div>
+                <dt>近期消息</dt>
+                <dd>{{ row.metrics?.recent_messages ?? '—' }}</dd>
+              </div>
+              <div>
+                <dt>成员</dt>
+                <dd>{{ row.metrics?.member_count ?? '—' }}</dd>
+              </div>
+              <div>
+                <dt>Token</dt>
+                <dd>
+                  {{ row.metrics?.total_tokens != null
+                    ? Number(row.metrics.total_tokens).toLocaleString()
+                    : '—' }}
+                </dd>
+              </div>
+            </dl>
+
+            <el-button class="mobile-chat-card__action" @click="open(row)">
+              查看会话详情
+              <span aria-hidden="true">→</span>
+            </el-button>
+          </article>
+        </div>
+
+        <div v-else class="chat-list-empty">
+          <strong>{{ chats.length ? '没有匹配当前筛选的会话' : '尚未读取到会话' }}</strong>
+          <span>
+            {{ chats.length ? '调整筛选条件后再试。' : '选择可用的机器人源并刷新列表。' }}
+          </span>
+        </div>
       </el-card>
     </div>
 
@@ -810,6 +916,76 @@ watch(rolloutBotID, () => {
 .chat-ops-toolbar {
   margin-bottom: 0.85rem;
   box-shadow: 0 0.7rem 2rem rgb(20 59 54 / 5%);
+}
+
+.chat-filter-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(26rem, 33rem);
+  gap: 1rem;
+  align-items: start;
+}
+
+.chat-filter-main {
+  min-width: 0;
+}
+
+.chat-filter-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.chat-filter-control {
+  width: 8.5rem;
+}
+
+.chat-filter-control--search {
+  width: min(100%, 17.5rem);
+}
+
+.chat-filter-control--bot {
+  width: 12.5rem;
+}
+
+.chat-filter-control--number {
+  width: 9.5rem;
+}
+
+.active-filters,
+.quick-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.active-filters > span:first-child,
+.quick-filters > span:first-child {
+  color: var(--ops-muted);
+  font-size: 0.67rem;
+  font-weight: 750;
+  letter-spacing: 0.045em;
+}
+
+.chat-distributions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ops-border);
+  border-radius: 0.8rem;
+  background: #faf9f5;
+}
+
+.chat-distributions__chart {
+  min-width: 0;
+  border-right: 1px solid var(--ops-border);
+}
+
+.chat-distributions__chart:last-child {
+  border-right: 0;
 }
 
 .chat-ops-table {
@@ -910,6 +1086,46 @@ watch(rolloutBotID, () => {
   border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+.desktop-chat-table {
+  cursor: pointer;
+}
+
+.mobile-chat-list {
+  display: none;
+}
+
+.chat-list-empty {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  padding: 3rem 1rem;
+  color: var(--ops-muted);
+  text-align: center;
+}
+
+.chat-list-empty::before {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 0.35rem;
+  border-radius: 1rem;
+  background: var(--ops-pine-100);
+  color: var(--ops-pine-700);
+  content: "—";
+  font-family: var(--ops-font-mono);
+  font-weight: 800;
+}
+
+.chat-list-empty strong {
+  color: var(--ops-pine-900);
+  font-size: 0.9rem;
+}
+
+.chat-list-empty span {
+  font-size: 0.75rem;
+}
+
 @media (max-width: 1023px) {
   .chat-ops-summary :deep(.el-col) {
     width: 50%;
@@ -917,12 +1133,8 @@ watch(rolloutBotID, () => {
     flex: 0 0 50%;
   }
 
-  .chat-ops-toolbar :deep(.el-card__body) > div {
-    display: grid !important;
-  }
-
-  .chat-ops-toolbar :deep(.el-card__body) > div > div {
-    min-width: 0 !important;
+  .chat-filter-layout {
+    grid-template-columns: 1fr;
   }
 
   .chat-ops-table :deep(.el-card__body) {
@@ -936,9 +1148,17 @@ watch(rolloutBotID, () => {
   }
 
   .chat-ops-summary :deep(.el-col) {
-    width: 100%;
-    max-width: 100%;
-    flex-basis: 100%;
+    width: 50%;
+    max-width: 50%;
+    flex-basis: 50%;
+  }
+
+  .chat-ops-summary .kpi-card :deep(.el-card__body) {
+    padding: 0.8rem;
+  }
+
+  .chat-ops-summary .kpi-card :deep(.el-statistic__number) {
+    font-size: 1.2rem;
   }
 
   .chat-ops-table__header,
@@ -953,11 +1173,161 @@ watch(rolloutBotID, () => {
     margin: 0;
   }
 
+  .chat-filter-control,
   .chat-ops-toolbar :deep(.el-input),
   .chat-ops-toolbar :deep(.el-select),
   .chat-ops-toolbar :deep(.el-input-number) {
     width: 100% !important;
     max-width: none !important;
+  }
+
+  .chat-filter-controls {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .chat-distributions {
+    display: none;
+  }
+
+  .chat-distributions__chart {
+    border-right: 0;
+    border-bottom: 1px solid var(--ops-border);
+  }
+
+  .chat-distributions__chart:last-child {
+    border-bottom: 0;
+  }
+
+  .desktop-chat-table {
+    display: none;
+  }
+
+  .mobile-chat-list {
+    display: grid;
+    gap: 0.7rem;
+  }
+
+  .mobile-chat-card {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--ops-border);
+    border-radius: 0.9rem;
+    background: #fffefa;
+    box-shadow: 0 0.4rem 1rem rgb(20 59 54 / 5%);
+  }
+
+  .mobile-chat-card.is-selected {
+    border-color: var(--ops-teal);
+    box-shadow:
+      0 0 0 0.18rem rgb(74 143 121 / 12%),
+      0 0.5rem 1.2rem rgb(20 59 54 / 8%);
+  }
+
+  .mobile-chat-card__header {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
+  }
+
+  .mobile-chat-card__identity {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mobile-chat-card__identity strong,
+  .mobile-chat-card__identity span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-chat-card__identity strong {
+    color: var(--ops-pine-950);
+    font-size: 0.88rem;
+  }
+
+  .mobile-chat-card__identity span {
+    margin-top: 0.2rem;
+    color: var(--ops-muted-light);
+    font-family: var(--ops-font-mono);
+    font-size: 0.62rem;
+  }
+
+  .mobile-chat-card__type,
+  .mobile-chat-card__membership {
+    padding: 0.25rem 0.45rem;
+    border-radius: 999px;
+    background: #eef2ed;
+    color: #65726d;
+    font-size: 0.64rem;
+    font-weight: 700;
+  }
+
+  .mobile-chat-card__bot {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--ops-muted);
+    font-size: 0.72rem;
+  }
+
+  .mobile-chat-card__membership {
+    margin-left: auto;
+  }
+
+  .mobile-chat-card__rollout {
+    width: 100%;
+    padding: 0.55rem 0.65rem;
+    border-radius: 0.6rem;
+    background: #f5f6f1;
+  }
+
+  .mobile-chat-card__metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+    margin: 0;
+  }
+
+  .mobile-chat-card__metrics div {
+    min-width: 0;
+    padding: 0.55rem;
+    border: 1px solid var(--ops-border);
+    border-radius: 0.6rem;
+    background: #faf9f5;
+  }
+
+  .mobile-chat-card__metrics dt {
+    color: var(--ops-muted);
+    font-size: 0.62rem;
+  }
+
+  .mobile-chat-card__metrics dd {
+    margin: 0.2rem 0 0;
+    overflow: hidden;
+    color: var(--ops-pine-900);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-chat-card__action {
+    width: 100%;
+    min-height: 2.75rem;
+    margin: 0;
+    border-color: var(--ops-pine-100);
+    background: var(--ops-pine-100);
+    color: var(--ops-pine-900);
+  }
+
+  .mobile-chat-card__action span {
+    margin-left: auto;
   }
 }
 </style>
