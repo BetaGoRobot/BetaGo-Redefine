@@ -6,8 +6,10 @@ import {
   type BotInstance,
 } from '../stores/filter'
 import { BotApi } from '../api/client'
+import { isAutheliaMode } from '../auth/runtime'
 
 const store = useFilterStore()
+const secureAuthMode = isAutheliaMode()
 const bots = computed(() => store.bots)
 const selectedBotIDs = computed(() => store.selectedBotIDs)
 const toggleBot = (id: string) => store.toggleBot(id)
@@ -27,7 +29,6 @@ function openAdd() {
   editing.value = {
     name: '',
     baseURL: '',
-    token: '',
     remark: '',
   }
   isEdit.value = false
@@ -49,7 +50,7 @@ function applyEdit() {
     store.updateBot(editing.value.id, {
       name: editing.value.name.trim(),
       baseURL: editing.value.baseURL || '',
-      token: editing.value.token || undefined,
+      token: secureAuthMode ? undefined : editing.value.token || undefined,
       remark: editing.value.remark,
     })
     ElMessage.success('已更新')
@@ -57,7 +58,7 @@ function applyEdit() {
     store.addBot({
       name: editing.value.name.trim(),
       baseURL: editing.value.baseURL || '',
-      token: editing.value.token || undefined,
+      token: secureAuthMode ? undefined : editing.value.token || undefined,
       remark: editing.value.remark,
     })
     ElMessage.success('已添加')
@@ -88,7 +89,11 @@ async function probe(bot: BotInstance) {
       robotName: h.robot_name || bot.robotName,
     })
     ElMessage.success(
-      `✅ ${h.robot_name || bot.name} 可用${h.auth ? '（需 Token）' : '（免鉴权）'}`,
+      `✅ ${h.robot_name || bot.name} 可用${
+        h.auth
+          ? secureAuthMode ? '（后端已保护）' : '（需 Token）'
+          : '（免鉴权）'
+      }`,
     )
   } catch (e: any) {
     store.updateBot(bot.id, { healthy: false })
@@ -144,7 +149,13 @@ onMounted(async () => {
           >全选</el-checkbox>
           <span class="bot-picker-menu__spacer" />
           <el-button size="small" @click.stop="probeAll">全部探活</el-button>
-          <el-button size="small" type="primary" plain @click.stop="openAdd">+ 添加机器人</el-button>
+          <el-button
+            v-if="!secureAuthMode"
+            size="small"
+            type="primary"
+            plain
+            @click.stop="openAdd"
+          >+ 添加机器人</el-button>
         </div>
         <div v-for="bot in bots" :key="bot.id" class="bot-row">
           <el-checkbox
@@ -164,17 +175,31 @@ onMounted(async () => {
               <span v-if="bot.instance" class="subtle">{{ bot.instance }}</span>
             </div>
             <div class="bot-sub">
-              <code class="code">{{ bot.baseURL || '(同源 /api)' }}</code>
+              <code class="code">
+                {{ secureAuthMode ? '服务端托管' : bot.baseURL || '(同源 /api)' }}
+              </code>
               <span v-if="bot.remark" class="subtle">· {{ bot.remark }}</span>
-              <span v-if="bot.token" class="subtle">· Token 已配置</span>
+              <span v-if="!secureAuthMode && bot.token" class="subtle">· Token 已配置</span>
             </div>
           </div>
           <div class="bot-actions" @click.stop>
             <el-button size="small" link :loading="probeLoading === bot.id" @click="probe(bot)">
               探活
             </el-button>
-            <el-button size="small" link type="primary" @click="openEdit(bot)">编辑</el-button>
-            <el-button size="small" link type="danger" @click="tryRemove(bot)">移除</el-button>
+            <el-button
+              v-if="!secureAuthMode"
+              size="small"
+              link
+              type="primary"
+              @click="openEdit(bot)"
+            >编辑</el-button>
+            <el-button
+              v-if="!secureAuthMode"
+              size="small"
+              link
+              type="danger"
+              @click="tryRemove(bot)"
+            >移除</el-button>
           </div>
         </div>
         <div v-if="!bots.length" class="bot-picker-empty">
@@ -202,7 +227,7 @@ onMounted(async () => {
           placeholder="留空表示走同源 /api；例如 https://bot-foo.example.com"
         />
       </el-form-item>
-      <el-form-item label="管理 Token">
+      <el-form-item v-if="!secureAuthMode" label="管理 Token">
         <el-input
           v-model="editing.token"
           type="password"

@@ -1,5 +1,9 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import {
+  isAutheliaMode,
+  stripBrowserCredentials,
+} from '../auth/runtime'
 
 /** 单个 Bot 实例定义（一个 bot 对应一个后端 WebUI 地址）。 */
 export interface BotInstance {
@@ -11,7 +15,7 @@ export interface BotInstance {
    *  浏览器**不会**直接使用此字段——所有请求一律走 `/bot/<id>/api/*` 同源前缀，
    *  由 webui 容器内的 Caddy（见 script/webui/docker-entrypoint.sh）反代到这里。 */
   baseURL: string
-  /** 写操作鉴权 token（空表示不鉴权，仅内网环境适用）。 */
+  /** legacy 模式写操作鉴权 token；Authelia 模式绝不保存在浏览器。 */
   token?: string
   /** 备注，可选 */
   remark?: string
@@ -35,10 +39,24 @@ const DEFAULT_PALETTE = [
   '#945FB9', '#FF9845', '#1E9493', '#FF99C3', '#5D7092',
 ]
 
+function sanitizeBotForRuntime(bot: BotInstance): BotInstance {
+  if (!isAutheliaMode()) return bot
+  return stripBrowserCredentials(bot) as unknown as BotInstance
+}
+
 function loadUserBotsFromStorage(): BotInstance[] {
   try {
     const raw = localStorage.getItem(BOT_STORAGE_KEY)
-    if (raw) return (JSON.parse(raw) as BotInstance[]).map((b) => ({ ...b, source: b.source || ('localstorage' as const) }))
+    if (raw) {
+      const loaded = (JSON.parse(raw) as BotInstance[])
+        .map((b) => ({ ...b, source: b.source || ('localstorage' as const) }))
+        .map(sanitizeBotForRuntime)
+      if (isAutheliaMode()) {
+        // One-time migration: remove bearer credentials left by legacy builds.
+        localStorage.setItem(BOT_STORAGE_KEY, JSON.stringify(loaded))
+      }
+      return loaded
+    }
   } catch { /* ignore */ }
   // 不再自动塞 default-local：浏览器只跟 webui 同域通信，bot 列表必须由
   // 容器 entrypoint 通过 VITE_BOTS / window.__BETAGO_CONFIG__.bots 注入，
@@ -121,7 +139,7 @@ function parseEnvBotPresets(): BotInstance[] {
       // baseURL 仅作为运维登记字段；浏览器一律走 /bot/<id>/api/* 同源前缀。
       const baseURL = typeof b.baseURL === 'string' ? b.baseURL : ''
       const id = String(b.id)
-      return {
+      return sanitizeBotForRuntime({
         id,
         name: String(b.name || b.id),
         baseURL,
@@ -129,7 +147,7 @@ function parseEnvBotPresets(): BotInstance[] {
         remark: typeof b.remark === 'string' ? b.remark : undefined,
         color: DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
         source: 'env' as const,
-      }
+      })
     })
 }
 
@@ -138,7 +156,7 @@ function mergeBots(envBots: BotInstance[], userBots: BotInstance[]): BotInstance
   const map = new Map<string, BotInstance>()
   for (const b of envBots) map.set(b.id, b)
   for (const b of userBots) map.set(b.id, { ...map.get(b.id), ...b })
-  return [...map.values()]
+  return [...map.values()].map(sanitizeBotForRuntime)
 }
 
 /** 可选的时间窗口 */
@@ -197,7 +215,9 @@ export const useFilterStore = defineStore('filter', () => {
     bots,
     (v) => {
       // 只持久化用户自建的 bot，env 预设由环境变量注入
-      const persist = v.filter((b) => b.source !== 'env')
+      const persist = v
+        .filter((b) => b.source !== 'env')
+        .map(sanitizeBotForRuntime)
       localStorage.setItem(BOT_STORAGE_KEY, JSON.stringify(persist))
       // 删掉不存在于列表中的 selectedBotIDs
       selectedBotIDs.value = selectedBotIDs.value.filter((id) =>
@@ -220,7 +240,12 @@ export const useFilterStore = defineStore('filter', () => {
     if (bots.value.some((b) => b.id === id)) return bots.value.find((b) => b.id === id)!
     const taken = new Set(bots.value.map((b) => b.color))
     const color = bot.color || DEFAULT_PALETTE.find((c) => !taken.has(c)) || `#${Math.floor(Math.random() * 16777215).toString(16)}`
-    const nb: BotInstance = { id, color, healthy: undefined, ...bot }
+    const nb = sanitizeBotForRuntime({
+      id,
+      color,
+      healthy: undefined,
+      ...bot,
+    } as BotInstance)
     bots.value = [...bots.value, nb]
     if (!selectedBotIDs.value.length) selectedBotIDs.value = [id]
     return nb
@@ -236,7 +261,7 @@ export const useFilterStore = defineStore('filter', () => {
     if (idx >= 0) {
       bots.value = [
         ...bots.value.slice(0, idx),
-        { ...bots.value[idx], ...patch },
+        sanitizeBotForRuntime({ ...bots.value[idx], ...patch }),
         ...bots.value.slice(idx + 1),
       ]
     }

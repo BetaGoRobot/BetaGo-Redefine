@@ -22,6 +22,7 @@ import type {
   StatsResponse,
 } from './types'
 import type { BotInstance } from '../stores/filter'
+import { isAutheliaMode } from '../auth/runtime'
 
 /**
  * 浏览器只跟 webui 容器同源通信。
@@ -57,12 +58,22 @@ export function createBotClient(bot: Pick<BotInstance, 'id' | 'token'>): AxiosIn
   })
   http.interceptors.request.use((config) => {
     const token = bot.token
-    if (token) {
+    if (token && !isAutheliaMode()) {
       config.headers = config.headers || {}
       config.headers.Authorization = `Bearer ${token}`
     }
     return config
   })
+  http.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = Number(error?.response?.status || 0)
+      if (isAutheliaMode() && (status === 401 || status === 403)) {
+        window.dispatchEvent(new CustomEvent('betago:auth-required'))
+      }
+      return Promise.reject(error)
+    },
+  )
   return http
 }
 

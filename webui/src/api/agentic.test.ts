@@ -4,7 +4,7 @@ import {
   chunkChatIDs,
   summarizeRollout,
 } from './agentic'
-import { BotApi } from './client'
+import { BotApi, createBotClient } from './client'
 import type {
   AgenticBatchRequest,
   AgenticCapabilityState,
@@ -60,6 +60,23 @@ describe('agentic rollout helpers', () => {
 })
 
 describe('BotApi agentic rollout contract', () => {
+  it('never sends browser bearer credentials in Authelia mode', async () => {
+    window.__BETAGO_CONFIG__ = { authMode: 'authelia' }
+    const client = createBotClient({ id: 'bot-a', token: 'browser-secret-sentinel' })
+
+    const response = await client.get('/health', {
+      adapter: async (config) => ({
+        config,
+        data: { ok: true },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }),
+    })
+
+    expect(response.config.headers.Authorization).toBeUndefined()
+  })
+
   it('reads a single chat through the bot-bound route', async () => {
     const api = new BotApi(testBot)
     const state = {
