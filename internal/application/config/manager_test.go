@@ -2,11 +2,37 @@ package config
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 )
+
+type mutationStoreFake struct {
+	err     error
+	applied [][]persistedConfigMutation
+	mu      sync.Mutex
+	onApply func()
+}
+
+func (f *mutationStoreFake) Apply(
+	_ context.Context,
+	mutations []persistedConfigMutation,
+) error {
+	copied := append([]persistedConfigMutation(nil), mutations...)
+	f.mu.Lock()
+	f.applied = append(f.applied, copied)
+	f.mu.Unlock()
+	if f.onApply != nil {
+		f.onApply()
+	}
+	return f.err
+}
 
 func TestBuildConfigKeyUsesBotNamespace(t *testing.T) {
 	oldIdentity := currentBotIdentity
@@ -288,6 +314,180 @@ func TestConversationRuntimeChatActivationIgnoresUserOnlyOverride(t *testing.T) 
 		"",
 	) {
 		t.Fatal("user-only runtime override enabled a chat-level activation lookup")
+	}
+}
+
+func TestGetScopedBoolOverrideDistinguishesAbsentAndFalse(t *testing.T) {
+	manager := newManagerWithMutationStore(&mutationStoreFake{})
+	manager.cache[buildConfigKey(
+		ScopeChat,
+		"oc_scoped_false",
+		"",
+		KeyConversationRuntimeEnabled,
+	)] = "false"
+
+	got, configured := manager.GetScopedBoolOverride(
+		context.Background(),
+		KeyConversationRuntimeEnabled,
+		ScopeChat,
+		"oc_scoped_false",
+		"",
+	)
+	if !configured || got {
+		t.Fatalf("got (%v, %v), want (false, true)", got, configured)
+	}
+	if got, configured = manager.GetScopedBoolOverride(
+		context.Background(),
+		KeyConversationRuntimeEnabled,
+		ScopeChat,
+		"oc_missing",
+		"",
+	); configured || got {
+		t.Fatalf("missing got (%v, %v), want (false, false)", got, configured)
+	}
+}
+
+func TestApplyConfigMutationsKeepsCacheUnchangedOnRollback(t *testing.T) {
+	store := &mutationStoreFake{err: errors.New("write failed")}
+	manager := newManagerWithMutationStore(store)
+	value := "true"
+
+	err := manager.ApplyConfigMutations(
+		context.Background(),
+		[]ConfigMutation{{
+			Key:    KeyConversationRuntimeEnabled,
+			Scope:  ScopeChat,
+			ChatID: "oc_rollback",
+			Value:  &value,
+		}},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if _, ok := manager.cache[buildConfigKey(
+		ScopeChat,
+		"oc_rollback",
+		"",
+		KeyConversationRuntimeEnabled,
+	)]; ok {
+		t.Fatal("cache changed before transaction commit")
+	}
+	if len(store.applied) != 1 {
+		t.Fatalf("apply calls = %d, want 1", len(store.applied))
+	}
+}
+
+func TestApplyConfigMutationsDeletesCacheOnlyAfterCommit(t *testing.T) {
+	manager := newManagerWithMutationStore(&mutationStoreFake{})
+	fullKey := buildConfigKey(
+		ScopeChat,
+		"oc_inherit",
+		"",
+		KeyConversationRuntimeEnabled,
+	)
+	manager.cache[fullKey] = "true"
+
+	err := manager.ApplyConfigMutations(
+		context.Background(),
+		[]ConfigMutation{{
+			Key:    KeyConversationRuntimeEnabled,
+			Scope:  ScopeChat,
+			ChatID: "oc_inherit",
+			Value:  nil,
+		}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.cache[fullKey]; ok {
+		t.Fatal("delete mutation must restore inherit")
+	}
+}
+
+func TestApplyConfigMutationsStopsBeforeStoreWhenGuardFails(t *testing.T) {
+	store := &mutationStoreFake{}
+	manager := newManagerWithMutationStore(store)
+	value := "true"
+	guardErr := errors.New("stale revision")
+
+	err := manager.ApplyConfigMutations(
+		context.Background(),
+		[]ConfigMutation{{
+			Key: KeyConversationRuntimeEnabled, Scope: ScopeChat,
+			ChatID: "oc_guard", Value: &value,
+		}},
+		func() error { return guardErr },
+	)
+	if !errors.Is(err, guardErr) {
+		t.Fatalf("error = %v, want guard error", err)
+	}
+	if len(store.applied) != 0 {
+		t.Fatal("store called after guard failure")
+	}
+}
+
+func TestApplyConfigMutationsRejectsDuplicateKeys(t *testing.T) {
+	store := &mutationStoreFake{}
+	manager := newManagerWithMutationStore(store)
+	value := "true"
+	mutation := ConfigMutation{
+		Key: KeyConversationRuntimeEnabled, Scope: ScopeChat,
+		ChatID: "oc_duplicate", Value: &value,
+	}
+
+	err := manager.ApplyConfigMutations(
+		context.Background(),
+		[]ConfigMutation{mutation, mutation},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected duplicate mutation error")
+	}
+	if len(store.applied) != 0 {
+		t.Fatal("duplicate mutations reached persistence")
+	}
+}
+
+func TestApplyConfigMutationsSerializesWriters(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	store := &mutationStoreFake{
+		onApply: func() {
+			current := active.Add(1)
+			for {
+				previous := maximum.Load()
+				if current <= previous || maximum.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+			active.Add(-1)
+		},
+	}
+	manager := newManagerWithMutationStore(store)
+	var wg sync.WaitGroup
+	for index := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			value := "true"
+			if err := manager.ApplyConfigMutations(
+				context.Background(),
+				[]ConfigMutation{{
+					Key: KeyConversationRuntimeEnabled, Scope: ScopeChat,
+					ChatID: "oc_serial_" + strconv.Itoa(index), Value: &value,
+				}},
+				nil,
+			); err != nil {
+				t.Errorf("ApplyConfigMutations: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := maximum.Load(); got != 1 {
+		t.Fatalf("maximum concurrent writers = %d, want 1", got)
 	}
 }
 

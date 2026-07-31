@@ -17,6 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -192,7 +193,67 @@ func stripBotNamespace(fullKey string) string {
 type Manager struct {
 	cache           map[string]string
 	mu              sync.RWMutex
+	writeMu         sync.Mutex
+	mutationStore   configMutationStore
 	getFeaturesFunc func() []Feature // 获取功能列表的回调
+}
+
+// ConfigMutation describes one atomic dynamic-config change. A nil Value
+// deletes the scoped value so callers inherit the next configuration layer.
+type ConfigMutation struct {
+	Key    ConfigKey
+	Scope  ConfigScope
+	ChatID string
+	OpenID string
+	Value  *string
+}
+
+type persistedConfigMutation struct {
+	FullKey string
+	Value   *string
+}
+
+type configMutationStore interface {
+	Apply(context.Context, []persistedConfigMutation) error
+}
+
+type gormConfigMutationStore struct{}
+
+func (gormConfigMutationStore) Apply(
+	ctx context.Context,
+	mutations []persistedConfigMutation,
+) error {
+	upserts := make([]*model.DynamicConfig, 0, len(mutations))
+	deletes := make([]string, 0, len(mutations))
+	for _, mutation := range mutations {
+		if mutation.Value == nil {
+			deletes = append(deletes, mutation.FullKey)
+			continue
+		}
+		upserts = append(upserts, &model.DynamicConfig{
+			Key:   mutation.FullKey,
+			Value: *mutation.Value,
+		})
+	}
+	base := query.DynamicConfig.WithContext(ctx).UnderlyingDB()
+	return base.Transaction(func(tx *gorm.DB) error {
+		db := tx.WithContext(ctx)
+		if len(upserts) > 0 {
+			if err := db.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "key"}},
+				DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			}).Create(&upserts).Error; err != nil {
+				return err
+			}
+		}
+		if len(deletes) > 0 {
+			if err := db.Where("key IN ?", deletes).
+				Delete(&model.DynamicConfig{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 type ConfigReadOptions struct {
@@ -201,8 +262,13 @@ type ConfigReadOptions struct {
 
 // NewManager 创建新的配置管理器
 func NewManager() *Manager {
+	return newManagerWithMutationStore(gormConfigMutationStore{})
+}
+
+func newManagerWithMutationStore(store configMutationStore) *Manager {
 	return &Manager{
-		cache: make(map[string]string),
+		cache:         make(map[string]string),
+		mutationStore: store,
 	}
 }
 
@@ -364,6 +430,27 @@ func (m *Manager) GetBoolOverride(
 		}
 	}
 	return false, false
+}
+
+// GetScopedBoolOverride reads exactly one persisted scope. It intentionally
+// does not fall through to broader scopes or TOML, so callers can distinguish
+// inherit from an explicit false value.
+func (m *Manager) GetScopedBoolOverride(
+	ctx context.Context,
+	key ConfigKey,
+	scope ConfigScope,
+	chatID string,
+	openID string,
+) (bool, bool) {
+	raw, ok := m.getConfig(ctx, scope, chatID, openID, key)
+	if !ok {
+		return false, false
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+	return value, true
 }
 
 // GetString 获取字符串配置
@@ -645,8 +732,9 @@ func (m *Manager) SetBool(ctx context.Context, key ConfigKey, scope ConfigScope,
 
 // SetString 设置字符串配置
 func (m *Manager) SetString(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string, value string) error {
-	fullKey := buildConfigKey(scope, chatID, openID, key)
-	return m.setConfigByFullKey(ctx, fullKey, value)
+	return m.ApplyConfigMutations(ctx, []ConfigMutation{{
+		Key: key, Scope: scope, ChatID: chatID, OpenID: openID, Value: &value,
+	}}, nil)
 }
 
 // setConfigByFullKey 通过完整键设置配置
@@ -660,26 +748,18 @@ func (m *Manager) setConfigByFullKey(ctx context.Context, fullKey, value string)
 		attribute.String("config.value.preview", otel.PreviewString(value, 128)),
 		attribute.Int("config.value.len", len(value)),
 	)
-	q := query.DynamicConfig
-	err = q.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).
-		Create(&model.DynamicConfig{
-			Key:   fullKey,
-			Value: value,
-		})
-	if err != nil {
-		return err
-	}
-	m.mu.Lock()
-	m.cache[fullKey] = value
-	m.mu.Unlock()
-	storeConfigValueInTraceCache(ctx, fullKey, value, true)
-	return nil
+	return m.applyPersistedConfigMutations(
+		ctx,
+		[]persistedConfigMutation{{FullKey: fullKey, Value: &value}},
+		nil,
+	)
 }
 
 // DeleteConfig 删除配置
 func (m *Manager) DeleteConfig(ctx context.Context, key ConfigKey, scope ConfigScope, chatID, openID string) error {
-	fullKey := buildConfigKey(scope, chatID, openID, key)
-	return m.deleteConfigByFullKey(ctx, fullKey)
+	return m.ApplyConfigMutations(ctx, []ConfigMutation{{
+		Key: key, Scope: scope, ChatID: chatID, OpenID: openID, Value: nil,
+	}}, nil)
 }
 
 // deleteConfigByFullKey 通过完整键删除配置
@@ -691,18 +771,88 @@ func (m *Manager) deleteConfigByFullKey(ctx context.Context, fullKey string) (er
 		attribute.String("config.key.preview", otel.PreviewString(fullKey, 128)),
 		attribute.Int("config.key.len", len(fullKey)),
 	)
-	_, err = query.Q.DynamicConfig.WithContext(ctx).
-		Where(query.DynamicConfig.Key.Eq(fullKey)).
-		Delete()
+	return m.applyPersistedConfigMutations(
+		ctx,
+		[]persistedConfigMutation{{FullKey: fullKey}},
+		nil,
+	)
+}
 
-	if err == nil {
-		m.mu.Lock()
-		delete(m.cache, fullKey)
-		m.mu.Unlock()
-		storeConfigValueInTraceCache(ctx, fullKey, "", false)
+// ApplyConfigMutations validates and atomically persists scoped changes. The
+// optional guard runs while all Manager writers are serialized and before the
+// database transaction starts.
+func (m *Manager) ApplyConfigMutations(
+	ctx context.Context,
+	mutations []ConfigMutation,
+	guard func() error,
+) error {
+	persisted := make([]persistedConfigMutation, 0, len(mutations))
+	seen := make(map[string]struct{}, len(mutations))
+	for _, mutation := range mutations {
+		if mutation.Key == "" {
+			return fmt.Errorf("config mutation key is required")
+		}
+		switch mutation.Scope {
+		case ScopeGlobal, ScopeChat, ScopeUser:
+		default:
+			return fmt.Errorf("invalid config mutation scope %q", mutation.Scope)
+		}
+		fullKey := buildConfigKey(
+			mutation.Scope,
+			mutation.ChatID,
+			mutation.OpenID,
+			mutation.Key,
+		)
+		if _, exists := seen[fullKey]; exists {
+			return fmt.Errorf("duplicate config mutation %q", fullKey)
+		}
+		seen[fullKey] = struct{}{}
+		persisted = append(persisted, persistedConfigMutation{
+			FullKey: fullKey,
+			Value:   mutation.Value,
+		})
 	}
+	return m.applyPersistedConfigMutations(ctx, persisted, guard)
+}
 
-	return err
+func (m *Manager) applyPersistedConfigMutations(
+	ctx context.Context,
+	mutations []persistedConfigMutation,
+	guard func() error,
+) error {
+	if len(mutations) == 0 {
+		return nil
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	if guard != nil {
+		if err := guard(); err != nil {
+			return err
+		}
+	}
+	if m.mutationStore == nil {
+		return fmt.Errorf("config mutation store is unavailable")
+	}
+	if err := m.mutationStore.Apply(ctx, mutations); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	for _, mutation := range mutations {
+		if mutation.Value == nil {
+			delete(m.cache, mutation.FullKey)
+			storeConfigValueInTraceCache(ctx, mutation.FullKey, "", false)
+			continue
+		}
+		m.cache[mutation.FullKey] = *mutation.Value
+		storeConfigValueInTraceCache(
+			ctx,
+			mutation.FullKey,
+			*mutation.Value,
+			true,
+		)
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 // ==========================================
