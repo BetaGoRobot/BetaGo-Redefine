@@ -108,7 +108,7 @@ describe('AgenticRolloutPanel', () => {
   it('expands Full Agentic and restore presets to all four capabilities', async () => {
     vi.spyOn(BotApi.prototype, 'getAgenticRollout').mockResolvedValue(chatState())
     const wrapper = mount(AgenticRolloutPanel, {
-      props: { bot, chatID: 'oc_1' },
+      props: { bot, chatId: 'oc_1' },
       global: {
         stubs: {
           AgenticCapabilityCard: true,
@@ -144,7 +144,7 @@ describe('AgenticRolloutPanel', () => {
       .spyOn(BotApi.prototype, 'updateAgenticRollout')
       .mockResolvedValue({ dry_run: false, items: [] })
     const wrapper = mount(AgenticRolloutPanel, {
-      props: { bot, chatID: 'oc_1' },
+      props: { bot, chatId: 'oc_1' },
       global: {
         stubs: {
           ElSegmented: segmentedStub,
@@ -178,7 +178,7 @@ describe('AgenticRolloutPanel', () => {
       response: { status: 409, data: { code: 'stale_revision' } },
     })
     const wrapper = mount(AgenticRolloutPanel, {
-      props: { bot, chatID: 'oc_1' },
+      props: { bot, chatId: 'oc_1' },
       global: {
         stubs: {
           AgenticCapabilityCard: true,

@@ -18,7 +18,7 @@ import AgenticCapabilityCard from './AgenticCapabilityCard.vue'
 
 const props = defineProps<{
   bot: BotInstance
-  chatID: string
+  chatId: string
 }>()
 
 const state = ref<AgenticChatState | null>(null)
@@ -52,7 +52,7 @@ async function load(resetDraft = true) {
   loading.value = true
   loadError.value = ''
   try {
-    const next = await new BotApi(props.bot).getAgenticRollout(props.chatID)
+    const next = await new BotApi(props.bot).getAgenticRollout(props.chatId)
     state.value = next
     if (resetDraft) {
       draft.value = buildCurrentAgenticChanges(next)
@@ -80,7 +80,7 @@ async function save() {
   saving.value = true
   conflict.value = false
   try {
-    await new BotApi(props.bot).updateAgenticRollout(props.chatID, {
+    await new BotApi(props.bot).updateAgenticRollout(props.chatId, {
       expected_revision: state.value.revision,
       changes: dirtyChanges.value,
     })
@@ -104,7 +104,7 @@ async function save() {
 }
 
 watch(
-  [() => props.bot.id, () => props.chatID],
+  [() => props.bot.id, () => props.chatId],
   () => load(),
   { immediate: true },
 )
@@ -122,7 +122,7 @@ watch(
       </div>
       <div class="agentic-panel__hero-status">
         <span>{{ allEffective ? 'Full Agentic 已生效' : '按能力渐进开放' }}</span>
-        <small>{{ chatID }}</small>
+        <small>{{ chatId }}</small>
       </div>
     </header>
 

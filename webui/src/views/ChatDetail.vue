@@ -37,6 +37,7 @@ import {
 } from '../composables/useChartOptions'
 import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
+import AgenticRolloutPanel from '../components/AgenticRolloutPanel.vue'
 
 const props = defineProps<{ chatID: string; botID?: string }>()
 const store = useFilterStore()
@@ -85,6 +86,11 @@ const topicTrendError = ref('')
 const features = ref<FeatureView[]>([])
 const featLoading = ref(false)
 const configs = ref<ConfigView[]>([])
+const genericConfigs = computed(() =>
+  configs.value.filter(
+    (config) => config.management_surface !== 'agentic_rollout',
+  ),
+)
 const cfgLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
 const members = ref<ChatMember[]>([])
@@ -920,8 +926,11 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 </script>
 
 <template>
-  <div>
-    <el-page-header @back="$router.push({ name: 'chats' })" style="margin-bottom: 8px">
+  <div class="chat-detail-ops">
+    <el-page-header
+      class="chat-detail-header"
+      @back="$router.push({ name: 'chats' })"
+    >
       <template #content>
         <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
           <el-tag v-if="botLabel" type="info" effect="plain">
@@ -1216,8 +1225,16 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
         </el-table>
       </el-tab-pane>
 
+      <el-tab-pane label="Agentic 灰度" name="agentic">
+        <AgenticRolloutPanel
+          v-if="bot"
+          :bot="bot"
+          :chat-id="props.chatID"
+        />
+      </el-tab-pane>
+
       <el-tab-pane label="⚙️ 配置" name="configs">
-        <el-table v-loading="cfgLoading" :data="configs" stripe>
+        <el-table v-loading="cfgLoading" :data="genericConfigs" stripe>
           <el-table-column prop="key" label="键" min-width="200" />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
           <el-table-column label="值" min-width="240">
@@ -1262,6 +1279,58 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 </template>
 
 <style scoped>
+.chat-detail-ops {
+  --ops-pine-900: #143b36;
+  --ops-pine-700: #25534d;
+  --ops-lime: #d7ff73;
+  --ops-canvas: #f8f7f3;
+  --ops-surface: #ffffff;
+  --ops-border: #e6e3da;
+  --ops-muted: #737d78;
+  min-height: 100%;
+  padding: clamp(0.25rem, 1vw, 0.75rem);
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(180deg, rgb(248 247 243 / 85%), transparent 18rem);
+}
+
+.chat-detail-header {
+  margin-bottom: 0.85rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 1rem;
+  background: var(--ops-surface);
+  box-shadow: 0 0.75rem 2.4rem rgb(20 59 54 / 6%);
+}
+
+.chat-detail-ops :deep(.el-page-header__left) {
+  color: var(--ops-pine-700);
+}
+
+.chat-detail-ops :deep(.el-tabs__header) {
+  margin: 0 0 1rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--ops-border);
+  border-radius: 0.85rem;
+  background: var(--ops-surface);
+}
+
+.chat-detail-ops :deep(.el-tabs__item) {
+  min-height: 3rem;
+  color: var(--ops-muted);
+  font-weight: 650;
+}
+
+.chat-detail-ops :deep(.el-tabs__item.is-active) {
+  color: var(--ops-pine-900);
+}
+
+.chat-detail-ops :deep(.el-tabs__active-bar) {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--ops-pine-700);
+}
+
 .bot-dot {
   display: inline-block;
   width: 8px;
@@ -1291,5 +1360,25 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
   top: 14px;
   font-size: 12px;
   color: #909399;
+}
+
+@media (max-width: 767px) {
+  .chat-detail-ops {
+    padding: 0;
+  }
+
+  .chat-detail-ops :deep(.el-tabs__nav-wrap) {
+    overflow-x: auto;
+  }
+
+  .chat-detail-ops :deep(.el-tabs__nav) {
+    float: none;
+    width: max-content;
+  }
+
+  .chat-detail-header {
+    align-items: flex-start;
+    padding: 0.85rem;
+  }
 }
 </style>
