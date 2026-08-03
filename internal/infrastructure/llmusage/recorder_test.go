@@ -11,15 +11,17 @@ import (
 )
 
 type fakeStore struct {
-	rows []UsageRecordRow
-	err  error
+	rows  []UsageRecordRow
+	tools [][]ToolCallRecordRow
+	err   error
 }
 
-func (f *fakeStore) CreateUsageRecord(_ context.Context, row *UsageRecordRow) error {
+func (f *fakeStore) CreateUsageTurn(_ context.Context, row *UsageRecordRow, tools []ToolCallRecordRow) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.rows = append(f.rows, *row)
+	f.tools = append(f.tools, append([]ToolCallRecordRow(nil), tools...))
 	return nil
 }
 
@@ -147,5 +149,44 @@ func TestRecorderReturnsStoreError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Record() error is nil, want store error")
+	}
+}
+
+func TestRecorderWritesBusinessAttributionAndSanitizedToolCalls(t *testing.T) {
+	store := &fakeStore{}
+	recorder := NewRecorderWithStore(store)
+	createdAt := time.Date(2026, 8, 3, 8, 30, 0, 0, time.UTC)
+
+	err := recorder.Record(context.Background(), Record{
+		Scope: Scope{
+			ChatID: "oc_chat", SourceType: SourceTypeUser, Source: "chat",
+			BusinessScene: SceneCommand, BusinessOperation: OperationCommandChat,
+		},
+		Provider: "ark", Model: "ep-test", Kind: KindResponsesStream,
+		Status: StatusSuccess, PromptTokens: 20, CompletionTokens: 8, TotalTokens: 28,
+		CreatedAt: createdAt,
+		ToolCalls: []ToolCall{
+			{Name: " search_history ", Status: ToolStatusSuccess, Duration: 120 * time.Millisecond},
+			{Name: "send_message", Status: ToolStatusError, Duration: 80 * time.Millisecond, ErrorKind: " handler_error ", Error: "secret raw failure"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if len(store.rows) != 1 || len(store.tools) != 1 || len(store.tools[0]) != 2 {
+		t.Fatalf("persisted rows/tools = %d/%v", len(store.rows), store.tools)
+	}
+	row := store.rows[0]
+	if row.BusinessScene != string(SceneCommand) || row.BusinessOperation != string(OperationCommandChat) || row.AttributionMode != string(AttributionExplicit) {
+		t.Fatalf("business attribution row = %+v", row)
+	}
+	if row.ToolCallCount != 2 || row.ToolSuccessCount != 1 || row.ToolErrorCount != 1 {
+		t.Fatalf("tool summary = %d/%d/%d", row.ToolCallCount, row.ToolSuccessCount, row.ToolErrorCount)
+	}
+	if got := store.tools[0][0]; got.ToolName != "search_history" || got.Status != string(ToolStatusSuccess) || got.DurationMs != 120 {
+		t.Fatalf("first tool row = %+v", got)
+	}
+	if got := store.tools[0][1]; got.ErrorKind != "handler_error" {
+		t.Fatalf("second tool error kind = %q", got.ErrorKind)
 	}
 }

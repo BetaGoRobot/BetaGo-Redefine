@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
-import type { AgenticChatState, ChatSummary } from '../api/types'
+import type { AgenticChatState, ChatSummary, TokenGroupCount } from '../api/types'
 import { BotApi, aggregate, type WithBot } from '../api/client'
 import {
   chunkChatIDs,
@@ -19,6 +19,7 @@ import { buildSparkline, buildDonut } from '../composables/useChartOptions'
 import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
 import AgenticBatchDrawer from '../components/AgenticBatchDrawer.vue'
+import { sceneLabel } from '../usage/taxonomy'
 
 const router = useRouter()
 const store = useFilterStore()
@@ -41,6 +42,7 @@ const rolloutErrors = ref<Record<string, string>>({})
 const typeFilter = ref<'all' | 'p2p' | 'group' | 'unknown'>('all')
 const extFilter = ref<'all' | 'internal' | 'external'>('all')
 const membershipFilter = ref<'all' | 'active' | 'left'>('all')
+const sceneFilter = ref<string>('all')
 const botFilter = ref<string>('all') // 'all' 或 bot_id
 const minTokens = ref<number>()
 const maxTokens = ref<number>()
@@ -52,6 +54,11 @@ interface ChatSpark {
   tokenSeries: number[]
   byModel: { group: string; total_tokens: number; requests: number; prompt_tokens: number; completion_tokens: number }[]
   byKind: { group: string; total_tokens: number; requests: number; prompt_tokens: number; completion_tokens: number }[]
+  byScene: TokenGroupCount[]
+  byOperation: TokenGroupCount[]
+  bySourceType: TokenGroupCount[]
+  byRawSource: TokenGroupCount[]
+  byStatus: TokenGroupCount[]
 }
 const sparkMap = ref<Record<string, ChatSpark>>({})
 const sparkLoading = ref(false)
@@ -60,6 +67,29 @@ const botOptions = computed(() => [
   { value: 'all', label: '全部机器人' },
   ...store.selectedBots.map((b) => ({ value: b.id, label: `${b.robotName || b.name} · ${b.id}` })),
 ])
+
+const sceneOptions = computed(() => {
+  const values = new Set<string>()
+  for (const spark of Object.values(sparkMap.value)) {
+    for (const item of spark.byScene) values.add(item.group)
+  }
+  return [
+    { value: 'all', label: '全部业务场景' },
+    ...[...values].sort().map((value) => ({ value, label: sceneLabel(value) })),
+  ]
+})
+
+function sparkGroups(spark: ChatSpark, dimension: DimensionKey): TokenGroupCount[] {
+  switch (dimension) {
+    case 'business_scene': return spark.byScene
+    case 'business_operation': return spark.byOperation
+    case 'model': return spark.byModel
+    case 'kind': return spark.byKind
+    case 'source_type': return spark.bySourceType
+    case 'source': return spark.byRawSource
+    case 'status': return spark.byStatus
+  }
+}
 
 const rolloutBotID = computed(() => {
   if (store.currentBotID) return store.currentBotID
@@ -99,14 +129,15 @@ const filtered = computed<BotChat[]>(() => {
     if (extFilter.value === 'external' && !c.external) return false
     if (membershipFilter.value === 'active' && c.membership === 'left') return false
     if (membershipFilter.value === 'left' && c.membership !== 'left') return false
+    const spark = sparkMap.value[`${c.bot_id}::${c.chat_id}`]
+    if (sceneFilter.value !== 'all' && !spark?.byScene.some((item) => item.group === sceneFilter.value)) return false
     const t = Number(c.metrics?.total_tokens || 0)
     if (minTokens.value != null && t < minTokens.value) return false
     if (maxTokens.value != null && t > maxTokens.value) return false
     if (dimFilters.length) {
-      const spark = sparkMap.value[`${c.bot_id}::${c.chat_id}`]
       if (!spark) return false
       for (const f of dimFilters) {
-        const pool = f.dimension === 'model' ? spark.byModel : spark.byKind
+        const pool = sparkGroups(spark, f.dimension)
         if (!pool.some((p) => p.group === f.value)) return false
       }
     }
@@ -144,6 +175,23 @@ const topModelDistribution = computed<EChartsOption>(() => {
   return buildDonut({
     title: '模型分布（当前过滤）',
     data: arr,
+    metric: 'total_tokens',
+  })
+})
+
+const businessSceneDistribution = computed<EChartsOption>(() => {
+  const totals = new Map<string, number>()
+  for (const spark of Object.values(sparkMap.value)) {
+    for (const item of spark.byScene) {
+      totals.set(item.group, (totals.get(item.group) || 0) + Number(item.total_tokens || 0))
+    }
+  }
+  return buildDonut({
+    title: '业务场景（已加载会话）',
+    data: [...totals.entries()].map(([group, total_tokens]) => ({
+      group: sceneLabel(group), total_tokens,
+      requests: 0, prompt_tokens: 0, completion_tokens: 0,
+    })),
     metric: 'total_tokens',
   })
 })
@@ -370,6 +418,11 @@ async function loadSparks() {
             prompt_tokens: Number(m.prompt_tokens),
             completion_tokens: Number(m.completion_tokens),
           })),
+          byScene: s.token.by_business_scene || [],
+          byOperation: s.token.by_business_operation || [],
+          bySourceType: s.token.by_source_type || [],
+          byRawSource: s.token.by_raw_source || [],
+          byStatus: s.token.by_status || [],
         })),
       ),
     )
@@ -510,6 +563,9 @@ watch(rolloutBotID, () => {
                 <el-option value="active" label="仅看在群" />
                 <el-option value="left" label="仅看已离开" />
               </el-select>
+              <el-select v-model="sceneFilter" class="chat-filter-control" placeholder="业务场景">
+                <el-option v-for="option in sceneOptions" :key="option.value" :value="option.value" :label="option.label" />
+              </el-select>
               <el-input-number
                 v-model="minTokens"
                 placeholder="最小 Token"
@@ -525,7 +581,7 @@ watch(rolloutBotID, () => {
                 class="chat-filter-control chat-filter-control--number"
               />
               <el-button
-                @click="() => { keyword = ''; typeFilter = 'all'; extFilter = 'all'; membershipFilter = 'all'; botFilter = 'all'; minTokens = undefined; maxTokens = undefined }"
+                @click="() => { keyword = ''; typeFilter = 'all'; extFilter = 'all'; membershipFilter = 'all'; sceneFilter = 'all'; botFilter = 'all'; minTokens = undefined; maxTokens = undefined }"
               >清除过滤</el-button>
               <el-button :loading="loading" type="primary" @click="load">刷新</el-button>
             </div>
@@ -548,7 +604,7 @@ watch(rolloutBotID, () => {
             <div class="quick-filters">
               <span>可叠加维度</span>
               <el-button
-                v-for="dim of (['model','kind','source_type','status'] as DimensionKey[])"
+                v-for="dim of (['business_scene','business_operation','model','kind','source_type','source','status'] as DimensionKey[])"
                 :key="dim"
                 size="small"
                 :type="store.currentDimensionFilters.some(f => f.dimension === dim) ? 'primary' : 'default'"
@@ -568,6 +624,9 @@ watch(rolloutBotID, () => {
             </div>
             <div class="chat-distributions__chart">
               <EChart :option="statusDistribution" height="180px" :dataZoom="false" :toolbox="false" />
+            </div>
+            <div class="chat-distributions__chart">
+              <EChart :option="businessSceneDistribution" height="180px" :dataZoom="false" :toolbox="false" />
             </div>
           </div>
         </div>
@@ -971,7 +1030,7 @@ watch(rolloutBotID, () => {
 
 .chat-distributions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--ops-border);
@@ -982,10 +1041,15 @@ watch(rolloutBotID, () => {
 .chat-distributions__chart {
   min-width: 0;
   border-right: 1px solid var(--ops-border);
+  border-bottom: 1px solid var(--ops-border);
 }
 
-.chat-distributions__chart:last-child {
+.chat-distributions__chart:nth-child(2n) {
   border-right: 0;
+}
+
+.chat-distributions__chart:nth-last-child(-n + 2) {
+  border-bottom: 0;
 }
 
 .chat-ops-table {

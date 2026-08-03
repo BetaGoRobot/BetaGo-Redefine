@@ -2,6 +2,7 @@ package webui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,8 +29,8 @@ func (s *tokenStatsStore) available() bool {
 
 // withBot 返回带 bot_id 过滤的基础查询。
 //
-// 过渡期兼容：历史 llm_token_usage_records.bot_id 默认为 ''，回刷前列表 / 趋势
-// 会全空。这里把 `bot_id = self` 与 `bot_id = ''` 一起放行，保证旧数据仍可见；
+// 过渡期兼容：历史 llm_token_usage_records.bot_id 默认为 ”，回刷前列表 / 趋势
+// 会全空。这里把 `bot_id = self` 与 `bot_id = ”` 一起放行，保证旧数据仍可见；
 // 回刷脚本跑完之后空字符串记录消失，自然就只剩当前 bot 的精确数据。
 // 单进程下其他 bot 的写入也不会进入本表的"未归属"段，因此这种放行是安全的。
 func (s *tokenStatsStore) withBot(ctx context.Context) *gorm.DB {
@@ -48,11 +49,16 @@ func (s *tokenStatsStore) base(ctx context.Context, chatID string, since time.Ti
 }
 
 type aggRow struct {
-	Group            string
-	Requests         int64
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
+	Group             string
+	Requests          int64
+	PromptTokens      int64
+	CompletionTokens  int64
+	TotalTokens       int64
+	ToolCalls         int64
+	TurnsWithTools    int64
+	ToolSuccesses     int64
+	ToolErrors        int64
+	ToolRelatedTokens int64
 }
 
 func (s *tokenStatsStore) total(ctx context.Context, chatID string, since time.Time) (TokenTotals, error) {
@@ -61,28 +67,49 @@ func (s *tokenStatsStore) total(ctx context.Context, chatID string, since time.T
 		Select("COUNT(*) AS requests, " +
 			"COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, " +
 			"COALESCE(SUM(completion_tokens),0) AS completion_tokens, " +
-			"COALESCE(SUM(total_tokens),0) AS total_tokens").
+			"COALESCE(SUM(total_tokens),0) AS total_tokens, " +
+			"COALESCE(SUM(tool_call_count),0) AS tool_calls, " +
+			"COALESCE(SUM(CASE WHEN tool_call_count > 0 THEN 1 ELSE 0 END),0) AS turns_with_tools, " +
+			"COALESCE(SUM(tool_success_count),0) AS tool_successes, " +
+			"COALESCE(SUM(tool_error_count),0) AS tool_errors, " +
+			"COALESCE(SUM(CASE WHEN tool_call_count > 0 THEN total_tokens ELSE 0 END),0) AS tool_related_tokens").
 		Scan(&row).Error
 	if err != nil {
 		return TokenTotals{}, err
 	}
 	return TokenTotals{
-		Requests:         row.Requests,
-		PromptTokens:     row.PromptTokens,
-		CompletionTokens: row.CompletionTokens,
-		TotalTokens:      row.TotalTokens,
+		Requests:          row.Requests,
+		PromptTokens:      row.PromptTokens,
+		CompletionTokens:  row.CompletionTokens,
+		TotalTokens:       row.TotalTokens,
+		ToolCalls:         row.ToolCalls,
+		TurnsWithTools:    row.TurnsWithTools,
+		ToolSuccesses:     row.ToolSuccesses,
+		ToolErrors:        row.ToolErrors,
+		ToolRelatedTokens: row.ToolRelatedTokens,
 	}, nil
 }
 
-// groupBy 按指定列分组聚合 token 用量。column 必须是受控的列名常量。
+var tokenGroupColumns = map[string]struct{}{
+	"business_scene": {}, "business_operation": {}, "attribution_mode": {},
+	"model": {}, "kind": {}, "source_type": {}, "source": {}, "status": {},
+}
+
+// groupBy 按指定列分组聚合 token 用量。column 必须属于固定白名单。
 func (s *tokenStatsStore) groupBy(ctx context.Context, chatID string, since time.Time, column string) ([]TokenGroupCount, error) {
+	if _, ok := tokenGroupColumns[column]; !ok {
+		return nil, fmt.Errorf("unsupported token group column %q", column)
+	}
 	var rows []aggRow
 	err := s.base(ctx, chatID, since).
-		Select(column+" AS \"group\", "+
-			"COUNT(*) AS requests, "+
-			"COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, "+
-			"COALESCE(SUM(completion_tokens),0) AS completion_tokens, "+
-			"COALESCE(SUM(total_tokens),0) AS total_tokens").
+		Select(column + " AS \"group\", " +
+			"COUNT(*) AS requests, " +
+			"COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, " +
+			"COALESCE(SUM(completion_tokens),0) AS completion_tokens, " +
+			"COALESCE(SUM(total_tokens),0) AS total_tokens, " +
+			"COALESCE(SUM(tool_call_count),0) AS tool_calls, " +
+			"COALESCE(SUM(CASE WHEN tool_call_count > 0 THEN 1 ELSE 0 END),0) AS turns_with_tools, " +
+			"COALESCE(SUM(CASE WHEN tool_call_count > 0 THEN total_tokens ELSE 0 END),0) AS tool_related_tokens").
 		Group(column).
 		Order("total_tokens DESC").
 		Scan(&rows).Error
@@ -96,14 +123,93 @@ func (s *tokenStatsStore) groupBy(ctx context.Context, chatID string, since time
 			group = "unknown"
 		}
 		out = append(out, TokenGroupCount{
-			Group:            group,
-			Requests:         r.Requests,
-			PromptTokens:     r.PromptTokens,
-			CompletionTokens: r.CompletionTokens,
-			TotalTokens:      r.TotalTokens,
+			Group:             group,
+			Requests:          r.Requests,
+			PromptTokens:      r.PromptTokens,
+			CompletionTokens:  r.CompletionTokens,
+			TotalTokens:       r.TotalTokens,
+			ToolCalls:         r.ToolCalls,
+			TurnsWithTools:    r.TurnsWithTools,
+			ToolRelatedTokens: r.ToolRelatedTokens,
 		})
 	}
 	return out, nil
+}
+
+func (s *tokenStatsStore) toolBase(ctx context.Context, chatID string, since time.Time) *gorm.DB {
+	q := s.db.WithContext(ctx).Model(&model.LlmToolCallRecord{}).
+		Where("chat_id = ?", chatID).
+		Where("called_at >= ?", since)
+	if s.botID != "" {
+		q = q.Where("bot_id = ? OR bot_id = ''", s.botID)
+	}
+	return q
+}
+
+type toolAggRow struct {
+	Group             string
+	Calls             int64
+	Successes         int64
+	Errors            int64
+	AverageDurationMs float64
+	P95DurationMs     float64
+}
+
+func (s *tokenStatsStore) toolSummary(ctx context.Context, chatID string, since time.Time, totals TokenTotals) (ToolSummary, error) {
+	var row toolAggRow
+	err := s.toolBase(ctx, chatID, since).
+		Select("COUNT(*) AS calls, " +
+			"COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),0) AS successes, " +
+			"COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),0) AS errors, " +
+			"COALESCE(AVG(duration_ms),0) AS average_duration_ms, " +
+			"COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms),0) AS p95_duration_ms").
+		Scan(&row).Error
+	if err != nil {
+		return ToolSummary{}, err
+	}
+	return ToolSummary{
+		Calls: row.Calls, TurnsWithTools: totals.TurnsWithTools,
+		Successes: row.Successes, Errors: row.Errors,
+		SuccessRate:       successRate(row.Successes, row.Calls),
+		AverageDurationMs: row.AverageDurationMs, P95DurationMs: row.P95DurationMs,
+		ToolRelatedTokens: totals.ToolRelatedTokens,
+	}, nil
+}
+
+func (s *tokenStatsStore) byTool(ctx context.Context, chatID string, since time.Time) ([]ToolGroupCount, error) {
+	var rows []toolAggRow
+	err := s.toolBase(ctx, chatID, since).
+		Select("tool_name AS \"group\", COUNT(*) AS calls, " +
+			"COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),0) AS successes, " +
+			"COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),0) AS errors, " +
+			"COALESCE(AVG(duration_ms),0) AS average_duration_ms, " +
+			"COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms),0) AS p95_duration_ms").
+		Group("tool_name").
+		Order("calls DESC, tool_name ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ToolGroupCount, 0, len(rows))
+	for _, row := range rows {
+		group := strings.TrimSpace(row.Group)
+		if group == "" {
+			group = "unknown"
+		}
+		out = append(out, ToolGroupCount{
+			Group: group, Calls: row.Calls, Successes: row.Successes, Errors: row.Errors,
+			SuccessRate:       successRate(row.Successes, row.Calls),
+			AverageDurationMs: row.AverageDurationMs, P95DurationMs: row.P95DurationMs,
+		})
+	}
+	return out, nil
+}
+
+func successRate(successes, calls int64) float64 {
+	if calls <= 0 {
+		return 0
+	}
+	return float64(successes) / float64(calls)
 }
 
 type dailyRow struct {
@@ -143,6 +249,15 @@ func (s *tokenStatsStore) collect(ctx context.Context, chatID string, since time
 		return stats, err
 	}
 	stats.Total = total
+	if stats.ByBusinessScene, err = s.groupBy(ctx, chatID, since, "business_scene"); err != nil {
+		return stats, err
+	}
+	if stats.ByBusinessOperation, err = s.groupBy(ctx, chatID, since, "business_operation"); err != nil {
+		return stats, err
+	}
+	if stats.ByAttributionMode, err = s.groupBy(ctx, chatID, since, "attribution_mode"); err != nil {
+		return stats, err
+	}
 	if stats.ByModel, err = s.groupBy(ctx, chatID, since, "model"); err != nil {
 		return stats, err
 	}
@@ -152,10 +267,19 @@ func (s *tokenStatsStore) collect(ctx context.Context, chatID string, since time
 	if stats.BySource, err = s.groupBy(ctx, chatID, since, "source_type"); err != nil {
 		return stats, err
 	}
+	if stats.ByRawSource, err = s.groupBy(ctx, chatID, since, "source"); err != nil {
+		return stats, err
+	}
 	if stats.ByStatus, err = s.groupBy(ctx, chatID, since, "status"); err != nil {
 		return stats, err
 	}
 	if stats.ByDay, err = s.byDay(ctx, chatID, since); err != nil {
+		return stats, err
+	}
+	if stats.ToolSummary, err = s.toolSummary(ctx, chatID, since, stats.Total); err != nil {
+		return stats, err
+	}
+	if stats.ByTool, err = s.byTool(ctx, chatID, since); err != nil {
 		return stats, err
 	}
 	return stats, nil

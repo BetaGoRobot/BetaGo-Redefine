@@ -8,16 +8,16 @@ import (
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
 	"github.com/VictoriaMetrics/metrics"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 )
 
 type UsageRecordRow = model.LlmTokenUsageRecord
+type ToolCallRecordRow = model.LlmToolCallRecord
 
 type Store interface {
-	CreateUsageRecord(context.Context, *UsageRecordRow) error
+	CreateUsageTurn(context.Context, *UsageRecordRow, []ToolCallRecordRow) error
 }
 
 // BotIDProvider 返回当前进程的 bot 标识，写入 token 表的 bot_id 列。
@@ -60,11 +60,22 @@ func NewGormStore(db *gorm.DB) *GormStore {
 	return &GormStore{db: db}
 }
 
-func (s *GormStore) CreateUsageRecord(ctx context.Context, row *UsageRecordRow) error {
+func (s *GormStore) CreateUsageTurn(ctx context.Context, row *UsageRecordRow, tools []ToolCallRecordRow) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return query.Use(s.db).LlmTokenUsageRecord.WithContext(ctx).Create(row)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(row).Error; err != nil {
+			return err
+		}
+		if len(tools) == 0 {
+			return nil
+		}
+		for index := range tools {
+			tools[index].UsageRecordID = row.ID
+		}
+		return tx.Create(&tools).Error
+	})
 }
 
 type Recorder struct {
@@ -116,11 +127,12 @@ func (r *Recorder) Record(ctx context.Context, record Record) error {
 		}
 	}
 	row := record.toRow()
+	toolRows := record.toToolRows(&row)
 	recordMetrics(row)
 	if r.store == nil {
 		return nil
 	}
-	return r.store.CreateUsageRecord(ctx, &row)
+	return r.store.CreateUsageTurn(ctx, &row, toolRows)
 }
 
 func (record Record) toRow() UsageRecordRow {
@@ -131,28 +143,67 @@ func (record Record) toRow() UsageRecordRow {
 	}
 	buckets := BucketTimes(createdAt)
 	return UsageRecordRow{
-		CreatedAt:        createdAt,
-		BucketMinute:     buckets.Minute,
-		BucketHour:       buckets.Hour,
-		BucketDay:        buckets.Day,
-		BotID:            currentBotID(),
-		Provider:         nonEmpty(record.Provider, "unknown"),
-		Model:            nonEmpty(record.Model, "unknown"),
-		Kind:             nonEmpty(string(record.Kind), "unknown"),
-		SourceType:       string(scope.SourceType),
-		Source:           scope.Source,
-		ChatID:           scope.ChatID,
-		ChatName:         scope.ChatName,
-		OpenID:           scope.OpenID,
-		UserName:         scope.UserName,
-		Status:           nonEmpty(string(record.Status), string(StatusSuccess)),
-		PromptTokens:     record.PromptTokens,
-		CompletionTokens: record.CompletionTokens,
-		TotalTokens:      record.TotalTokens,
-		ResponseID:       strings.TrimSpace(record.ResponseID),
-		TraceID:          strings.TrimSpace(record.TraceID),
-		Error:            strings.TrimSpace(record.Error),
+		CreatedAt:         createdAt,
+		BucketMinute:      buckets.Minute,
+		BucketHour:        buckets.Hour,
+		BucketDay:         buckets.Day,
+		BotID:             currentBotID(),
+		Provider:          nonEmpty(record.Provider, "unknown"),
+		Model:             nonEmpty(record.Model, "unknown"),
+		Kind:              nonEmpty(string(record.Kind), "unknown"),
+		SourceType:        string(scope.SourceType),
+		Source:            scope.Source,
+		ChatID:            scope.ChatID,
+		ChatName:          scope.ChatName,
+		OpenID:            scope.OpenID,
+		UserName:          scope.UserName,
+		Status:            nonEmpty(string(record.Status), string(StatusSuccess)),
+		PromptTokens:      record.PromptTokens,
+		CompletionTokens:  record.CompletionTokens,
+		TotalTokens:       record.TotalTokens,
+		ResponseID:        strings.TrimSpace(record.ResponseID),
+		TraceID:           strings.TrimSpace(record.TraceID),
+		Error:             strings.TrimSpace(record.Error),
+		BusinessScene:     string(scope.BusinessScene),
+		BusinessOperation: string(scope.BusinessOperation),
+		AttributionMode:   string(scope.AttributionMode),
 	}
+}
+
+func (record Record) toToolRows(row *UsageRecordRow) []ToolCallRecordRow {
+	rows := make([]ToolCallRecordRow, 0, len(record.ToolCalls))
+	for _, call := range record.ToolCalls {
+		name := sanitizeLabel(call.Name)
+		if name == "" {
+			name = "unknown"
+		}
+		status := call.Status
+		if status != ToolStatusSuccess && status != ToolStatusError {
+			status = ToolStatusError
+		}
+		durationMillis := call.Duration.Milliseconds()
+		if durationMillis < 0 {
+			durationMillis = 0
+		}
+		calledAt := call.CalledAt
+		if calledAt.IsZero() {
+			calledAt = row.CreatedAt
+		}
+		if status == ToolStatusSuccess {
+			row.ToolSuccessCount++
+		} else {
+			row.ToolErrorCount++
+		}
+		rows = append(rows, ToolCallRecordRow{
+			BotID: currentBotID(), ChatID: row.ChatID,
+			BusinessScene: row.BusinessScene, BusinessOperation: row.BusinessOperation,
+			ToolName: name, Status: string(status), DurationMs: durationMillis,
+			ErrorKind: sanitizeLabel(call.ErrorKind), TraceID: row.TraceID,
+			CalledAt: calledAt, CreatedAt: row.CreatedAt,
+		})
+	}
+	row.ToolCallCount = int64(len(rows))
+	return rows
 }
 
 func recordMetrics(row UsageRecordRow) {

@@ -8,6 +8,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/consts"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg/larkcard"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
@@ -49,6 +50,7 @@ func (r *CommandOperator) Run(ctx context.Context, event *larkim.P2MessageReceiv
 
 func ExecuteFromRawCommand(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData, rawCommand string) (err error) {
 	ctx, span := otel.Start(ctx)
+	ctx = llmusage.WithBusinessAttribution(ctx, llmusage.SceneCommand, llmusage.OperationCommandChat)
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)

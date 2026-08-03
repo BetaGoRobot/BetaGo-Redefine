@@ -22,6 +22,22 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
 
+func TestBuildUserLLMUsageScopeUsesConversationAttributionFromContext(t *testing.T) {
+	ctx := llmusage.WithBusinessAttribution(context.Background(), llmusage.SceneCommand, llmusage.OperationCommandChat)
+	scope := buildUserLLMUsageScope(ctx, "", "", "", "", "chat", llmusage.SourceTypeUser)
+	if scope.BusinessScene != llmusage.SceneCommand || scope.BusinessOperation != llmusage.OperationCommandChat {
+		t.Fatalf("business attribution = %q/%q", scope.BusinessScene, scope.BusinessOperation)
+	}
+}
+
+func TestBuildUserLLMUsageScopeKeepsSpecializedRetrievalAttribution(t *testing.T) {
+	ctx := llmusage.WithBusinessAttribution(context.Background(), llmusage.SceneCommand, llmusage.OperationCommandChat)
+	scope := buildUserLLMUsageScope(ctx, "", "", "", "", "history_search", llmusage.SourceTypeUser)
+	if scope.BusinessScene != llmusage.SceneRetrieval || scope.BusinessOperation != llmusage.OperationHistorySearch {
+		t.Fatalf("business attribution = %q/%q", scope.BusinessScene, scope.BusinessOperation)
+	}
+}
+
 func TestResolveStandardPromptMode(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	group := "group"

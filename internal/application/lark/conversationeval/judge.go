@@ -194,9 +194,11 @@ func NewJudgeWithCompletion(
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
-	config.Scope = llmusage.NormalizeScope(config.Scope)
 	config.Scope.SourceType = llmusage.SourceTypeBackground
 	config.Scope.Source = judgeSource
+	config.Scope.BusinessScene = llmusage.SceneEvaluation
+	config.Scope.BusinessOperation = llmusage.OperationJudge
+	config.Scope = llmusage.NormalizeScope(config.Scope)
 	return &Judge{config: config, store: store, completion: completion}, nil
 }
 

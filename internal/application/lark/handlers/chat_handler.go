@@ -1020,13 +1020,23 @@ func buildUserLLMUsageScope(ctx context.Context, chatID, chatName, openID, userN
 	if strings.TrimSpace(chatName) == "" && strings.TrimSpace(chatID) != "" {
 		chatName = larkchat.GetChatName(ctx, chatID)
 	}
-	return llmusage.Scope{
+	scope := llmusage.Scope{
 		ChatID:     chatID,
 		ChatName:   chatName,
 		OpenID:     openID,
 		UserName:   userName,
 		SourceType: sourceType,
 		Source:     source,
+	}
+	switch source {
+	case "topic_recall":
+		return llmusage.ApplyBusinessAttribution(nil, scope, llmusage.SceneRetrieval, llmusage.OperationTopicRecall)
+	case "history_search":
+		return llmusage.ApplyBusinessAttribution(nil, scope, llmusage.SceneRetrieval, llmusage.OperationHistorySearch)
+	case "debug_image":
+		return llmusage.ApplyBusinessAttribution(nil, scope, llmusage.SceneDebug, llmusage.OperationDebugImage)
+	default:
+		return llmusage.ApplyBusinessAttribution(ctx, scope, llmusage.SceneConversation, llmusage.OperationChatReply)
 	}
 }
 

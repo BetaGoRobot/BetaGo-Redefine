@@ -233,7 +233,7 @@ type arkUsageStore struct {
 	rows []llmusage.UsageRecordRow
 }
 
-func (s *arkUsageStore) CreateUsageRecord(_ context.Context, row *llmusage.UsageRecordRow) error {
+func (s *arkUsageStore) CreateUsageTurn(_ context.Context, row *llmusage.UsageRecordRow, _ []llmusage.ToolCallRecordRow) error {
 	s.rows = append(s.rows, *row)
 	return nil
 }

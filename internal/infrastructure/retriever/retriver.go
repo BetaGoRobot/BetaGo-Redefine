@@ -155,10 +155,10 @@ func (*arkMultiModalEmbeddingClient) CreateEmbedding(ctx context.Context, texts 
 		eg.Go(
 			func() error {
 				embedding, _, err := ark_dal.EmbeddingText(ctx, text, llmusage.Scope{
-					ChatID:     scope.ChatID,
-					ChatName:   scope.ChatName,
-					SourceType: scope.SourceType,
-					Source:     scope.Source,
+					ChatID: scope.ChatID, ChatName: scope.ChatName,
+					OpenID: scope.OpenID, UserName: scope.UserName,
+					SourceType: scope.SourceType, Source: scope.Source,
+					BusinessScene: scope.BusinessScene, BusinessOperation: scope.BusinessOperation,
 				})
 				if err != nil {
 					return err
@@ -189,8 +189,10 @@ func embeddingUsageScopeFromContext(ctx context.Context) llmusage.Scope {
 		return scope
 	}
 	return llmusage.Scope{
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "retriever_embedding",
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "retriever_embedding",
+		BusinessScene:     llmusage.SceneRetrieval,
+		BusinessOperation: llmusage.OperationRetrieverEmbedding,
 	}
 }
 
@@ -262,10 +264,12 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 	indexName := indexNameForSuffix(suffix)
 	chatName := larkchat.GetChatName(ctx, suffix)
 	ctx = context.WithValue(ctx, embeddingUsageScopeKey{}, llmusage.Scope{
-		ChatID:     suffix,
-		ChatName:   chatName,
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "retriever_embedding",
+		ChatID:            suffix,
+		ChatName:          chatName,
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "retriever_embedding",
+		BusinessScene:     llmusage.SceneRetrieval,
+		BusinessOperation: llmusage.OperationRetrieverEmbedding,
 	})
 	logs.L().Ctx(ctx).Info("正在为索引准备...", zap.String("indexName", indexName))
 	// 确保索引存在且维度正确
@@ -296,10 +300,12 @@ func (rs *RAGSystem) RecallDocs(ctx context.Context, suffix string, query string
 
 	// 1. 生成查询向量
 	vec, _, err := ark_dal.EmbeddingText(ctx, query, llmusage.Scope{
-		ChatID:     suffix,
-		ChatName:   chatName,
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "retriever_recall",
+		ChatID:            suffix,
+		ChatName:          chatName,
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "retriever_recall",
+		BusinessScene:     llmusage.SceneRetrieval,
+		BusinessOperation: llmusage.OperationRetrieverRecall,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("生成查询向量失败: %w", err)
@@ -436,10 +442,12 @@ func (rs *RAGSystem) AnswerQuery(ctx context.Context, suffix string, query strin
 		llms.TextParts(llms.ChatMessageTypeHuman, prompt),
 	})
 	recordLangchainUsage(ctx, llmusage.Scope{
-		ChatID:     chatID,
-		ChatName:   larkchat.GetChatName(ctx, chatID),
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "retriever_answer",
+		ChatID:            chatID,
+		ChatName:          larkchat.GetChatName(ctx, chatID),
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "retriever_answer",
+		BusinessScene:     llmusage.SceneRetrieval,
+		BusinessOperation: llmusage.OperationRetrieverAnswer,
 	}, config.Get().ArkConfig.NormalModel, resp, err)
 	if err != nil {
 		return "", contextDocs, fmt.Errorf("RAG - LLM 调用失败: %w", err)

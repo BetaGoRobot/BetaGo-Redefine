@@ -39,6 +39,7 @@ import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
 import AgenticRolloutPanel from '../components/AgenticRolloutPanel.vue'
 import ManagementGate from '../components/ManagementGate.vue'
+import UsageBusinessOverview from '../components/UsageBusinessOverview.vue'
 import { managementSession } from '../auth/session'
 import { isAutheliaMode } from '../auth/runtime'
 
@@ -106,6 +107,12 @@ const focusValue = ref<string | null>(null)
 function clearFocus() {
   focusValue.value = null
   viewMode.value = 'overview'
+}
+
+function onBusinessDrill(dimension: 'business_scene' | 'business_operation', value: string) {
+  focusDimension.value = dimension
+  focusValue.value = value
+  viewMode.value = 'deep'
 }
 
 async function loadStats() {
@@ -303,9 +310,12 @@ const primary = computed<MetricKey>(() => store.primaryMetric)
 const secondary = computed<MetricKey>(() => store.secondaryMetric)
 function getGroup(dim: DimensionKey) {
   switch (dim) {
+    case 'business_scene': return stats.value?.token.by_business_scene || []
+    case 'business_operation': return stats.value?.token.by_business_operation || []
     case 'model': return stats.value?.token.by_model || []
     case 'kind': return stats.value?.token.by_kind || []
     case 'source_type': return stats.value?.token.by_source_type || []
+    case 'source': return stats.value?.token.by_raw_source || []
     case 'status': return stats.value?.token.by_status || []
   }
 }
@@ -1030,6 +1040,20 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           <small>点击其他饼图或条形可切换聚焦维度</small>
         </div>
 
+        <UsageBusinessOverview
+          class="detail-business-overview"
+          :stats="stats?.token || null"
+          @drill="onBusinessDrill"
+        />
+
+        <header class="detail-technical-heading">
+          <div>
+            <p>Technical dimensions</p>
+            <h2>技术维度与会话信号</h2>
+          </div>
+          <span>模型、类型、原始来源、状态及消息侧指标</span>
+        </header>
+
         <div class="detail-control-row">
           <el-radio-group v-model="viewMode">
             <el-radio-button value="overview">总览模式</el-radio-button>
@@ -1038,13 +1062,13 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
           <template v-if="viewMode === 'overview'">
             <span>堆叠分解维度</span>
             <el-select v-model="focusDimension" class="detail-control-row__select">
-              <el-option v-for="d of (['model','kind','source_type','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
+              <el-option v-for="d of (['business_scene','business_operation','model','kind','source_type','source','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
             </el-select>
           </template>
           <template v-else>
             <span>聚焦维度</span>
             <el-select v-model="focusDimension" class="detail-control-row__select">
-              <el-option v-for="d of (['model','kind','source_type','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
+              <el-option v-for="d of (['business_scene','business_operation','model','kind','source_type','source','status'] as DimensionKey[])" :key="d" :value="d" :label="DIMENSION_LABEL[d]" />
             </el-select>
             <el-select v-model="focusValue" class="detail-control-row__focus" placeholder="选择聚焦值" filterable clearable>
               <el-option
@@ -1485,6 +1509,42 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 .detail-drill-banner small {
   color: var(--ops-muted);
   font-size: 0.68rem;
+}
+
+.detail-business-overview {
+  margin-bottom: 1.25rem;
+}
+
+.detail-technical-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin: 0.3rem 0 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--ops-border);
+}
+
+.detail-technical-heading p {
+  margin: 0 0 0.2rem;
+  color: var(--ops-teal);
+  font-family: var(--ops-font-mono);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.detail-technical-heading h2 {
+  margin: 0;
+  color: var(--ops-pine-950);
+  font-size: 1.1rem;
+}
+
+.detail-technical-heading > span {
+  color: var(--ops-muted);
+  font-size: 0.7rem;
 }
 
 .detail-control-row {

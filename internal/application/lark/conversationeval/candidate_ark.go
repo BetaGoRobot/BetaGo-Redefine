@@ -96,6 +96,8 @@ func NewArkCandidateStageEngineWithCompletion(
 	if config.PolicyPrompt == "" {
 		config.PolicyPrompt = defaultCandidatePolicyPrompt
 	}
+	config.Scope.BusinessScene = llmusage.SceneEvaluation
+	config.Scope.BusinessOperation = llmusage.OperationCandidateGeneration
 	config.Scope = llmusage.NormalizeScope(config.Scope)
 	return &arkCandidateStageEngine{config: config, completion: completion}, nil
 }

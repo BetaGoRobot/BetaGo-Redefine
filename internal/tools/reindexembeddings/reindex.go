@@ -602,10 +602,12 @@ func processPendingBatch(ctx context.Context, osClient *opensearchapi.Client, ar
 	scopes := make([]llmusage.Scope, 0, len(pending))
 	for _, item := range pending {
 		scopes = append(scopes, llmusage.Scope{
-			ChatID:     item.ChatID,
-			ChatName:   item.ChatName,
-			SourceType: llmusage.SourceTypeBackground,
-			Source:     "reindex_embeddings",
+			ChatID:            item.ChatID,
+			ChatName:          item.ChatName,
+			SourceType:        llmusage.SourceTypeBackground,
+			Source:            "reindex_embeddings",
+			BusinessScene:     llmusage.SceneBackground,
+			BusinessOperation: llmusage.OperationReindexEmbedding,
 		})
 	}
 	vectors, errs, promptTokens, totalTokens := batchEmbed(ctx, arkClient, opts, texts, scopes)
@@ -717,12 +719,17 @@ func scopeAt(scopes []llmusage.Scope, idx int) llmusage.Scope {
 	if idx >= 0 && idx < len(scopes) {
 		return scopes[idx]
 	}
-	return llmusage.Scope{SourceType: llmusage.SourceTypeBackground, Source: "reindex_embeddings"}
+	return llmusage.Scope{
+		SourceType: llmusage.SourceTypeBackground, Source: "reindex_embeddings",
+		BusinessScene: llmusage.SceneBackground, BusinessOperation: llmusage.OperationReindexEmbedding,
+	}
 }
 
 func recordReindexUsage(ctx context.Context, modelID string, scope llmusage.Scope, usage model.Usage, err error) {
 	scope.SourceType = llmusage.SourceTypeBackground
 	scope.Source = "reindex_embeddings"
+	scope.BusinessScene = llmusage.SceneBackground
+	scope.BusinessOperation = llmusage.OperationReindexEmbedding
 	record := llmusage.Record{
 		Scope:            scope,
 		Provider:         "ark",

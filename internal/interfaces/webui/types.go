@@ -329,30 +329,67 @@ type ConfigView struct {
 
 // TokenStats 是 token 消耗的多维聚合结果。
 type TokenStats struct {
-	WindowDays int               `json:"window_days"`
-	Total      TokenTotals       `json:"total"`
-	ByModel    []TokenGroupCount `json:"by_model"`
-	ByKind     []TokenGroupCount `json:"by_kind"`
-	BySource   []TokenGroupCount `json:"by_source_type"`
-	ByStatus   []TokenGroupCount `json:"by_status"`
-	ByDay      []TokenDailyPoint `json:"by_day"`
+	WindowDays          int               `json:"window_days"`
+	Total               TokenTotals       `json:"total"`
+	ByBusinessScene     []TokenGroupCount `json:"by_business_scene"`
+	ByBusinessOperation []TokenGroupCount `json:"by_business_operation"`
+	ByAttributionMode   []TokenGroupCount `json:"by_attribution_mode"`
+	ByModel             []TokenGroupCount `json:"by_model"`
+	ByKind              []TokenGroupCount `json:"by_kind"`
+	BySource            []TokenGroupCount `json:"by_source_type"`
+	ByRawSource         []TokenGroupCount `json:"by_raw_source"`
+	ByStatus            []TokenGroupCount `json:"by_status"`
+	ByDay               []TokenDailyPoint `json:"by_day"`
+	ToolSummary         ToolSummary       `json:"tool_summary"`
+	ByTool              []ToolGroupCount  `json:"by_tool"`
 }
 
 // TokenTotals 是窗口内的总量汇总。
 type TokenTotals struct {
-	Requests         int64 `json:"requests"`
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	Requests          int64 `json:"requests"`
+	PromptTokens      int64 `json:"prompt_tokens"`
+	CompletionTokens  int64 `json:"completion_tokens"`
+	TotalTokens       int64 `json:"total_tokens"`
+	ToolCalls         int64 `json:"tool_calls"`
+	TurnsWithTools    int64 `json:"turns_with_tools"`
+	ToolSuccesses     int64 `json:"tool_successes"`
+	ToolErrors        int64 `json:"tool_errors"`
+	ToolRelatedTokens int64 `json:"tool_related_tokens"`
 }
 
 // TokenGroupCount 是按某一维度分组的聚合项。
 type TokenGroupCount struct {
-	Group            string `json:"group"`
-	Requests         int64  `json:"requests"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	TotalTokens      int64  `json:"total_tokens"`
+	Group             string `json:"group"`
+	Requests          int64  `json:"requests"`
+	PromptTokens      int64  `json:"prompt_tokens"`
+	CompletionTokens  int64  `json:"completion_tokens"`
+	TotalTokens       int64  `json:"total_tokens"`
+	ToolCalls         int64  `json:"tool_calls"`
+	TurnsWithTools    int64  `json:"turns_with_tools"`
+	ToolRelatedTokens int64  `json:"tool_related_tokens"`
+}
+
+// ToolSummary 是窗口内工具执行概况；tool_related_tokens 按逻辑回合去重统计。
+type ToolSummary struct {
+	Calls             int64   `json:"calls"`
+	TurnsWithTools    int64   `json:"turns_with_tools"`
+	Successes         int64   `json:"successes"`
+	Errors            int64   `json:"errors"`
+	SuccessRate       float64 `json:"success_rate"`
+	AverageDurationMs float64 `json:"average_duration_ms"`
+	P95DurationMs     float64 `json:"p95_duration_ms"`
+	ToolRelatedTokens int64   `json:"tool_related_tokens"`
+}
+
+// ToolGroupCount 是按工具名聚合的执行量与延迟，不分摊回合 Token。
+type ToolGroupCount struct {
+	Group             string  `json:"group"`
+	Calls             int64   `json:"calls"`
+	Successes         int64   `json:"successes"`
+	Errors            int64   `json:"errors"`
+	SuccessRate       float64 `json:"success_rate"`
+	AverageDurationMs float64 `json:"average_duration_ms"`
+	P95DurationMs     float64 `json:"p95_duration_ms"`
 }
 
 // TokenDailyPoint 是按天的时间序列点。

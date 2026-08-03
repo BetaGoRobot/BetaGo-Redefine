@@ -434,10 +434,12 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	)
 	chatName := larkchat.GetChatName(ctx, chunk.GroupID)
 	res, err := ark_dal.ResponseWithCache(arkCtx, sysPrompt.String(), chunkStr, config.Get().ArkConfig.ChunkModel, llmusage.Scope{
-		ChatID:     chunk.GroupID,
-		ChatName:   chatName,
-		SourceType: llmusage.SourceTypeBackground,
-		Source:     "chunking",
+		ChatID:            chunk.GroupID,
+		ChatName:          chatName,
+		SourceType:        llmusage.SourceTypeBackground,
+		Source:            "chunking",
+		BusinessScene:     llmusage.SceneBackground,
+		BusinessOperation: llmusage.OperationChunkMerge,
 	})
 	otel.RecordError(arkSpan, err)
 	arkSpan.End()
@@ -474,10 +476,12 @@ func (m *Management) OnMerge(ctx context.Context, chunk *Chunk) (err error) {
 	}
 	embeddingCtx, embeddingSpan := otel.StartNamed(ctx, "chunk.embedding")
 	embedding, _, err := ark_dal.EmbeddingText(embeddingCtx, BuildEmbeddingInput(chunkLog), llmusage.Scope{
-		ChatID:     chunk.GroupID,
-		ChatName:   chatName,
-		SourceType: llmusage.SourceTypeBackground,
-		Source:     "chunking_embedding",
+		ChatID:            chunk.GroupID,
+		ChatName:          chatName,
+		SourceType:        llmusage.SourceTypeBackground,
+		Source:            "chunking_embedding",
+		BusinessScene:     llmusage.SceneBackground,
+		BusinessOperation: llmusage.OperationChunkEmbedding,
 	})
 	otel.RecordError(embeddingSpan, err)
 	embeddingSpan.End()

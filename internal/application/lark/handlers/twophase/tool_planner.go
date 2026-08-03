@@ -93,6 +93,8 @@ func PlanToolsWithContext(
 
 	plannerScope := scope
 	plannerScope.Source = "chat_tool_planner"
+	plannerScope.BusinessScene = llmusage.SceneRouting
+	plannerScope.BusinessOperation = llmusage.OperationToolPlanning
 
 	respText, err := ark_dal.ResponseTextWithCache(ctx, ark_dal.CachedResponseRequest{
 		CacheScene:   "tool_plan",

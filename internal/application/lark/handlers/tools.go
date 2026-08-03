@@ -29,8 +29,10 @@ func BuildCandidateRunnerForTask(
 			ModelID: task.Cohort.CandidateVersion,
 			Scope: llmusage.Scope{
 				ChatID: task.Message.ChatID, OpenID: task.Message.SenderOpenID,
-				SourceType: llmusage.SourceTypeBackground,
-				Source:     "conversation_evaluation_candidate",
+				SourceType:        llmusage.SourceTypeBackground,
+				Source:            "conversation_evaluation_candidate",
+				BusinessScene:     llmusage.SceneEvaluation,
+				BusinessOperation: llmusage.OperationCandidateGeneration,
 			},
 		},
 	)

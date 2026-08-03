@@ -143,6 +143,11 @@ export interface TokenTotals {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  tool_calls: number
+  turns_with_tools: number
+  tool_successes: number
+  tool_errors: number
+  tool_related_tokens: number
 }
 
 export interface TokenGroupCount {
@@ -151,6 +156,30 @@ export interface TokenGroupCount {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  tool_calls?: number
+  turns_with_tools?: number
+  tool_related_tokens?: number
+}
+
+export interface ToolSummary {
+  calls: number
+  turns_with_tools: number
+  successes: number
+  errors: number
+  success_rate: number
+  average_duration_ms: number
+  p95_duration_ms: number
+  tool_related_tokens: number
+}
+
+export interface ToolGroupCount {
+  group: string
+  calls: number
+  successes: number
+  errors: number
+  success_rate: number
+  average_duration_ms: number
+  p95_duration_ms: number
 }
 
 export interface TokenDailyPoint {
@@ -162,11 +191,17 @@ export interface TokenDailyPoint {
 export interface TokenStats {
   window_days: number
   total: TokenTotals
+  by_business_scene: TokenGroupCount[]
+  by_business_operation: TokenGroupCount[]
+  by_attribution_mode: TokenGroupCount[]
   by_model: TokenGroupCount[]
   by_kind: TokenGroupCount[]
   by_source_type: TokenGroupCount[]
+  by_raw_source: TokenGroupCount[]
   by_status: TokenGroupCount[]
   by_day: TokenDailyPoint[]
+  tool_summary: ToolSummary
+  by_tool: ToolGroupCount[]
 }
 
 export interface MessageStats {

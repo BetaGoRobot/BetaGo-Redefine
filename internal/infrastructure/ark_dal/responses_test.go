@@ -49,6 +49,89 @@ func TestResponsesImplDrainPendingStreamItemsEmitsDeltaAndCapabilityTrace(t *tes
 	}
 }
 
+func TestResponsesImplDefersToolContinuationUntilCompletedAndAggregatesTurnUsage(t *testing.T) {
+	restoreArkRuntimeForModelTest(t, "normal-model")
+	var requests []*responses.ResponsesRequest
+	previousCreator := responsesStreamCreator
+	responsesStreamCreator = func(
+		_ context.Context,
+		request *responses.ResponsesRequest,
+		_ llmusage.Scope,
+	) (*arkutils.ResponsesStreamReader, error) {
+		requests = append(requests, request)
+		return nil, nil
+	}
+	t.Cleanup(func() { responsesStreamCreator = previousCreator })
+
+	impl := New[string]("oc_chat", "ou_actor", nil).WithModelID("normal-model")
+	impl.beginUsageTurn(llmusage.Scope{
+		SourceType: llmusage.SourceTypeUser, Source: "chat",
+		BusinessScene: llmusage.SceneConversation, BusinessOperation: llmusage.OperationChatReply,
+	}, "normal-model")
+	impl.lastRespID = "resp-plan"
+	impl.functionCallMap["call-1"] = "lookup"
+	impl.functionCallMap["call-2"] = "broken_tool"
+	impl.handlers["lookup"] = func(context.Context, string, tools.FCMeta[string]) gresult.R[string] {
+		return gresult.OK("found")
+	}
+	impl.handlers["broken_tool"] = func(context.Context, string, tools.FCMeta[string]) gresult.R[string] {
+		return gresult.Err[string](errors.New("tool failed"))
+	}
+	arguments := `{"query":"weather"}`
+	argsEvent := &responses.Event{Event: &responses.Event_FunctionCallArgumentsDone{
+		FunctionCallArgumentsDone: &responses.FunctionCallArgumentsDoneEvent{
+			Type: responses.EventType_response_function_call_arguments_done, ItemId: "call-1", Arguments: &arguments,
+		},
+	}}
+	if _, err := impl.Handle(context.Background(), nil, argsEvent, llmusage.Scope{}, "normal-model"); err != nil {
+		t.Fatalf("Handle(arguments done) error = %v", err)
+	}
+	brokenArguments := `{"query":"broken"}`
+	brokenEvent := &responses.Event{Event: &responses.Event_FunctionCallArgumentsDone{
+		FunctionCallArgumentsDone: &responses.FunctionCallArgumentsDoneEvent{
+			Type: responses.EventType_response_function_call_arguments_done, ItemId: "call-2", Arguments: &brokenArguments,
+		},
+	}}
+	if _, err := impl.Handle(context.Background(), nil, brokenEvent, llmusage.Scope{}, "normal-model"); err != nil {
+		t.Fatalf("Handle(second arguments done) error = %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("continuation started before response.completed: %+v", requests)
+	}
+
+	collector := llmusage.NewCollector()
+	ctx := llmusage.WithObserver(context.Background(), collector)
+	if _, err := impl.Handle(ctx, nil, completedResponseEvent("resp-plan", 10, 2, 12), llmusage.Scope{}, "normal-model"); err != nil {
+		t.Fatalf("Handle(plan completed) error = %v", err)
+	}
+	if len(requests) != 1 || requests[0].GetPreviousResponseId() != "resp-plan" {
+		t.Fatalf("continuation requests = %+v", requests)
+	}
+	if got := len(requests[0].GetInput().GetListValue().GetListValue()); got != 2 {
+		t.Fatalf("continuation tool outputs = %d, want 2", got)
+	}
+	impl.OnCompleted(ctx, completedResponseEvent("resp-final", 20, 5, 25), llmusage.Scope{}, "normal-model")
+	impl.recordStreamUsage(ctx, llmusage.Scope{}, "normal-model")
+	records := collector.Records()
+	if len(records) != 1 {
+		t.Fatalf("usage record count = %d, want 1: %+v", len(records), records)
+	}
+	if records[0].TotalTokens != 37 || records[0].PromptTokens != 30 || records[0].CompletionTokens != 7 {
+		t.Fatalf("aggregated usage = %+v", records[0])
+	}
+	if len(records[0].ToolCalls) != 2 || records[0].ToolCalls[0].Name != "lookup" || records[0].ToolCalls[1].Status != llmusage.ToolStatusError {
+		t.Fatalf("tool calls = %+v", records[0].ToolCalls)
+	}
+}
+
+func completedResponseEvent(id string, prompt, completion, total int64) *responses.Event {
+	return &responses.Event{Event: &responses.Event_ResponseCompleted{
+		ResponseCompleted: &responses.ResponseCompletedEvent{Response: &responses.ResponseObject{
+			Id: id, Usage: &responses.Usage{InputTokens: prompt, OutputTokens: completion, TotalTokens: total},
+		}, Type: responses.EventType_response_completed},
+	}}
+}
+
 func TestResponsesImplModelOverrideControlsInitialToolContinuationAndUsage(t *testing.T) {
 	restoreArkRuntimeForModelTest(t, "normal-model")
 	var requests []*responses.ResponsesRequest
@@ -85,6 +168,14 @@ func TestResponsesImplModelOverrideControlsInitialToolContinuationAndUsage(t *te
 	}}
 	if _, err := impl.OnCallArgs(context.Background(), event, llmusage.Scope{}); err != nil {
 		t.Fatalf("OnCallArgs() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("tool continuation started before response.completed: %+v", requests)
+	}
+	if _, err := impl.Handle(
+		context.Background(), nil, completedResponseEvent("resp_initial", 0, 0, 0), llmusage.Scope{}, impl.ActiveModelID(),
+	); err != nil {
+		t.Fatalf("Handle(response.completed) error = %v", err)
 	}
 	if len(requests) != 2 || requests[1].GetModel() != "override-model" {
 		t.Fatalf("tool continuation requests = %+v", requests)

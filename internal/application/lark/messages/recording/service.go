@@ -107,12 +107,14 @@ func CollectMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, metaD
 			chatName = larkchat.GetChatName(ctx, chatID)
 		}
 		embedded, usage, err := ark_dal.EmbeddingText(ctx, content, llmusage.Scope{
-			ChatID:     chatID,
-			ChatName:   chatName,
-			OpenID:     openID,
-			UserName:   userName,
-			SourceType: llmusage.SourceTypeUser,
-			Source:     "message_recording",
+			ChatID:            chatID,
+			ChatName:          chatName,
+			OpenID:            openID,
+			UserName:          userName,
+			SourceType:        llmusage.SourceTypeUser,
+			Source:            "message_recording",
+			BusinessScene:     llmusage.SceneBackground,
+			BusinessOperation: llmusage.OperationMessageEmbedding,
 		})
 		if err != nil {
 			logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err), zap.String("content", content))

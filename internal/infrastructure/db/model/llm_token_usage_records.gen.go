@@ -12,28 +12,34 @@ const TableNameLlmTokenUsageRecord = "llm_token_usage_records"
 
 // LlmTokenUsageRecord mapped from table <llm_token_usage_records>
 type LlmTokenUsageRecord struct {
-	ID               int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	CreatedAt        time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
-	BucketMinute     time.Time `gorm:"column:bucket_minute;not null" json:"bucket_minute"`
-	BucketHour       time.Time `gorm:"column:bucket_hour;not null" json:"bucket_hour"`
-	BucketDay        time.Time `gorm:"column:bucket_day;not null" json:"bucket_day"`
-	Provider         string    `gorm:"column:provider;not null" json:"provider"`
-	Model            string    `gorm:"column:model;not null" json:"model"`
-	Kind             string    `gorm:"column:kind;not null" json:"kind"`
-	SourceType       string    `gorm:"column:source_type;not null" json:"source_type"`
-	Source           string    `gorm:"column:source;not null" json:"source"`
-	ChatID           string    `gorm:"column:chat_id;not null" json:"chat_id"`
-	ChatName         string    `gorm:"column:chat_name;not null" json:"chat_name"`
-	OpenID           string    `gorm:"column:open_id;not null" json:"open_id"`
-	UserName         string    `gorm:"column:user_name;not null" json:"user_name"`
-	Status           string    `gorm:"column:status;not null" json:"status"`
-	PromptTokens     int64     `gorm:"column:prompt_tokens;not null" json:"prompt_tokens"`
-	CompletionTokens int64     `gorm:"column:completion_tokens;not null" json:"completion_tokens"`
-	TotalTokens      int64     `gorm:"column:total_tokens;not null" json:"total_tokens"`
-	ResponseID       string    `gorm:"column:response_id;not null" json:"response_id"`
-	TraceID          string    `gorm:"column:trace_id;not null" json:"trace_id"`
-	Error            string    `gorm:"column:error;not null" json:"error"`
-	BotID            string    `gorm:"column:bot_id;not null" json:"bot_id"`
+	ID                int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
+	CreatedAt         time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	BucketMinute      time.Time `gorm:"column:bucket_minute;not null" json:"bucket_minute"`
+	BucketHour        time.Time `gorm:"column:bucket_hour;not null" json:"bucket_hour"`
+	BucketDay         time.Time `gorm:"column:bucket_day;not null" json:"bucket_day"`
+	Provider          string    `gorm:"column:provider;not null" json:"provider"`
+	Model             string    `gorm:"column:model;not null" json:"model"`
+	Kind              string    `gorm:"column:kind;not null" json:"kind"`
+	SourceType        string    `gorm:"column:source_type;not null" json:"source_type"`
+	Source            string    `gorm:"column:source;not null" json:"source"`
+	ChatID            string    `gorm:"column:chat_id;not null" json:"chat_id"`
+	ChatName          string    `gorm:"column:chat_name;not null" json:"chat_name"`
+	OpenID            string    `gorm:"column:open_id;not null" json:"open_id"`
+	UserName          string    `gorm:"column:user_name;not null" json:"user_name"`
+	Status            string    `gorm:"column:status;not null" json:"status"`
+	PromptTokens      int64     `gorm:"column:prompt_tokens;not null" json:"prompt_tokens"`
+	CompletionTokens  int64     `gorm:"column:completion_tokens;not null" json:"completion_tokens"`
+	TotalTokens       int64     `gorm:"column:total_tokens;not null" json:"total_tokens"`
+	ResponseID        string    `gorm:"column:response_id;not null" json:"response_id"`
+	TraceID           string    `gorm:"column:trace_id;not null" json:"trace_id"`
+	Error             string    `gorm:"column:error;not null" json:"error"`
+	BotID             string    `gorm:"column:bot_id;not null" json:"bot_id"`
+	BusinessScene     string    `gorm:"column:business_scene;not null;default:unknown" json:"business_scene"`
+	BusinessOperation string    `gorm:"column:business_operation;not null;default:unknown" json:"business_operation"`
+	AttributionMode   string    `gorm:"column:attribution_mode;not null;default:unknown" json:"attribution_mode"`
+	ToolCallCount     int64     `gorm:"column:tool_call_count;not null" json:"tool_call_count"`
+	ToolSuccessCount  int64     `gorm:"column:tool_success_count;not null" json:"tool_success_count"`
+	ToolErrorCount    int64     `gorm:"column:tool_error_count;not null" json:"tool_error_count"`
 }
 
 // TableName LlmTokenUsageRecord's table name

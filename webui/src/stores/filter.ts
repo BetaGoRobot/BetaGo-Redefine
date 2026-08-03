@@ -168,9 +168,18 @@ export type MetricKey =
   | 'prompt_tokens'
   | 'completion_tokens'
   | 'requests'
+  | 'tool_calls'
+  | 'tool_related_tokens'
 
 /** 分组维度键 */
-export type DimensionKey = 'model' | 'kind' | 'source_type' | 'status'
+export type DimensionKey =
+  | 'business_scene'
+  | 'business_operation'
+  | 'model'
+  | 'kind'
+  | 'source_type'
+  | 'source'
+  | 'status'
 
 export interface DrillStep {
   /** 维度键 */
@@ -186,12 +195,17 @@ export const METRIC_LABEL: Record<MetricKey, string> = {
   prompt_tokens: 'Prompt Token',
   completion_tokens: 'Completion Token',
   requests: '请求数',
+  tool_calls: '工具调用数',
+  tool_related_tokens: '含工具回合 Token',
 }
 
 export const DIMENSION_LABEL: Record<DimensionKey, string> = {
+  business_scene: '业务场景',
+  business_operation: '业务动作',
   model: '模型',
   kind: '类型',
   source_type: '来源',
+  source: '原始来源',
   status: '状态',
 }
 

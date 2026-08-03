@@ -42,6 +42,7 @@ type (
 		functionInput          map[callID]any
 		functionResult         map[callID]gresult.R[string]
 		pendingCapabilityCalls []CapabilityCallTrace
+		pendingToolOutputs     []*responses.InputItem
 		ignoredEventCounts     map[string]int
 		reasoningEffort        *responses.ResponsesReasoning
 		streamUsage            *responses.Usage
@@ -49,6 +50,7 @@ type (
 		streamUsageRecorded    bool
 		modelIDOverride        string
 		activeModelID          string
+		usageTurn              *llmusage.TurnAccumulator
 
 		lastRespID string
 		textOutput textOutput
@@ -164,6 +166,7 @@ func New[T any](chatID, openID string, data *T) *ResponsesImpl[T] {
 		functionInput:          make(map[callID]any),
 		functionResult:         make(map[callID]gresult.R[string]),
 		pendingCapabilityCalls: make([]CapabilityCallTrace, 0),
+		pendingToolOutputs:     make([]*responses.InputItem, 0),
 		ignoredEventCounts:     make(map[string]int),
 		reasoningEffort: &responses.ResponsesReasoning{
 			Effort: responses.ReasoningEffort_medium, // 默认中等
@@ -338,7 +341,21 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		zap.String("handlerName", handlerName),
 	)
 	if handler, ok := r.handlers[handlerName]; ok {
+		startedAt := utilsNow()
 		res := handler(ctx, args, r.meta)
+		toolStatus := llmusage.ToolStatusSuccess
+		errorKind := ""
+		if res.IsErr() {
+			toolStatus = llmusage.ToolStatusError
+			errorKind = "handler_error"
+		}
+		if r.usageTurn != nil {
+			r.usageTurn.AddToolCall(llmusage.ToolCall{
+				Name: handlerName, Status: toolStatus,
+				Duration: utilsNow().Sub(startedAt), ErrorKind: errorKind,
+				CalledAt: startedAt,
+			})
+		}
 		r.functionResult[callID] = res
 		r.dynamicTools = mergeResponseTools(r.dynamicTools, additionalToolsFromToolResult(handlerName, res.Value()))
 		traceOutput := strings.TrimSpace(res.Value())
@@ -358,50 +375,15 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 				zap.Error(res.Err()),
 			)
 		}
-		message := &responses.ResponsesInput{
-			Union: &responses.ResponsesInput_ListValue{
-				ListValue: &responses.InputItemList{ListValue: []*responses.InputItem{
-					{
-						Union: &responses.InputItem_FunctionToolCallOutput{
-							FunctionToolCallOutput: &responses.ItemFunctionToolCallOutput{
-								CallId: argsDoneEvent.GetItemId(),
-								Output: utils.MustMarshalString(res.Value()),
-								Type:   responses.ItemType_function_call_output,
-							},
-						},
-					},
-				}},
+		r.pendingToolOutputs = append(r.pendingToolOutputs, &responses.InputItem{
+			Union: &responses.InputItem_FunctionToolCallOutput{
+				FunctionToolCallOutput: &responses.ItemFunctionToolCallOutput{
+					CallId: argsDoneEvent.GetItemId(),
+					Output: utils.MustMarshalString(res.Value()),
+					Type:   responses.ItemType_function_call_output,
+				},
 			},
-		}
-		_, cfg, cfgErr := runtimeClient()
-		if cfgErr != nil {
-			return nil, cfgErr
-		}
-		modelID := r.activeModelID
-		if strings.TrimSpace(modelID) == "" {
-			modelID = r.resolveModelID(cfg.NormalModel)
-			r.activeModelID = modelID
-		}
-		resp, err = responsesStreamCreator(ctx, &responses.ResponsesRequest{
-			Model:              modelID,
-			PreviousResponseId: new(r.lastRespID),
-			Input:              message,
-			Store:              new(true),
-			Tools:              mergeResponseTools(r.tools, r.dynamicTools),
-			Reasoning:          r.reasoningEffort,
-			Stream:             new(true),
-			// Text: &responses.ResponsesText{
-			// 	Format: &responses.TextFormat{
-			// 		Type: responses.TextType_json_object,
-			// 	},
-			// },
-		}, scope)
-		if err != nil {
-			return
-		}
-		r.streamUsage = nil
-		r.streamResponseID = ""
-		r.streamUsageRecorded = false
+		})
 	} else {
 		logs.L().Ctx(ctx).Warn("no handler found for function call",
 			zap.String("function_name", handlerName),
@@ -410,6 +392,37 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		return nil, errors.New("no handler found for function call: " + handlerName)
 	}
 	return resp, err
+}
+
+func (r *ResponsesImpl[T]) startPendingToolContinuation(ctx context.Context, scope llmusage.Scope) (*arkutils.ResponsesStreamReader, error) {
+	if r == nil || len(r.pendingToolOutputs) == 0 {
+		return nil, nil
+	}
+	_, cfg, err := runtimeClient()
+	if err != nil {
+		return nil, err
+	}
+	modelID := r.activeModelID
+	if strings.TrimSpace(modelID) == "" {
+		modelID = r.resolveModelID(cfg.NormalModel)
+		r.activeModelID = modelID
+	}
+	items := append([]*responses.InputItem(nil), r.pendingToolOutputs...)
+	next, err := responsesStreamCreator(ctx, &responses.ResponsesRequest{
+		Model: modelID, PreviousResponseId: new(r.lastRespID),
+		Input: &responses.ResponsesInput{Union: &responses.ResponsesInput_ListValue{
+			ListValue: &responses.InputItemList{ListValue: items},
+		}},
+		Store: new(true), Tools: mergeResponseTools(r.tools, r.dynamicTools),
+		Reasoning: r.reasoningEffort, Stream: new(true),
+	}, scope)
+	if err != nil {
+		return nil, err
+	}
+	r.pendingToolOutputs = r.pendingToolOutputs[:0]
+	r.streamUsage = nil
+	r.streamResponseID = ""
+	return next, nil
 }
 
 func (r *ResponsesImpl[T]) OnReasoningDelta(ctx context.Context, event *responses.Event) {
@@ -455,7 +468,17 @@ func (r *ResponsesImpl[T]) OnCompleted(ctx context.Context, event *responses.Eve
 	if r.streamResponseID != "" {
 		r.lastRespID = r.streamResponseID
 	}
-	r.recordStreamUsage(ctx, scope, modelID)
+	if r.usageTurn == nil {
+		r.beginUsageTurn(scope, modelID)
+	}
+	if r.streamUsage != nil {
+		r.usageTurn.AddUsage(r.streamResponseID, llmusage.Usage{
+			PromptTokens: r.streamUsage.GetInputTokens(), CompletionTokens: r.streamUsage.GetOutputTokens(),
+			TotalTokens: r.streamUsage.GetTotalTokens(),
+		})
+	} else {
+		r.usageTurn.AddUsage(r.streamResponseID, llmusage.Usage{})
+	}
 }
 
 func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesStreamReader, event *responses.Event, scope llmusage.Scope, modelID string) (newRes *arkutils.ResponsesStreamReader, err error) {
@@ -466,10 +489,14 @@ func (r *ResponsesImpl[T]) Handle(ctx context.Context, resp *arkutils.ResponsesS
 	switch eventType := event.GetEventType(); eventType {
 	case responses.EventType_response_completed.String():
 		r.OnCompleted(ctx, event, scope, modelID)
+		if len(r.pendingToolOutputs) > 0 {
+			return r.startPendingToolContinuation(ctx, scope)
+		}
 	case responses.EventType_response_output_item_added.String():
 		r.OnCallStart(ctx, event)
 	case responses.EventType_response_function_call_arguments_done.String():
-		return r.OnCallArgs(ctx, event, scope)
+		_, err := r.OnCallArgs(ctx, event, scope)
+		return resp, err
 	case responses.EventType_response_reasoning_summary_text_delta.String():
 		r.OnReasoningDelta(ctx, event)
 	case responses.EventType_response_output_text_delta.String():
@@ -590,6 +617,7 @@ func (r *ResponsesImpl[T]) DoSync(ctx context.Context, scope llmusage.Scope, sys
 		items   = baseInputItem(sysPrompt, userPrompt)
 	)
 	r.activeModelID = modelID
+	r.beginUsageTurn(scope, modelID)
 	defer r.recordStreamUsage(ctx, scope, modelID)
 
 	span.SetAttributes(
@@ -666,6 +694,7 @@ func (r *ResponsesImpl[T]) Do(ctx context.Context, scope llmusage.Scope, sysProm
 		items   = baseInputItem(sysPrompt, userPrompt)
 	)
 	r.activeModelID = modelID
+	r.beginUsageTurn(scope, modelID)
 
 	span.SetAttributes(
 		attribute.Key("model_id").String(modelID),
@@ -751,27 +780,38 @@ func (r *ResponsesImpl[T]) recordStreamUsage(ctx context.Context, scope llmusage
 	if r.streamUsageRecorded {
 		return
 	}
-	r.streamUsageRecorded = true
-	if r.streamUsage == nil && strings.TrimSpace(r.streamResponseID) == "" && strings.TrimSpace(r.lastRespID) == "" {
-		return
-	}
-	status := llmusage.StatusUsageMissing
-	record := llmusage.Record{
-		Scope:      scope,
-		Provider:   "ark",
-		Model:      modelID,
-		Kind:       llmusage.KindResponsesStream,
-		Status:     status,
-		ResponseID: strings.TrimSpace(firstNonEmptyString(r.streamResponseID, r.lastRespID)),
-		CreatedAt:  utilsNow(),
+	if r.usageTurn == nil {
+		r.beginUsageTurn(scope, modelID)
 	}
 	if r.streamUsage != nil {
-		record.Status = llmusage.StatusSuccess
-		record.PromptTokens = r.streamUsage.GetInputTokens()
-		record.CompletionTokens = r.streamUsage.GetOutputTokens()
-		record.TotalTokens = r.streamUsage.GetTotalTokens()
+		r.usageTurn.AddUsage(firstNonEmptyString(r.streamResponseID, r.lastRespID), llmusage.Usage{
+			PromptTokens: r.streamUsage.GetInputTokens(), CompletionTokens: r.streamUsage.GetOutputTokens(),
+			TotalTokens: r.streamUsage.GetTotalTokens(),
+		})
 	}
+	record := r.usageTurn.Record(llmusage.StatusSuccess, "")
+	if record.ResponseID == "" && strings.TrimSpace(r.lastRespID) != "" {
+		record.ResponseID = strings.TrimSpace(r.lastRespID)
+	}
+	if record.ResponseID == "" && record.TotalTokens == 0 && len(record.ToolCalls) == 0 {
+		return
+	}
+	if record.TotalTokens == 0 {
+		record.Status = llmusage.StatusUsageMissing
+	}
+	r.streamUsageRecorded = true
 	_ = llmusage.RecordUsage(ctx, record)
+}
+
+func (r *ResponsesImpl[T]) beginUsageTurn(scope llmusage.Scope, modelID string) {
+	if r == nil {
+		return
+	}
+	r.usageTurn = llmusage.NewTurnAccumulator(llmusage.TurnOptions{
+		Scope: scope, Provider: "ark", Model: modelID,
+		Kind: llmusage.KindResponsesStream, CreatedAt: utilsNow(),
+	})
+	r.streamUsageRecorded = false
 }
 
 func firstNonEmptyString(values ...string) string {

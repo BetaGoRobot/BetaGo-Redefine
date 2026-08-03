@@ -88,12 +88,14 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 	chatName := larkchat.GetChatName(ctx, chatID)
 	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content), llmusage.Scope{
-		ChatID:     chatID,
-		ChatName:   chatName,
-		OpenID:     recordedOpenID,
-		UserName:   recordedUserName,
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "outbound_message_recording",
+		ChatID:            chatID,
+		ChatName:          chatName,
+		OpenID:            recordedOpenID,
+		UserName:          recordedUserName,
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "outbound_message_recording",
+		BusinessScene:     llmusage.SceneBackground,
+		BusinessOperation: llmusage.OperationOutboundEmbedding,
 	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))
@@ -188,12 +190,14 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 	chatName := larkchat.GetChatName(ctx, chatID)
 	recordedOpenID, recordedUserName := resolveRecordedBotIdentity(utils.AddrOrNil(resp.Data.Sender.Id))
 	embedded, usage, err := ark_dal.EmbeddingText(ctx, utils.AddrOrNil(resp.Data.Body.Content), llmusage.Scope{
-		ChatID:     chatID,
-		ChatName:   chatName,
-		OpenID:     recordedOpenID,
-		UserName:   recordedUserName,
-		SourceType: llmusage.SourceTypeSystem,
-		Source:     "outbound_message_recording",
+		ChatID:            chatID,
+		ChatName:          chatName,
+		OpenID:            recordedOpenID,
+		UserName:          recordedUserName,
+		SourceType:        llmusage.SourceTypeSystem,
+		Source:            "outbound_message_recording",
+		BusinessScene:     llmusage.SceneBackground,
+		BusinessOperation: llmusage.OperationOutboundEmbedding,
 	})
 	if err != nil {
 		logs.L().Ctx(ctx).Error("EmbeddingText error", zap.Error(err))

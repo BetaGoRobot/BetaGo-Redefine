@@ -116,6 +116,7 @@ func (g *continuationGenerator) Generate(
 	}, llmusage.Scope{
 		ChatID: input.ChatID, OpenID: input.ActorOpenID,
 		SourceType: llmusage.SourceTypeBackground, Source: "agent_callback_continuation",
+		BusinessScene: llmusage.SceneAgentRuntime, BusinessOperation: llmusage.OperationCallbackContinuation,
 	})
 	if err != nil {
 		return TurnDecision{}, err

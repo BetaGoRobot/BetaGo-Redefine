@@ -51,6 +51,9 @@ func TestEmbeddingUsageScopeFromContextFallback(t *testing.T) {
 	if normalized.ChatName != "system:retriever_embedding" {
 		t.Fatalf("ChatName = %q, want source fallback", normalized.ChatName)
 	}
+	if normalized.AttributionMode != llmusage.AttributionExplicit || normalized.BusinessOperation != llmusage.OperationRetrieverEmbedding {
+		t.Fatalf("business attribution = %+v", normalized)
+	}
 }
 
 func TestEmbeddingUsageScopeFromContextUsesContext(t *testing.T) {
@@ -118,7 +121,7 @@ type fakeRetrieverUsageStore struct {
 	rows []llmusage.UsageRecordRow
 }
 
-func (s *fakeRetrieverUsageStore) CreateUsageRecord(_ context.Context, row *llmusage.UsageRecordRow) error {
+func (s *fakeRetrieverUsageStore) CreateUsageTurn(_ context.Context, row *llmusage.UsageRecordRow, _ []llmusage.ToolCallRecordRow) error {
 	s.rows = append(s.rows, *row)
 	return nil
 }

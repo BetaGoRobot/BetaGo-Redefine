@@ -7,6 +7,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/handlers"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/ratelimit"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
@@ -74,6 +75,11 @@ func (r *ReplyChatOperator) PreRun(ctx context.Context, event *larkim.P2MessageR
 //	@return err
 func (r *ReplyChatOperator) Run(ctx context.Context, event *larkim.P2MessageReceiveV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
+	operation := llmusage.OperationMentionReply
+	if currentChatType(event) == "p2p" {
+		operation = llmusage.OperationP2PReply
+	}
+	ctx = llmusage.WithBusinessAttribution(ctx, llmusage.SceneConversation, operation)
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)

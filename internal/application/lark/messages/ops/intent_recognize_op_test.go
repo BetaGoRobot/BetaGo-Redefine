@@ -40,6 +40,9 @@ func TestIntentRecognizeOperatorRunStoresAnalysis(t *testing.T) {
 			if len(recent) != 3 {
 				t.Fatalf("recent len = %d, want 3", len(recent))
 			}
+			if scope.BusinessScene != llmusage.SceneRouting || scope.BusinessOperation != llmusage.OperationIntentRecognition {
+				t.Fatalf("business attribution = %q/%q", scope.BusinessScene, scope.BusinessOperation)
+			}
 			return &intent.IntentAnalysis{
 				IntentType:      intent.IntentTypeQuestion,
 				NeedReply:       true,

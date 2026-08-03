@@ -28,6 +28,8 @@ import {
 } from '../composables/useChartOptions'
 import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
+import UsageBusinessOverview from '../components/UsageBusinessOverview.vue'
+import { mergeUsageStats } from '../usage/aggregation'
 
 const router = useRouter()
 const store = useFilterStore()
@@ -153,6 +155,16 @@ const agg = computed<AggregateStats>(() => {
   }
 })
 
+const businessStats = computed(() => {
+  if (!topChatStats.value.length) return null
+  return mergeUsageStats(topChatStats.value.map((item) => item.token))
+})
+
+function onBusinessDrill(dimension: 'business_scene' | 'business_operation', value: string) {
+  store.pushDrill({ dimension, value, label: value })
+  ElMessage.info(`已下钻：${dimension}=${value}`)
+}
+
 // ---------- Chart Options ----------
 const primary = computed<MetricKey>(() => store.primaryMetric)
 const secondary = computed<MetricKey>(() => store.secondaryMetric)
@@ -207,9 +219,12 @@ const trendOption = computed<EChartsOption>(() => {
 
 function buildDonutFor(dim: DimensionKey, data: TokenGroupCount[]): EChartsOption {
   const label: Record<DimensionKey, string> = {
+    business_scene: '按业务场景',
+    business_operation: '按业务动作',
     model: '按模型',
     kind: '按类型',
     source_type: '按来源',
+    source: '按原始来源',
     status: '按状态',
   }
   return buildDonut({
@@ -436,6 +451,16 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
     </section>
 
     <div v-else v-loading="loading" class="dashboard-content">
+      <UsageBusinessOverview :stats="businessStats" @drill="onBusinessDrill" />
+
+      <header class="technical-section-heading">
+        <div>
+          <p>Technical dimensions</p>
+          <h2>技术维度与运行质量</h2>
+        </div>
+        <span>保留模型、调用类型、原始来源与状态下钻</span>
+      </header>
+
       <section class="metric-grid" aria-label="关键指标">
         <el-card shadow="never" class="metric-card">
           <span class="metric-card__index">01</span>
@@ -658,6 +683,38 @@ watch([() => store.window, () => store.selectedBotIDs.slice().sort().join(',')],
 .dashboard-content {
   display: grid;
   gap: 0.9rem;
+}
+
+.technical-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--ops-border);
+}
+
+.technical-section-heading p {
+  margin: 0 0 0.2rem;
+  color: var(--ops-teal);
+  font-family: var(--ops-font-mono);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.technical-section-heading h2 {
+  margin: 0;
+  color: var(--ops-pine-950);
+  font-size: 1.15rem;
+}
+
+.technical-section-heading > span {
+  color: var(--ops-muted);
+  font-size: 0.7rem;
 }
 
 .metric-grid {

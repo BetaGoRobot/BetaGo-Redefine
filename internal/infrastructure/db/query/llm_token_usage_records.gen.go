@@ -47,6 +47,12 @@ func newLlmTokenUsageRecord(db *gorm.DB, opts ...gen.DOOption) llmTokenUsageReco
 	_llmTokenUsageRecord.TraceID = field.NewString(tableName, "trace_id")
 	_llmTokenUsageRecord.Error = field.NewString(tableName, "error")
 	_llmTokenUsageRecord.BotID = field.NewString(tableName, "bot_id")
+	_llmTokenUsageRecord.BusinessScene = field.NewString(tableName, "business_scene")
+	_llmTokenUsageRecord.BusinessOperation = field.NewString(tableName, "business_operation")
+	_llmTokenUsageRecord.AttributionMode = field.NewString(tableName, "attribution_mode")
+	_llmTokenUsageRecord.ToolCallCount = field.NewInt64(tableName, "tool_call_count")
+	_llmTokenUsageRecord.ToolSuccessCount = field.NewInt64(tableName, "tool_success_count")
+	_llmTokenUsageRecord.ToolErrorCount = field.NewInt64(tableName, "tool_error_count")
 
 	_llmTokenUsageRecord.fillFieldMap()
 
@@ -56,29 +62,35 @@ func newLlmTokenUsageRecord(db *gorm.DB, opts ...gen.DOOption) llmTokenUsageReco
 type llmTokenUsageRecord struct {
 	llmTokenUsageRecordDo llmTokenUsageRecordDo
 
-	ALL              field.Asterisk
-	ID               field.Int64
-	CreatedAt        field.Time
-	BucketMinute     field.Time
-	BucketHour       field.Time
-	BucketDay        field.Time
-	Provider         field.String
-	Model            field.String
-	Kind             field.String
-	SourceType       field.String
-	Source           field.String
-	ChatID           field.String
-	ChatName         field.String
-	OpenID           field.String
-	UserName         field.String
-	Status           field.String
-	PromptTokens     field.Int64
-	CompletionTokens field.Int64
-	TotalTokens      field.Int64
-	ResponseID       field.String
-	TraceID          field.String
-	Error            field.String
-	BotID            field.String
+	ALL               field.Asterisk
+	ID                field.Int64
+	CreatedAt         field.Time
+	BucketMinute      field.Time
+	BucketHour        field.Time
+	BucketDay         field.Time
+	Provider          field.String
+	Model             field.String
+	Kind              field.String
+	SourceType        field.String
+	Source            field.String
+	ChatID            field.String
+	ChatName          field.String
+	OpenID            field.String
+	UserName          field.String
+	Status            field.String
+	PromptTokens      field.Int64
+	CompletionTokens  field.Int64
+	TotalTokens       field.Int64
+	ResponseID        field.String
+	TraceID           field.String
+	Error             field.String
+	BotID             field.String
+	BusinessScene     field.String
+	BusinessOperation field.String
+	AttributionMode   field.String
+	ToolCallCount     field.Int64
+	ToolSuccessCount  field.Int64
+	ToolErrorCount    field.Int64
 
 	fieldMap map[string]field.Expr
 }
@@ -117,6 +129,12 @@ func (l *llmTokenUsageRecord) updateTableName(table string) *llmTokenUsageRecord
 	l.TraceID = field.NewString(table, "trace_id")
 	l.Error = field.NewString(table, "error")
 	l.BotID = field.NewString(table, "bot_id")
+	l.BusinessScene = field.NewString(table, "business_scene")
+	l.BusinessOperation = field.NewString(table, "business_operation")
+	l.AttributionMode = field.NewString(table, "attribution_mode")
+	l.ToolCallCount = field.NewInt64(table, "tool_call_count")
+	l.ToolSuccessCount = field.NewInt64(table, "tool_success_count")
+	l.ToolErrorCount = field.NewInt64(table, "tool_error_count")
 
 	l.fillFieldMap()
 
@@ -145,7 +163,7 @@ func (l *llmTokenUsageRecord) GetFieldByName(fieldName string) (field.OrderExpr,
 }
 
 func (l *llmTokenUsageRecord) fillFieldMap() {
-	l.fieldMap = make(map[string]field.Expr, 22)
+	l.fieldMap = make(map[string]field.Expr, 28)
 	l.fieldMap["id"] = l.ID
 	l.fieldMap["created_at"] = l.CreatedAt
 	l.fieldMap["bucket_minute"] = l.BucketMinute
@@ -168,6 +186,12 @@ func (l *llmTokenUsageRecord) fillFieldMap() {
 	l.fieldMap["trace_id"] = l.TraceID
 	l.fieldMap["error"] = l.Error
 	l.fieldMap["bot_id"] = l.BotID
+	l.fieldMap["business_scene"] = l.BusinessScene
+	l.fieldMap["business_operation"] = l.BusinessOperation
+	l.fieldMap["attribution_mode"] = l.AttributionMode
+	l.fieldMap["tool_call_count"] = l.ToolCallCount
+	l.fieldMap["tool_success_count"] = l.ToolSuccessCount
+	l.fieldMap["tool_error_count"] = l.ToolErrorCount
 }
 
 func (l llmTokenUsageRecord) clone(db *gorm.DB) llmTokenUsageRecord {

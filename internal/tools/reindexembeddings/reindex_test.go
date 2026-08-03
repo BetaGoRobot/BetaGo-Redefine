@@ -223,6 +223,9 @@ func TestScopeAtFallback(t *testing.T) {
 	if normalized.ChatName != "background:reindex_embeddings" {
 		t.Fatalf("normalized ChatName = %q, want source fallback", normalized.ChatName)
 	}
+	if normalized.AttributionMode != llmusage.AttributionExplicit || normalized.BusinessOperation != llmusage.OperationReindexEmbedding {
+		t.Fatalf("business attribution = %+v", normalized)
+	}
 }
 
 func TestBuildEmbeddingRequests(t *testing.T) {

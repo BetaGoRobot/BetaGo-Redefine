@@ -166,12 +166,14 @@ func buildIntentLLMUsageScope(ctx context.Context, event *larkim.P2MessageReceiv
 		chatName = larkchat.GetChatName(ctx, chatID)
 	}
 	return llmusage.Scope{
-		ChatID:     chatID,
-		ChatName:   chatName,
-		OpenID:     openID,
-		UserName:   userName,
-		SourceType: llmusage.SourceTypeUser,
-		Source:     "intent",
+		ChatID:            chatID,
+		ChatName:          chatName,
+		OpenID:            openID,
+		UserName:          userName,
+		SourceType:        llmusage.SourceTypeUser,
+		Source:            "intent",
+		BusinessScene:     llmusage.SceneRouting,
+		BusinessOperation: llmusage.OperationIntentRecognition,
 	}
 }
 
