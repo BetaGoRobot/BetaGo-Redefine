@@ -431,6 +431,26 @@ LLM 工具和应用服务已经接入以下任务能力：
 
 ## 开发调试
 
+### 编译与测试基线
+
+本地 Go 编译和测试参数以 `.vscode/launch.json` 与 `.vscode/settings.json` 为准。由于 `.vscode` 是本地忽略目录，仓库同时在本节和根目录 [`AGENTS.md`](./AGENTS.md) 记录当前有效参数；本机 `.vscode` 发生变化时，应同步更新这两处说明。
+
+当前基线如下：
+
+- Go 版本由 `go.mod` 声明，不使用宿主机中偶然排在 `PATH` 首位的其他版本。
+- 编译、运行和测试 Go 包时使用 `-tags=custom_skip_vips`。
+- 测试设置 `BETAGO_CONFIG_PATH=.dev/config.toml`，并启用 `.vscode/settings.json` 中的 `-v`。
+- 不启用 `.vscode/settings.json` 中已注释的 `-gcflags=all=-N -l`。
+
+等价 CLI 示例：
+
+```bash
+go build -tags=custom_skip_vips ./...
+BETAGO_CONFIG_PATH=.dev/config.toml go test -v -tags=custom_skip_vips ./...
+```
+
+从其他 worktree 执行测试时，将 `BETAGO_CONFIG_PATH` 指向主工作区实际存在的 `.dev/config.toml`（建议使用绝对路径）；不要复制或提交该本地配置文件。如果 `.vscode` 缺失或其中参数互相矛盾，应先确认正确基线，不能擅自换参数后宣称验证通过。
+
 ### 1. 卡片调试 CLI
 
 仓库内置了一个专门的飞书卡片调试入口：
