@@ -39,7 +39,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/sourcegraph/conc v0.3.0
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	github.com/tmc/langchaingo v0.1.14
 	github.com/volcengine/volcengine-go-sdk v1.2.47
 	github.com/yanyiwu/gojieba v1.4.7
