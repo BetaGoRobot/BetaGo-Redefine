@@ -198,6 +198,8 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
     embedding_model = "ep-***"
     normal_model = "doubao-seed-1-8-251228"
     reasoning_model = "doubao-seed-1-8-251228"
+    # 默认不发送 reasoning.effort；只对精确命中的模型或 Endpoint ID 启用。
+    reasoning_effort_models = []
     vision_model = "doubao-seed-1-8-251228"
 
 [minio_config]

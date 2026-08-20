@@ -75,6 +75,13 @@ func runtimeClient() (*arkruntime.Client, *config.ArkConfig, error) {
 
 func CreateResponses(ctx context.Context, body *responses.ResponsesRequest, scope llmusage.Scope) (*responses.ResponseObject, error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.create")
+	defer span.End()
+	runtime, cfg, err := runtimeClient()
+	if err != nil {
+		otel.RecordError(span, err)
+		return nil, err
+	}
+	body = prepareResponsesRequest(cfg, body)
 	if body != nil {
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
@@ -88,13 +95,6 @@ func CreateResponses(ctx context.Context, body *responses.ResponsesRequest, scop
 		if body.PreviousResponseId != nil {
 			span.SetAttributes(attribute.String("previous_response_id.preview", otel.PreviewString(*body.PreviousResponseId, 128)))
 		}
-	}
-	defer span.End()
-
-	runtime, _, err := runtimeClient()
-	if err != nil {
-		otel.RecordError(span, err)
-		return nil, err
 	}
 	resp, err := runtime.CreateResponses(ctx, body)
 	otel.RecordError(span, err)
@@ -107,6 +107,13 @@ func CreateResponses(ctx context.Context, body *responses.ResponsesRequest, scop
 
 func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest, scope llmusage.Scope) (*arkutils.ResponsesStreamReader, error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.stream_create")
+	defer span.End()
+	runtime, cfg, err := runtimeClient()
+	if err != nil {
+		otel.RecordError(span, err)
+		return nil, err
+	}
+	body = prepareResponsesRequest(cfg, body)
 	if body != nil {
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
@@ -120,13 +127,6 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 		if body.PreviousResponseId != nil {
 			span.SetAttributes(attribute.String("previous_response_id.preview", otel.PreviewString(*body.PreviousResponseId, 128)))
 		}
-	}
-	defer span.End()
-
-	runtime, _, err := runtimeClient()
-	if err != nil {
-		otel.RecordError(span, err)
-		return nil, err
 	}
 	resp, err := runtime.CreateResponsesStream(ctx, body)
 	otel.RecordError(span, err)

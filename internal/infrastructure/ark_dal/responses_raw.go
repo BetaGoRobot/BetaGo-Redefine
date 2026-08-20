@@ -50,9 +50,11 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 }
 
 func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope llmusage.Scope) (res string, err error) {
-	if _, _, err := runtimeClientFn(); err != nil {
+	_, cfg, err := runtimeClientFn()
+	if err != nil {
 		return "", err
 	}
+	req.Reasoning = effectiveResponsesReasoning(cfg, req.ModelID, req.Reasoning)
 	ctx, span := otel.StartNamed(ctx, "ark.responses.cache")
 	span.SetAttributes(attribute.String("model.id", req.ModelID))
 	span.SetAttributes(attribute.String("cache.scene", cacheScene(req.CacheScene)))
@@ -69,7 +71,7 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		cacheScene(req.CacheScene),
 		req.ModelID,
 		"thinking_"+req.Thinking.String(),
-		"reasoning_"+req.Reasoning.String(),
+		"reasoning_"+responseReasoningEffort(req.Reasoning),
 		hashResponseCacheInput(req.SystemPrompt),
 	)
 	span.SetAttributes(

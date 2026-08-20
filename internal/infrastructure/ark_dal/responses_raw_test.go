@@ -154,8 +154,8 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if second.GetCaching() == nil || second.GetCaching().GetType() != responses.CacheType_enabled {
 		t.Fatalf("response request Caching = %+v, want enabled to continue cached head", second.GetCaching())
 	}
-	if second.GetReasoning() == nil || second.GetReasoning().GetEffort() != responses.ReasoningEffort_low {
-		t.Fatalf("response request Reasoning = %+v, want low to match seed", second.GetReasoning())
+	if second.GetReasoning() != nil {
+		t.Fatalf("response request Reasoning = %+v, want omitted for unlisted model", second.GetReasoning())
 	}
 	if second.GetThinking() == nil || second.GetThinking().GetType() != responses.ThinkingType_disabled {
 		t.Fatalf("response request Thinking = %+v, want disabled to match seed", second.GetThinking())
