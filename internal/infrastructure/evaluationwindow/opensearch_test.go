@@ -62,3 +62,21 @@ func TestPreWindowQueryUsesStrictModernAndConservativeLegacyCutoff(t *testing.T)
 		t.Fatalf("legacy cutoff = %#v, want %q", got, wantLegacy)
 	}
 }
+
+func TestPreWindowQuerySortsByKeywordMessageID(t *testing.T) {
+	query := preWindowQuery("chat-1", time.Now(), 20)
+	sorts, ok := query["sort"].([]any)
+	if !ok || len(sorts) != 2 {
+		t.Fatalf("sort = %#v, want two sort clauses", query["sort"])
+	}
+	tieBreaker, ok := sorts[1].(map[string]any)
+	if !ok {
+		t.Fatalf("message ID sort = %#v, want object", sorts[1])
+	}
+	if _, ok := tieBreaker["message_id.keyword"]; !ok {
+		t.Fatalf(
+			"message ID sort = %#v, want message_id.keyword to avoid text fielddata",
+			tieBreaker,
+		)
+	}
+}

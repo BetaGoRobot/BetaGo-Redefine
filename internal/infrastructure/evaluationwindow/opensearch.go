@@ -88,7 +88,7 @@ func preWindowQuery(chatID string, anchorAt time.Time, limit int) map[string]any
 		},
 		"sort": []any{
 			map[string]any{"create_time_v2": map[string]any{"order": "desc"}},
-			map[string]any{"message_id": map[string]any{"order": "desc"}},
+			map[string]any{"message_id.keyword": map[string]any{"order": "desc"}},
 		},
 		"query": map[string]any{
 			"bool": map[string]any{
