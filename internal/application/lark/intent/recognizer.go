@@ -220,6 +220,8 @@ func analyzeMessageWithContext(
 		return nil, errors.New("empty response from model")
 	}
 
+	responseText = strings.TrimPrefix(responseText, "```json")
+	responseText = strings.TrimSuffix(responseText, "```")
 	// 解析 JSON
 	analysis = &IntentAnalysis{}
 	if err := sonic.Unmarshal([]byte(responseText), analysis); err != nil {
