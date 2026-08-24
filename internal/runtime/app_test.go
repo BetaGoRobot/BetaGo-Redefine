@@ -3,11 +3,41 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestAppLogsOptionalModuleFailure(t *testing.T) {
+	oldLogf := optionalModuleErrorLogf
+	var logged string
+	optionalModuleErrorLogf = func(format string, args ...any) {
+		logged = fmt.Sprintf(format, args...)
+	}
+	t.Cleanup(func() { optionalModuleErrorLogf = oldLogf })
+
+	app := NewApp(NewFuncModule(FuncModuleOptions{
+		Name: "telemetry",
+		Start: func(context.Context) error {
+			return errors.New("collector unavailable")
+		},
+	}))
+	if err := app.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	for _, want := range []string{"telemetry", "start", "collector unavailable"} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("optional module log = %q, want it to contain %q", logged, want)
+		}
+	}
+	status := componentByName(t, app.Registry().Snapshot(), "telemetry")
+	if status.State != StateDegraded {
+		t.Fatalf("optional module state = %s, want %s", status.State, StateDegraded)
+	}
+}
 
 func TestAppModuleNamesPreservesRegistrationOrderAndReturnsDefensiveCopy(t *testing.T) {
 	app := NewApp(

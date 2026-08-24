@@ -6,10 +6,63 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	globalotel "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestNewResourceMergesWithDefault(t *testing.T) {
+	res, err := newResource(&config.OtelConfig{ServiceName: "betago-test"})
+	if err != nil {
+		t.Fatalf("newResource() error = %v", err)
+	}
+	if res == nil {
+		t.Fatal("newResource() returned nil")
+	}
+}
+
+func TestInitCreatesValidSpan(t *testing.T) {
+	previousTracerProvider := tracerProvider
+	previousLoggerProvider := loggerProvider
+	previousMeterProvider := meterProvider
+	previousTracer := OtelTracer
+	previousGlobalTracerProvider := globalotel.GetTracerProvider()
+	previousGlobalMeterProvider := globalotel.GetMeterProvider()
+	t.Cleanup(func() {
+		if tp, ok := tracerProvider.(*sdktrace.TracerProvider); ok {
+			_ = tp.Shutdown(context.Background())
+		}
+		if loggerProvider != nil && loggerProvider != previousLoggerProvider {
+			_ = loggerProvider.Shutdown(context.Background())
+		}
+		if meterProvider != nil && meterProvider != previousMeterProvider {
+			_ = meterProvider.Shutdown(context.Background())
+		}
+		tracerProvider = previousTracerProvider
+		loggerProvider = previousLoggerProvider
+		meterProvider = previousMeterProvider
+		OtelTracer = previousTracer
+		globalotel.SetTracerProvider(previousGlobalTracerProvider)
+		globalotel.SetMeterProvider(previousGlobalMeterProvider)
+	})
+
+	Init(&config.OtelConfig{
+		CollectorEndpoint: "127.0.0.1:4317",
+		TracerName:        "betago-test-tracer",
+		ServiceName:       "betago-test-service",
+	})
+
+	_, span := StartEntry(context.Background(), "init-test")
+	defer span.End()
+	if !span.SpanContext().TraceID().IsValid() {
+		t.Fatal("Init() left the tracer without a valid trace ID")
+	}
+	if !span.SpanContext().SpanID().IsValid() {
+		t.Fatal("Init() left the tracer without a valid span ID")
+	}
+}
 
 type stubSpan struct {
 	trace.Span

@@ -293,21 +293,26 @@ func completeJudgeJSONWithArk(
 	ctx context.Context,
 	request JudgeCompletionRequest,
 ) (json.RawMessage, error) {
-	text, err := ark_dal.ResponseTextWithCache(ctx, ark_dal.CachedResponseRequest{
+	text, err := ark_dal.ResponseTextWithCache(ctx, judgeCachedResponseRequest(request), request.Scope)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(text), nil
+}
+
+func judgeCachedResponseRequest(request JudgeCompletionRequest) ark_dal.CachedResponseRequest {
+	return ark_dal.CachedResponseRequest{
 		CacheScene: judgeSource, SystemPrompt: request.SystemPrompt,
 		UserPrompt: request.UserPrompt, ModelID: request.ModelID,
-		Text: &responses.ResponsesText{Format: judgeResponseFormat()},
+		DisablePrefixCache: true,
+		Text:               &responses.ResponsesText{Format: judgeResponseFormat()},
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: responses.ReasoningEffort_medium,
 		},
 		Thinking: &responses.ResponsesThinking{
 			Type: responses.ThinkingType_disabled.Enum(),
 		},
-	}, request.Scope)
-	if err != nil {
-		return nil, err
 	}
-	return json.RawMessage(text), nil
 }
 
 func judgeResponseFormat() *responses.TextFormat {

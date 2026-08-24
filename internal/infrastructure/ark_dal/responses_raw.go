@@ -28,13 +28,14 @@ var (
 const responseCacheVersion = "v2"
 
 type CachedResponseRequest struct {
-	CacheScene   string
-	SystemPrompt string
-	UserPrompt   string
-	ModelID      string
-	Text         *responses.ResponsesText
-	Reasoning    *responses.ResponsesReasoning
-	Thinking     *responses.ResponsesThinking
+	CacheScene         string
+	SystemPrompt       string
+	UserPrompt         string
+	ModelID            string
+	Text               *responses.ResponsesText
+	Reasoning          *responses.ResponsesReasoning
+	Thinking           *responses.ResponsesThinking
+	DisablePrefixCache bool
 }
 
 func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string, scope llmusage.Scope) (res string, err error) {
@@ -62,6 +63,10 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	span.SetAttributes(otel.PreviewAttrs("user_prompt", req.UserPrompt, 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+
+	if req.DisablePrefixCache {
+		return responseTextDirect(ctx, req, scope, "direct")
+	}
 
 	key := botidentity.Current().NamespaceKey(
 		"ark",
@@ -110,6 +115,10 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		}
 		resp, err := createResponsesFn(ctx, cacheReq, scope)
 		if err != nil {
+			if isPrefixCacheInputTooShort(err) {
+				span.AddEvent("prefix_cache_input_too_short_fallback")
+				return responseTextDirect(ctx, req, scope, "cache_fallback")
+			}
 			logs.L().Ctx(ctx).Error(
 				"responses error",
 				responseRequestLogFields("cache_head", req.CacheScene, cacheReq, scope, err)...,
@@ -164,6 +173,37 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		return "", err
 	}
 
+	return responseText(resp)
+}
+
+func responseTextDirect(
+	ctx context.Context,
+	req CachedResponseRequest,
+	scope llmusage.Scope,
+	stage string,
+) (string, error) {
+	directReq := &responses.ResponsesRequest{
+		Model: req.ModelID,
+		Input: textInput(
+			responseInputMessage{responses.MessageRole_system, req.SystemPrompt},
+			responseInputMessage{responses.MessageRole_user, req.UserPrompt},
+		),
+		Text:      req.Text,
+		Thinking:  req.Thinking,
+		Reasoning: req.Reasoning,
+	}
+	resp, err := createResponsesFn(ctx, directReq, scope)
+	if err != nil {
+		logs.L().Ctx(ctx).Error(
+			"responses error",
+			responseRequestLogFields(stage, req.CacheScene, directReq, scope, err)...,
+		)
+		return "", err
+	}
+	return responseText(resp)
+}
+
+func responseText(resp *responses.ResponseObject) (string, error) {
 	for _, output := range resp.GetOutput() {
 		if msg := output.GetOutputMessage(); msg != nil {
 			if content := msg.GetContent(); len(content) > 0 {
@@ -174,29 +214,38 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	return "", errors.New("text is nil")
 }
 
+type responseInputMessage struct {
+	role responses.MessageRole_Enum
+	text string
+}
+
 func singleTextInput(role responses.MessageRole_Enum, text string) *responses.ResponsesInput {
+	return textInput(responseInputMessage{role: role, text: text})
+}
+
+func textInput(messages ...responseInputMessage) *responses.ResponsesInput {
+	items := make([]*responses.InputItem, 0, len(messages))
+	for _, message := range messages {
+		items = append(items, &responses.InputItem{
+			Union: &responses.InputItem_InputMessage{
+				InputMessage: &responses.ItemInputMessage{
+					Role: message.role,
+					Content: []*responses.ContentItem{{
+						Union: &responses.ContentItem_Text{
+							Text: &responses.ContentItemText{
+								Type: responses.ContentItemType_input_text,
+								Text: message.text,
+							},
+						},
+					}},
+				},
+			},
+		})
+	}
 	return &responses.ResponsesInput{
 		Union: &responses.ResponsesInput_ListValue{
 			ListValue: &responses.InputItemList{
-				ListValue: []*responses.InputItem{
-					{
-						Union: &responses.InputItem_InputMessage{
-							InputMessage: &responses.ItemInputMessage{
-								Role: role,
-								Content: []*responses.ContentItem{
-									{
-										Union: &responses.ContentItem_Text{
-											Text: &responses.ContentItemText{
-												Type: responses.ContentItemType_input_text,
-												Text: text,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
+				ListValue: items,
 			},
 		},
 	}
@@ -213,6 +262,15 @@ func cacheScene(scene string) string {
 func hashResponseCacheInput(sysPrompt string) string {
 	sum := sha256.Sum256([]byte(sysPrompt))
 	return hex.EncodeToString(sum[:])
+}
+
+func isPrefixCacheInputTooShort(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "input tokens must be greater than") &&
+		strings.Contains(message, "when using prefix cache")
 }
 
 func responseRequestLogFields(

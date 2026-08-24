@@ -106,11 +106,20 @@ func completeCandidateJSONWithArk(
 	ctx context.Context,
 	request CandidateCompletionRequest,
 ) (json.RawMessage, error) {
-	text, err := ark_dal.ResponseTextWithCache(ctx, ark_dal.CachedResponseRequest{
-		CacheScene:   request.CacheScene,
-		SystemPrompt: request.SystemPrompt,
-		UserPrompt:   request.UserPrompt,
-		ModelID:      request.ModelID,
+	text, err := ark_dal.ResponseTextWithCache(ctx, candidateCachedResponseRequest(request), request.Scope)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(text), nil
+}
+
+func candidateCachedResponseRequest(request CandidateCompletionRequest) ark_dal.CachedResponseRequest {
+	return ark_dal.CachedResponseRequest{
+		CacheScene:         request.CacheScene,
+		SystemPrompt:       request.SystemPrompt,
+		UserPrompt:         request.UserPrompt,
+		ModelID:            request.ModelID,
+		DisablePrefixCache: true,
 		Text: &responses.ResponsesText{
 			Format: &responses.TextFormat{Type: responses.TextType_json_object},
 		},
@@ -120,11 +129,7 @@ func completeCandidateJSONWithArk(
 		Thinking: &responses.ResponsesThinking{
 			Type: responses.ThinkingType_disabled.Enum(),
 		},
-	}, request.Scope)
-	if err != nil {
-		return nil, err
 	}
-	return json.RawMessage(text), nil
 }
 
 func (e *arkCandidateStageEngine) EvaluateActivation(

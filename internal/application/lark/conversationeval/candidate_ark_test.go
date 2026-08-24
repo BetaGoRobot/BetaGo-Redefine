@@ -37,6 +37,16 @@ func TestArkCandidateProductionConstructorUsesArkCompletionAndRequiresModel(t *t
 	}
 }
 
+func TestCandidateCachedResponseRequestDisablesPrefixCache(t *testing.T) {
+	req := candidateCachedResponseRequest(CandidateCompletionRequest{
+		CacheScene: "conversation_candidate_activation",
+		ModelID:    "candidate-model", SystemPrompt: "system", UserPrompt: "user",
+	})
+	if !req.DisablePrefixCache {
+		t.Fatal("candidate Ark request should disable prefix cache")
+	}
+}
+
 func TestArkCandidateContextPreservesOriginalBucketsAndBudget(t *testing.T) {
 	input := candidateContextTestInput()
 	var contextPrompt string

@@ -197,6 +197,10 @@ func setNoop(reason string) {
 }
 
 func newTracerProvider(config *config.OtelConfig) (*tracesdk.TracerProvider, error) {
+	res, err := newResource(config)
+	if err != nil {
+		return nil, err
+	}
 	// Create the Jaeger exporter
 	ctx := context.Background()
 	exp, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(config.CollectorEndpoint), otlptracegrpc.WithInsecure())
@@ -206,29 +210,28 @@ func newTracerProvider(config *config.OtelConfig) (*tracesdk.TracerProvider, err
 
 	tp := tracesdk.NewTracerProvider(
 		tracesdk.WithBatcher(exp),
-		tracesdk.WithResource(newResource(config)),
+		tracesdk.WithResource(res),
 		tracesdk.WithSpanProcessor(&spanMetricsProcessor{}),
 	)
 	return tp, nil
 }
 
-func newResource(config *config.OtelConfig) *resource.Resource {
-	res, err := resource.Merge(
+func newResource(config *config.OtelConfig) (*resource.Resource, error) {
+	return resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
+		resource.NewSchemaless(
 			semconv.ServiceName(config.ServiceName),
 			attribute.String("environment", environment),
 			attribute.Int64("ID", id),
 		),
 	)
-	if err != nil {
-		panic(err)
-	}
-	return res
 }
 
 func newLoggerProvider(config *config.OtelConfig) (*log2.LoggerProvider, error) {
+	res, err := newResource(config)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	exporter, err := otlploggrpc.New(
 		ctx, otlploggrpc.WithEndpoint(config.CollectorEndpoint), otlploggrpc.WithInsecure(),
@@ -238,12 +241,16 @@ func newLoggerProvider(config *config.OtelConfig) (*log2.LoggerProvider, error) 
 	}
 	processor := log2.NewBatchProcessor(exporter)
 	return log2.NewLoggerProvider(
-		log2.WithResource(newResource(config)),
+		log2.WithResource(res),
 		log2.WithProcessor(processor),
 	), nil
 }
 
 func newMeterProvider(config *config.OtelConfig) (*metricsdk.MeterProvider, error) {
+	res, err := newResource(config)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	exporter, err := otlpmetricgrpc.New(
 		ctx, otlpmetricgrpc.WithEndpoint(config.CollectorEndpoint), otlpmetricgrpc.WithInsecure(),
@@ -252,7 +259,7 @@ func newMeterProvider(config *config.OtelConfig) (*metricsdk.MeterProvider, erro
 		return nil, err
 	}
 	return metricsdk.NewMeterProvider(
-		metricsdk.WithResource(newResource(config)),
+		metricsdk.WithResource(res),
 		metricsdk.WithReader(metricsdk.NewPeriodicReader(exporter)),
 	), nil
 }

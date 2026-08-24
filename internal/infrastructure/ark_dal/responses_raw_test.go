@@ -57,6 +57,139 @@ func TestResponseRequestLogFieldsIncludeModelAndCallContext(t *testing.T) {
 	}
 }
 
+func TestResponseTextWithCacheDisabledPrefixUsesDirectRequest(t *testing.T) {
+	loadResponseCacheTestConfig(t)
+
+	oldRuntimeClientFn := runtimeClientFn
+	runtimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		return nil, &config.ArkConfig{}, nil
+	}
+	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	var captured []*responses.ResponsesRequest
+	oldCreateResponsesFn := createResponsesFn
+	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
+		captured = append(captured, req)
+		return responseTextFixture(`{"ok":true}`), nil
+	}
+	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
+
+	got, err := ResponseTextWithCache(context.Background(), CachedResponseRequest{
+		CacheScene:         "short-system",
+		SystemPrompt:       "system prompt",
+		UserPrompt:         "user prompt",
+		ModelID:            "model",
+		DisablePrefixCache: true,
+		Text: &responses.ResponsesText{Format: &responses.TextFormat{
+			Type: responses.TextType_json_object,
+		}},
+		Thinking: &responses.ResponsesThinking{Type: responses.ThinkingType_disabled.Enum()},
+	}, llmusage.Scope{Source: "short-system"})
+	if err != nil {
+		t.Fatalf("ResponseTextWithCache() error = %v", err)
+	}
+	if got != `{"ok":true}` {
+		t.Fatalf("ResponseTextWithCache() = %q", got)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("CreateResponses call count = %d, want 1", len(captured))
+	}
+	req := captured[0]
+	if req.GetPreviousResponseId() != "" || req.GetCaching() != nil || req.GetStore() {
+		t.Fatalf("direct request unexpectedly enables cache chaining: %+v", req)
+	}
+	if req.GetText().GetFormat().GetType() != responses.TextType_json_object {
+		t.Fatalf("direct request Text = %+v", req.GetText())
+	}
+	assertInputMessages(t, req,
+		inputMessageExpectation{responses.MessageRole_system, "system prompt"},
+		inputMessageExpectation{responses.MessageRole_user, "user prompt"},
+	)
+}
+
+func TestResponseTextWithCacheFallsBackWhenPrefixInputIsTooShort(t *testing.T) {
+	loadResponseCacheTestConfig(t)
+	installResponseCacheTestRedis(t)
+
+	oldRuntimeClientFn := runtimeClientFn
+	runtimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		return nil, &config.ArkConfig{}, nil
+	}
+	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	var captured []*responses.ResponsesRequest
+	oldCreateResponsesFn := createResponsesFn
+	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
+		captured = append(captured, req)
+		if len(captured) == 1 {
+			return nil, errors.New("Error code: 400 - input tokens must be greater than 256 when using prefix cache, current: 164")
+		}
+		return responseTextFixture(`{"ok":true}`), nil
+	}
+	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
+
+	got, err := ResponseTextWithCache(context.Background(), CachedResponseRequest{
+		CacheScene:   "short-cache-head",
+		SystemPrompt: "short system prompt",
+		UserPrompt:   "user prompt",
+		ModelID:      "model",
+		Thinking:     &responses.ResponsesThinking{Type: responses.ThinkingType_disabled.Enum()},
+	}, llmusage.Scope{Source: "fallback"})
+	if err != nil {
+		t.Fatalf("ResponseTextWithCache() error = %v", err)
+	}
+	if got != `{"ok":true}` {
+		t.Fatalf("ResponseTextWithCache() = %q", got)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("CreateResponses call count = %d, want 2", len(captured))
+	}
+	if captured[0].GetCaching() == nil || !captured[0].GetCaching().GetPrefix() {
+		t.Fatalf("first request should use prefix cache: %+v", captured[0])
+	}
+	if captured[1].GetCaching() != nil || captured[1].GetStore() || captured[1].GetPreviousResponseId() != "" {
+		t.Fatalf("fallback request unexpectedly uses cache: %+v", captured[1])
+	}
+	assertInputMessages(t, captured[1],
+		inputMessageExpectation{responses.MessageRole_system, "short system prompt"},
+		inputMessageExpectation{responses.MessageRole_user, "user prompt"},
+	)
+}
+
+func TestResponseTextWithCacheDoesNotFallbackForUnrelatedError(t *testing.T) {
+	loadResponseCacheTestConfig(t)
+	installResponseCacheTestRedis(t)
+
+	oldRuntimeClientFn := runtimeClientFn
+	runtimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		return nil, &config.ArkConfig{}, nil
+	}
+	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	calls := 0
+	wantErr := errors.New("endpoint unavailable")
+	oldCreateResponsesFn := createResponsesFn
+	createResponsesFn = func(_ context.Context, _ *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
+		calls++
+		return nil, wantErr
+	}
+	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
+
+	_, err := ResponseTextWithCache(context.Background(), CachedResponseRequest{
+		CacheScene:   "ordinary-error",
+		SystemPrompt: "system prompt",
+		UserPrompt:   "user prompt",
+		ModelID:      "model",
+		Thinking:     &responses.ResponsesThinking{Type: responses.ThinkingType_disabled.Enum()},
+	}, llmusage.Scope{Source: "no-fallback"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ResponseTextWithCache() error = %v, want %v", err, wantErr)
+	}
+	if calls != 1 {
+		t.Fatalf("CreateResponses call count = %d, want 1", calls)
+	}
+}
+
 func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	loadResponseCacheTestConfig(t)
 
@@ -220,23 +353,35 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 
 func assertSingleInputMessage(t *testing.T, req *responses.ResponsesRequest, role responses.MessageRole_Enum, text string) {
 	t.Helper()
+	assertInputMessages(t, req, inputMessageExpectation{role: role, text: text})
+}
+
+type inputMessageExpectation struct {
+	role responses.MessageRole_Enum
+	text string
+}
+
+func assertInputMessages(t *testing.T, req *responses.ResponsesRequest, want ...inputMessageExpectation) {
+	t.Helper()
 
 	items := req.GetInput().GetListValue().GetListValue()
-	if len(items) != 1 {
-		t.Fatalf("input item count = %d, want 1", len(items))
+	if len(items) != len(want) {
+		t.Fatalf("input item count = %d, want %d", len(items), len(want))
 	}
-	msg := items[0].GetInputMessage()
-	if msg == nil {
-		t.Fatal("input message is nil")
-	}
-	if msg.GetRole() != role {
-		t.Fatalf("input message role = %v, want %v", msg.GetRole(), role)
-	}
-	if len(msg.GetContent()) != 1 {
-		t.Fatalf("content item count = %d, want 1", len(msg.GetContent()))
-	}
-	if got := msg.GetContent()[0].GetText().GetText(); got != text {
-		t.Fatalf("input text = %q, want %q", got, text)
+	for index, expectation := range want {
+		msg := items[index].GetInputMessage()
+		if msg == nil {
+			t.Fatalf("input message %d is nil", index)
+		}
+		if msg.GetRole() != expectation.role {
+			t.Fatalf("input message %d role = %v, want %v", index, msg.GetRole(), expectation.role)
+		}
+		if len(msg.GetContent()) != 1 {
+			t.Fatalf("input message %d content count = %d, want 1", index, len(msg.GetContent()))
+		}
+		if got := msg.GetContent()[0].GetText().GetText(); got != expectation.text {
+			t.Fatalf("input message %d text = %q, want %q", index, got, expectation.text)
+		}
 	}
 }
 
@@ -306,4 +451,21 @@ bot_open_id = "ou_test"
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 	config.LoadFile(path)
+}
+
+func installResponseCacheTestRedis(t *testing.T) {
+	t.Helper()
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run() error = %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	oldRedisClient := redis_dal.RedisClient
+	redis_dal.RedisClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		_ = redis_dal.RedisClient.Close()
+		redis_dal.RedisClient = oldRedisClient
+	})
 }

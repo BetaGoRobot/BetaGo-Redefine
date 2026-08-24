@@ -189,6 +189,15 @@ func TestJudgeProductionConstructorUsesStrictArkJSONSchema(t *testing.T) {
 	}
 }
 
+func TestJudgeCachedResponseRequestDisablesPrefixCache(t *testing.T) {
+	req := judgeCachedResponseRequest(JudgeCompletionRequest{
+		ModelID: "judge-model", SystemPrompt: "system", UserPrompt: "user",
+	})
+	if !req.DisablePrefixCache {
+		t.Fatal("judge Ark request should disable prefix cache")
+	}
+}
+
 type judgeStoreFake struct {
 	judgments []Judgment
 }

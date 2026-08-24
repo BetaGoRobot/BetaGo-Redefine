@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -11,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var optionalModuleErrorLogf = log.Printf
 
 // App 是进程内的运行时容器，负责统一管理模块顺序、启动/回滚策略、
 // 逆序关闭流程以及共享健康注册表。
@@ -225,6 +228,10 @@ func (a *App) handleStartError(ctx context.Context, module Module, failureState 
 		return a.stopStarted(ctx, started)
 	}
 	a.registry.Update(module.Name(), StateDegraded, message, moduleStats(module))
+	optionalModuleErrorLogf(
+		"[ERROR] optional module degraded: module=%s stage=%s error=%v",
+		module.Name(), stage, err,
+	)
 	return nil
 }
 
