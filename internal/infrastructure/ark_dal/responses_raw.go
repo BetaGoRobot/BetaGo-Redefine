@@ -110,7 +110,10 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		}
 		resp, err := createResponsesFn(ctx, cacheReq, scope)
 		if err != nil {
-			logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_head", cacheReq, err)...)
+			logs.L().Ctx(ctx).Error(
+				"responses error",
+				responseRequestLogFields("cache_head", req.CacheScene, cacheReq, scope, err)...,
+			)
 			return "", err
 		}
 		redisSetCtx, redisSetSpan := otel.StartNamed(ctx, "ark.responses.cache_set")
@@ -154,7 +157,10 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 
 	resp, err := createResponsesFn(ctx, secondReq, scope)
 	if err != nil {
-		logs.L().Ctx(ctx).Error("responses error", responseRequestLogFields("cache_continuation", secondReq, err)...)
+		logs.L().Ctx(ctx).Error(
+			"responses error",
+			responseRequestLogFields("cache_continuation", req.CacheScene, secondReq, scope, err)...,
+		)
 		return "", err
 	}
 
@@ -209,15 +215,30 @@ func hashResponseCacheInput(sysPrompt string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func responseRequestLogFields(stage string, req *responses.ResponsesRequest, err error) []zap.Field {
+func responseRequestLogFields(
+	stage string,
+	scene string,
+	req *responses.ResponsesRequest,
+	scope llmusage.Scope,
+	err error,
+) []zap.Field {
+	scope = llmusage.NormalizeScope(scope)
 	fields := []zap.Field{
 		zap.Error(err),
 		zap.String("ark_request_stage", stage),
+		zap.String("cache_scene", cacheScene(scene)),
+		zap.String("source_type", string(scope.SourceType)),
+		zap.String("source", scope.Source),
+		zap.String("business_scene", string(scope.BusinessScene)),
+		zap.String("business_operation", string(scope.BusinessOperation)),
+		zap.String("chat_id", scope.ChatID),
+		zap.String("open_id", scope.OpenID),
 	}
 	if req == nil {
 		return fields
 	}
 	fields = append(fields,
+		zap.String("model_id", req.Model),
 		zap.String("model", req.Model),
 		zap.Bool("previous_response_id_set", req.PreviousResponseId != nil),
 		zap.String("previous_response_id_preview", otel.PreviewString(req.GetPreviousResponseId(), 128)),

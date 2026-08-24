@@ -2,6 +2,7 @@ package ark_dal
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,46 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 )
+
+func TestResponseRequestLogFieldsIncludeModelAndCallContext(t *testing.T) {
+	req := &responses.ResponsesRequest{Model: "candidate-current"}
+	scope := llmusage.Scope{
+		ChatID:            "oc_chat",
+		OpenID:            "ou_user",
+		SourceType:        llmusage.SourceTypeBackground,
+		Source:            "conversation_candidate_activation",
+		BusinessScene:     llmusage.SceneEvaluation,
+		BusinessOperation: llmusage.OperationCandidateGeneration,
+	}
+
+	fields := responseRequestLogFields(
+		"cache_head",
+		"conversation_candidate_activation",
+		req,
+		scope,
+		errors.New("endpoint not found"),
+	)
+	got := make(map[string]string, len(fields))
+	for _, field := range fields {
+		got[field.Key] = field.String
+	}
+
+	want := map[string]string{
+		"model_id":           "candidate-current",
+		"cache_scene":        "conversation_candidate_activation",
+		"source_type":        "background",
+		"source":             "conversation_candidate_activation",
+		"business_scene":     "evaluation",
+		"business_operation": "candidate_generation",
+		"chat_id":            "oc_chat",
+		"open_id":            "ou_user",
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("field %q = %q, want %q", key, got[key], value)
+		}
+	}
+}
 
 func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	loadResponseCacheTestConfig(t)

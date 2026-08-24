@@ -92,6 +92,7 @@ type RuntimeConfig struct {
 	EvaluationCandidateLeaseSeconds      int      `json:"evaluation_candidate_lease_seconds" yaml:"evaluation_candidate_lease_seconds" toml:"evaluation_candidate_lease_seconds"`
 	EvaluationCandidateRetrySeconds      int      `json:"evaluation_candidate_retry_seconds" yaml:"evaluation_candidate_retry_seconds" toml:"evaluation_candidate_retry_seconds"`
 	EvaluationCandidatePollMillis        int      `json:"evaluation_candidate_poll_millis" yaml:"evaluation_candidate_poll_millis" toml:"evaluation_candidate_poll_millis"`
+	EvaluationCandidateModel             string   `json:"evaluation_candidate_model" yaml:"evaluation_candidate_model" toml:"evaluation_candidate_model"`
 	EvaluationWindowSweepSeconds         int      `json:"evaluation_window_sweep_seconds" yaml:"evaluation_window_sweep_seconds" toml:"evaluation_window_sweep_seconds"`
 	EvaluationJudgeWorkers               int      `json:"evaluation_judge_workers" yaml:"evaluation_judge_workers" toml:"evaluation_judge_workers"`
 	EvaluationJudgePollMillis            int      `json:"evaluation_judge_poll_millis" yaml:"evaluation_judge_poll_millis" toml:"evaluation_judge_poll_millis"`

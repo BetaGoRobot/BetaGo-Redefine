@@ -333,6 +333,26 @@ func TestEvaluationJudgeModelPrefersExplicitThenReasoningFallback(t *testing.T) 
 	}
 }
 
+func TestEvaluationCandidateModelPrefersExplicitThenReasoningFallback(t *testing.T) {
+	cfg := testConversationRuntimeConfig()
+	runtimeConfig := cfg.RuntimeConfig
+	runtimeConfig.EvaluationCandidateModel = " explicit-candidate "
+	if got := evaluationCandidateModelID(cfg, runtimeConfig); got != "explicit-candidate" {
+		t.Fatalf("explicit candidate model = %q", got)
+	}
+	runtimeConfig.EvaluationCandidateModel = ""
+	if got := evaluationCandidateModelID(cfg, runtimeConfig); got != "reasoning-test" {
+		t.Fatalf("reasoning candidate model = %q", got)
+	}
+	cfg.ArkConfig.ReasoningModel = ""
+	if got := evaluationCandidateModelID(cfg, runtimeConfig); got != "normal-test" {
+		t.Fatalf("normal candidate model = %q", got)
+	}
+	if got := evaluationCandidateModelID(&infraConfig.BaseConfig{}, nil); got != "" {
+		t.Fatalf("missing Ark config candidate model = %q", got)
+	}
+}
+
 func TestConversationModulesAreRegisteredAfterExecutors(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	app, err := buildApp(cfg)

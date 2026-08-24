@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/agentcardtool"
@@ -17,39 +18,47 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-func BuildCandidateRunnerForTask(
-	_ context.Context,
-	task conversationeval.CandidateTask,
-) (conversationeval.CandidateRunner, error) {
-	if err := task.Validate(); err != nil {
-		return nil, err
+func NewCandidateRunnerFactory(
+	modelID string,
+) (conversationeval.CandidateRunnerFactory, error) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil, fmt.Errorf("candidate Ark model id is required")
 	}
-	engine, err := conversationeval.NewArkCandidateStageEngine(
-		conversationeval.ArkCandidateEngineConfig{
-			ModelID: task.Cohort.CandidateVersion,
-			Scope: llmusage.Scope{
-				ChatID: task.Message.ChatID, OpenID: task.Message.SenderOpenID,
-				SourceType:        llmusage.SourceTypeBackground,
-				Source:            "conversation_evaluation_candidate",
-				BusinessScene:     llmusage.SceneEvaluation,
-				BusinessOperation: llmusage.OperationCandidateGeneration,
+	return func(
+		_ context.Context,
+		task conversationeval.CandidateTask,
+	) (conversationeval.CandidateRunner, error) {
+		if err := task.Validate(); err != nil {
+			return nil, err
+		}
+		engine, err := conversationeval.NewArkCandidateStageEngine(
+			conversationeval.ArkCandidateEngineConfig{
+				ModelID: modelID,
+				Scope: llmusage.Scope{
+					ChatID: task.Message.ChatID, OpenID: task.Message.SenderOpenID,
+					SourceType:        llmusage.SourceTypeBackground,
+					Source:            "conversation_evaluation_candidate",
+					BusinessScene:     llmusage.SceneEvaluation,
+					BusinessOperation: llmusage.OperationCandidateGeneration,
+				},
 			},
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	registry, err := BuildCandidateShadowRegistry(
-		conversationeval.NewObservationCache(),
-		nil,
-		task.Message.ChatID,
-		task.Message.SenderOpenID,
-		task.Episode.AnchorAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return conversationeval.NewCandidateRunner(engine, registry), nil
+		)
+		if err != nil {
+			return nil, err
+		}
+		registry, err := BuildCandidateShadowRegistry(
+			conversationeval.NewObservationCache(),
+			nil,
+			task.Message.ChatID,
+			task.Message.SenderOpenID,
+			task.Episode.AnchorAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return conversationeval.NewCandidateRunner(engine, registry), nil
+	}, nil
 }
 
 func BuildLarkTools() *tools.Impl[larkim.P2MessageReceiveV1] {

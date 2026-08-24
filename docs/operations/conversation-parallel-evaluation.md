@@ -28,6 +28,7 @@ evaluation_candidate_lease_seconds = 600
 evaluation_candidate_retry_seconds = 15
 evaluation_candidate_poll_millis = 1000
 evaluation_window_sweep_seconds = 5
+evaluation_candidate_model = ""
 
 evaluation_judge_workers = 1
 evaluation_judge_poll_millis = 1000
@@ -38,6 +39,11 @@ evaluation_projection_interval_seconds = 30
 evaluation_projection_batch_size = 100
 evaluation_index = "agent_conversation_evaluations"
 ```
+
+`evaluation_candidate_model` 为空时优先使用
+`ark_config.reasoning_model`，其次使用 `normal_model`。该字段必须是 Ark
+可调用的 endpoint/model ID；cohort 中的 `candidate_version` 只是评测版本标签，
+不会作为 Ark 请求模型发送。
 
 `evaluation_judge_model` 为空时优先使用
 `ark_config.reasoning_model`，其次使用 `normal_model`。没有可用 Judge

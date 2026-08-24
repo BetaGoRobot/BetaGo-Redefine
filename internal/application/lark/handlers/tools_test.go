@@ -47,6 +47,19 @@ func useWorkspaceConfigPath(t *testing.T) {
 	t.Setenv("BETAGO_CONFIG_PATH", configPath)
 }
 
+func TestNewCandidateRunnerFactoryRequiresArkModelID(t *testing.T) {
+	if _, err := NewCandidateRunnerFactory("  "); err == nil {
+		t.Fatal("NewCandidateRunnerFactory() accepted an empty Ark model ID")
+	}
+	factory, err := NewCandidateRunnerFactory(" endpoint-candidate ")
+	if err != nil {
+		t.Fatalf("NewCandidateRunnerFactory() error = %v", err)
+	}
+	if factory == nil {
+		t.Fatal("NewCandidateRunnerFactory() returned a nil factory")
+	}
+}
+
 func TestBuildSchedulableToolsContainsStandardToolset(t *testing.T) {
 	useWorkspaceConfigPath(t)
 	schedulable := BuildSchedulableTools()

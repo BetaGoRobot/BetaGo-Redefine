@@ -1056,10 +1056,16 @@ func addConversationEvaluationModule(
 			if runtimeConfig == nil {
 				runtimeConfig = &infraConfig.RuntimeConfig{}
 			}
+			candidateRunnerFactory, err := handlers.NewCandidateRunnerFactory(
+				evaluationCandidateModelID(cfg, runtimeConfig),
+			)
+			if err != nil {
+				return fmt.Errorf("create evaluation candidate runner factory: %w", err)
+			}
 			processor, err := conversationeval.NewCandidateProcessor(
 				repository,
 				service,
-				handlers.BuildCandidateRunnerForTask,
+				candidateRunnerFactory,
 				conversationeval.CandidateProcessorConfig{
 					WorkerID: "evaluation-candidate-" + uuid.NewV4().String(),
 					LeaseTTL: durationSeconds(
@@ -1296,6 +1302,24 @@ func evaluationJudgeModelID(
 ) string {
 	if runtimeConfig != nil {
 		if modelID := strings.TrimSpace(runtimeConfig.EvaluationJudgeModel); modelID != "" {
+			return modelID
+		}
+	}
+	if cfg == nil || cfg.ArkConfig == nil {
+		return ""
+	}
+	if modelID := strings.TrimSpace(cfg.ArkConfig.ReasoningModel); modelID != "" {
+		return modelID
+	}
+	return strings.TrimSpace(cfg.ArkConfig.NormalModel)
+}
+
+func evaluationCandidateModelID(
+	cfg *infraConfig.BaseConfig,
+	runtimeConfig *infraConfig.RuntimeConfig,
+) string {
+	if runtimeConfig != nil {
+		if modelID := strings.TrimSpace(runtimeConfig.EvaluationCandidateModel); modelID != "" {
 			return modelID
 		}
 	}
