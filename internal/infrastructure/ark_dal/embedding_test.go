@@ -5,9 +5,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
+
+func TestEmbeddingTextSkipsBlankInputBeforeCreatingArkClient(t *testing.T) {
+	calls := 0
+	oldRuntimeClientFn := embeddingRuntimeClientFn
+	embeddingRuntimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		calls++
+		return nil, nil, nil
+	}
+	t.Cleanup(func() { embeddingRuntimeClientFn = oldRuntimeClientFn })
+
+	embedded, usage, err := EmbeddingText(context.Background(), " \n\t", llmusage.Scope{})
+	if err != nil {
+		t.Fatalf("EmbeddingText() error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("runtimeClient call count = %d, want 0", calls)
+	}
+	if embedded != nil || usage.TotalTokens != 0 {
+		t.Fatalf("EmbeddingText() = (%v, %+v), want empty result", embedded, usage)
+	}
+}
 
 func TestRecordEmbeddingUsageWritesTokenUsage(t *testing.T) {
 	store := &arkUsageStore{}

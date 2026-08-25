@@ -189,12 +189,12 @@ func TestJudgeProductionConstructorUsesStrictArkJSONSchema(t *testing.T) {
 	}
 }
 
-func TestJudgeCachedResponseRequestDisablesPrefixCache(t *testing.T) {
+func TestJudgeCachedResponseRequestUsesCentralizedPrefixCacheEligibility(t *testing.T) {
 	req := judgeCachedResponseRequest(JudgeCompletionRequest{
 		ModelID: "judge-model", SystemPrompt: "system", UserPrompt: "user",
 	})
-	if !req.DisablePrefixCache {
-		t.Fatal("judge Ark request should disable prefix cache")
+	if req.DisablePrefixCache {
+		t.Fatal("judge Ark request should let ResponseTextWithCache check token length")
 	}
 }
 

@@ -304,8 +304,7 @@ func judgeCachedResponseRequest(request JudgeCompletionRequest) ark_dal.CachedRe
 	return ark_dal.CachedResponseRequest{
 		CacheScene: judgeSource, SystemPrompt: request.SystemPrompt,
 		UserPrompt: request.UserPrompt, ModelID: request.ModelID,
-		DisablePrefixCache: true,
-		Text:               &responses.ResponsesText{Format: judgeResponseFormat()},
+		Text: &responses.ResponsesText{Format: judgeResponseFormat()},
 		Reasoning: &responses.ResponsesReasoning{
 			Effort: responses.ReasoningEffort_medium,
 		},

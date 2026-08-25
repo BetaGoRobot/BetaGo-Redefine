@@ -115,11 +115,10 @@ func completeCandidateJSONWithArk(
 
 func candidateCachedResponseRequest(request CandidateCompletionRequest) ark_dal.CachedResponseRequest {
 	return ark_dal.CachedResponseRequest{
-		CacheScene:         request.CacheScene,
-		SystemPrompt:       request.SystemPrompt,
-		UserPrompt:         request.UserPrompt,
-		ModelID:            request.ModelID,
-		DisablePrefixCache: true,
+		CacheScene:   request.CacheScene,
+		SystemPrompt: request.SystemPrompt,
+		UserPrompt:   request.UserPrompt,
+		ModelID:      request.ModelID,
 		Text: &responses.ResponsesText{
 			Format: &responses.TextFormat{Type: responses.TextType_json_object},
 		},

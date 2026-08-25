@@ -1,12 +1,47 @@
 package larkmsg
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
+	"go.opentelemetry.io/otel/trace"
 )
+
+func TestStartRecordingSpanDetachesCallerCancellation(t *testing.T) {
+	type contextKey string
+	const key contextKey = "recording-value"
+
+	traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	spanID := trace.SpanID{17, 18, 19, 20, 21, 22, 23, 24}
+	parentSpanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID,
+		SpanID:  spanID,
+	})
+	parent := trace.ContextWithSpanContext(
+		context.WithValue(context.Background(), key, "preserved"),
+		parentSpanContext,
+	)
+	parent, cancel := context.WithCancel(parent)
+	cancel()
+
+	ctx, span := startRecordingSpan(parent)
+	defer span.End()
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("recording context inherited caller cancellation: %v", err)
+	}
+	if got := ctx.Value(key); got != "preserved" {
+		t.Fatalf("recording context value = %v, want preserved", got)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("recording context inherited caller deadline")
+	}
+	if got := trace.SpanContextFromContext(ctx).TraceID(); got != traceID {
+		t.Fatalf("recording trace ID = %s, want %s", got, traceID)
+	}
+}
 
 func useLarkMsgConfigPath(t *testing.T) {
 	t.Helper()

@@ -29,6 +29,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/yanyiwu/gojieba"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -40,8 +41,12 @@ func resolveRecordedBotIdentity(senderID string) (openID, userName string) {
 	return openID, "你"
 }
 
+func startRecordingSpan(ctx context.Context) (context.Context, trace.Span) {
+	return otel.Start(utils.DurableContext(ctx))
+}
+
 func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessageResp, contents ...string) {
-	ctx, span := otel.Start(ctx)
+	ctx, span := startRecordingSpan(ctx)
 	defer span.End()
 	if resp == nil || resp.Data == nil {
 		return
@@ -141,7 +146,7 @@ func RecordReplyMessage2Opensearch(ctx context.Context, resp *larkim.ReplyMessag
 }
 
 func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageResp, contents ...string) {
-	ctx, span := otel.Start(ctx)
+	ctx, span := startRecordingSpan(ctx)
 	defer span.End()
 	if resp == nil || resp.Data == nil {
 		return
@@ -244,7 +249,7 @@ func RecordMessage2Opensearch(ctx context.Context, resp *larkim.CreateMessageRes
 }
 
 func RecordCardAction2Opensearch(ctx context.Context, cardAction *callback.CardActionTriggerEvent) {
-	ctx, span := otel.Start(ctx)
+	ctx, span := startRecordingSpan(ctx)
 	defer span.End()
 	if cardAction == nil || cardAction.Event == nil || cardAction.Event.Context == nil || cardAction.Event.Operator == nil {
 		return

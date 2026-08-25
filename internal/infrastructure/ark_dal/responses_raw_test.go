@@ -2,7 +2,10 @@ package ark_dal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +69,14 @@ func TestResponseTextWithCacheDisabledPrefixUsesDirectRequest(t *testing.T) {
 	}
 	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
 
+	tokenizationCalls := 0
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, _, _ string) (int, error) {
+		tokenizationCalls++
+		return 257, nil
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
+
 	var captured []*responses.ResponsesRequest
 	oldCreateResponsesFn := createResponsesFn
 	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
@@ -94,6 +105,9 @@ func TestResponseTextWithCacheDisabledPrefixUsesDirectRequest(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("CreateResponses call count = %d, want 1", len(captured))
 	}
+	if tokenizationCalls != 0 {
+		t.Fatalf("CreateTokenization call count = %d, want 0", tokenizationCalls)
+	}
 	req := captured[0]
 	if req.GetPreviousResponseId() != "" || req.GetCaching() != nil || req.GetStore() {
 		t.Fatalf("direct request unexpectedly enables cache chaining: %+v", req)
@@ -107,7 +121,7 @@ func TestResponseTextWithCacheDisabledPrefixUsesDirectRequest(t *testing.T) {
 	)
 }
 
-func TestResponseTextWithCacheFallsBackWhenPrefixInputIsTooShort(t *testing.T) {
+func TestResponseTextWithCacheUsesDirectRequestWhenPrefixInputIsNotLongEnough(t *testing.T) {
 	loadResponseCacheTestConfig(t)
 	installResponseCacheTestRedis(t)
 
@@ -117,13 +131,21 @@ func TestResponseTextWithCacheFallsBackWhenPrefixInputIsTooShort(t *testing.T) {
 	}
 	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
 
+	tokenizationCalls := 0
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, modelID, input string) (int, error) {
+		tokenizationCalls++
+		if modelID != "model" || input != "short system prompt" {
+			t.Fatalf("tokenization input = (%q, %q), want (%q, %q)", modelID, input, "model", "short system prompt")
+		}
+		return 256, nil
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
+
 	var captured []*responses.ResponsesRequest
 	oldCreateResponsesFn := createResponsesFn
 	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
 		captured = append(captured, req)
-		if len(captured) == 1 {
-			return nil, errors.New("Error code: 400 - input tokens must be greater than 256 when using prefix cache, current: 164")
-		}
 		return responseTextFixture(`{"ok":true}`), nil
 	}
 	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
@@ -141,19 +163,107 @@ func TestResponseTextWithCacheFallsBackWhenPrefixInputIsTooShort(t *testing.T) {
 	if got != `{"ok":true}` {
 		t.Fatalf("ResponseTextWithCache() = %q", got)
 	}
+	if tokenizationCalls != 1 {
+		t.Fatalf("CreateTokenization call count = %d, want 1", tokenizationCalls)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("CreateResponses call count = %d, want 1", len(captured))
+	}
+	if captured[0].GetCaching() != nil || captured[0].GetStore() || captured[0].GetPreviousResponseId() != "" {
+		t.Fatalf("direct request unexpectedly uses cache: %+v", captured[0])
+	}
+	assertInputMessages(t, captured[0],
+		inputMessageExpectation{responses.MessageRole_system, "short system prompt"},
+		inputMessageExpectation{responses.MessageRole_user, "user prompt"},
+	)
+}
+
+func TestResponseTextWithCacheUsesPrefixCacheWhenInputIsLongEnough(t *testing.T) {
+	loadResponseCacheTestConfig(t)
+	installResponseCacheTestRedis(t)
+
+	oldRuntimeClientFn := runtimeClientFn
+	runtimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		return nil, &config.ArkConfig{}, nil
+	}
+	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, _, _ string) (int, error) {
+		return 257, nil
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
+
+	var captured []*responses.ResponsesRequest
+	oldCreateResponsesFn := createResponsesFn
+	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
+		captured = append(captured, req)
+		if len(captured) == 1 {
+			return &responses.ResponseObject{Id: "resp_seed"}, nil
+		}
+		return responseTextFixture(`{"ok":true}`), nil
+	}
+	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
+
+	_, err := ResponseTextWithCache(context.Background(), CachedResponseRequest{
+		CacheScene:   "long-cache-head",
+		SystemPrompt: "long system prompt",
+		UserPrompt:   "user prompt",
+		ModelID:      "model",
+		Thinking:     &responses.ResponsesThinking{Type: responses.ThinkingType_disabled.Enum()},
+	}, llmusage.Scope{Source: "prefix-cache"})
+	if err != nil {
+		t.Fatalf("ResponseTextWithCache() error = %v", err)
+	}
 	if len(captured) != 2 {
 		t.Fatalf("CreateResponses call count = %d, want 2", len(captured))
 	}
 	if captured[0].GetCaching() == nil || !captured[0].GetCaching().GetPrefix() {
 		t.Fatalf("first request should use prefix cache: %+v", captured[0])
 	}
-	if captured[1].GetCaching() != nil || captured[1].GetStore() || captured[1].GetPreviousResponseId() != "" {
-		t.Fatalf("fallback request unexpectedly uses cache: %+v", captured[1])
+	if captured[1].GetPreviousResponseId() != "resp_seed" {
+		t.Fatalf("continuation PreviousResponseId = %q, want resp_seed", captured[1].GetPreviousResponseId())
 	}
-	assertInputMessages(t, captured[1],
-		inputMessageExpectation{responses.MessageRole_system, "short system prompt"},
-		inputMessageExpectation{responses.MessageRole_user, "user prompt"},
-	)
+}
+
+func TestResponseTextWithCacheUsesDirectRequestWhenTokenizationFails(t *testing.T) {
+	loadResponseCacheTestConfig(t)
+	installResponseCacheTestRedis(t)
+
+	oldRuntimeClientFn := runtimeClientFn
+	runtimeClientFn = func() (*arkruntime.Client, *config.ArkConfig, error) {
+		return nil, &config.ArkConfig{}, nil
+	}
+	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	wantErr := errors.New("tokenization unavailable")
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, _, _ string) (int, error) {
+		return 0, wantErr
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
+
+	var captured []*responses.ResponsesRequest
+	oldCreateResponsesFn := createResponsesFn
+	createResponsesFn = func(_ context.Context, req *responses.ResponsesRequest, _ llmusage.Scope) (*responses.ResponseObject, error) {
+		captured = append(captured, req)
+		return responseTextFixture(`{"ok":true}`), nil
+	}
+	t.Cleanup(func() { createResponsesFn = oldCreateResponsesFn })
+
+	_, err := ResponseTextWithCache(context.Background(), CachedResponseRequest{
+		CacheScene:   "tokenization-error",
+		SystemPrompt: "system prompt",
+		UserPrompt:   "user prompt",
+		ModelID:      "model",
+		Thinking:     &responses.ResponsesThinking{Type: responses.ThinkingType_disabled.Enum()},
+	}, llmusage.Scope{Source: "tokenization-error"})
+	if err != nil {
+		t.Fatalf("ResponseTextWithCache() error = %v", err)
+	}
+	if len(captured) != 1 || captured[0].GetCaching() != nil {
+		t.Fatalf("CreateResponses requests = %+v, want one direct request", captured)
+	}
 }
 
 func TestResponseTextWithCacheDoesNotFallbackForUnrelatedError(t *testing.T) {
@@ -165,6 +275,12 @@ func TestResponseTextWithCacheDoesNotFallbackForUnrelatedError(t *testing.T) {
 		return nil, &config.ArkConfig{}, nil
 	}
 	t.Cleanup(func() { runtimeClientFn = oldRuntimeClientFn })
+
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, _, _ string) (int, error) {
+		return 257, nil
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
 
 	calls := 0
 	wantErr := errors.New("endpoint unavailable")
@@ -213,6 +329,14 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	t.Cleanup(func() {
 		runtimeClientFn = oldRuntimeClientFn
 	})
+
+	tokenizationCalls := 0
+	oldCountPrefixTokensFn := countPrefixTokensFn
+	countPrefixTokensFn = func(_ context.Context, _ *arkruntime.Client, _, _ string) (int, error) {
+		tokenizationCalls++
+		return 257, nil
+	}
+	t.Cleanup(func() { countPrefixTokensFn = oldCountPrefixTokensFn })
 
 	var captured []*responses.ResponsesRequest
 	var capturedScopes []llmusage.Scope
@@ -285,6 +409,9 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if len(captured) != 3 {
 		t.Fatalf("CreateResponses call count = %d, want 3", len(captured))
 	}
+	if tokenizationCalls != 1 {
+		t.Fatalf("CreateTokenization call count = %d, want 1", tokenizationCalls)
+	}
 	if len(capturedScopes) != 3 {
 		t.Fatalf("captured scope count = %d, want 3", len(capturedScopes))
 	}
@@ -349,6 +476,51 @@ func TestResponseTextWithCacheReusesSeededResponseID(t *testing.T) {
 	if !strings.Contains(keys[0], ":ark:response:cache:v2:intent:") {
 		t.Fatalf("cache key = %q, want versioned intent cache namespace", keys[0])
 	}
+}
+
+func TestCountPrefixTokensUsesArkTokenizationEndpoint(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/tokenization" {
+			t.Errorf("request path = %q, want /tokenization", req.URL.Path)
+		}
+		var body struct {
+			Model string `json:"model"`
+			Text  string `json:"text"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Errorf("decode tokenization request: %v", err)
+		}
+		if body.Model != "model-endpoint" || body.Text != "system prompt" {
+			t.Errorf("tokenization request = %+v", body)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"tok","model":"model-endpoint","data":[{"index":0,"total_tokens":257}]}`,
+			)),
+		}, nil
+	})}
+
+	client := arkruntime.NewClientWithApiKey(
+		"test-api-key",
+		arkruntime.WithBaseUrl("https://ark.test"),
+		arkruntime.WithHTTPClient(httpClient),
+		arkruntime.WithRetryTimes(0),
+	)
+	got, err := countPrefixTokens(context.Background(), client, "model-endpoint", "system prompt")
+	if err != nil {
+		t.Fatalf("countPrefixTokens() error = %v", err)
+	}
+	if got != 257 {
+		t.Fatalf("countPrefixTokens() = %d, want 257", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func assertSingleInputMessage(t *testing.T, req *responses.ResponsesRequest, role responses.MessageRole_Enum, text string) {

@@ -2,6 +2,7 @@ package ark_dal
 
 import (
 	"context"
+	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
@@ -12,6 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var embeddingRuntimeClientFn = runtimeClient
+
 // EmbeddingText returns the embedding of the input text.
 //
 //	@param ctx
@@ -19,7 +22,10 @@ import (
 //	@return embedded
 //	@return err
 func EmbeddingText(ctx context.Context, input string, scope llmusage.Scope) (embedded []float32, tokenUsage model.Usage, err error) {
-	runtime, cfg, err := runtimeClient()
+	if strings.TrimSpace(input) == "" {
+		return nil, model.Usage{}, nil
+	}
+	runtime, cfg, err := embeddingRuntimeClientFn()
 	if err != nil {
 		recordEmbeddingUsage(ctx, scope, "", model.Usage{}, err)
 		return nil, model.Usage{}, err

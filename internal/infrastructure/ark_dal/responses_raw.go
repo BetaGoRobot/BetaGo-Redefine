@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	redis_dal "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/redis"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/redis/go-redis/v9"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -21,11 +24,15 @@ import (
 )
 
 var (
-	runtimeClientFn   = runtimeClient
-	createResponsesFn = CreateResponses
+	runtimeClientFn     = runtimeClient
+	createResponsesFn   = CreateResponses
+	countPrefixTokensFn = countPrefixTokens
 )
 
-const responseCacheVersion = "v2"
+const (
+	responseCacheVersion     = "v2"
+	minimumPrefixCacheTokens = 256
+)
 
 type CachedResponseRequest struct {
 	CacheScene         string
@@ -51,7 +58,7 @@ func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID strin
 }
 
 func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope llmusage.Scope) (res string, err error) {
-	_, cfg, err := runtimeClientFn()
+	client, cfg, err := runtimeClientFn()
 	if err != nil {
 		return "", err
 	}
@@ -100,6 +107,29 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 				attribute.Int("cache.key.len", len(key)),
 			),
 		)
+		inputTokens, tokenizationErr := countPrefixTokensFn(ctx, client, req.ModelID, req.SystemPrompt)
+		if tokenizationErr != nil {
+			span.AddEvent("prefix_cache_tokenization_failed")
+			logs.L().Ctx(ctx).Warn(
+				"prefix cache tokenization failed; using direct request",
+				zap.Error(tokenizationErr),
+				zap.String("cache_scene", cacheScene(req.CacheScene)),
+				zap.String("model_id", req.ModelID),
+			)
+			return responseTextDirect(ctx, req, scope, "direct_tokenization_failed")
+		}
+		span.SetAttributes(attribute.Int("cache.prefix_input_tokens", inputTokens))
+		if inputTokens <= minimumPrefixCacheTokens {
+			span.AddEvent(
+				"prefix_cache_skipped_short_input",
+				trace.WithAttributes(
+					attribute.Int("input.tokens", inputTokens),
+					attribute.Int("minimum.exclusive", minimumPrefixCacheTokens),
+				),
+			)
+			return responseTextDirect(ctx, req, scope, "direct_short_prefix")
+		}
+
 		exp := time.Now().Add(time.Hour).Unix()
 		cacheReq := &responses.ResponsesRequest{
 			Model: req.ModelID,
@@ -115,10 +145,6 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 		}
 		resp, err := createResponsesFn(ctx, cacheReq, scope)
 		if err != nil {
-			if isPrefixCacheInputTooShort(err) {
-				span.AddEvent("prefix_cache_input_too_short_fallback")
-				return responseTextDirect(ctx, req, scope, "cache_fallback")
-			}
 			logs.L().Ctx(ctx).Error(
 				"responses error",
 				responseRequestLogFields("cache_head", req.CacheScene, cacheReq, scope, err)...,
@@ -174,6 +200,23 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	}
 
 	return responseText(resp)
+}
+
+func countPrefixTokens(ctx context.Context, client *arkruntime.Client, modelID, input string) (int, error) {
+	if client == nil {
+		return 0, errors.New("ark runtime client is nil")
+	}
+	result, err := client.CreateTokenization(ctx, model.TokenizationRequestString{
+		Model: modelID,
+		Text:  input,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create tokenization: %w", err)
+	}
+	if len(result.Data) != 1 || result.Data[0] == nil {
+		return 0, fmt.Errorf("unexpected tokenization result count: %d", len(result.Data))
+	}
+	return result.Data[0].TotalTokens, nil
 }
 
 func responseTextDirect(
@@ -262,15 +305,6 @@ func cacheScene(scene string) string {
 func hashResponseCacheInput(sysPrompt string) string {
 	sum := sha256.Sum256([]byte(sysPrompt))
 	return hex.EncodeToString(sum[:])
-}
-
-func isPrefixCacheInputTooShort(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "input tokens must be greater than") &&
-		strings.Contains(message, "when using prefix cache")
 }
 
 func responseRequestLogFields(
