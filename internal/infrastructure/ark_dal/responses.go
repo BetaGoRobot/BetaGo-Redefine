@@ -380,8 +380,8 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 		r.functionResult[callID] = res
 		r.dynamicTools = mergeResponseTools(r.dynamicTools, additionalToolsFromToolResult(handlerName, res.Value()))
 		traceOutput := strings.TrimSpace(res.Value())
-		if traceOutput == "" && res.IsErr() && res.Err() != nil {
-			traceOutput = strings.TrimSpace(res.Err().Error())
+		if res.IsErr() {
+			traceOutput = toolCallContinuationOutput(res)
 		}
 		r.pendingCapabilityCalls = append(r.pendingCapabilityCalls, CapabilityCallTrace{
 			CallID:       callID,

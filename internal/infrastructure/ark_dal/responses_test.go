@@ -77,6 +77,84 @@ func TestToolCallContinuationOutput(t *testing.T) {
 	}
 }
 
+func TestResponsesImplOnCallArgsSanitizesCapabilityTrace(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     gresult.R[string]
+		wantOutput string
+		wantError  string
+	}{
+		{
+			name:      "plain internal error",
+			result:    gresult.Err[string](errors.New("database password=secret")),
+			wantError: "工具执行失败",
+		},
+		{
+			name: "safe tool feedback",
+			result: gresult.Err[string](xerror.WithToolFeedback(
+				errors.New("database password=secret"),
+				"缺少 run_at",
+			)),
+			wantError: "缺少 run_at",
+		},
+		{
+			name:       "success preserves raw trace output",
+			result:     gresult.OK("found"),
+			wantOutput: "found",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			impl := New[string]("oc_chat", "ou_actor", nil)
+			impl.functionCallMap["call-1"] = "lookup"
+			impl.handlers["lookup"] = func(context.Context, string, tools.FCMeta[string]) gresult.R[string] {
+				return tt.result
+			}
+			arguments := `{"query":"weather"}`
+			event := &responses.Event{Event: &responses.Event_FunctionCallArgumentsDone{
+				FunctionCallArgumentsDone: &responses.FunctionCallArgumentsDoneEvent{
+					Type: responses.EventType_response_function_call_arguments_done, ItemId: "call-1", Arguments: &arguments,
+				},
+			}}
+
+			if _, err := impl.OnCallArgs(context.Background(), event, llmusage.Scope{}); err != nil {
+				t.Fatalf("OnCallArgs() error = %v", err)
+			}
+			items := impl.drainPendingStreamItems()
+			if len(items) != 1 || items[0].CapabilityCall == nil {
+				t.Fatalf("drainPendingStreamItems() = %+v, want one capability trace", items)
+			}
+			output := items[0].CapabilityCall.Output
+			if output == "" {
+				t.Fatal("capability trace output is empty")
+			}
+			if strings.Contains(output, "password") || strings.Contains(output, "secret") {
+				t.Fatalf("capability trace output leaked internal error: %q", output)
+			}
+			if tt.wantOutput != "" {
+				if output != tt.wantOutput {
+					t.Fatalf("capability trace output = %q, want %q", output, tt.wantOutput)
+				}
+				return
+			}
+
+			var envelope struct {
+				OK    bool   `json:"ok"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+				t.Fatalf("capability trace output = %q, want JSON error envelope: %v", output, err)
+			}
+			if envelope.OK {
+				t.Fatal("capability trace output ok = true, want false")
+			}
+			if envelope.Error != tt.wantError {
+				t.Fatalf("capability trace error = %q, want %q", envelope.Error, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestResponsesImplDrainPendingStreamItemsEmitsDeltaAndCapabilityTrace(t *testing.T) {
 	resp := New[string]("oc_chat", "ou_actor", nil)
 	resp.textOutput.ReasoningTextDelta = "先分析"
