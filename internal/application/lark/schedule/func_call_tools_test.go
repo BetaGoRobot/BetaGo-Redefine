@@ -406,9 +406,20 @@ func TestCreateScheduleParseToolRejectsIncompleteOnce(t *testing.T) {
 	if !ok {
 		t.Fatalf("ToolFeedback() ok = false for error %v", err)
 	}
-	for _, want := range []string{"message 或 tool_name", "run_at", "先询问用户"} {
+	for _, want := range []string{
+		"message 或 tool_name",
+		"run_at",
+		"已明确提供",
+		"补齐参数后重试",
+		"先询问用户",
+	} {
 		if !strings.Contains(feedback, want) {
 			t.Fatalf("ToolFeedback() = %q, want substring %q", feedback, want)
+		}
+	}
+	for _, unconditional := range []string{"也不要调用 create_schedule", "只能先询问"} {
+		if strings.Contains(feedback, unconditional) {
+			t.Fatalf("ToolFeedback() = %q, contains unconditional instruction %q", feedback, unconditional)
 		}
 	}
 	if strings.Contains(feedback, raw) || strings.Contains(feedback, "洛克王国货单提醒") {
@@ -493,17 +504,23 @@ func TestCreateScheduleParseToolRejectsCronWithoutExpression(t *testing.T) {
 	}
 }
 
-func TestCreateScheduleToolSpecWarnsAgainstIncompleteCalls(t *testing.T) {
+func TestCreateScheduleToolSpecGuidesInformedRetries(t *testing.T) {
 	desc := CreateSchedule.ToolSpec().Desc
 
 	for _, want := range []string{
-		"信息缺失时不要调用 create_schedule",
 		"不要猜测",
-		"询问用户",
+		"已明确提供",
+		"补齐参数后重试",
+		"先询问用户",
 		"不能只传 name/type",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("ToolSpec().Desc = %q, want substring %q", desc, want)
+		}
+	}
+	for _, unconditional := range []string{"信息缺失时不要调用 create_schedule", "只能先询问"} {
+		if strings.Contains(desc, unconditional) {
+			t.Fatalf("ToolSpec().Desc = %q, contains unconditional instruction %q", desc, unconditional)
 		}
 	}
 }
