@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	"github.com/bytedance/mockey"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -387,6 +389,122 @@ func TestFilterQueriedSchedulesByCreatorOpenID(t *testing.T) {
 	}
 	if filtered[0].ID != "task-2" {
 		t.Fatalf("unexpected filtered task: %+v", filtered[0])
+	}
+}
+
+func TestCreateScheduleParseToolRejectsIncompleteOnce(t *testing.T) {
+	raw := `{ "name": "洛克王国货单提醒", "type": "once" }`
+
+	args, err := CreateSchedule.ParseTool(raw)
+	if err == nil {
+		t.Fatal("ParseTool() error = nil, want incomplete arguments error")
+	}
+	if !reflect.DeepEqual(args, createScheduleArgs{}) {
+		t.Fatalf("ParseTool() args = %#v, want zero value", args)
+	}
+	feedback, ok := xerror.ToolFeedback(err)
+	if !ok {
+		t.Fatalf("ToolFeedback() ok = false for error %v", err)
+	}
+	for _, want := range []string{"message 或 tool_name", "run_at", "先询问用户"} {
+		if !strings.Contains(feedback, want) {
+			t.Fatalf("ToolFeedback() = %q, want substring %q", feedback, want)
+		}
+	}
+	if strings.Contains(feedback, raw) || strings.Contains(feedback, "洛克王国货单提醒") {
+		t.Fatalf("ToolFeedback() unexpectedly exposes raw tool arguments: %q", feedback)
+	}
+}
+
+func TestCreateScheduleParseToolAcceptsValidOnceMessage(t *testing.T) {
+	args, err := CreateSchedule.ParseTool(`{
+		"name": "发货提醒",
+		"type": "once",
+		"run_at": " 2026-08-27 09:00:00 ",
+		"message": "  请核对发货单  "
+	}`)
+	if err != nil {
+		t.Fatalf("ParseTool() error = %v", err)
+	}
+	if args.Type != TaskTypeOnce || args.RunAt != "2026-08-27 09:00:00" {
+		t.Fatalf("ParseTool() args = %#v, want normalized once schedule", args)
+	}
+	if args.Message != "  请核对发货单  " {
+		t.Fatalf("ParseTool() message = %q, want message body preserved", args.Message)
+	}
+}
+
+func TestCreateScheduleParseToolAcceptsValidCronToolName(t *testing.T) {
+	args, err := CreateSchedule.ParseTool(`{
+		"name": "工作日报",
+		"type": "cron",
+		"cron_expr": " 0 9 * * 1-5 ",
+		"tool_name": " send_message "
+	}`)
+	if err != nil {
+		t.Fatalf("ParseTool() error = %v", err)
+	}
+	if args.Type != TaskTypeCron || args.CronExpr != "0 9 * * 1-5" || args.ToolName != "send_message" {
+		t.Fatalf("ParseTool() args = %#v, want normalized cron tool schedule", args)
+	}
+}
+
+func TestCreateScheduleParseToolRejectsBothMessageAndToolName(t *testing.T) {
+	args, err := CreateSchedule.ParseTool(`{
+		"name": "重复动作",
+		"type": "once",
+		"run_at": "2026-08-27 09:00:00",
+		"message": "提醒我",
+		"tool_name": "send_message"
+	}`)
+	if err == nil {
+		t.Fatal("ParseTool() error = nil, want mutually exclusive action error")
+	}
+	if !reflect.DeepEqual(args, createScheduleArgs{}) {
+		t.Fatalf("ParseTool() args = %#v, want zero value", args)
+	}
+	feedback, ok := xerror.ToolFeedback(err)
+	if !ok {
+		t.Fatalf("ToolFeedback() ok = false for error %v", err)
+	}
+	for _, want := range []string{"二选一", "不能同时"} {
+		if !strings.Contains(feedback, want) {
+			t.Fatalf("ToolFeedback() = %q, want substring %q", feedback, want)
+		}
+	}
+}
+
+func TestCreateScheduleParseToolRejectsCronWithoutExpression(t *testing.T) {
+	args, err := CreateSchedule.ParseTool(`{
+		"name": "工作日报",
+		"type": "cron",
+		"cron_expr": " \t ",
+		"tool_name": "send_message"
+	}`)
+	if err == nil {
+		t.Fatal("ParseTool() error = nil, want missing cron_expr error")
+	}
+	if !reflect.DeepEqual(args, createScheduleArgs{}) {
+		t.Fatalf("ParseTool() args = %#v, want zero value", args)
+	}
+	feedback, ok := xerror.ToolFeedback(err)
+	if !ok || !strings.Contains(feedback, "cron_expr") {
+		t.Fatalf("ToolFeedback() = %q, %v, want trusted cron_expr feedback", feedback, ok)
+	}
+}
+
+func TestCreateScheduleToolSpecWarnsAgainstIncompleteCalls(t *testing.T) {
+	desc := CreateSchedule.ToolSpec().Desc
+
+	for _, want := range []string{
+		"信息缺失时不要调用 create_schedule",
+		"不要猜测",
+		"询问用户",
+		"不能只传 name/type",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("ToolSpec().Desc = %q, want substring %q", desc, want)
+		}
 	}
 }
 

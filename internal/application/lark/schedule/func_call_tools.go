@@ -14,6 +14,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xcommand"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -152,12 +153,36 @@ func (createScheduleHandler) ParseTool(raw string) (createScheduleArgs, error) {
 		return createScheduleArgs{}, err
 	}
 	parsed.Type = taskType
+	parsed.ToolName = strings.TrimSpace(parsed.ToolName)
+	parsed.RunAt = strings.TrimSpace(parsed.RunAt)
+	parsed.CronExpr = strings.TrimSpace(parsed.CronExpr)
+
+	hasMessage := strings.TrimSpace(parsed.Message) != ""
+	hasToolName := parsed.ToolName != ""
+	problems := make([]string, 0, 2)
+	switch {
+	case !hasMessage && !hasToolName:
+		problems = append(problems, "缺少 message 或 tool_name")
+	case hasMessage && hasToolName:
+		problems = append(problems, "message 和 tool_name 必须二选一，不能同时传")
+	}
+	if parsed.Type == TaskTypeOnce && parsed.RunAt == "" {
+		problems = append(problems, "type=once 时缺少 run_at")
+	}
+	if parsed.Type == TaskTypeCron && parsed.CronExpr == "" {
+		problems = append(problems, "type=cron 时缺少 cron_expr")
+	}
+	if len(problems) != 0 {
+		cause := fmt.Errorf("invalid create_schedule arguments: %s", strings.Join(problems, "; "))
+		feedback := "create_schedule 参数无效：" + strings.Join(problems, "；") + "。不要猜测缺失值，也不要调用 create_schedule；请先询问用户补齐必要信息。"
+		return createScheduleArgs{}, xerror.WithToolFeedback(cause, feedback)
+	}
 	return parsed, nil
 }
 
 func (createScheduleHandler) ToolSpec() xcommand.ToolSpec {
 	availableTools := strings.Join(GetService().AvailableTools(), ", ")
-	desc := "创建统一的 schedule。单次提醒用 type=once + run_at + message；周期任务用 type=cron + cron_expr；如果要执行工具，则传 tool_name 和 tool_args。message 里如果需要@成员，优先输出飞书 `<at user_id=\"open_id\">姓名</at>`；如果只知道名字，也可以写 `@姓名`，系统会尝试按当前群成员匹配"
+	desc := "创建统一的 schedule。单次提醒用 type=once + run_at + message；周期任务用 type=cron + cron_expr；如果要执行工具，则传 tool_name 和 tool_args。message 里如果需要@成员，优先输出飞书 `<at user_id=\"open_id\">姓名</at>`；如果只知道名字，也可以写 `@姓名`，系统会尝试按当前群成员匹配。信息缺失时不要调用 create_schedule，不要猜测缺失值，只能先询问用户补齐；不能只传 name/type"
 	if availableTools != "" {
 		desc += "。可调度工具: " + availableTools
 	}
