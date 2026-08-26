@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,43 @@ func TestUpdateTaskSameAbsoluteRunAtDoesNotMoveNextRunAt(t *testing.T) {
 	if updateCalls != 0 || !task.NextRunAt.Equal(runAt) {
 		t.Fatalf("update calls = %d, next_run_at = %v, want unchanged %v",
 			updateCalls, task.NextRunAt, runAt)
+	}
+}
+
+func TestUpdateTaskRejectsResultReviewForSendMessage(t *testing.T) {
+	task := &model.ScheduledTask{
+		ID: "task-reminder", CreatorID: "ou-actor", ToolName: "send_message",
+	}
+	repo := &scheduleinfra.Repository{}
+	getPatch := mockey.Mock((*scheduleinfra.Repository).GetTaskByID).
+		Return(task, nil).
+		Build()
+	updateCalls := 0
+	updatePatch := mockey.Mock((*scheduleinfra.Repository).UpdateTaskFields).
+		To(func(*scheduleinfra.Repository, context.Context, string, map[string]any) error {
+			updateCalls++
+			return nil
+		}).
+		Build()
+	t.Cleanup(func() {
+		updatePatch.UnPatch()
+		getPatch.UnPatch()
+	})
+	service := NewService(repo, &ToolExecutor{}, botidentity.Identity{AppID: "app-test"})
+	enabled := true
+
+	got, err := service.UpdateTask(context.Background(), &UpdateTaskRequest{
+		ID: "task-reminder", ActorOpenID: "ou-actor", NotifyResult: &enabled,
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "send_message") {
+		t.Fatalf("UpdateTask() error = %v, want send_message result-review rejection", err)
+	}
+	if got != nil {
+		t.Fatalf("UpdateTask() task = %#v, want nil", got)
+	}
+	if updateCalls != 0 || task.NotifyResult {
+		t.Fatalf("update calls/notify_result = %d/%v, want 0/false", updateCalls, task.NotifyResult)
 	}
 }
 

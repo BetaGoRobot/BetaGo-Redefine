@@ -207,10 +207,17 @@ func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) 
 		logs.L().Ctx(ctx).Error("Finalize scheduled task execution failed",
 			zap.Error(updateErr),
 			zap.String("task_id", task.ID))
+		return
 	}
 
 	if err != nil && task.NotifyOnError {
-		if notifyErr := s.notify(ctx, task, fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error())); notifyErr != nil {
+		if notifyErr := s.notify(
+			ctx,
+			task,
+			fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error()),
+			taskNotificationKindExecutionError,
+			finishedAt,
+		); notifyErr != nil {
 			otel.RecordError(span, notifyErr)
 		}
 		return
@@ -231,7 +238,7 @@ func (s *Scheduler) reviewAndNotifyResult(
 	if task == nil {
 		return errors.New("task is nil")
 	}
-	if !task.NotifyResult {
+	if !task.NotifyResult || task.ToolName == "send_message" {
 		return nil
 	}
 	ctx, span := otel.StartNamed(ctx, "schedule.result_review")
@@ -257,11 +264,17 @@ func (s *Scheduler) reviewAndNotifyResult(
 		if !task.NotifyOnError {
 			return reviewErr
 		}
-		notifyErr := s.notify(ctx, task, fmt.Sprintf(
-			"⚠️ 定时任务结果审核失败\n\n任务: %s\n工具: %s\n原始结果已保存，可通过 schedule 查询查看。",
-			task.Name,
-			task.ToolName,
-		))
+		notifyErr := s.notify(
+			ctx,
+			task,
+			fmt.Sprintf(
+				"⚠️ 定时任务结果审核失败\n\n任务: %s\n工具: %s\n原始结果已保存，可通过 schedule 查询查看。",
+				task.Name,
+				task.ToolName,
+			),
+			taskNotificationKindReviewError,
+			finishedAt,
+		)
 		if notifyErr != nil {
 			return errors.Join(reviewErr, notifyErr)
 		}
@@ -280,7 +293,7 @@ func (s *Scheduler) reviewAndNotifyResult(
 			zap.String("reason", decision.Reason))
 		return nil
 	}
-	if err := s.notify(ctx, task, decision.Content); err != nil {
+	if err := s.notify(ctx, task, decision.Content, taskNotificationKindResult, finishedAt); err != nil {
 		return err
 	}
 	logs.L().Ctx(ctx).Info("Scheduled task result notification sent",
@@ -292,7 +305,13 @@ func (s *Scheduler) reviewAndNotifyResult(
 	return nil
 }
 
-func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, content string) (err error) {
+func (s *Scheduler) notify(
+	ctx context.Context,
+	task *model.ScheduledTask,
+	content string,
+	kind taskNotificationKind,
+	finishedAt time.Time,
+) (err error) {
 	ctx, span := otel.StartNamed(ctx, "schedule.notify")
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
@@ -305,13 +324,14 @@ func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, conte
 	span.SetAttributes(
 		attribute.String("schedule.task_id", taskID),
 		attribute.String("schedule.chat_id", chatID),
+		attribute.String("schedule.notification.kind", string(kind)),
 		attribute.Int("schedule.content.len", len(content)),
 		attribute.String("schedule.content.preview", otel.PreviewString(content, 128)),
 	)
 	if s == nil || s.notifier == nil {
 		err = errors.New("scheduled task notifier is not configured")
 	} else {
-		err = s.notifier.Notify(ctx, task, content)
+		err = s.notifier.Notify(ctx, task, content, taskNotificationDeliveryKey(task, kind, finishedAt))
 	}
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Send scheduled task notification failed",

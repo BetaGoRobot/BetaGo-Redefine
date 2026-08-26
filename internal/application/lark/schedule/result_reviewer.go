@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,6 +25,8 @@ const (
 	scheduleResultReviewMaxDecisionBytes = 16 * 1024
 	scheduleResultReviewMaxContentRunes  = 6000
 	scheduleResultReviewMaxReasonRunes   = 1000
+	scheduleResultReviewRedactedValue    = "[REDACTED]"
+	scheduleResultReviewInvalidJSONValue = "[INVALID_JSON]"
 )
 
 const scheduleResultReviewSystemPrompt = `你是群聊定时任务的结果审核器。
@@ -96,13 +99,7 @@ func (r *modelTaskResultReviewer) Review(
 	}
 
 	boundedResult, truncated := truncateTaskResultReviewInput(result, scheduleResultReviewMaxInputBytes)
-	toolArgs := any(strings.TrimSpace(task.ToolArgs))
-	if strings.TrimSpace(task.ToolArgs) != "" {
-		var decodedArgs any
-		if err := json.Unmarshal([]byte(task.ToolArgs), &decodedArgs); err == nil {
-			toolArgs = decodedArgs
-		}
-	}
+	toolArgs := redactTaskResultReviewToolArgs(task.ToolArgs)
 	prompt, err := json.Marshal(taskResultReviewPrompt{
 		TaskID: task.ID, TaskName: task.Name, ToolName: task.ToolName,
 		ToolArgs: toolArgs, ChatID: task.ChatID, CreatorOpenID: task.CreatorID,
@@ -114,10 +111,11 @@ func (r *modelTaskResultReviewer) Review(
 	}
 
 	raw, err := r.responseText(ctx, ark_dal.CachedResponseRequest{
-		CacheScene:   "schedule_result_review",
-		SystemPrompt: scheduleResultReviewSystemPrompt,
-		UserPrompt:   string(prompt),
-		ModelID:      modelID,
+		CacheScene:              "schedule_result_review",
+		SystemPrompt:            scheduleResultReviewSystemPrompt,
+		UserPrompt:              string(prompt),
+		RedactUserPromptPreview: true,
+		ModelID:                 modelID,
 		Text: &responses.ResponsesText{Format: &responses.TextFormat{
 			Type: responses.TextType_json_object,
 		}},
@@ -132,6 +130,83 @@ func (r *modelTaskResultReviewer) Review(
 		return TaskResultDecision{}, fmt.Errorf("review scheduled task result: %w", err)
 	}
 	return decodeTaskResultDecision(raw)
+}
+
+func redactTaskResultReviewToolArgs(raw string) any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{}
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return scheduleResultReviewInvalidJSONValue
+	}
+	return redactTaskResultReviewValue(decoded)
+}
+
+func redactTaskResultReviewValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if isSensitiveTaskResultReviewKey(key) {
+				redacted[key] = scheduleResultReviewRedactedValue
+				continue
+			}
+			redacted[key] = redactTaskResultReviewValue(item)
+		}
+		return redacted
+	case []any:
+		redacted := make([]any, len(typed))
+		for index, item := range typed {
+			redacted[index] = redactTaskResultReviewValue(item)
+		}
+		return redacted
+	case string:
+		return redactTaskResultReviewURL(typed)
+	default:
+		return value
+	}
+}
+
+func isSensitiveTaskResultReviewKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(normalized)
+	for _, marker := range []string{
+		"password", "passwd", "secret", "token", "credential", "api_key", "apikey",
+		"authorization", "cookie", "signature", "private_key", "access_key",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func redactTaskResultReviewURL(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return value
+	}
+	query := parsed.Query()
+	changed := false
+	for key := range query {
+		if isSensitiveTaskResultReviewKey(key) {
+			query.Set(key, scheduleResultReviewRedactedValue)
+			changed = true
+		}
+	}
+	if parsed.User != nil {
+		if _, hasPassword := parsed.User.Password(); hasPassword {
+			parsed.User = url.UserPassword(parsed.User.Username(), scheduleResultReviewRedactedValue)
+			changed = true
+		}
+	}
+	if !changed {
+		return value
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func decodeTaskResultDecision(raw string) (TaskResultDecision, error) {

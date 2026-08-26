@@ -61,6 +61,55 @@ func TestDecodeTaskResultDecision(t *testing.T) {
 	}
 }
 
+func TestDecodeTaskResultDecisionLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{
+			name: "content at rune limit",
+			raw: `{"send":true,"content":"` + strings.Repeat("a", scheduleResultReviewMaxContentRunes) +
+				`","reason":"ok"}`,
+		},
+		{
+			name: "content over rune limit",
+			raw: `{"send":true,"content":"` + strings.Repeat("a", scheduleResultReviewMaxContentRunes+1) +
+				`","reason":"ok"}`,
+			wantErr: "content is too long",
+		},
+		{
+			name: "multibyte reason at rune limit",
+			raw:  `{"send":false,"content":"","reason":"` + strings.Repeat("因", scheduleResultReviewMaxReasonRunes) + `"}`,
+		},
+		{
+			name:    "multibyte reason over rune limit",
+			raw:     `{"send":false,"content":"","reason":"` + strings.Repeat("因", scheduleResultReviewMaxReasonRunes+1) + `"}`,
+			wantErr: "reason is too long",
+		},
+		{
+			name:    "decision over byte limit",
+			raw:     strings.Repeat(" ", scheduleResultReviewMaxDecisionBytes+1),
+			wantErr: "invalid size",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeTaskResultDecision(tt.raw)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("decodeTaskResultDecision() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("decodeTaskResultDecision() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestModelTaskResultReviewerBuildsRestrictedBackgroundRequest(t *testing.T) {
 	task := &model.ScheduledTask{
 		ID:        "task-1",
@@ -99,6 +148,9 @@ func TestModelTaskResultReviewerBuildsRestrictedBackgroundRequest(t *testing.T) 
 	if capturedRequest.CacheScene != "schedule_result_review" || capturedRequest.ModelID != "normal-model" {
 		t.Fatalf("request cache/model = %q/%q", capturedRequest.CacheScene, capturedRequest.ModelID)
 	}
+	if !capturedRequest.RedactUserPromptPreview {
+		t.Fatal("schedule result review must redact the user prompt from telemetry previews")
+	}
 	if capturedRequest.Text == nil || capturedRequest.Text.Format == nil || capturedRequest.Text.Format.Type != responses.TextType_json_object {
 		t.Fatalf("request text format = %+v, want json_object", capturedRequest.Text)
 	}
@@ -136,6 +188,69 @@ func TestModelTaskResultReviewerRejectsMissingModel(t *testing.T) {
 	_, err := reviewer.Review(context.Background(), &model.ScheduledTask{ChatID: "oc", CreatorID: "ou"}, "result", time.Now())
 	if err == nil || !strings.Contains(err.Error(), "model is not configured") {
 		t.Fatalf("Review() error = %v, want missing model", err)
+	}
+}
+
+func TestModelTaskResultReviewerRedactsSensitiveToolArgs(t *testing.T) {
+	task := &model.ScheduledTask{
+		ID:        "task-1",
+		ChatID:    "oc",
+		CreatorID: "ou",
+		ToolArgs: `{
+			"url":"https://example.com/merchant?access_token=url-secret&round=1",
+			"headers":{"Authorization":"Bearer auth-secret","X-API-Key":"header-secret"},
+			"nested":[{"password":"password-secret"}],
+			"query":"safe-value"
+		}`,
+	}
+	var prompt string
+	reviewer := &modelTaskResultReviewer{
+		modelID: func(context.Context, string, string) string { return "normal-model" },
+		responseText: func(_ context.Context, req ark_dal.CachedResponseRequest, _ llmusage.Scope) (string, error) {
+			prompt = req.UserPrompt
+			return `{"send":false,"content":"","reason":"无需发送"}`, nil
+		},
+	}
+
+	if _, err := reviewer.Review(context.Background(), task, "result", time.Now()); err != nil {
+		t.Fatalf("Review() error = %v", err)
+	}
+	for _, secret := range []string{"url-secret", "auth-secret", "header-secret", "password-secret"} {
+		if strings.Contains(prompt, secret) {
+			t.Fatalf("user prompt leaked %q: %s", secret, prompt)
+		}
+	}
+	for _, required := range []string{"[REDACTED]", "safe-value", "round=1"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("redacted user prompt missing %q: %s", required, prompt)
+		}
+	}
+}
+
+func TestModelTaskResultReviewerDoesNotForwardMalformedToolArgs(t *testing.T) {
+	task := &model.ScheduledTask{
+		ID:        "task-1",
+		ChatID:    "oc",
+		CreatorID: "ou",
+		ToolArgs:  `{"token":"malformed-secret"`,
+	}
+	var prompt string
+	reviewer := &modelTaskResultReviewer{
+		modelID: func(context.Context, string, string) string { return "normal-model" },
+		responseText: func(_ context.Context, req ark_dal.CachedResponseRequest, _ llmusage.Scope) (string, error) {
+			prompt = req.UserPrompt
+			return `{"send":false,"content":"","reason":"无需发送"}`, nil
+		},
+	}
+
+	if _, err := reviewer.Review(context.Background(), task, "result", time.Now()); err != nil {
+		t.Fatalf("Review() error = %v", err)
+	}
+	if strings.Contains(prompt, "malformed-secret") {
+		t.Fatalf("user prompt forwarded malformed tool args: %s", prompt)
+	}
+	if !strings.Contains(prompt, "[INVALID_JSON]") {
+		t.Fatalf("user prompt did not mark invalid tool args: %s", prompt)
 	}
 }
 

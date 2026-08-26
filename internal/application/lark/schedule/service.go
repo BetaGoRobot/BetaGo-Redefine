@@ -433,6 +433,9 @@ func (s *Service) UpdateTask(ctx context.Context, req *UpdateTaskRequest) (*mode
 		task.NotifyOnError = *req.NotifyOnError
 	}
 	if req.NotifyResult != nil {
+		if task.ToolName == "send_message" && *req.NotifyResult {
+			return nil, fmt.Errorf("notify_result cannot be enabled for send_message tasks")
+		}
 		updates["notify_result"] = *req.NotifyResult
 		task.NotifyResult = *req.NotifyResult
 	}

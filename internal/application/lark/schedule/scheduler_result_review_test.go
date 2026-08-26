@@ -30,14 +30,16 @@ func (f *taskResultReviewerFake) Review(_ context.Context, _ *model.ScheduledTas
 }
 
 type taskNotifierFake struct {
-	calls   int
-	content string
-	err     error
+	calls       int
+	content     string
+	deliveryKey string
+	err         error
 }
 
-func (f *taskNotifierFake) Notify(_ context.Context, _ *model.ScheduledTask, content string) error {
+func (f *taskNotifierFake) Notify(_ context.Context, _ *model.ScheduledTask, content, deliveryKey string) error {
 	f.calls++
 	f.content = content
+	f.deliveryKey = deliveryKey
 	return f.err
 }
 
@@ -45,6 +47,7 @@ type schedulerReviewService struct {
 	noopService
 	result        string
 	execErr       error
+	finalizeErr   error
 	executeCalls  int
 	finalizeCalls int
 	finalized     bool
@@ -60,7 +63,7 @@ func (s *schedulerReviewService) ExecuteTask(context.Context, *model.ScheduledTa
 func (s *schedulerReviewService) FinalizeTaskExecution(context.Context, *model.ScheduledTask, string, error, time.Time) error {
 	s.finalizeCalls++
 	s.finalized = true
-	return nil
+	return s.finalizeErr
 }
 
 func TestSchedulerSkipsResultReviewWhenNotifyResultDisabled(t *testing.T) {
@@ -71,6 +74,24 @@ func TestSchedulerSkipsResultReviewWhenNotifyResultDisabled(t *testing.T) {
 	err := scheduler.reviewAndNotifyResult(context.Background(), &model.ScheduledTask{
 		ID: "task-1", NotifyResult: false,
 	}, "raw result", time.Now())
+	if err != nil {
+		t.Fatalf("reviewAndNotifyResult() error = %v", err)
+	}
+	if reviewer.calls != 0 || notifier.calls != 0 {
+		t.Fatalf("reviewer/notifier calls = %d/%d, want 0/0", reviewer.calls, notifier.calls)
+	}
+}
+
+func TestSchedulerSkipsResultReviewForSendMessage(t *testing.T) {
+	reviewer := &taskResultReviewerFake{decision: TaskResultDecision{
+		Send: true, Content: "must not send", Reason: "duplicate reminder",
+	}}
+	notifier := &taskNotifierFake{}
+	scheduler := newSchedulerWithDependencies(nil, nil, reviewer, notifier)
+
+	err := scheduler.reviewAndNotifyResult(context.Background(), &model.ScheduledTask{
+		ID: "task-send-message", ToolName: "send_message", NotifyResult: true,
+	}, "消息发送成功", time.Now())
 	if err != nil {
 		t.Fatalf("reviewAndNotifyResult() error = %v", err)
 	}
@@ -98,6 +119,9 @@ func TestSchedulerSendsModelReviewedResult(t *testing.T) {
 	}
 	if notifier.calls != 1 || notifier.content != reviewer.decision.Content {
 		t.Fatalf("notifier call = %d/%q, want model content %q", notifier.calls, notifier.content, reviewer.decision.Content)
+	}
+	if !strings.Contains(notifier.deliveryKey, "task-2") || !strings.HasSuffix(notifier.deliveryKey, "-result") {
+		t.Fatalf("notifier delivery key = %q", notifier.deliveryKey)
 	}
 }
 
@@ -208,5 +232,27 @@ func TestSchedulerExecuteTaskDoesNotReviewToolFailure(t *testing.T) {
 
 	if service.executeCalls != 1 || service.finalizeCalls != 1 || reviewer.calls != 0 || notifier.calls != 0 {
 		t.Fatalf("execute/finalize/reviewer/notifier calls = %d/%d/%d/%d", service.executeCalls, service.finalizeCalls, reviewer.calls, notifier.calls)
+	}
+}
+
+func TestSchedulerExecuteTaskDoesNotReviewWhenFinalizationFails(t *testing.T) {
+	service := &schedulerReviewService{
+		result:      `{"items":["炫彩蛋"]}`,
+		finalizeErr: errors.New("database unavailable"),
+	}
+	reviewer := &taskResultReviewerFake{decision: TaskResultDecision{
+		Send: true, Content: "must not send", Reason: "send",
+	}}
+	notifier := &taskNotifierFake{}
+	scheduler := newSchedulerWithDependencies(service, nil, reviewer, notifier)
+	task := &model.ScheduledTask{ID: "task-9", NotifyResult: true, NotifyOnError: true}
+
+	scheduler.executeTask(context.Background(), task)
+
+	if service.executeCalls != 1 || service.finalizeCalls != 1 {
+		t.Fatalf("execute/finalize calls = %d/%d, want 1/1", service.executeCalls, service.finalizeCalls)
+	}
+	if reviewer.calls != 0 || notifier.calls != 0 {
+		t.Fatalf("reviewer/notifier calls = %d/%d, want 0/0", reviewer.calls, notifier.calls)
 	}
 }

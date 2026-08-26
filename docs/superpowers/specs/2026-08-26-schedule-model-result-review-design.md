@@ -34,7 +34,7 @@
 
 模型输入包括：
 
-- task ID、名称、工具名和工具参数；
+- task ID、名称、工具名和经过敏感字段清理的工具参数；无法解析的参数不原样转发；
 - chat ID、creator open ID、时区和本次完成时间；
 - 工具原始结果；
 - 明确的数据边界和截断标记。
@@ -60,12 +60,12 @@
 ## 执行流程
 
 1. scheduler claim 到期任务并执行原有单一工具。
-2. 无论后续模型审核是否成功，都先通过 `FinalizeTaskExecution` 持久化原始结果和工具执行状态。
+2. 无论后续模型审核是否成功，都先通过 `FinalizeTaskExecution` 持久化原始结果和工具执行状态；持久化失败时停止本次审核和通知。
 3. 工具失败时不调用 reviewer；按现有 `notify_on_error` 发送错误通知。
-4. 工具成功但 `notify_result=false` 时结束。
+4. 工具成功但 `notify_result=false` 时结束；`send_message` 始终跳过结果审核，避免提醒发送后产生二次通知。
 5. 工具成功且 `notify_result=true` 时调用 reviewer，即使结果为空也由模型决定是否需要通知。
 6. reviewer 返回静默决策时只记录包含 reason 的结构化日志。
-7. reviewer 返回发送决策时交给 notifier；优先回复 `source_message_id`，失败后回落到 `chat_id` 直发。
+7. reviewer 返回发送决策时交给 notifier；优先回复 `source_message_id`，失败后回落到 `chat_id` 直发。两条链路共用由任务 ID、本次完成时间和通知类型组成的稳定投递键。
 
 ## 错误处理
 
@@ -78,15 +78,17 @@
 
 - reviewer 请求不注册任何工具。
 - 模型使用 minimal reasoning，并关闭 thinking。
+- 工具参数中的 token、密码、凭据、签名、Cookie 和 URL 敏感查询参数在进入提示词前递归遮蔽。
 - 原始结果进入提示词前按字节安全截断，并显式标记截断。
+- reviewer 的用户提示词不写入 OTel 内容预览，只记录长度和已遮蔽标志。
 - 模型输出限制为单个小型 JSON 文档；最终群聊文案设置上限。
 - LLM usage 归类为 background schedule result review，并保留 chat/open ID 归因。
 
 ## 测试
 
 - reviewer 解码：发送、静默、未知字段、多 JSON、空 reason、发送空 content、静默非空 content、超长输入/输出。
-- scheduler 编排：开关关闭不审核、成功发送、成功静默、空结果仍审核、工具失败不审核、审核失败走错误通知、投递失败不重跑工具。
-- notifier：来源消息回复成功、回复失败后群聊回落、双重失败返回错误。
+- scheduler 编排：开关关闭不审核、`send_message` 不审核、成功发送、成功静默、空结果仍审核、工具失败不审核、持久化失败不审核、审核失败走错误通知、投递失败不重跑工具。
+- notifier：来源消息回复成功、回复失败后群聊回落、双重失败返回错误、不同执行使用不同投递键。
 - 装配与既有 schedule 包回归测试。
 
 测试和构建严格使用仓库 Go 基线：Go 版本取自 `go.mod`，`-tags=custom_skip_vips`，测试设置 `BETAGO_CONFIG_PATH=.dev/config.toml` 并使用 `-v`。

@@ -35,14 +35,15 @@ const (
 )
 
 type CachedResponseRequest struct {
-	CacheScene         string
-	SystemPrompt       string
-	UserPrompt         string
-	ModelID            string
-	Text               *responses.ResponsesText
-	Reasoning          *responses.ResponsesReasoning
-	Thinking           *responses.ResponsesThinking
-	DisablePrefixCache bool
+	CacheScene              string
+	SystemPrompt            string
+	UserPrompt              string
+	RedactUserPromptPreview bool
+	ModelID                 string
+	Text                    *responses.ResponsesText
+	Reasoning               *responses.ResponsesReasoning
+	Thinking                *responses.ResponsesThinking
+	DisablePrefixCache      bool
 }
 
 func ResponseWithCache(ctx context.Context, sysPrompt, userPrompt, modelID string, scope llmusage.Scope) (res string, err error) {
@@ -67,7 +68,14 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	span.SetAttributes(attribute.String("model.id", req.ModelID))
 	span.SetAttributes(attribute.String("cache.scene", cacheScene(req.CacheScene)))
 	span.SetAttributes(otel.PreviewAttrs("sys_prompt", req.SystemPrompt, 256)...)
-	span.SetAttributes(otel.PreviewAttrs("user_prompt", req.UserPrompt, 256)...)
+	if req.RedactUserPromptPreview {
+		span.SetAttributes(
+			attribute.Bool("user_prompt.redacted", true),
+			attribute.Int("user_prompt.len", len(req.UserPrompt)),
+		)
+	} else {
+		span.SetAttributes(otel.PreviewAttrs("user_prompt", req.UserPrompt, 256)...)
+	}
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
 
