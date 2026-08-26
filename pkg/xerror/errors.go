@@ -22,10 +22,8 @@ func (e *toolFeedbackError) ToolFeedback() string {
 	return e.feedback
 }
 
-type toolFeedbackProvider interface {
-	ToolFeedback() string
-}
-
+// WithToolFeedback wraps err with trimmed feedback explicitly designated for
+// tool-facing use. It returns err unchanged when err is nil or feedback is blank.
 func WithToolFeedback(err error, feedback string) error {
 	feedback = strings.TrimSpace(feedback)
 	if err == nil || feedback == "" {
@@ -35,13 +33,15 @@ func WithToolFeedback(err error, feedback string) error {
 	return &toolFeedbackError{err: err, feedback: feedback}
 }
 
+// ToolFeedback returns trusted, non-empty feedback from a WithToolFeedback
+// wrapper in err's chain. It returns ("", false) when no such feedback exists.
 func ToolFeedback(err error) (string, bool) {
-	var provider toolFeedbackProvider
-	if !errors.As(err, &provider) {
+	var wrapped *toolFeedbackError
+	if !errors.As(err, &wrapped) {
 		return "", false
 	}
 
-	feedback := strings.TrimSpace(provider.ToolFeedback())
+	feedback := strings.TrimSpace(wrapped.ToolFeedback())
 	if feedback == "" {
 		return "", false
 	}
