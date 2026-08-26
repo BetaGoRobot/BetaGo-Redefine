@@ -2,15 +2,14 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/mention"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"go.opentelemetry.io/otel/attribute"
@@ -20,6 +19,8 @@ import (
 type Scheduler struct {
 	service   TaskService
 	executor  taskSubmitter
+	reviewer  TaskResultReviewer
+	notifier  TaskNotifier
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -42,10 +43,26 @@ func NewScheduler(service TaskService) *Scheduler {
 }
 
 func NewSchedulerWithExecutor(service TaskService, executor taskSubmitter) *Scheduler {
+	return newSchedulerWithDependencies(
+		service,
+		executor,
+		newModelTaskResultReviewer(),
+		newLarkTaskNotifier(),
+	)
+}
+
+func newSchedulerWithDependencies(
+	service TaskService,
+	executor taskSubmitter,
+	reviewer TaskResultReviewer,
+	notifier TaskNotifier,
+) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		service:  service,
 		executor: executor,
+		reviewer: reviewer,
+		notifier: notifier,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
@@ -193,55 +210,116 @@ func (s *Scheduler) executeTask(ctx context.Context, task *model.ScheduledTask) 
 	}
 
 	if err != nil && task.NotifyOnError {
-		s.notify(ctx, task, fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error()))
+		if notifyErr := s.notify(ctx, task, fmt.Sprintf("⚠️ 定时任务执行失败\n\n任务: %s\n工具: %s\n错误: %s", task.Name, task.ToolName, err.Error())); notifyErr != nil {
+			otel.RecordError(span, notifyErr)
+		}
 		return
 	}
-	if err == nil && task.NotifyResult && result != "" {
-		logs.L().Ctx(ctx).Info("Scheduled task execution result",
-			zap.String("task_id", task.ID),
-			zap.String("task_name", task.Name),
-			zap.String("tool_name", task.ToolName),
-			zap.String("result", result))
+	if err == nil {
+		if reviewErr := s.reviewAndNotifyResult(ctx, task, result, finishedAt); reviewErr != nil {
+			otel.RecordError(span, reviewErr)
+		}
 	}
 }
 
-func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, content string) {
-	chatID := ""
-	taskID := ""
-	sourceMessageID := ""
-	if task != nil {
-		chatID = task.ChatID
-		taskID = task.ID
-		sourceMessageID = task.SourceMessageID
+func (s *Scheduler) reviewAndNotifyResult(
+	ctx context.Context,
+	task *model.ScheduledTask,
+	result string,
+	finishedAt time.Time,
+) error {
+	if task == nil {
+		return errors.New("task is nil")
 	}
-	if chatID == "" || content == "" {
-		return
+	if !task.NotifyResult {
+		return nil
 	}
+	ctx, span := otel.StartNamed(ctx, "schedule.result_review")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("schedule.task_id", task.ID),
+		attribute.String("schedule.tool_name", task.ToolName),
+		attribute.Int("schedule.result.len", len(result)),
+	)
+	if s == nil || s.reviewer == nil {
+		return errors.New("scheduled task result reviewer is not configured")
+	}
+
+	decision, err := s.reviewer.Review(ctx, task, result, finishedAt)
+	if err != nil {
+		reviewErr := fmt.Errorf("review scheduled task result: %w", err)
+		otel.RecordError(span, reviewErr)
+		logs.L().Ctx(ctx).Error("Scheduled task result review failed",
+			zap.Error(reviewErr),
+			zap.String("task_id", task.ID),
+			zap.String("task_name", task.Name),
+			zap.String("tool_name", task.ToolName))
+		if !task.NotifyOnError {
+			return reviewErr
+		}
+		notifyErr := s.notify(ctx, task, fmt.Sprintf(
+			"⚠️ 定时任务结果审核失败\n\n任务: %s\n工具: %s\n原始结果已保存，可通过 schedule 查询查看。",
+			task.Name,
+			task.ToolName,
+		))
+		if notifyErr != nil {
+			return errors.Join(reviewErr, notifyErr)
+		}
+		return reviewErr
+	}
+
+	span.SetAttributes(
+		attribute.Bool("schedule.result_review.send", decision.Send),
+		attribute.String("schedule.result_review.reason.preview", otel.PreviewString(decision.Reason, 128)),
+	)
+	if !decision.Send {
+		logs.L().Ctx(ctx).Info("Scheduled task result notification suppressed",
+			zap.String("task_id", task.ID),
+			zap.String("task_name", task.Name),
+			zap.String("tool_name", task.ToolName),
+			zap.String("reason", decision.Reason))
+		return nil
+	}
+	if err := s.notify(ctx, task, decision.Content); err != nil {
+		return err
+	}
+	logs.L().Ctx(ctx).Info("Scheduled task result notification sent",
+		zap.String("task_id", task.ID),
+		zap.String("task_name", task.Name),
+		zap.String("tool_name", task.ToolName),
+		zap.String("reason", decision.Reason),
+		zap.Int("content_len", len(decision.Content)))
+	return nil
+}
+
+func (s *Scheduler) notify(ctx context.Context, task *model.ScheduledTask, content string) (err error) {
 	ctx, span := otel.StartNamed(ctx, "schedule.notify")
 	defer span.End()
-	var err error
 	defer otel.RecordErrorPtr(span, &err)
+	taskID := ""
+	chatID := ""
+	if task != nil {
+		taskID = task.ID
+		chatID = task.ChatID
+	}
 	span.SetAttributes(
 		attribute.String("schedule.task_id", taskID),
 		attribute.String("schedule.chat_id", chatID),
 		attribute.Int("schedule.content.len", len(content)),
 		attribute.String("schedule.content.preview", otel.PreviewString(content, 128)),
 	)
-	if normalized, normalizeErr := mention.NormalizeOutgoingText(ctx, chatID, content); normalizeErr == nil {
-		content = normalized
+	if s == nil || s.notifier == nil {
+		err = errors.New("scheduled task notifier is not configured")
+	} else {
+		err = s.notifier.Notify(ctx, task, content)
 	}
-	notifyID := fmt.Sprintf("schedule-notify-%s-%d", taskID, time.Now().UnixNano())
-	if sourceMessageID != "" {
-		if _, err = larkmsg.ReplyMsgText(ctx, content, sourceMessageID, "_scheduleNotify", false); err == nil {
-			return
-		}
-	}
-	err = larkmsg.CreateMsgTextRaw(ctx, larkmsg.NewTextMsgBuilder().Text(content).Build(), notifyID, chatID)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("Send scheduled task notification failed",
 			zap.Error(err),
+			zap.String("task_id", taskID),
 			zap.String("chat_id", chatID))
 	}
+	return err
 }
 
 func StartScheduler() {

@@ -174,7 +174,7 @@ func (createScheduleHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("tool_name", &tools.Prop{Type: "string", Desc: "需要自动执行的工具名。message 和 tool_name 二选一"}).
 			AddProp("tool_args", &tools.Prop{Type: "object", Desc: "工具参数对象。使用 tool_name 时传入"}).
 			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否额外发一条错误通知"}).
-			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "工具返回文本结果时是否额外发送结果通知"}).
+			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "为 true 时由模型审核工具结果，并决定是否发送及生成通知内容"}).
 			AddProp("skip_holidays", &tools.Prop{Type: "boolean", Desc: "是否跳过法定节假日"}).
 			AddRequired("name").
 			AddRequired("type"),
@@ -494,7 +494,7 @@ func (editScheduleHandler) ToolSpec() xcommand.ToolSpec {
 			AddProp("timezone", &tools.Prop{Type: "string", Desc: "新的时区"}).
 			AddProp("message", &tools.Prop{Type: "string", Desc: "新的消息内容"}).
 			AddProp("notify_on_error", &tools.Prop{Type: "boolean", Desc: "执行失败时是否通知"}).
-			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "执行结果是否通知"}).
+			AddProp("notify_result", &tools.Prop{Type: "boolean", Desc: "为 true 时由模型审核工具结果，并决定是否发送及生成通知内容"}).
 			AddProp("skip_holidays", &tools.Prop{Type: "boolean", Desc: "是否跳过法定节假日"}).
 			AddRequired("id"),
 	)
