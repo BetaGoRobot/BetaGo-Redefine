@@ -15,6 +15,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/bytedance/gg/gresult"
@@ -323,6 +324,26 @@ func (r *ResponsesImpl[T]) OnCallStart(ctx context.Context, event *responses.Eve
 	}
 }
 
+func toolCallContinuationOutput(result gresult.R[string]) string {
+	if !result.IsErr() {
+		return utils.MustMarshalString(result.Value())
+	}
+
+	feedback := "工具执行失败"
+	if safeFeedback, ok := xerror.ToolFeedback(result.Err()); ok {
+		feedback = safeFeedback
+	}
+	return utils.MustMarshalString(struct {
+		OK          bool   `json:"ok"`
+		Error       string `json:"error"`
+		Instruction string `json:"instruction"`
+	}{
+		OK:          false,
+		Error:       feedback,
+		Instruction: "不要假设工具调用成功；请纠正参数后重试；若缺少必要信息，请询问用户。",
+	})
+}
+
 func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Event, scope llmusage.Scope) (resp *arkutils.ResponsesStreamReader, err error) {
 	ctx, span := otel.StartNamed(ctx, "ark.responses.tool_args")
 	defer span.End()
@@ -379,7 +400,7 @@ func (r *ResponsesImpl[T]) OnCallArgs(ctx context.Context, event *responses.Even
 			Union: &responses.InputItem_FunctionToolCallOutput{
 				FunctionToolCallOutput: &responses.ItemFunctionToolCallOutput{
 					CallId: argsDoneEvent.GetItemId(),
-					Output: utils.MustMarshalString(res.Value()),
+					Output: toolCallContinuationOutput(res),
 					Type:   responses.ItemType_function_call_output,
 				},
 			},

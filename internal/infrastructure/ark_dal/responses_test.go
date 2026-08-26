@@ -2,17 +2,80 @@ package ark_dal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal/tools"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xerror"
 	"github.com/bytedance/gg/gresult"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model/responses"
 	arkutils "github.com/volcengine/volcengine-go-sdk/service/arkruntime/utils"
 )
+
+func TestToolCallContinuationOutput(t *testing.T) {
+	t.Run("success preserves existing encoding", func(t *testing.T) {
+		got := toolCallContinuationOutput(gresult.OK("found"))
+		want := utils.MustMarshalString("found")
+		if got != want {
+			t.Fatalf("toolCallContinuationOutput() = %q, want %q", got, want)
+		}
+	})
+
+	type errorEnvelope struct {
+		OK          bool   `json:"ok"`
+		Error       string `json:"error"`
+		Instruction string `json:"instruction"`
+	}
+	tests := []struct {
+		name      string
+		result    gresult.R[string]
+		wantError string
+	}{
+		{
+			name: "safe tool feedback",
+			result: gresult.Err[string](xerror.WithToolFeedback(
+				errors.New("database password=secret"),
+				"缺少 run_at",
+			)),
+			wantError: "缺少 run_at",
+		},
+		{
+			name:      "plain internal error",
+			result:    gresult.Err[string](errors.New("database password=secret")),
+			wantError: "工具执行失败",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toolCallContinuationOutput(tt.result)
+			if strings.Contains(got, "password") || strings.Contains(got, "secret") {
+				t.Fatalf("toolCallContinuationOutput() leaked internal error: %q", got)
+			}
+
+			var envelope errorEnvelope
+			if err := json.Unmarshal([]byte(got), &envelope); err != nil {
+				t.Fatalf("toolCallContinuationOutput() = %q, want JSON object: %v", got, err)
+			}
+			if envelope.OK {
+				t.Fatal("toolCallContinuationOutput() ok = true, want false")
+			}
+			if envelope.Error != tt.wantError {
+				t.Fatalf("toolCallContinuationOutput() error = %q, want %q", envelope.Error, tt.wantError)
+			}
+			for _, phrase := range []string{"不要假设", "纠正参数", "询问用户"} {
+				if !strings.Contains(envelope.Instruction, phrase) {
+					t.Errorf("toolCallContinuationOutput() instruction = %q, want phrase %q", envelope.Instruction, phrase)
+				}
+			}
+		})
+	}
+}
 
 func TestResponsesImplDrainPendingStreamItemsEmitsDeltaAndCapabilityTrace(t *testing.T) {
 	resp := New[string]("oc_chat", "ou_actor", nil)
