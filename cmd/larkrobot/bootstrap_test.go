@@ -143,18 +143,15 @@ func TestNewAppComponentsRejectsUnsafeConversationBudgets(t *testing.T) {
 func TestSearchSchemaModuleSkipsEvaluationIndexWhenEvaluationModeIsOff(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	cfg.OpensearchConfig = &infraConfig.OpensearchConfig{Domain: "search.internal"}
-	components, err := newAppComponents(cfg)
+	fake := &tenantIndexProvisionerFake{}
+	components, err := newAppComponentsWithDependencies(cfg, appComponentDependencies{
+		newTenantIndexProvisioner: func() (tenantIndexProvisioner, error) {
+			return fake, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &tenantIndexProvisionerFake{}
-	original := newTenantIndexProvisioner
-	newTenantIndexProvisioner = func() (tenantIndexProvisioner, error) {
-		return fake, nil
-	}
-	t.Cleanup(func() {
-		newTenantIndexProvisioner = original
-	})
 	module := newSearchSchemaModule(cfg, components)
 	if err := module.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -205,18 +202,15 @@ func TestSearchSchemaModuleCreatesEvaluationIndexWhenEnabled(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	cfg.OpensearchConfig = &infraConfig.OpensearchConfig{Domain: "search.internal"}
 	cfg.RuntimeConfig.EvaluationMode = "on"
-	components, err := newAppComponents(cfg)
+	fake := &tenantIndexProvisionerFake{}
+	components, err := newAppComponentsWithDependencies(cfg, appComponentDependencies{
+		newTenantIndexProvisioner: func() (tenantIndexProvisioner, error) {
+			return fake, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &tenantIndexProvisionerFake{}
-	original := newTenantIndexProvisioner
-	newTenantIndexProvisioner = func() (tenantIndexProvisioner, error) {
-		return fake, nil
-	}
-	t.Cleanup(func() {
-		newTenantIndexProvisioner = original
-	})
 	module := newSearchSchemaModule(cfg, components)
 	if err := module.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -234,18 +228,15 @@ func TestSearchSchemaModuleCreatesEvaluationIndexWhenEnabled(t *testing.T) {
 func TestSearchSchemaPermissionFailureFailsReadinessClosed(t *testing.T) {
 	cfg := testConversationRuntimeConfig()
 	cfg.OpensearchConfig = &infraConfig.OpensearchConfig{Domain: "search.internal"}
-	components, err := newAppComponents(cfg)
+	fake := &tenantIndexProvisionerFake{err: errors.New("HTTP 403")}
+	components, err := newAppComponentsWithDependencies(cfg, appComponentDependencies{
+		newTenantIndexProvisioner: func() (tenantIndexProvisioner, error) {
+			return fake, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &tenantIndexProvisionerFake{err: errors.New("HTTP 403")}
-	original := newTenantIndexProvisioner
-	newTenantIndexProvisioner = func() (tenantIndexProvisioner, error) {
-		return fake, nil
-	}
-	t.Cleanup(func() {
-		newTenantIndexProvisioner = original
-	})
 	app := appruntime.NewApp(newSearchSchemaModule(cfg, components))
 	if err := app.Start(context.Background()); err == nil {
 		t.Fatal("App.Start() accepted a tenant search permission failure")

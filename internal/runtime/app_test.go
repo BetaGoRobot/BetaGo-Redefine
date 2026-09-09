@@ -1,9 +1,10 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,14 +13,8 @@ import (
 )
 
 func TestAppLogsOptionalModuleFailure(t *testing.T) {
-	oldLogf := optionalModuleErrorLogf
-	var logged string
-	optionalModuleErrorLogf = func(format string, args ...any) {
-		logged = fmt.Sprintf(format, args...)
-	}
-	t.Cleanup(func() { optionalModuleErrorLogf = oldLogf })
-
-	app := NewApp(NewFuncModule(FuncModuleOptions{
+	var output bytes.Buffer
+	app := NewAppWithOptions(AppOptions{Logger: log.New(&output, "", 0)}, NewFuncModule(FuncModuleOptions{
 		Name: "telemetry",
 		Start: func(context.Context) error {
 			return errors.New("collector unavailable")
@@ -28,6 +23,7 @@ func TestAppLogsOptionalModuleFailure(t *testing.T) {
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	logged := output.String()
 	for _, want := range []string{"telemetry", "start", "collector unavailable"} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("optional module log = %q, want it to contain %q", logged, want)

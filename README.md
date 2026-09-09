@@ -1,6 +1,6 @@
 # BetaGo-Redefine
 
-BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言开发，目前主要针对飞书 (Lark) 平台。项目采用清晰的分层架构，集成了多种 AI 能力和实用工具，核心场景包括群聊消息处理、LLM 对话、历史消息检索、待办与定时任务，以及围绕群机器人治理的一整套配置、频控和卡片交互能力。
+BetaGo-Redefine 是一个基于 Go 的智能聊天机器人系统，目前主要针对飞书 (Lark) 平台。后端采用模块化单体结构，由统一运行时管理模块生命周期，管理前端独立构建。核心场景包括群聊消息处理、LLM 对话、历史消息检索、待办与定时任务，以及配置、频控和卡片交互。
 
 ![Visualization of the codebase](https://github.com/BetaGoRobot/BetaGo-Redefine/blob/diagram/diagram.svg)
 
@@ -10,18 +10,19 @@ BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言
 
 | 类别 | 技术 | 版本 |
 |------|------|------|
-| 语言 | Go | 1.25.1 |
-| Web 框架 | Hertz | v0.10.4 |
-| ORM | GORM | v1.31.1 |
+| 语言 | Go | 1.26（以 `go.mod` 为准） |
+| HTTP 服务 | Go `net/http` | 标准库 |
+| ORM | GORM | v1.31.2 |
 | 数据库 | PostgreSQL | - |
-| 缓存 | Redis | v9.18.0 |
-| 对象存储 | Minio | v7.0.98 |
+| 缓存客户端 | go-redis | v9.22.0 |
+| 对象存储客户端 | MinIO Go SDK | v7.3.0 |
 | 搜索引擎 | OpenSearch/Elasticsearch | - |
-| 日志 | Zap | v1.27.1 |
-| 监控 | OpenTelemetry | v1.40.0 |
-| JSON 处理 | Sonic | v1.15.0 |
-| Lark SDK | oapi-sdk-go | v3.5.3 |
+| 日志 | Zap | v1.28.0 |
+| 监控 | OpenTelemetry | v1.45.0 |
+| JSON 处理 | Sonic | v1.15.2 |
+| Lark SDK | oapi-sdk-go | v3.10.0 |
 | LLM | 字节跳动 ARK (豆包) | - |
+| 管理前端 | Vue 3 / TypeScript / Vite | 以 `webui/package.json` 和锁文件为准 |
 
 ## 项目概览
 
@@ -80,63 +81,50 @@ BetaGo-Redefine 是一个企业级智能聊天机器人系统，基于 Go 语言
 
 ## 架构与运行链路
 
-主入口是 [`cmd/larkrobot`](./cmd/larkrobot)，启动流程大致如下：
+主入口是 [`cmd/larkrobot`](./cmd/larkrobot)。`main.go` 负责配置、信号和进程控制，`bootstrap.go` 编排组件、基础设施、搜索、应用和评估的装配文件，`internal/runtime.App` 按注册顺序执行模块的 `Init → Start → Ready`，退出时逆序执行 `Stop`。
 
-1. 加载 TOML 配置，默认读取根目录 `.dev/config.toml`，也支持通过 `BETAGO_CONFIG_PATH` 覆盖
-2. 初始化基础设施层，包括 OTel、PostgreSQL、OpenSearch、Ark Runtime、MinIO、网易云 API、AKTools、Gotify、Lark DAL 等
-3. 初始化应用层，包括卡片动作注册、Todo 服务、Schedule 服务
-4. 启动后台调度器，轮询 `scheduled_tasks`
-5. 建立飞书 WebSocket Client，持续消费事件
+1. 加载 TOML 配置，默认读取 `.dev/config.toml`，支持 `BETAGO_CONFIG_PATH` 覆盖
+2. 装配日志、数据库、schema 迁移、Redis 和外部服务适配器，并准备租户搜索索引
+3. 注册 message、reaction、recording、chunk、schedule、conversation、projection 执行器
+4. 装配消息处理、Todo、Schedule、会话续跑、卡片交互及评估服务
+5. 启动后台 worker、管理 HTTP / WebUI HTTP、调度器和飞书 WebSocket 入口
 
-### 分层架构
+关键模块启动失败会先清理当前模块的部分初始化资源，再逆序回滚此前模块；清理使用独立的超时预算。可选模块 Init/Start 失败时清理并降级，Ready 失败时保留降级运行能力。显式关闭的模块释放已有资源后标记为 disabled。具体顺序和关键性以装配代码为准。
 
+### 模块职责与实际依赖
+
+| 目录 | 当前职责 |
+| --- | --- |
+| `cmd/larkrobot` | 进程入口、依赖装配、模块注册 |
+| `internal/runtime` | 生命周期、执行器、健康注册表、管理探针及 WebSocket 模块 |
+| `internal/interfaces` | 飞书事件入口和 WebUI REST API |
+| `internal/application` | 配置治理、消息、命令、卡片、任务、会话运行时和评估等业务逻辑 |
+| `internal/domain` | 当前仅有 Todo 模型，其他业务模型主要位于应用包 |
+| `internal/infrastructure` | 数据库、搜索、缓存、模型服务及平台适配器；部分旧包仍包含业务编排 |
+| `pkg` | 仓库共享组件；部分包仍依赖 `internal`，不能统一视为独立公共库 |
+| `webui` | 独立构建的 Vue 管理前端，通过 HTTP API 访问后端 |
+
+目录保留分层命名，但实际采用混合依赖方式：旧业务直接调用基础设施，新会话与评估模块通过应用层定义的接口连接存储适配器。例如 `agentstore.Repository` 实现 `agentruntime.Store`，这种依赖用于实现应用契约。
+
+### 消息与后台执行链路
+
+```mermaid
+flowchart LR
+    WS[飞书 WebSocket] --> H[HandlerSet]
+    H --> E[入口执行器]
+    E --> M[MessageHandler]
+    M --> P[每条消息独立的 Processor execution]
+    P --> O[命令与聊天 operators]
+    O --> D[平台与模型服务]
+    P --> R[入站消息 recording]
+    R --> S[搜索与上下文存储]
+    M --> C[会话运行时与评估]
+    C --> W[续跑与投影 workers]
+    UI[Vue WebUI] --> API[WebUI HTTP]
+    API --> A[配置与查询服务]
 ```
-┌─────────────────────────────────────────┐
-│         Interfaces (接口层)              │
-│  - Lark WebSocket 事件接收               │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│       Application (应用层)               │
-│  - Handlers: 消息/卡片/反应处理          │
-│  - Command: 命令解析                      │
-│  - History: 历史消息                      │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│        Domain (领域层)                   │
-│  - 核心业务模型                           │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│    Infrastructure (基础设施层)           │
-│  - DB, Cache, Search, Storage           │
-│  - Lark DAL, ARK DAL                    │
-│  - Config, Logging, Tracing             │
-└─────────────────────────────────────────┘
-```
 
-对应的分层关系如下：
-
-- `internal/interfaces/lark`：飞书事件入口
-- `internal/application/lark`：消息处理、命令、卡片回调、todo、schedule 等应用逻辑
-- `internal/domain`：Todo / Schedule 等领域模型
-- `internal/infrastructure`：数据库、OpenSearch、Redis、Ark、MinIO、Gotify、网易云等外部依赖适配
-- `pkg`：仓库内通用组件，例如命令框架、处理器、日志、HTTP、chunk 管理等
-
-### 消息处理流程
-
-```
-Lark WebSocket Event
-    ↓
-MessageV2Handler (interfaces/lark)
-    ↓
-messages.Handler (application/lark/messages)
-    ↓
-具体 Handler (chat/music/stock/...)
-    ↓
-基础设施服务 (DB/ARK/Search/...)
-```
+当前架构审查、已存在的治理能力及优化优先级见 [2026-09-08 架构审查](./docs/architecture/2026-09-08-architecture-review.md)。生命周期决策见 [ADR 0001](./docs/adr/0001-runtime-lifecycle.md)。
 
 ## 快速开始
 
@@ -144,7 +132,7 @@ messages.Handler (application/lark/messages)
 
 建议至少准备以下依赖：
 
-- Go `1.25+`
+- Go `1.26`（与 `go.mod` 声明一致）
 - PostgreSQL
 - 飞书应用凭证
 - 火山方舟 API Key 与模型 ID

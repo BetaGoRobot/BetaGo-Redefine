@@ -20,6 +20,11 @@ var ErrDisabled = errors.New("module disabled")
 // - Start：真正启动后台任务、监听器或轮询器；
 // - Ready：判断模块是否已经具备对外提供能力的条件；
 // - Stop：按逆序释放资源。
+//
+// 普通 Init/Start 错误也会触发当前模块的 Stop，因此 Stop 必须能够处理
+// 部分初始化状态，并遵守传入的清理上下文截止时间。模块自己在失败时
+// 清理过的资源不能再次释放。Init 返回 ErrDisabled 时必须不持有资源；
+// Start/Ready 返回 ErrDisabled 则由 App 立即调用 Stop 释放此前资源。
 type Module interface {
 	Name() string
 	Critical() bool
