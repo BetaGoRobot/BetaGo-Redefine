@@ -121,13 +121,7 @@ func (p *OrderPoller) process(record luckin.OrderRecord, now time.Time) {
 		return
 	}
 
-	cred, err := resolveCredential(p.ctx, p.tokens, luckin.CredentialRequest{
-		AppID:     record.AppID,
-		BotOpenID: record.BotOpenID,
-		ChatID:    record.ChatID,
-		OpenID:    record.RequesterOpenID,
-		ChatType:  scopeChatType(record.CredentialScope),
-	})
+	cred, err := loadOrderCredential(p.ctx, p.tokens, record)
 	if err != nil {
 		// token 失效：停止轮询，避免无意义重试。
 		p.stop(rowID, luckin.OrderRecordFailed, "credential unavailable", now)
@@ -231,13 +225,6 @@ func (p *OrderPoller) stop(rowID int64, status luckin.OrderRecordStatus, reason 
 		Status:        status,
 		StoppedReason: reason,
 	}, now)
-}
-
-func scopeChatType(scope luckin.CredentialScope) luckin.ChatType {
-	if scope.Type == luckin.ScopeChat {
-		return luckin.ChatTypeGroup
-	}
-	return luckin.ChatTypePrivate
 }
 
 var (

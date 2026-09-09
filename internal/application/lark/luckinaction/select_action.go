@@ -396,6 +396,21 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 				}
 				return
 			}
+			req := credentialRequestFromAction(actionCtx)
+			if strings.TrimSpace(order.RequesterOpenID) == "" ||
+				strings.TrimSpace(order.RequesterOpenID) != strings.TrimSpace(req.OpenID) ||
+				strings.TrimSpace(order.ChatID) != strings.TrimSpace(req.ChatID) ||
+				order.AppID != req.AppID || order.BotOpenID != req.BotOpenID {
+				// A shared card does not authorize other users to access the
+				// requester's coupons or rewrite their account-bound draft.
+				return
+			}
+			if err := luckin.ValidatePersonalCredentialOwner(order.RequesterOpenID, order.CredentialScope); err != nil {
+				if msgID != "" {
+					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("订单账号归属已变更，请使用自己的个人瑞幸账号重新结算"))
+				}
+				return
+			}
 			if strings.TrimSpace(order.PayloadHash) != payloadHash || order.Status != luckin.PendingStatusPending || !order.ExpiresAt.After(time.Now()) {
 				if msgID != "" {
 					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已过期，请重新结算"))
@@ -448,6 +463,7 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			// draft.Draft 会分配新的 UUID；这里必须让 pending_order 落库 ID 与卡片按钮里的 pending_order_id
 			// 保持一致，否则用户点「确认下单」时会拿着 draft 分配的新 UUID 去查 DB，永远 not found。
 			nextOrder.ID = order.ID
+			nextOrder.ExpiresAt = order.ExpiresAt
 			if err := pending.UpdateDraft(runCtx, nextOrder, time.Now()); err != nil {
 				if msgID != "" {
 					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("刷新待确认订单失败："+err.Error()))
@@ -457,98 +473,6 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			if msgID != "" {
 				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildPendingOrderCard(nextOrder), order.InitiatorOpenID))
 			}
-		}, nil
-	}
-}
-
-func checkoutTask(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderStore, tokens luckin.CredentialStore, coupons []string) appcardaction.AsyncHandler {
-	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
-		msgID := strings.TrimSpace(actionCtx.MessageID())
-		if msgID == "" {
-			return nil, errors.New("message id is required")
-		}
-		_, sess, ok := requireSession(ctx, session, actionCtx)
-		if !ok {
-			return patchSessionMissing(session, actionCtx, msgID), nil
-		}
-		mode := luckin.NormalizeCheckoutMode(formValue(actionCtx, cardactionproto.LuckinCheckoutModeField))
-		if mode == "" {
-			mode = luckin.NormalizeCheckoutMode(string(sess.CheckoutMode))
-		}
-		if mode == "" {
-			mode = luckin.CheckoutModeInitiatorUnified
-		}
-		if mode == luckin.CheckoutModeInitiatorUnified && !luckin.IsInitiator(sess, actionCtx.OpenID()) {
-			return func(context.Context) { /* no-op */ }, errInitiatorOnly()
-		}
-		shop := sess.Shop
-		if shop.DeptID == 0 || sess.Cart.Empty() {
-			return patchSessionMissing(session, actionCtx, msgID), nil
-		}
-		operatorOpenID := actionCtx.OpenID()
-		requesterOpenID := sess.InitiatorOpenID
-		if mode == luckin.CheckoutModeSelfService {
-			requesterOpenID = operatorOpenID
-		}
-		items := luckin.SelectCheckoutItems(sess.Cart, mode, operatorOpenID)
-		if len(items) == 0 {
-			return nil, errors.New("当前结算模式下没有可下单商品")
-		}
-		req := initiatorCredentialRequest(sess, actionCtx)
-		initiator := sess.InitiatorOpenID
-
-		return func(runCtx context.Context) {
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCheckoutProcessingCard(shop), initiator))
-			cred, err := resolveCredential(runCtx, tokens, req)
-			if err != nil {
-				sendBindGuide(runCtx, req)
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(shop, luckin.Cart{Items: items}, mode), initiator))
-				return
-			}
-			subOrders := luckin.SplitItemsToSingleCupOrders(items)
-			if len(subOrders) == 0 {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("没有可拆分的下单商品"), initiator))
-				return
-			}
-			summaryCard := luckin.BuildOrderProcessingCard("已按单杯拆成 " + strconv.Itoa(len(subOrders)) + " 个待确认订单，请分别选择优惠券并支付。")
-			_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(summaryCard, initiator))
-			for idx, orderItems := range subOrders {
-				order, card, err := draft.Draft(runCtx, luckin.DraftRequest{
-					AppID:           req.AppID,
-					BotOpenID:       req.BotOpenID,
-					ChatID:          req.ChatID,
-					InitiatorOpenID: initiator,
-					RequesterOpenID: requesterOpenID,
-					CheckoutMode:    mode,
-					Credential:      cred,
-					Shop:            shop,
-					Items:           orderItems,
-					CouponCodeList:  coupons,
-					Now:             time.Now(),
-				})
-				if err != nil {
-					_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("预览订单失败："+err.Error()), initiator), splitOrderReplySuffix("_luckinSplitDraft", "", idx), false)
-					continue
-				}
-				if pending != nil {
-					if err := pending.CreatePendingOrder(runCtx, order); err != nil {
-						logs.L().Ctx(runCtx).Warn("luckin create pending order failed", zap.Error(err))
-						_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderFailedCard("创建待确认订单失败："+err.Error()), initiator), splitOrderReplySuffix("_luckinSplitPending", order.ID, idx), false)
-						continue
-					}
-				}
-				_ = larkmsg.ReplyCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiator), splitOrderReplySuffix("_luckinSplitOrder", order.ID, idx), false)
-			}
-			_ = mcpstore.WithSessionLock(runCtx, msgID, func() error {
-				key, curSess, ok := requireSession(runCtx, session, actionCtx)
-				if !ok {
-					return nil
-				}
-				curSess.CheckoutMode = mode
-				curSess.Cart = luckin.RemoveCheckoutItems(curSess.Cart, mode, operatorOpenID)
-				session.SetSession(runCtx, key, curSess)
-				return larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildCartCard(curSess.Shop, curSess.Cart, curSess.CheckoutMode), curSess.InitiatorOpenID))
-			})
 		}, nil
 	}
 }
@@ -575,6 +499,7 @@ func splitOrderReplySuffix(prefix, orderID string, index int) string {
 
 // handleOrderStatus 实时查询订单状态并刷新卡片。任何人都可点（公共信息）。
 func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService) appcardaction.AsyncHandler {
+	service := orderStatusService{orders: storedOrderFinder{}, tokens: tokens, draft: draft}
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		orderID := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinOrderIDField))
 		if orderID == "" {
@@ -582,17 +507,10 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 		}
 		msgID := strings.TrimSpace(actionCtx.MessageID())
 		mode := strings.TrimSpace(actionValue(actionCtx, cardactionproto.LuckinStatusModeField))
-		// 用发起人凭证查；若 session 已不存在（取餐通知卡场景），退回点击者本人凭证。
+		// 查询账号取自已保存订单；同群查看者不会改变订单的账号归属。
 		req := credentialRequestFromAction(actionCtx)
-		if _, sess, ok := requireSession(ctx, tokensSessionStore(tokens), actionCtx); ok && sess.InitiatorOpenID != "" {
-			req = initiatorCredentialRequest(sess, actionCtx)
-		}
 		return func(runCtx context.Context) {
-			cred, err := resolveCredential(runCtx, tokens, req)
-			if err != nil {
-				return
-			}
-			detail, err := draft.OrderDetail(runCtx, cred, orderID)
+			detail, err := service.detail(runCtx, req, orderID)
 			if err != nil {
 				logs.L().Ctx(runCtx).Warn("luckin query order detail failed", zap.String("order_id", orderID), zap.Error(err))
 				return
@@ -609,10 +527,6 @@ func handleOrderStatus(tokens luckin.CredentialStore, draft luckin.DraftService)
 		}, nil
 	}
 }
-
-// tokensSessionStore 是个 stub：handleOrderStatus 不真正访问 SessionStore，
-// 只想复用 requireSession 的解析逻辑。这里用 nil 触发其"无 session"分支即可。
-func tokensSessionStore(_ luckin.CredentialStore) luckin.SessionStore { return nil }
 
 func handleBindToken(store luckin.CredentialWriter, dismiss ephemeralDeleter) appcardaction.SyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (*callback.CardActionTriggerResponse, error) {

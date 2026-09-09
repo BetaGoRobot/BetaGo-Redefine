@@ -159,6 +159,24 @@ func orderRecordFromRow(row *model.LuckinOrder) luckin.OrderRecord {
 	}
 }
 
+// FindOrder loads the persisted account scope and chat for a tenant's order.
+func (r *OrderRepository) FindOrder(ctx context.Context, appID, botOpenID, orderID string) (luckin.OrderRecord, error) {
+	ins := r.q.LuckinOrder
+	rows, err := ins.WithContext(ctx).
+		Where(ins.AppID.Eq(appID)).
+		Where(ins.BotOpenID.Eq(botOpenID)).
+		Where(ins.OrderID.Eq(orderID)).
+		Limit(1).
+		Find()
+	if err != nil {
+		return luckin.OrderRecord{}, err
+	}
+	if len(rows) == 0 {
+		return luckin.OrderRecord{}, gorm.ErrRecordNotFound
+	}
+	return orderRecordFromRow(rows[0]), nil
+}
+
 // FindRowID 通过 app/bot/orderID 找到行主键，供 ApplyUpdate 使用。
 func (r *OrderRepository) FindRowID(ctx context.Context, appID, botOpenID, orderID string) (int64, bool, error) {
 	ins := r.q.LuckinOrder

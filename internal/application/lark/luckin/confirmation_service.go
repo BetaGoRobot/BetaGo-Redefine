@@ -16,7 +16,7 @@ type ConfirmationService interface {
 	Confirm(context.Context, ConfirmRequest) (map[string]any, error)
 	Cancel(context.Context, CancelRequest) error
 	// CardAfterConfirmError 确认失败后的回写卡片：
-	// pending 仍有效时回到确认下单页（可改券重试），否则才落到终态失败卡。
+	// pending 仍有效且账号归属正确时回到确认页，否则落到重新结算提示。
 	CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any
 }
 
@@ -116,6 +116,9 @@ func (s confirmationService) Confirm(ctx context.Context, req ConfirmRequest) (m
 		)
 		return nil, err
 	}
+	if err := ValidatePersonalCredentialOwner(order.RequesterOpenID, order.CredentialScope); err != nil {
+		return nil, err
+	}
 	cred, err := s.tokens.FindToken(ctx, CredentialLookup{
 		Provider:  ProviderLuckin,
 		AppID:     order.AppID,
@@ -209,8 +212,11 @@ func (s confirmationService) remoteURL() string {
 }
 
 // CardAfterConfirmError 在 createOrder 被拒等可恢复失败时，把卡片刷回待确认订单页；
-// 仅当草稿已失效/找不到/明确过期时才使用终态失败卡（含重新结算/重选门店）。
+// 草稿失效、过期或账号归属不匹配时，使用终态失败卡重新结算。
 func (s confirmationService) CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any {
+	if errors.Is(confirmErr, ErrPendingOrderCredentialMismatch) {
+		return BuildOrderFailedCard("待确认订单的账号与结算人不匹配，请使用自己的个人瑞幸账号重新结算。")
+	}
 	notice = strings.TrimSpace(notice)
 	if notice == "" {
 		notice = "创建订单失败"

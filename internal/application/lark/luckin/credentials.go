@@ -73,7 +73,7 @@ func NewCredentialResolver(store CredentialStore, systemToken string) Credential
 	return CredentialResolver{store: store}
 }
 
-// Resolve 只解析发起人个人 token。出于优惠券归属与隐私考虑，不再支持系统默认或群聊默认凭证。
+// Resolve 只解析请求用户的个人 token。出于优惠券归属与隐私考虑，不再支持系统默认或群聊默认凭证。
 func (r CredentialResolver) Resolve(ctx context.Context, req CredentialRequest) (Credential, error) {
 	if req.OpenID == "" {
 		return Credential{}, ErrCredentialNotFound
@@ -102,4 +102,14 @@ func MaskToken(token string) string {
 		return "****"
 	}
 	return "****" + token[len(token)-4:]
+}
+
+// ValidatePersonalCredentialOwner 校验结算人只能使用自己的个人凭证。
+// 不依赖 CheckoutMode，避免历史待确认订单缺失结算模式时绕过账号归属校验。
+func ValidatePersonalCredentialOwner(requesterOpenID string, scope CredentialScope) error {
+	requesterOpenID = strings.TrimSpace(requesterOpenID)
+	if requesterOpenID == "" || scope.Type != ScopePersonal || strings.TrimSpace(scope.ID) != requesterOpenID {
+		return ErrPendingOrderCredentialMismatch
+	}
+	return nil
 }

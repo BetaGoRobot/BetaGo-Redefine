@@ -35,10 +35,11 @@ func BuildPendingOrderCardWithNotice(order PendingOrder, notice string) map[stri
 	summary := previewSummaryFromOrder(order)
 	available := AvailableCouponsFromPreview(order.PreviewResult)
 	selected := selectedCouponsFromPayload(order.CreateOrderPayload)
-	modeText := "统一下单（发起人账号）"
-	if order.CheckoutMode == CheckoutModeSelfService {
-		modeText = "自我下单（只下当前操作者自己的商品）"
+	accountText := ScopeLabel(order.CredentialScope)
+	if order.CredentialScope.Type == ScopePersonal && strings.TrimSpace(order.CredentialScope.ID) != "" {
+		accountText = larkmsg.AtUserMD(strings.TrimSpace(order.CredentialScope.ID)) + " 的个人瑞幸账号"
 	}
+	modeText := pendingOrderModeText(order)
 	elements := []any{
 		larkmsg.Markdown("**🧾 确认瑞幸订单**"),
 	}
@@ -49,7 +50,7 @@ func BuildPendingOrderCardWithNotice(order PendingOrder, notice string) map[stri
 		)
 	}
 	elements = append(elements,
-		larkmsg.HintMarkdown("账号："+ScopeLabel(order.CredentialScope)),
+		larkmsg.HintMarkdown("下单账号："+accountText),
 		larkmsg.HintMarkdown("结算模式："+modeText),
 		larkmsg.Divider(),
 		larkmsg.Markdown("🏬 **门店**\n"+summary.Shop),
@@ -355,4 +356,26 @@ func nonEmptyStrings(values ...string) []string {
 		}
 	}
 	return out
+}
+
+// pendingOrderModeText 优先使用持久化的人员和账号归属。
+// CheckoutMode 可能缺失，或在重建草稿时被默认归一化为统一下单。
+func pendingOrderModeText(order PendingOrder) string {
+	requester := strings.TrimSpace(order.RequesterOpenID)
+	initiator := strings.TrimSpace(order.InitiatorOpenID)
+	personalOwner := ValidatePersonalCredentialOwner(requester, order.CredentialScope) == nil
+	if personalOwner && initiator != "" && requester != initiator {
+		return "自我下单（使用自己的个人瑞幸账号，只结算自己的商品）"
+	}
+	switch order.CheckoutMode {
+	case CheckoutModeSelfService:
+		return "自我下单（只结算自己的商品）"
+	case CheckoutModeInitiatorUnified:
+		if personalOwner && requester == initiator {
+			return "统一下单（发起人账号）"
+		}
+		return "统一下单"
+	default:
+		return "个人账号下单"
+	}
 }
