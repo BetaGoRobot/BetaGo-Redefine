@@ -56,7 +56,19 @@ func Register() {
 	}))
 }
 
+type confirmEffects struct {
+	patch func(context.Context, string, any) error
+	lock  func(context.Context, string, func() error) error
+}
+
 func handleConfirm(service luckin.ConfirmationService, session luckin.SessionStore) appcardaction.AsyncHandler {
+	return handleConfirmWithEffects(service, session, confirmEffects{
+		patch: larkmsg.PatchCardJSON,
+		lock:  mcpstore.WithSessionLock,
+	})
+}
+
+func handleConfirmWithEffects(service luckin.ConfirmationService, session luckin.SessionStore, effects confirmEffects) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		id, err := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		if err != nil {
@@ -90,11 +102,8 @@ func handleConfirm(service luckin.ConfirmationService, session luckin.SessionSto
 			Now:            time.Now(),
 		}
 		return func(runCtx context.Context) {
-			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildOrderProcessingCard("正在为你创建瑞幸订单…"), initiatorOpenID))
-			}
 			var card map[string]any
-			lockErr := mcpstore.WithSessionLock(runCtx, msgID, func() error {
+			lockErr := effects.lock(runCtx, msgID, func() error {
 				c, err := service.Confirm(runCtx, req)
 				if err != nil {
 					return err
@@ -116,21 +125,24 @@ func handleConfirm(service luckin.ConfirmationService, session luckin.SessionSto
 					zap.Bool("has_session", ok),
 					zap.Error(lockErr),
 				)
-				// 双击/回放：DB 里已经是 confirmed/cancelled，之前那次已经把成功卡贴回去了；
-				// 什么都不改，避免用二次点击的错误文案覆盖已经成功的卡片。
-				if errors.Is(lockErr, luckin.ErrPendingOrderAlreadyDone) {
+				// 重复确认、旧版本回调或另一请求持锁时，保留现有卡片。
+				if errors.Is(lockErr, luckin.ErrPendingOrderAlreadyDone) ||
+					errors.Is(lockErr, mcpstore.ErrSessionLocked) ||
+					errors.Is(lockErr, luckin.ErrPendingOrderPayloadMismatch) {
 					return
 				}
 				if msgID != "" {
 					// pending 仍有效时回到确认下单页（可改券重试），不要退回选店初始态。
 					notice := friendlyConfirmError("创建订单失败", lockErr)
 					failCard := service.CardAfterConfirmError(runCtx, id, lockErr, notice)
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(failCard, initiatorOpenID))
+					if failCard != nil {
+						_ = effects.patch(runCtx, msgID, luckin.AppendInitiatorFooter(failCard, initiatorOpenID))
+					}
 				}
 				return
 			}
 			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiatorOpenID))
+				_ = effects.patch(runCtx, msgID, luckin.AppendInitiatorFooter(card, initiatorOpenID))
 			}
 		}, nil
 	}
@@ -309,12 +321,12 @@ func (pendingStore) MarkCancelled(ctx context.Context, id, payloadHash, operator
 	return repo.MarkCancelled(ctx, id, payloadHash, operatorOpenID, chatID, now)
 }
 
-func (pendingStore) UpdateDraft(ctx context.Context, order luckin.PendingOrder, now time.Time) error {
+func (pendingStore) UpdateDraft(ctx context.Context, order luckin.PendingOrder, expectedHash string, now time.Time) error {
 	repo, err := newPendingRepo()
 	if err != nil {
 		return err
 	}
-	return repo.UpdateDraft(ctx, order, now)
+	return repo.UpdateDraft(ctx, order, expectedHash, now)
 }
 
 func newPendingRepo() (*mcpstore.PendingOrderRepository, error) {

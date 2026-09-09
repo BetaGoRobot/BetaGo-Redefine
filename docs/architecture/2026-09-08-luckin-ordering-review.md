@@ -17,6 +17,16 @@
 
 主要实现：`luckinaction/checkout_action.go`、`luckin/confirmation_service.go`、`luckinaction/select_action.go`、`luckinaction/order_status.go`、`luckinaction/poller.go`、`mcpstore/orders.go`；路径均位于 `internal/application/lark` 或 `internal/infrastructure` 对应目录。
 
+## 2026-09-09：优惠券失败恢复
+
+用户确认优惠券失败后需要刷新卡片并允许重新提交。新增工具级 `ToolError` 区分 `isError=true` 与传输/RPC 异常；仅匹配明确的券自身拒绝语义，服务/协议/认证异常不进入安全重提分支。当前使用保守文本白名单，未声称已验证瑞幸所有远端业务码或异常格式。
+
+明确券拒绝后在确认服务内清除选券并重新预览原 payload，保留商品、账号、其他参数、ID 与原期限；保存报价后刷新原子卡，等待用户再次确认。预览必须包含有效价格；失败时给出只执行预览的刷新按钮。创建尝试后的不确定错误不再直接展示确认/改券按钮。
+
+`UpdateDraft` 增加旧 hash、pending、有效期的 CAS，刷新 hash 链包含旧版本、payload 和报价，因此同一选券下价格改变也会使旧确认失效。卡片回写前读回状态与版本，支持草稿实际写入成功但确认响应丢失的恢复；旧回调、锁忙、已完成回调不再提前把卡片盖成“处理中”。
+
+边界：这未实现持久化 submitting/unknown、账号级跨卡资源协调、购物车批次预占，不能保证远端 exactly-once。读回到飞书 patch 仍有时间窗，完整卡片投递顺序需要后续版本化发布；L1、L4、L5、L9、L10 仍待处理，L2 的草稿更新 CAS 与 L8 的提前覆盖已局部修复，但改券与远端创建之间仍缺原子提交占用。没有 schema 变更或真实下单。验证：六个相关包 212 个顶层测试、3 个隔离存储测试通过，双子单争券用例的 race 检测通过。
+
 ## 范围与证据口径
 
 已阅读根 `AGENTS.md`、`Agents.md`、`docs/superpowers/specs/2026-06-15-luckin-mcp-integration-design.md`、相应 integration plan、`docs/luckin_mcp_usage.md`；追踪 `luckin`、`luckinaction`、`handlers/luckin*`、`mcpbridge`、`mcpclient`、`mcpstore`、卡片分发注册及相关测试。文件引用均以仓库根目录为基准，L1—L10 的行号对应初次审查、账号修复前的工作区快照。

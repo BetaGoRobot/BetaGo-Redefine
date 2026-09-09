@@ -54,16 +54,16 @@ func TestConfirmationServiceConfirmCreatesRemoteOrderAndMarksConfirmed(t *testin
 	}
 }
 
-func TestCardAfterConfirmErrorRestoresPendingConfirmCard(t *testing.T) {
+func TestCardAfterPreSubmissionErrorRestoresPendingConfirmCard(t *testing.T) {
 	now := time.Now()
 	order := testConfirmableOrder(json.RawMessage(`{"deptId":1}`), now.Add(time.Minute))
 	order.PreviewResult = json.RawMessage(`{"couponCodeList":["coupon-a"],"discountPrice":12}`)
 	store := &fakePendingStore{order: order}
 	service := NewConfirmationService(store, &fakeCredentialLookup{}, &fakeToolCaller{}, ServerURL)
 
-	card := service.CardAfterConfirmError(context.Background(), order.ID, errors.New("coupon already used"), "创建订单失败：coupon already used")
+	card := service.CardAfterConfirmError(context.Background(), order.ID, errors.New("credential lookup unavailable"), "创建订单失败：credential lookup unavailable")
 	text := string(mustJSON(card))
-	if !containsJSON(text, "coupon already used", "luckin_order_confirm", order.ID, order.PayloadHash) {
+	if !containsJSON(text, "credential lookup unavailable", "luckin_order_confirm", order.ID, order.PayloadHash) {
 		t.Fatalf("expected restored confirm card, got %s", text)
 	}
 	if containsJSON(text, "重新选择门店", "luckin_cart_checkout") {
@@ -179,7 +179,10 @@ func (s *fakePendingStore) MarkCancelled(ctx context.Context, id, payloadHash, o
 	return nil
 }
 
-func (s *fakePendingStore) UpdateDraft(ctx context.Context, order PendingOrder, now time.Time) error {
+func (s *fakePendingStore) UpdateDraft(ctx context.Context, order PendingOrder, expectedHash string, now time.Time) error {
+	if s.order.PayloadHash != expectedHash || s.order.Status != PendingStatusPending || !s.order.ExpiresAt.After(now) {
+		return ErrPendingOrderNotConfirmable
+	}
 	s.order = order
 	return nil
 }

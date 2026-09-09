@@ -2,7 +2,6 @@ package luckinaction
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -190,7 +189,7 @@ type pendingOrderCreator interface {
 type pendingOrderStore interface {
 	CreatePendingOrder(context.Context, luckin.PendingOrder) error
 	FindPendingOrder(context.Context, string) (luckin.PendingOrder, error)
-	UpdateDraft(context.Context, luckin.PendingOrder, time.Time) error
+	UpdateDraft(context.Context, luckin.PendingOrder, string, time.Time) error
 }
 
 // handleProductSelect 异步处理：有规格则先弹规格卡，否则把商品加入购物车并刷新购物车卡。
@@ -373,6 +372,10 @@ func handleCartCheckout(session luckin.SessionStore, draft luckin.DraftService, 
 // 因此这里只按 pending order 重新预览、原地刷新当前卡片；绝不回退到购物车结算流程
 // （那会在回复卡的 msgID 上找不到 session，进而把卡片打回“选择门店”，正是本次要修的 bug）。
 func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderStore, tokens luckin.CredentialStore) appcardaction.AsyncHandler {
+	return handleCouponApplyWithPatch(session, draft, pending, tokens, larkmsg.PatchCardJSON)
+}
+
+func handleCouponApplyWithPatch(session luckin.SessionStore, draft luckin.DraftService, pending pendingOrderStore, tokens luckin.CredentialStore, patch func(context.Context, string, any) error) appcardaction.AsyncHandler {
 	return func(ctx context.Context, actionCtx *appcardaction.Context) (appcardaction.AsyncTask, error) {
 		pendingID, _ := actionCtx.Action.RequiredString(cardactionproto.PendingOrderIDField)
 		payloadHash, _ := actionCtx.Action.RequiredString(cardactionproto.PayloadHashField)
@@ -384,7 +387,7 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			// 理论上不会发生：优惠券卡一定带 pending 信息。宁可原地报错，也不要回退到选门店。
 			return func(runCtx context.Context) {
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单信息缺失，请重新结算"))
+					_ = patch(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单信息缺失，请重新结算"))
 				}
 			}, nil
 		}
@@ -392,7 +395,7 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			order, err := pending.FindPendingOrder(runCtx, pendingID)
 			if err != nil {
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已失效，请重新结算"))
+					_ = patch(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已失效，请重新结算"))
 				}
 				return
 			}
@@ -407,13 +410,16 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			}
 			if err := luckin.ValidatePersonalCredentialOwner(order.RequesterOpenID, order.CredentialScope); err != nil {
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("订单账号归属已变更，请使用自己的个人瑞幸账号重新结算"))
+					_ = patch(runCtx, msgID, luckin.BuildOrderFailedCard("订单账号归属已变更，请使用自己的个人瑞幸账号重新结算"))
 				}
 				return
 			}
-			if strings.TrimSpace(order.PayloadHash) != payloadHash || order.Status != luckin.PendingStatusPending || !order.ExpiresAt.After(time.Now()) {
+			if strings.TrimSpace(order.PayloadHash) != payloadHash || order.Status != luckin.PendingStatusPending {
+				return
+			}
+			if !order.ExpiresAt.After(time.Now()) {
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已过期，请重新结算"))
+					_ = patch(runCtx, msgID, luckin.BuildOrderFailedCard("待确认订单已过期，请重新结算"))
 				}
 				return
 			}
@@ -425,56 +431,50 @@ func handleCouponApply(session luckin.SessionStore, draft luckin.DraftService, p
 			})
 			if err != nil {
 				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("瑞幸账号凭证失效，请重新绑定后结算"))
+					current, readErr := pending.FindPendingOrder(runCtx, order.ID)
+					if readErr == nil && current.Status == luckin.PendingStatusPending && current.PayloadHash == order.PayloadHash {
+						_ = patch(runCtx, msgID, luckin.BuildOrderFailedCard("瑞幸账号凭证失效，请重新绑定后结算"))
+					}
 				}
 				return
 			}
-			var payload map[string]any
-			if err := json.Unmarshal(order.CreateOrderPayload, &payload); err != nil {
-				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("订单草稿损坏，请重新结算"))
-				}
-				return
-			}
-			shop := luckin.ShopSelection{
-				DeptID:    int64(numberFloat(payload["deptId"])),
-				Longitude: numberFloat(payload["longitude"]),
-				Latitude:  numberFloat(payload["latitude"]),
-			}
-			nextOrder, _, err := draft.Draft(runCtx, luckin.DraftRequest{
-				AppID:           order.AppID,
-				BotOpenID:       order.BotOpenID,
-				ChatID:          order.ChatID,
-				InitiatorOpenID: order.InitiatorOpenID,
-				RequesterOpenID: order.RequesterOpenID,
-				CheckoutMode:    order.CheckoutMode,
-				Credential:      cred,
-				Shop:            shop,
-				Items:           order.CartSnapshot,
-				CouponCodeList:  coupons,
-				Now:             time.Now(),
-			})
+			nextOrder, err := draft.RefreshPending(runCtx, order, cred, coupons)
 			if err != nil {
-				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("预览优惠券失败："+err.Error()))
-				}
+				patchCouponRefreshResult(runCtx, pending, order, nil, msgID, patch)
 				return
 			}
-			// draft.Draft 会分配新的 UUID；这里必须让 pending_order 落库 ID 与卡片按钮里的 pending_order_id
-			// 保持一致，否则用户点「确认下单」时会拿着 draft 分配的新 UUID 去查 DB，永远 not found。
-			nextOrder.ID = order.ID
-			nextOrder.ExpiresAt = order.ExpiresAt
-			if err := pending.UpdateDraft(runCtx, nextOrder, time.Now()); err != nil {
-				if msgID != "" {
-					_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.BuildOrderFailedCard("刷新待确认订单失败："+err.Error()))
-				}
-				return
-			}
-			if msgID != "" {
-				_ = larkmsg.PatchCardJSON(runCtx, msgID, luckin.AppendInitiatorFooter(luckin.BuildPendingOrderCard(nextOrder), order.InitiatorOpenID))
-			}
+			// Read back even on an error: the write may have committed before its
+			// acknowledgement was lost, or another action may own a newer revision.
+			_ = pending.UpdateDraft(runCtx, nextOrder, order.PayloadHash, time.Now())
+			patchCouponRefreshResult(runCtx, pending, order, &nextOrder, msgID, patch)
 		}, nil
 	}
+}
+
+func patchCouponRefreshResult(ctx context.Context, pending pendingOrderStore, original luckin.PendingOrder, next *luckin.PendingOrder, msgID string, patch func(context.Context, string, any) error) {
+	if msgID == "" {
+		return
+	}
+	current, err := pending.FindPendingOrder(ctx, original.ID)
+	if err != nil || current.Status != luckin.PendingStatusPending {
+		return
+	}
+	if current.ID != original.ID || current.AppID != original.AppID || current.BotOpenID != original.BotOpenID || current.ChatID != original.ChatID || current.RequesterOpenID != original.RequesterOpenID || current.CredentialScope != original.CredentialScope {
+		return
+	}
+	if !current.ExpiresAt.After(time.Now()) {
+		_ = patch(ctx, msgID, luckin.BuildOrderFailedCard("订单已过期，请重新结算"))
+		return
+	}
+	var card map[string]any
+	if next != nil && current.PayloadHash == next.PayloadHash {
+		card = luckin.BuildPendingOrderCard(current)
+	} else if current.PayloadHash == original.PayloadHash {
+		card = luckin.BuildCouponRefreshCard(current)
+	} else {
+		return
+	}
+	_ = patch(ctx, msgID, luckin.AppendInitiatorFooter(card, current.InitiatorOpenID))
 }
 
 func numberFloat(v any) float64 {

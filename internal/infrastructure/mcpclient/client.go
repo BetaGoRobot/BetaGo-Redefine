@@ -76,7 +76,7 @@ func (c *Client) CallTool(ctx context.Context, req CallRequest) (CallResult, err
 		return CallResult{}, fmt.Errorf("%w: encode result: %v", ErrProtocol, err)
 	}
 	if res.IsError {
-		return CallResult{}, fmt.Errorf("%w: %s", ErrRemote, toolErrorText(res))
+		return CallResult{}, &ToolError{Message: toolErrorText(res)}
 	}
 	return CallResult{Content: content, Raw: raw}, nil
 }

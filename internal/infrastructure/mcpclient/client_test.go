@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -119,6 +120,50 @@ func TestClientNormalizesToolErrors(t *testing.T) {
 	})
 	if !errors.Is(err, ErrRemote) {
 		t.Fatalf("err = %v, want ErrRemote", err)
+	}
+	var toolErr *ToolError
+	if !errors.As(err, &toolErr) {
+		t.Fatalf("err = %v, want *ToolError for an explicit tool failure", err)
+	}
+	if toolErr.Message != "upstream failed" || err.Error() != "mcp remote error: upstream failed" {
+		t.Fatalf("tool error changed remote error text: %+v", toolErr)
+	}
+}
+
+func TestClientTransportErrorIsNotToolError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("coupon service unavailable"))
+	}))
+	defer server.Close()
+
+	client := New(ClientOptions{HTTPClient: server.Client()})
+	_, err := client.CallTool(context.Background(), CallRequest{
+		Server:   ServerConfig{Name: "my-coffee", URL: server.URL},
+		ToolName: "queryShopList",
+	})
+	if !errors.Is(err, ErrRemote) {
+		t.Fatalf("err = %v, want ErrRemote", err)
+	}
+	var toolErr *ToolError
+	if errors.As(err, &toolErr) {
+		t.Fatalf("transport error was reported as a tool rejection: %v", err)
+	}
+}
+
+func TestClassifiedRemoteErrorIsNotToolError(t *testing.T) {
+	for _, original := range []error{
+		errors.New("connection reset while checking coupon"),
+		&jsonrpc.Error{Code: jsonrpc.CodeInternalError, Message: "coupon service failed"},
+	} {
+		err := classifyError(original)
+		if !errors.Is(err, ErrRemote) {
+			t.Fatalf("classifyError(%v) = %v, want ErrRemote", original, err)
+		}
+		var toolErr *ToolError
+		if errors.As(err, &toolErr) {
+			t.Fatalf("classifyError(%v) returned a tool rejection: %v", original, err)
+		}
 	}
 }
 
