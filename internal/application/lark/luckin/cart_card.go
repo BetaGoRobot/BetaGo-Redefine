@@ -39,11 +39,8 @@ func checkoutModeForm(mode CheckoutMode) map[string]any {
 		{Text: "统一下单", Value: string(CheckoutModeInitiatorUnified)},
 		{Text: "自我下单", Value: string(CheckoutModeSelfService)},
 	}
-	description := "统一下单：用发起人账号统一结算，只有发起人可以继续操作。"
-	if mode == CheckoutModeSelfService {
-		description = "自我下单：结算者只下自己加入的商品，任何人都能各自完成自己的订单。"
-	}
-	checkoutSubmit := larkmsg.Button("去结算（仅发起人可点）", larkmsg.ButtonOptions{
+	description := "统一下单：由发起人使用自己的账号统一结算。\n自我下单：使用各自的个人瑞幸账号，只结算自己加入的商品。"
+	checkoutSubmit := larkmsg.Button("去结算", larkmsg.ButtonOptions{
 		Name:           "luckin_checkout_submit",
 		Type:           "primary",
 		FormActionType: "submit",

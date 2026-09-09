@@ -138,6 +138,7 @@ type fakePendingStore struct {
 	order               PendingOrder
 	findErr             error
 	markConfirmedCalled bool
+	markCancelledCalled bool
 	markHash            string
 	markResult          json.RawMessage
 }
@@ -174,6 +175,7 @@ func (s *fakePendingStore) MarkConfirmed(ctx context.Context, id, payloadHash, c
 }
 
 func (s *fakePendingStore) MarkCancelled(ctx context.Context, id, payloadHash, operatorOpenID, chatID string, now time.Time) error {
+	s.markCancelledCalled = true
 	return nil
 }
 

@@ -5,31 +5,53 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-var optionalModuleErrorLogf = log.Printf
+// AppOptions controls startup-failure cleanup independently of the startup
+// context. CleanupTimeout is a shared budget for the current failure and its
+// rollback; modules must honor the deadline passed to Stop.
+type AppOptions struct {
+	CleanupTimeout time.Duration
+	Logger         *log.Logger
+}
 
 // App 是进程内的运行时容器，负责统一管理模块顺序、启动/回滚策略、
 // 逆序关闭流程以及共享健康注册表。
 type App struct {
-	mu       sync.Mutex
-	registry *Registry
-	modules  []Module
-	started  []Module
-	running  bool
+	mu             sync.Mutex
+	registry       *Registry
+	modules        []Module
+	started        []Module
+	running        bool
+	cleanupTimeout time.Duration
+	logger         *log.Logger
 }
 
 // NewApp 创建一个空的运行时容器，并按给定顺序预注册模块。
 func NewApp(modules ...Module) *App {
+	return NewAppWithOptions(AppOptions{}, modules...)
+}
+
+// NewAppWithOptions adds instance-scoped cleanup and logging configuration.
+// Non-positive timeouts use 30 seconds; a nil logger uses log.Default().
+func NewAppWithOptions(options AppOptions, modules ...Module) *App {
+	if options.CleanupTimeout <= 0 {
+		options.CleanupTimeout = 30 * time.Second
+	}
+	if options.Logger == nil {
+		options.Logger = log.Default()
+	}
 	app := &App{
-		registry: NewRegistry(),
-		modules:  make([]Module, 0, len(modules)),
+		registry:       NewRegistry(),
+		modules:        make([]Module, 0, len(modules)),
+		cleanupTimeout: options.CleanupTimeout,
+		logger:         options.Logger,
 	}
 	for _, module := range modules {
 		app.AddModule(module)
@@ -110,65 +132,22 @@ func (a *App) Start(ctx context.Context) (err error) {
 			continue
 		}
 
-		moduleName := module.Name()
-		stats := moduleStats(module)
-
-		a.registry.Update(moduleName, StateInitializing, "", stats)
-		if err = module.Init(ctx); err != nil {
-			span.AddEvent("module.init.failed", trace.WithAttributes(attribute.String("module.name", moduleName)))
-			if errors.Is(err, ErrDisabled) {
-				a.registry.Update(moduleName, StateDisabled, err.Error(), stats)
-				err = nil
-				continue
+		stage, startErr := a.startModule(ctx, module)
+		if startErr != nil {
+			span.AddEvent("module."+stage+".failed", trace.WithAttributes(attribute.String("module.name", module.Name())))
+			keepRunning, failureErr := a.handleStartError(ctx, module, stage, startErr, started)
+			if failureErr != nil {
+				return failureErr
 			}
-			if stopErr := a.handleStartError(ctx, module, StateFailed, "init", err, started); stopErr != nil {
-				return errors.Join(err, stopErr)
+			if keepRunning {
+				started = append(started, module)
 			}
-			if !module.Critical() {
-				err = nil
-				continue
-			}
-			return err
+			continue
 		}
 
-		a.registry.Update(moduleName, StateStarting, "", moduleStats(module))
-		if err = module.Start(ctx); err != nil {
-			span.AddEvent("module.start.failed", trace.WithAttributes(attribute.String("module.name", moduleName)))
-			if errors.Is(err, ErrDisabled) {
-				a.registry.Update(moduleName, StateDisabled, err.Error(), moduleStats(module))
-				err = nil
-				continue
-			}
-			if stopErr := a.handleStartError(ctx, module, StateFailed, "start", err, started); stopErr != nil {
-				return errors.Join(err, stopErr)
-			}
-			if !module.Critical() {
-				err = nil
-				continue
-			}
-			return err
-		}
 		started = append(started, module)
-
-		if err = module.Ready(ctx); err != nil {
-			span.AddEvent("module.ready.failed", trace.WithAttributes(attribute.String("module.name", moduleName)))
-			if errors.Is(err, ErrDisabled) {
-				a.registry.Update(moduleName, StateDisabled, err.Error(), moduleStats(module))
-				err = nil
-				continue
-			}
-			if stopErr := a.handleStartError(ctx, module, StateDegraded, "ready", err, started); stopErr != nil {
-				return errors.Join(err, stopErr)
-			}
-			if !module.Critical() {
-				err = nil
-				continue
-			}
-			return err
-		}
-
-		span.AddEvent("module.ready", trace.WithAttributes(attribute.String("module.name", moduleName)))
-		a.registry.Update(moduleName, StateReady, "", moduleStats(module))
+		span.AddEvent("module.ready", trace.WithAttributes(attribute.String("module.name", module.Name())))
+		a.registry.Update(module.Name(), StateReady, "", moduleStats(module))
 	}
 
 	a.mu.Lock()
@@ -177,6 +156,18 @@ func (a *App) Start(ctx context.Context) (err error) {
 	a.mu.Unlock()
 	a.registry.SetLive(true)
 	return nil
+}
+
+func (a *App) startModule(ctx context.Context, module Module) (string, error) {
+	a.registry.Update(module.Name(), StateInitializing, "", moduleStats(module))
+	if err := module.Init(ctx); err != nil {
+		return "init", err
+	}
+	a.registry.Update(module.Name(), StateStarting, "", moduleStats(module))
+	if err := module.Start(ctx); err != nil {
+		return "start", err
+	}
+	return "ready", module.Ready(ctx)
 }
 
 // Stop 按启动逆序关闭模块，对齐依赖的反向释放顺序。
@@ -198,41 +189,47 @@ func (a *App) Stop(ctx context.Context) (stopErr error) {
 	a.mu.Unlock()
 	a.registry.SetLive(false)
 
-	for idx := len(started) - 1; idx >= 0; idx-- {
-		module := started[idx]
-		if module == nil {
-			continue
-		}
-		err := module.Stop(ctx)
-		if err != nil {
-			span.AddEvent("module.stop.failed", trace.WithAttributes(attribute.String("module.name", module.Name())))
-			stopErr = errors.Join(stopErr, fmt.Errorf("%s stop: %w", module.Name(), err))
-			a.registry.Update(module.Name(), StateFailed, err.Error(), moduleStats(module))
-			continue
-		}
-		span.AddEvent("module.stopped", trace.WithAttributes(attribute.String("module.name", module.Name())))
-		a.registry.Update(module.Name(), StateStopped, "", moduleStats(module))
-	}
-	return stopErr
+	return a.stopStarted(ctx, started)
 }
 
-// handleStartError 统一处理启动阶段错误，并按照 critical / optional
-// 语义决定是回滚退出，还是降级继续。
-func (a *App) handleStartError(ctx context.Context, module Module, failureState State, stage string, err error, started []Module) error {
-	if module == nil {
-		return err
+// handleStartError owns the failed module separately from previously started
+// modules, including resources allocated before Start succeeded. keepRunning is
+// true only for an optional module whose readiness check failed.
+func (a *App) handleStartError(ctx context.Context, module Module, stage string, err error, started []Module) (keepRunning bool, failureErr error) {
+	disabled := errors.Is(err, ErrDisabled)
+	if disabled && stage == "init" {
+		a.registry.Update(module.Name(), StateDisabled, err.Error(), moduleStats(module))
+		return false, nil
 	}
-	message := strings.TrimSpace(stage + ": " + err.Error())
+	if !disabled && stage == "ready" && !module.Critical() {
+		a.recordStartFailure(module, stage, err)
+		return true, nil
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cleanupTimeout)
+	defer cancel()
+	cleanupErr := a.stopModule(cleanupCtx, module)
+	if disabled && cleanupErr == nil {
+		a.registry.Update(module.Name(), StateDisabled, err.Error(), moduleStats(module))
+		return false, nil
+	}
+	failure := errors.Join(fmt.Errorf("%s %s: %w", module.Name(), stage, err), cleanupErr)
+	a.recordStartFailure(module, stage, failure)
+	if !module.Critical() {
+		return false, nil
+	}
+	return false, errors.Join(failure, a.stopStarted(cleanupCtx, started))
+}
+
+func (a *App) recordStartFailure(module Module, stage string, err error) {
+	state := StateDegraded
 	if module.Critical() {
-		a.registry.Update(module.Name(), failureState, message, moduleStats(module))
-		return a.stopStarted(ctx, started)
+		state = StateFailed
 	}
-	a.registry.Update(module.Name(), StateDegraded, message, moduleStats(module))
-	optionalModuleErrorLogf(
-		"[ERROR] optional module degraded: module=%s stage=%s error=%v",
-		module.Name(), stage, err,
-	)
-	return nil
+	a.registry.Update(module.Name(), state, stage+": "+err.Error(), moduleStats(module))
+	if !module.Critical() {
+		a.logger.Printf("[ERROR] optional module degraded: module=%s stage=%s error=%v", module.Name(), stage, err)
+	}
 }
 
 // stopStarted 是 critical 模块启动失败时的回滚路径，用来清理前面已经
@@ -244,12 +241,21 @@ func (a *App) stopStarted(ctx context.Context, started []Module) error {
 		if module == nil {
 			continue
 		}
-		err := module.Stop(ctx)
-		if err != nil {
-			stopErr = errors.Join(stopErr, fmt.Errorf("%s stop: %w", module.Name(), err))
-		}
+		stopErr = errors.Join(stopErr, a.stopModule(ctx, module))
 	}
 	return stopErr
+}
+
+func (a *App) stopModule(ctx context.Context, module Module) error {
+	span := trace.SpanFromContext(ctx)
+	if err := module.Stop(ctx); err != nil {
+		span.AddEvent("module.stop.failed", trace.WithAttributes(attribute.String("module.name", module.Name())))
+		a.registry.Update(module.Name(), StateFailed, err.Error(), moduleStats(module))
+		return fmt.Errorf("%s stop: %w", module.Name(), err)
+	}
+	span.AddEvent("module.stopped", trace.WithAttributes(attribute.String("module.name", module.Name())))
+	a.registry.Update(module.Name(), StateStopped, "", moduleStats(module))
+	return nil
 }
 
 // moduleStats 用来读取模块的可选观测数据，不强制所有模块都实现

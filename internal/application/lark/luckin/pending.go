@@ -21,8 +21,10 @@ const (
 )
 
 var (
-	ErrPendingOrderNotFound       = errors.New("luckin pending order not found")
-	ErrPendingOrderNotConfirmable = errors.New("luckin pending order cannot be confirmed")
+	// ErrPendingOrderCredentialMismatch 待确认订单没有使用结算人自己的个人账号。
+	ErrPendingOrderCredentialMismatch = errors.New("luckin pending order credential owner mismatch")
+	ErrPendingOrderNotFound           = errors.New("luckin pending order not found")
+	ErrPendingOrderNotConfirmable     = errors.New("luckin pending order cannot be confirmed")
 	// ErrPendingOrderAlreadyDone 已经被确认或取消过；一般是重复点击/回放。
 	ErrPendingOrderAlreadyDone = errors.New("luckin pending order already confirmed or cancelled")
 	// ErrPendingOrderExpired 已过 10 分钟有效期。
@@ -36,15 +38,13 @@ var (
 )
 
 type PendingOrder struct {
-	ID                 string
-	AppID              string
-	BotOpenID          string
-	ChatID             string
-	// RequesterOpenID 始终是发起人 OpenID。即便结算按钮被发起人之外的人点到（虽然会被
-	// 越权拦截），凭证、订单归属仍以发起人为准。
-	RequesterOpenID    string
-	// InitiatorOpenID 与 RequesterOpenID 在 luckin 场景下相同，单独保留是为了
-	// 在落库时显式表达"这单的发起人"，方便后续按发起人查询/分账。
+	ID        string
+	AppID     string
+	BotOpenID string
+	ChatID    string
+	// RequesterOpenID 是本单结算人；自我下单时为参与者，统一下单时为发起人。
+	RequesterOpenID string
+	// InitiatorOpenID 是购物会话发起人，自我下单时可以与结算人不同。
 	InitiatorOpenID    string
 	CheckoutMode       CheckoutMode
 	CredentialScope    CredentialScope
@@ -54,13 +54,13 @@ type PendingOrder struct {
 	PreviewResult      json.RawMessage
 	// CartSnapshot 是 Draft 时的购物车原貌（含 LineID/AddedByOpenID/UnitPrice），
 	// 取餐通知卡按这份快照分账，避免后续 cart 被清空导致拿不到分账依据。
-	CartSnapshot       []CartItem
-	Status             PendingStatus
-	ResultJSON         json.RawMessage
-	ErrorText          string
-	ExpiresAt          time.Time
-	ConfirmedByOpenID  string
-	ConfirmedAt        *time.Time
+	CartSnapshot      []CartItem
+	Status            PendingStatus
+	ResultJSON        json.RawMessage
+	ErrorText         string
+	ExpiresAt         time.Time
+	ConfirmedByOpenID string
+	ConfirmedAt       *time.Time
 }
 
 type NewPendingOrderRequest struct {

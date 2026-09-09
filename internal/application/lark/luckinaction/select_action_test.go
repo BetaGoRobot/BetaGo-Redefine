@@ -177,9 +177,10 @@ func TestSplitOrderReplySuffixIsUniquePerOrder(t *testing.T) {
 }
 
 func TestHandleCouponApplyForSplitPendingOrderDoesNotRequireSession(t *testing.T) {
+	identity := credentialRequestFromAction(testActionContextNoMsg(nil))
 	order := luckin.NewPendingOrder(luckin.NewPendingOrderRequest{
-		AppID:           "app",
-		BotOpenID:       "bot",
+		AppID:           identity.AppID,
+		BotOpenID:       identity.BotOpenID,
 		ChatID:          "oc_chat",
 		InitiatorOpenID: "ou_user",
 		RequesterOpenID: "ou_user",

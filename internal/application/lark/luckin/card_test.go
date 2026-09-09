@@ -118,3 +118,41 @@ func containsAll(s string, parts ...string) bool {
 	}
 	return true
 }
+
+func TestInitialCartExplainsBothModesWithoutInitiatorOnlyButton(t *testing.T) {
+	card := BuildCartCard(ShopSelection{DeptName: "门店"}, Cart{Items: []CartItem{{Amount: 1}}}, CheckoutModeInitiatorUnified)
+	text := mustMarshalForTest(card)
+	if !containsAll(text, "去结算", "统一下单：", "自我下单：", "使用各自的个人瑞幸账号") || strings.Contains(text, "仅发起人可点") {
+		t.Fatal("initial cart must explain both modes and use a generic checkout button")
+	}
+}
+
+func TestPendingCardUsesSavedPersonalOwnerWhenModeIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		requester string
+		mode      CheckoutMode
+		normalize bool
+		want      string
+		reject    string
+	}{
+		{"participant_missing_mode", "ou_b", "", false, "自我下单", "发起人账号"},
+		{"participant_normalized_mode", "ou_b", "", true, "自我下单", "发起人账号"},
+		{"initiator_missing_mode", "ou_a", "", false, "个人账号下单", "统一下单"},
+		{"explicit_unified", "ou_a", CheckoutModeInitiatorUnified, false, "统一下单", "自我下单"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			order := PendingOrder{RequesterOpenID: tc.requester, InitiatorOpenID: "ou_a", CheckoutMode: tc.mode, CredentialScope: CredentialScope{Type: ScopePersonal, ID: tc.requester}}
+			if tc.normalize {
+				order = NewPendingOrder(NewPendingOrderRequest{RequesterOpenID: order.RequesterOpenID, InitiatorOpenID: order.InitiatorOpenID, CheckoutMode: order.CheckoutMode, Credential: Credential{Scope: order.CredentialScope}})
+				if order.CheckoutMode != CheckoutModeInitiatorUnified {
+					t.Fatal("test must reproduce normalized mode after coupon draft")
+				}
+			}
+			text := mustMarshalForTest(BuildPendingOrderCard(order))
+			if !containsAll(text, tc.want, "下单账号：", tc.requester) || strings.Contains(text, tc.reject) {
+				t.Fatalf("card did not describe saved ownership: %s", text)
+			}
+		})
+	}
+}

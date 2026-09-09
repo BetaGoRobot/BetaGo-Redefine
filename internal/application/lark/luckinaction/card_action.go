@@ -15,8 +15,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpclient"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/mcpstore"
-	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"go.uber.org/zap"
 )
 
@@ -210,6 +210,8 @@ func friendlyConfirmError(prefix string, err error) string {
 		return "订单不属于当前群，请勿跨群点击"
 	case errors.Is(err, luckin.ErrPendingOrderNotOwnedByOperator):
 		return "只有下单人才能确认或取消该订单"
+	case errors.Is(err, luckin.ErrPendingOrderCredentialMismatch):
+		return "订单账号归属已变更，请使用自己的个人瑞幸账号重新结算"
 	case errors.Is(err, luckin.ErrPendingOrderNotFound):
 		return "订单不存在或已失效，请重新结算"
 	default:
