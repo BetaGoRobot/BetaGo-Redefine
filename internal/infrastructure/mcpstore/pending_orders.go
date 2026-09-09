@@ -3,6 +3,7 @@ package mcpstore
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
@@ -91,7 +92,10 @@ func (r *PendingOrderRepository) MarkCancelled(ctx context.Context, id, payloadH
 	return nil
 }
 
-func (r *PendingOrderRepository) UpdateDraft(ctx context.Context, order luckin.PendingOrder, now time.Time) error {
+func (r *PendingOrderRepository) UpdateDraft(ctx context.Context, order luckin.PendingOrder, expectedHash string, now time.Time) error {
+	if strings.TrimSpace(expectedHash) == "" {
+		return luckin.ErrPendingOrderNotConfirmable
+	}
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -104,6 +108,7 @@ func (r *PendingOrderRepository) UpdateDraft(ctx context.Context, order luckin.P
 	ins := r.q.LuckinPendingOrder
 	result, err := ins.WithContext(ctx).
 		Where(ins.ID.Eq(order.ID)).
+		Where(ins.PayloadHash.Eq(expectedHash)).
 		Where(ins.Status.Eq(string(luckin.PendingStatusPending))).
 		Where(ins.ExpiresAt.Gt(now)).
 		Updates(updates)

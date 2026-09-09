@@ -143,7 +143,7 @@ func TestCouponSelfServiceKeepsUsersAccount(t *testing.T) {
 		InitiatorOpenID: "ou_initiator", RequesterOpenID: req.OpenID,
 		CheckoutMode:       luckin.CheckoutModeSelfService,
 		Credential:         luckin.Credential{Scope: luckin.CredentialScope{Type: luckin.ScopePersonal, ID: req.OpenID}},
-		CreateOrderPayload: json.RawMessage(`{"deptId":1}`),
+		CreateOrderPayload: json.RawMessage(`{"deptId":1,"productList":[{"productId":1,"amount":1}]}`),
 		CartSnapshot:       []luckin.CartItem{{ProductID: 1, Amount: 1}}, Now: time.Now(),
 	})
 	action.Action.Value = map[string]any{cardactionproto.PendingOrderIDField: order.ID, cardactionproto.PayloadHashField: order.PayloadHash}

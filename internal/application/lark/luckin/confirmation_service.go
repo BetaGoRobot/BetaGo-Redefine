@@ -16,7 +16,8 @@ type ConfirmationService interface {
 	Confirm(context.Context, ConfirmRequest) (map[string]any, error)
 	Cancel(context.Context, CancelRequest) error
 	// CardAfterConfirmError 确认失败后的回写卡片：
-	// pending 仍有效且账号归属正确时回到确认页，否则落到重新结算提示。
+	// 明确券拒绝后使用新报价；结果不确定时不提供重提按钮。
+	// 返回 nil 表示已有新版本或已完成，调用方不得覆盖当前卡片。
 	CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any
 }
 
@@ -41,7 +42,7 @@ type PendingOrderStore interface {
 	FindPendingOrder(context.Context, string) (PendingOrder, error)
 	MarkConfirmed(context.Context, string, string, string, json.RawMessage, time.Time) error
 	MarkCancelled(context.Context, string, string, string, string, time.Time) error
-	UpdateDraft(context.Context, PendingOrder, time.Time) error
+	UpdateDraft(context.Context, PendingOrder, string, time.Time) error
 }
 
 type ToolCaller interface {
@@ -139,10 +140,13 @@ func (s confirmationService) Confirm(ctx context.Context, req ConfirmRequest) (m
 		Arguments: order.CreateOrderPayload,
 	})
 	if err != nil {
-		return nil, err
+		if isCouponRejection(err) {
+			return nil, s.recoverCoupon(ctx, order, cred, err)
+		}
+		return nil, &submissionUncertain{cause: err}
 	}
 	if err := s.store.MarkConfirmed(ctx, order.ID, order.PayloadHash, req.OperatorOpenID, result.Content, now); err != nil {
-		return nil, err
+		return nil, &submissionUncertain{cause: err}
 	}
 
 	created := OrderCreatedFromResult(result.Content)
@@ -211,9 +215,33 @@ func (s confirmationService) remoteURL() string {
 	return ServerURL
 }
 
-// CardAfterConfirmError 在 createOrder 被拒等可恢复失败时，把卡片刷回待确认订单页；
-// 草稿失效、过期或账号归属不匹配时，使用终态失败卡重新结算。
+// CardAfterConfirmError 使用持久化读回结果渲染恢复卡；确认结果不确定时提示核对。
 func (s confirmationService) CardAfterConfirmError(ctx context.Context, pendingOrderID string, confirmErr error, notice string) map[string]any {
+	var uncertain *submissionUncertain
+	if errors.As(confirmErr, &uncertain) {
+		return buildOrderCheckCard("下单结果暂未确认，请先在瑞幸核对订单，避免重复下单。")
+	}
+	var recovery *couponRecovery
+	if errors.As(confirmErr, &recovery) {
+		current, err := s.store.FindPendingOrder(ctx, pendingOrderID)
+		if err != nil {
+			return buildOrderCheckCard("暂时无法读取订单，请稍后核对订单状态。")
+		}
+		// A concurrent revision or completed order owns the newer card.
+		if current.Status != PendingStatusPending {
+			return nil
+		}
+		if !current.ExpiresAt.After(time.Now()) {
+			return BuildOrderFailedCard("订单已过期，请重新结算")
+		}
+		if recovery.next != nil && current.PayloadHash == recovery.next.PayloadHash {
+			return BuildPendingOrderCardWithNotice(current, "优惠券不可用，已清除原选券并刷新可用券与价格，请重新确认。")
+		}
+		if current.PayloadHash != recovery.order.PayloadHash {
+			return nil
+		}
+		return BuildCouponRefreshCard(current)
+	}
 	if errors.Is(confirmErr, ErrPendingOrderCredentialMismatch) {
 		return BuildOrderFailedCard("待确认订单的账号与结算人不匹配，请使用自己的个人瑞幸账号重新结算。")
 	}

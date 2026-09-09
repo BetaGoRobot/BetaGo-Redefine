@@ -390,7 +390,10 @@ func (s *memPendingStore) FindPendingOrder(ctx context.Context, id string) (luck
 	return s.order, nil
 }
 
-func (s *memPendingStore) UpdateDraft(ctx context.Context, order luckin.PendingOrder, now time.Time) error {
+func (s *memPendingStore) UpdateDraft(ctx context.Context, order luckin.PendingOrder, expectedHash string, now time.Time) error {
+	if s.order.PayloadHash != expectedHash || s.order.Status != luckin.PendingStatusPending || !s.order.ExpiresAt.After(now) {
+		return luckin.ErrPendingOrderNotConfirmable
+	}
 	s.order = order
 	s.updated = true
 	return nil

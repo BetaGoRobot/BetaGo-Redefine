@@ -50,8 +50,9 @@ type PendingOrder struct {
 	CredentialScope    CredentialScope
 	MCPServerName      string
 	CreateOrderPayload json.RawMessage
-	PayloadHash        string
-	PreviewResult      json.RawMessage
+	// PayloadHash 同时作为卡片版本凭据；刷新时包含旧版本、提交参数与新报价。
+	PayloadHash   string
+	PreviewResult json.RawMessage
 	// CartSnapshot 是 Draft 时的购物车原貌（含 LineID/AddedByOpenID/UnitPrice），
 	// 取餐通知卡按这份快照分账，避免后续 cart 被清空导致拿不到分账依据。
 	CartSnapshot      []CartItem
