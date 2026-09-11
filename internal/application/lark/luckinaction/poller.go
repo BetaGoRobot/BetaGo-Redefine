@@ -24,12 +24,22 @@ const (
 	orderMaxFailCount = 5
 )
 
+type orderPollRepository interface {
+	ClaimDueOrders(context.Context, string, string, time.Time, time.Duration, int) ([]luckin.OrderRecord, error)
+	FindRowID(context.Context, string, string, string) (int64, bool, error)
+	ApplyUpdate(context.Context, string, string, int64, mcpstore.OrderUpdate, time.Time) error
+}
+
 // OrderPoller 后台轮询瑞幸订单生命周期，按状态机推进并通知/更新卡片。
 type OrderPoller struct {
-	repo   *mcpstore.OrderRepository
-	draft  luckin.DraftService
-	tokens luckin.CredentialStore
-	cfg    luckin.OrderPollConfig
+	repo      orderPollRepository
+	draft     luckin.DraftService
+	tokens    luckin.CredentialStore
+	cfg       luckin.OrderPollConfig
+	appID     string
+	botOpenID string
+	patch     func(context.Context, string, any) error
+	create    func(context.Context, string, any, string, string) error
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -44,13 +54,18 @@ func NewOrderPoller() *OrderPoller {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	identity := botidentity.Current()
 	return &OrderPoller{
-		repo:   mcpstore.NewOrderRepository(db),
-		draft:  luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL()),
-		tokens: credentialStore{},
-		cfg:    luckinOrderPollConfig(),
-		ctx:    ctx,
-		cancel: cancel,
+		repo:      mcpstore.NewOrderRepository(db),
+		draft:     luckin.NewDraftService(mcpclient.New(mcpclient.ClientOptions{}), luckinServerURL()),
+		tokens:    credentialStore{},
+		cfg:       luckinOrderPollConfig(),
+		appID:     identity.AppID,
+		botOpenID: identity.BotOpenID,
+		patch:     larkmsg.PatchCardJSON,
+		create:    larkmsg.CreateCardJSON,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -105,7 +120,7 @@ func (p *OrderPoller) run() {
 
 func (p *OrderPoller) tick() {
 	now := time.Now()
-	records, err := p.repo.ClaimDueOrders(p.ctx, now, orderPollLease, orderPollBatch)
+	records, err := p.repo.ClaimDueOrders(p.ctx, p.appID, p.botOpenID, now, orderPollLease, orderPollBatch)
 	if err != nil {
 		logs.L().Ctx(p.ctx).Warn("luckin claim due orders failed", zap.Error(err))
 		return
@@ -116,7 +131,11 @@ func (p *OrderPoller) tick() {
 }
 
 func (p *OrderPoller) process(record luckin.OrderRecord, now time.Time) {
-	rowID, ok, err := p.repo.FindRowID(p.ctx, record.AppID, record.BotOpenID, record.OrderID)
+	if !p.ownsOrder(record) {
+		logs.L().Ctx(p.ctx).Warn("luckin order poll rejected foreign or missing tenant", zap.String("order_id", record.OrderID))
+		return
+	}
+	rowID, ok, err := p.repo.FindRowID(p.ctx, p.appID, p.botOpenID, record.OrderID)
 	if err != nil || !ok {
 		return
 	}
@@ -156,13 +175,17 @@ func (p *OrderPoller) handleFailure(record luckin.OrderRecord, rowID int64, reas
 		return
 	}
 	next := now.Add(p.cfg.PollInterval)
-	_ = p.repo.ApplyUpdate(p.ctx, rowID, mcpstore.OrderUpdate{
+	_ = p.repo.ApplyUpdate(p.ctx, p.appID, p.botOpenID, rowID, mcpstore.OrderUpdate{
 		FailCount:  &failCount,
 		NextPollAt: &next,
 	}, now)
 }
 
 func (p *OrderPoller) apply(record luckin.OrderRecord, rowID int64, detail luckin.OrderDetail, decision luckin.PollDecision, now time.Time) {
+	if !p.ownsOrder(record) {
+		logs.L().Ctx(p.ctx).Warn("luckin order delivery rejected foreign or missing tenant", zap.String("order_id", record.OrderID))
+		return
+	}
 	update := mcpstore.OrderUpdate{
 		Status:           decision.Status,
 		LastRemoteStatus: decision.LastRemoteStatus,
@@ -171,29 +194,58 @@ func (p *OrderPoller) apply(record luckin.OrderRecord, rowID int64, detail lucki
 		StoppedReason:    decision.StoppedReason,
 		Timestamps:       decision.StatusTimestamps,
 	}
-	if err := p.repo.ApplyUpdate(p.ctx, rowID, update, now); err != nil {
-		logs.L().Ctx(p.ctx).Warn("luckin order update failed", zap.String("order_id", record.OrderID), zap.Error(err))
-	}
-
+	deliveryFailed := false
 	if record.MessageID == "" {
 		logs.L().Ctx(p.ctx).Warn("luckin order poll skipped card patch: message id empty", zap.String("order_id", record.OrderID))
-		return
-	}
-	switch {
-	case decision.SendUnpaidReminder:
-		p.patchOrderCard(record, luckin.BuildUnpaidReminderCard(record.OrderID, record.PayURL), "unpaid_reminder")
-	case decision.NoticeText != "":
-		p.patchOrderCard(record, luckin.BuildOrderNoticeCard(decision.NoticeText, detail), "notice")
-		if detail.Status == luckin.OrderStatusReady {
-			p.notifyReady(record, detail)
+	} else {
+		var patchErr error
+		switch {
+		case decision.SendUnpaidReminder:
+			patchErr = p.patchOrderCard(record, luckin.BuildUnpaidReminderCard(record.OrderID, record.PayURL), "unpaid_reminder")
+		case decision.NoticeText != "":
+			patchErr = p.patchOrderCard(record, luckin.BuildOrderNoticeCard(decision.NoticeText, detail), "notice")
+		case decision.PatchStatusCard:
+			patchErr = p.patchOrderCard(record, luckin.BuildOrderStatusCard(detail), "status")
 		}
-	case decision.PatchStatusCard:
-		p.patchOrderCard(record, luckin.BuildOrderStatusCard(detail), "status")
+		deliveryFailed = patchErr != nil
+	}
+	// The separate pickup notice must still be attempted if the original card
+	// cannot be patched. EvaluatePoll also normalizes status-name-only responses.
+	if decision.LastRemoteStatus != nil && *decision.LastRemoteStatus == luckin.OrderStatusReady {
+		if err := p.notifyReady(record, detail); err != nil {
+			deliveryFailed = true
+		}
+	}
+	if deliveryFailed {
+		// Acknowledge the transition only after both deliveries succeed. The ready
+		// notice retains its per-order UUID so retries reuse the same delivery key.
+		next := decision.NextPollAt
+		if next == nil {
+			interval := p.cfg.PollInterval
+			if interval <= 0 {
+				interval = luckin.DefaultOrderPollConfig().PollInterval
+			}
+			retryAt := now.Add(interval)
+			next = &retryAt
+		}
+		update = mcpstore.OrderUpdate{NextPollAt: next}
+	}
+
+	if err := p.repo.ApplyUpdate(p.ctx, p.appID, p.botOpenID, rowID, update, now); err != nil {
+		logs.L().Ctx(p.ctx).Warn("luckin order update failed", zap.String("order_id", record.OrderID), zap.Error(err))
+		return
 	}
 }
 
-func (p *OrderPoller) patchOrderCard(record luckin.OrderRecord, card map[string]any, scene string) {
-	if err := larkmsg.PatchCardJSON(p.ctx, record.MessageID, card); err != nil {
+// Both identifiers must match the worker, never identity supplied by a row.
+func (p *OrderPoller) ownsOrder(record luckin.OrderRecord) bool {
+	return strings.TrimSpace(p.appID) != "" && strings.TrimSpace(p.botOpenID) != "" &&
+		record.AppID == p.appID && record.BotOpenID == p.botOpenID
+}
+
+func (p *OrderPoller) patchOrderCard(record luckin.OrderRecord, card map[string]any, scene string) error {
+	err := p.patch(p.ctx, record.MessageID, card)
+	if err != nil {
 		logs.L().Ctx(p.ctx).Warn("luckin order poll patch card failed",
 			zap.String("order_id", record.OrderID),
 			zap.String("message_id", record.MessageID),
@@ -201,11 +253,12 @@ func (p *OrderPoller) patchOrderCard(record luckin.OrderRecord, card map[string]
 			zap.Error(err),
 		)
 	}
+	return err
 }
 
-func (p *OrderPoller) notifyReady(record luckin.OrderRecord, detail luckin.OrderDetail) {
+func (p *OrderPoller) notifyReady(record luckin.OrderRecord, detail luckin.OrderDetail) error {
 	if strings.TrimSpace(record.ChatID) == "" {
-		return
+		return fmt.Errorf("ready notice requires chat id for order %s", record.OrderID)
 	}
 	initiator := strings.TrimSpace(record.InitiatorOpenID)
 	if initiator == "" {
@@ -215,13 +268,15 @@ func (p *OrderPoller) notifyReady(record luckin.OrderRecord, detail luckin.Order
 	// 用快照 + DiscountPrice 渲染按人分账。空快照时 BuildOrderReadyCard 退化为普通通知卡。
 	card := luckin.BuildOrderReadyCard(notice, detail, record.CartSnapshot, record.DiscountPrice)
 	card = luckin.AppendInitiatorFooter(card, initiator)
-	if err := larkmsg.CreateCardJSON(p.ctx, record.ChatID, card, "luckin-ready-"+record.OrderID, "_luckinReady"); err != nil {
+	if err := p.create(p.ctx, record.ChatID, card, "luckin-ready-"+record.OrderID, "_luckinReady"); err != nil {
 		logs.L().Ctx(p.ctx).Warn("luckin ready notice card failed", zap.String("order_id", record.OrderID), zap.Error(err))
+		return err
 	}
+	return nil
 }
 
 func (p *OrderPoller) stop(rowID int64, status luckin.OrderRecordStatus, reason string, now time.Time) {
-	_ = p.repo.ApplyUpdate(p.ctx, rowID, mcpstore.OrderUpdate{
+	_ = p.repo.ApplyUpdate(p.ctx, p.appID, p.botOpenID, rowID, mcpstore.OrderUpdate{
 		Status:        status,
 		StoppedReason: reason,
 	}, now)

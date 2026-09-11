@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
@@ -68,5 +69,96 @@ func TestFindOrderUsesTenantAndOrderPredicates(t *testing.T) {
 				t.Fatalf("stored order metadata not preserved: %+v, error=%v", record, err)
 			}
 		})
+	}
+}
+
+func TestClaimDueOrdersScopesSelectionAndLeaseToTenant(t *testing.T) {
+	database, err := gorm.Open(postgres.New(postgres.Config{Conn: &orderFindDryRunPool{}}), &gorm.Config{DryRun: true, SkipDefaultTransaction: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statements []struct {
+		sql  string
+		vars []any
+	}
+	capture := func(tx *gorm.DB) {
+		statements = append(statements, struct {
+			sql  string
+			vars []any
+		}{tx.Statement.SQL.String(), append([]any(nil), tx.Statement.Vars...)})
+	}
+	if err := database.Callback().Query().After("gorm:query").Register("test:claim-row", func(tx *gorm.DB) {
+		capture(tx)
+		rows := tx.Statement.Dest.(*[]*model.LuckinOrder)
+		*rows = []*model.LuckinOrder{{ID: 7, AppID: "app", BotOpenID: "bot"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Callback().Update().After("gorm:update").Register("test:claim-lease", capture); err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewOrderRepository(database).ClaimDueOrders(context.Background(), "app", "bot", time.Now(), time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statements) != 2 {
+		t.Fatalf("want selection and lease update, got %v", statements)
+	}
+	for _, statement := range statements {
+		assertDraftBoundValue(t, statement.sql, statement.vars, "app_id", "=", "app")
+		assertDraftBoundValue(t, statement.sql, statement.vars, "bot_open_id", "=", "bot")
+	}
+
+}
+
+func TestClaimDueOrdersRejectsMissingTenantBeforeDatabaseAccess(t *testing.T) {
+	for _, tenant := range [][2]string{{"", "bot"}, {"app", " "}, {"", ""}} {
+		repo := &OrderRepository{}
+		if _, err := repo.ClaimDueOrders(context.Background(), tenant[0], tenant[1], time.Now(), time.Minute, 10); err == nil {
+			t.Errorf("missing tenant %q must not claim orders", tenant)
+		}
+	}
+}
+
+func TestApplyOrderUpdateRequiresTenantAndRow(t *testing.T) {
+	database, err := gorm.Open(postgres.New(postgres.Config{Conn: &orderFindDryRunPool{}}), &gorm.Config{DryRun: true, SkipDefaultTransaction: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statement string
+	var vars []any
+	if err := database.Callback().Update().After("gorm:update").Register("test:tenant-update", func(tx *gorm.DB) {
+		statement = tx.Statement.SQL.String()
+		vars = append([]any(nil), tx.Statement.Vars...)
+		tx.RowsAffected = 1
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewOrderRepository(database).ApplyUpdate(context.Background(), "app", "bot", 7, OrderUpdate{Status: luckin.OrderRecordCompleted}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	assertDraftBoundValue(t, statement, vars, "app_id", "=", "app")
+	assertDraftBoundValue(t, statement, vars, "bot_open_id", "=", "bot")
+	assertDraftBoundValue(t, statement, vars, "id", "=", int64(7))
+}
+
+func TestApplyOrderUpdateRejectsMissingTenantBeforeDatabaseAccess(t *testing.T) {
+	for _, tenant := range [][2]string{{"", "bot"}, {"app", " "}, {"", ""}} {
+		repo := &OrderRepository{}
+		if err := repo.ApplyUpdate(context.Background(), tenant[0], tenant[1], 7, OrderUpdate{Status: luckin.OrderRecordFailed}, time.Now()); err == nil {
+			t.Fatalf("missing tenant accepted: %q", tenant)
+		}
+	}
+}
+
+func TestApplyOrderUpdateRejectsRowOutsideTenant(t *testing.T) {
+	database, err := gorm.Open(postgres.New(postgres.Config{Conn: &orderFindDryRunPool{}}), &gorm.Config{DryRun: true, SkipDefaultTransaction: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A row ID outside the tenant matches no rows in the scoped UPDATE.
+	err = NewOrderRepository(database).ApplyUpdate(context.Background(), "app", "bot", 7, OrderUpdate{Status: luckin.OrderRecordCompleted}, time.Now())
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("zero matching rows error=%v", err)
 	}
 }
