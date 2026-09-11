@@ -2,6 +2,8 @@ package mcpstore
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/luckin"
@@ -24,9 +26,14 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, record luckin.OrderRe
 }
 
 // ClaimDueOrders 原子领取到期可轮询的订单：把 next_poll_at 推后一个租约，避免多 worker 重复处理。
-func (r *OrderRepository) ClaimDueOrders(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]luckin.OrderRecord, error) {
+func (r *OrderRepository) ClaimDueOrders(ctx context.Context, appID, botOpenID string, now time.Time, lease time.Duration, limit int) ([]luckin.OrderRecord, error) {
+	appID, botOpenID = strings.TrimSpace(appID), strings.TrimSpace(botOpenID)
+	if appID == "" || botOpenID == "" {
+		return nil, errors.New("order polling requires app id and bot open id")
+	}
 	ins := r.q.LuckinOrder
 	rows, err := ins.WithContext(ctx).
+		Where(ins.AppID.Eq(appID), ins.BotOpenID.Eq(botOpenID)).
 		Where(ins.Status.Eq(string(luckin.OrderRecordActive))).
 		Where(ins.NextPollAt.Lte(now)).
 		Order(ins.NextPollAt).
@@ -38,6 +45,7 @@ func (r *OrderRepository) ClaimDueOrders(ctx context.Context, now time.Time, lea
 	claimed := make([]luckin.OrderRecord, 0, len(rows))
 	for _, row := range rows {
 		res, err := ins.WithContext(ctx).
+			Where(ins.AppID.Eq(appID), ins.BotOpenID.Eq(botOpenID)).
 			Where(ins.ID.Eq(row.ID)).
 			Where(ins.Status.Eq(string(luckin.OrderRecordActive))).
 			Where(ins.NextPollAt.Lte(now)).
@@ -57,7 +65,11 @@ func (r *OrderRepository) ClaimDueOrders(ctx context.Context, now time.Time, lea
 }
 
 // ApplyUpdate 写入一次轮询后的状态更新（节点时间戳、状态、下次轮询时间或终止）。
-func (r *OrderRepository) ApplyUpdate(ctx context.Context, orderRowID int64, update OrderUpdate, now time.Time) error {
+func (r *OrderRepository) ApplyUpdate(ctx context.Context, appID, botOpenID string, orderRowID int64, update OrderUpdate, now time.Time) error {
+	appID, botOpenID = strings.TrimSpace(appID), strings.TrimSpace(botOpenID)
+	if appID == "" || botOpenID == "" {
+		return errors.New("order update requires app id and bot open id")
+	}
 	updates := map[string]any{"updated_at": now}
 	if update.Status != "" {
 		updates["status"] = string(update.Status)
@@ -81,8 +93,16 @@ func (r *OrderRepository) ApplyUpdate(ctx context.Context, orderRowID int64, upd
 		updates[col] = ts
 	}
 	ins := r.q.LuckinOrder
-	_, err := ins.WithContext(ctx).Where(ins.ID.Eq(orderRowID)).Updates(updates)
-	return err
+	result, err := ins.WithContext(ctx).
+		Where(ins.AppID.Eq(appID), ins.BotOpenID.Eq(botOpenID), ins.ID.Eq(orderRowID)).
+		Updates(updates)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // OrderUpdate 描述一次轮询后的字段变更。
