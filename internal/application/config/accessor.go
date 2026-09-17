@@ -3,8 +3,13 @@ package config
 import (
 	"context"
 
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
 )
+
+func (a *Accessor) ArkModelOptions() (infraConfig.ModelOptionsMap, error) {
+	return infraConfig.ParseModelOptions(a.manager.GetString(a.ctx, KeyArkModelOptions, a.chatID, a.openID))
+}
 
 // Accessor 统一配置访问接口
 // 这是一个便捷的包装器，提供简洁的配置访问方法

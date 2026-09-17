@@ -39,6 +39,7 @@ import EChart from '../components/EChart.vue'
 import GlobalFilterBar from '../components/GlobalFilterBar.vue'
 import AgenticRolloutPanel from '../components/AgenticRolloutPanel.vue'
 import ManagementGate from '../components/ManagementGate.vue'
+import ModelOptionsEditor from '../components/ModelOptionsEditor.vue'
 import UsageBusinessOverview from '../components/UsageBusinessOverview.vue'
 import { managementSession } from '../auth/session'
 import { isAutheliaMode } from '../auth/runtime'
@@ -93,9 +94,11 @@ const featLoading = ref(false)
 const configs = ref<ConfigView[]>([])
 const genericConfigs = computed(() =>
   configs.value.filter(
-    (config) => config.management_surface !== 'agentic_rollout',
+    (config) => config.management_surface !== 'agentic_rollout' && config.management_surface !== 'model_options',
   ),
 )
+const modelOptionConfigs = computed(() => configs.value.filter((config) => config.management_surface === 'model_options'))
+const modelOptionsSaving = ref(false)
 const cfgLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
 const members = ref<ChatMember[]>([])
@@ -280,6 +283,15 @@ async function saveConfig(c: ConfigView) {
     ElMessage.success(c.key + ' 已保存')
   } catch (e: any) {
     ElMessage.error('保存失败：' + (e?.response?.data?.error || e.message))
+  }
+}
+async function saveModelOptions(c: ConfigView, value: string) {
+  modelOptionsSaving.value = true
+  drafts.value[c.key] = value
+  try {
+    await saveConfig(c)
+  } finally {
+    modelOptionsSaving.value = false
   }
 }
 async function resetConfig(c: ConfigView) {
@@ -1324,6 +1336,14 @@ watch([() => props.chatID, () => props.botID, () => bot.value?.id], async () => 
 
       <el-tab-pane label="配置" name="configs">
         <ManagementGate title="登录后编辑机器人配置">
+        <ModelOptionsEditor
+          v-for="config in modelOptionConfigs"
+          :key="config.key"
+          :value="config.value"
+          :disabled="config.read_only || cfgLoading || modelOptionsSaving"
+          @save="(value) => saveModelOptions(config, value)"
+          @reset="resetConfig(config)"
+        />
         <el-table v-loading="cfgLoading" :data="genericConfigs" stripe>
           <el-table-column prop="key" label="键" min-width="200" />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />

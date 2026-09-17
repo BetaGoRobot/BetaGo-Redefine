@@ -190,6 +190,11 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
     reasoning_effort_models = []
     vision_model = "doubao-seed-1-8-251228"
 
+    # 可选：按请求中的模型或 Endpoint ID 精确匹配。
+    # [ark_config.model_options."ep-your-model"]
+    #     service_tier = "flex"
+    #     reasoning_effort = "high"
+
 [minio_config]
     ak = "***"
     sk = "***"
@@ -217,6 +222,10 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
     service_name = "BetaGoV2"
 ```
 
+`ark_config.model_options` 支持 `service_tier`（`auto/default/fast/flex`）和 `reasoning_effort`（`minimal/low/medium/high`），键必须与请求的模型名或 Endpoint ID 精确一致。字段省略或留空时沿用现有行为；显式设置 `reasoning_effort` 时覆盖旧 `reasoning_effort_models` 策略。它作用于普通、流式及前缀缓存 Responses 请求，Embedding 请求不受影响。
+
+WebUI 的群聊或全局「配置 → 模型请求参数」提供对应表单。动态键为 `ark_model_options`，保存后使用现有配置优先级（`chat:user > user > chat > global > TOML`），**按整张模型配置表覆盖，不逐字段合并**。保存空表 `{}` 清除当前作用域的模型参数覆盖，保留现有请求默认行为；「重置为继承」删除当前作用域的动态配置，恢复上级或 TOML 配置。TOML 修改需重启加载，WebUI 保存后后续请求生效。
+
 当前代码里的配置分组如下：
 
 | Section | 作用 |
@@ -224,7 +233,7 @@ export BETAGO_CONFIG_PATH=/path/to/config.toml
 | `base_info` | 机器人基础信息，如机器人名称 |
 | `db_config` | PostgreSQL 连接配置 |
 | `lark_config` | 飞书应用 `app_id`、`app_secret`、机器人 OpenID，以及 `bootstrap_admin_open_id` |
-| `ark_config` | 方舟 API Key 与 `reasoning/normal/embedding/vision/chunk` 模型 |
+| `ark_config` | 方舟 API Key、`reasoning/normal/embedding/vision/chunk` 模型与 `model_options` 请求参数 |
 | `otel_config` | OTLP 上报配置 |
 | `opensearch_config` | 历史消息、卡片动作、chunk 检索相关索引配置 |
 | `minio_config` | 对象存储配置，音乐/图片等上传能力会用到 |

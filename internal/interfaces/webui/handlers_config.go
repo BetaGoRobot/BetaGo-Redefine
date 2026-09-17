@@ -1,11 +1,13 @@
 package webui
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
+	infraConfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/config"
 	"github.com/bytedance/sonic"
 )
 
@@ -215,6 +217,14 @@ func (s *Server) handleDeleteConfig(w http.ResponseWriter, r *http.Request) {
 // validateConfigValue 按配置类型与约束校验入参，返回归一化后的字符串值。
 func validateConfigValue(def appconfig.ConfigDefinition, raw string) (string, error) {
 	value := strings.TrimSpace(raw)
+	if def.Key == appconfig.KeyArkModelOptions {
+		options, err := infraConfig.ParseModelOptions(value)
+		if err != nil {
+			return "", errInvalidValue(err.Error())
+		}
+		encoded, err := json.Marshal(options)
+		return string(encoded), err
+	}
 	switch def.ValueType {
 	case "int":
 		n, err := strconv.Atoi(value)
