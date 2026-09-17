@@ -224,7 +224,8 @@ type MinioConfigInner struct {
 	UseSSL   bool   `json:"use_ssl" yaml:"use_ssl" toml:"use_ssl"`
 }
 type ArkConfig struct {
-	APIKey string `json:"api_key" yaml:"api_key" toml:"api_key"`
+	APIKey       string          `json:"api_key" yaml:"api_key" toml:"api_key"`
+	ModelOptions ModelOptionsMap `json:"model_options" yaml:"model_options" toml:"model_options"`
 
 	VisionModel           string   `json:"vision_model" yaml:"vision_model" toml:"vision_model"`
 	ReasoningModel        string   `json:"reasoning_model" yaml:"reasoning_model" toml:"reasoning_model"`
@@ -266,6 +267,13 @@ func LoadFileE(path string) (*BaseConfig, error) {
 	err = toml.Unmarshal(data, config)
 	if err != nil {
 		return nil, err
+	}
+	options, err := modelOptionsFromTOML(data)
+	if err != nil {
+		return nil, err
+	}
+	if config.ArkConfig != nil {
+		config.ArkConfig.ModelOptions = options
 	}
 	return config, nil
 }

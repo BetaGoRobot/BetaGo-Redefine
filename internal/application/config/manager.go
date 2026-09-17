@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ const (
 	KeyChatReasoningModel  ConfigKey = "chat_reasoning_model"
 	KeyChatNormalModel     ConfigKey = "chat_normal_model"
 	KeyIntentLiteModel     ConfigKey = "intent_lite_model"
+	KeyArkModelOptions     ConfigKey = "ark_model_options"
 	KeyLarkCardActionIndex ConfigKey = "lark_card_action_index"
 	KeyLarkMsgIndex        ConfigKey = "lark_msg_index"
 	KeyLarkChunkIndex      ConfigKey = "lark_chunk_index"
@@ -639,6 +641,12 @@ func (m *Manager) getStringFromToml(key ConfigKey) string {
 	}
 
 	switch key {
+	case KeyArkModelOptions:
+		if cfg.ArkConfig == nil || cfg.ArkConfig.ModelOptions == nil {
+			return "{}"
+		}
+		value, _ := json.Marshal(cfg.ArkConfig.ModelOptions)
+		return string(value)
 	case KeyChatMode:
 		return m.getDefaultString(key)
 	case KeyChatReasoningModel:
@@ -710,6 +718,8 @@ func (m *Manager) getDefaultBool(key ConfigKey) bool {
 
 func (m *Manager) getDefaultString(key ConfigKey) string {
 	switch key {
+	case KeyArkModelOptions:
+		return "{}"
 	case KeyChatMode:
 		return string(ChatModeStandard)
 	default:
@@ -790,6 +800,18 @@ func (m *Manager) ApplyConfigMutations(
 	persisted := make([]persistedConfigMutation, 0, len(mutations))
 	seen := make(map[string]struct{}, len(mutations))
 	for _, mutation := range mutations {
+		if mutation.Key == KeyArkModelOptions && mutation.Value != nil {
+			options, err := config.ParseModelOptions(*mutation.Value)
+			if err != nil {
+				return err
+			}
+			encoded, err := json.Marshal(options)
+			if err != nil {
+				return err
+			}
+			value := string(encoded)
+			mutation.Value = &value
+		}
 		if mutation.Key == "" {
 			return fmt.Errorf("config mutation key is required")
 		}

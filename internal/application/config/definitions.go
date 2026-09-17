@@ -32,6 +32,7 @@ type ManagementSurface string
 const (
 	ManagementSurfaceGeneric        ManagementSurface = ""
 	ManagementSurfaceAgenticRollout ManagementSurface = "agentic_rollout"
+	ManagementSurfaceModelOptions   ManagementSurface = "model_options"
 )
 
 var configDefinitions = []ConfigDefinition{
@@ -154,6 +155,12 @@ var configDefinitions = []ConfigDefinition{
 		EnumGroup:       configEnumGroupArkModels,
 		EnumOptionsFunc: arkModelEnumOptions,
 		AllowCustom:     true,
+	},
+	{
+		Key:               KeyArkModelOptions,
+		Description:       "Ark 模型请求参数（按模型或 Endpoint ID 精确匹配）",
+		ValueType:         "string",
+		ManagementSurface: ManagementSurfaceModelOptions,
 	},
 	{
 		Key:             KeyLarkCardActionIndex,

@@ -38,6 +38,14 @@
     embedding_model = "ep-xxx"
     chunk_model = "ep-xxx"
 
+    # 可选：精确匹配模型名或 Endpoint ID，应用于普通和流式 Responses 请求。
+    # service_tier: auto / default / fast / flex
+    # reasoning_effort: minimal / low / medium / high；显式设置时覆盖旧 allowlist 策略。
+    # 字段省略或留空时沿用现有请求行为。WebUI 可通过 ark_model_options 动态覆盖整张表。
+    # [ark_config.model_options."ep-your-model"]
+    #     service_tier = "flex"
+    #     reasoning_effort = "high"
+
 # Conversation Runtime 使用有界 executor；动态开关仍在配置管理中按 chat
 # 控制。projection 写入失败只会降级索引，不影响 PostgreSQL 中的回调续接。
 [runtime_config]

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/akshareapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/ark_dal"
@@ -130,7 +131,9 @@ func addInfrastructureModules(
 		return nil
 	}))
 	app.AddModule(newOptionalModule("ark_runtime", func() {
-		ark_dal.Init(cfg.ArkConfig)
+		ark_dal.Init(cfg.ArkConfig, func(ctx context.Context, scope llmusage.Scope) (infraConfig.ModelOptionsMap, error) {
+			return appconfig.NewAccessor(ctx, scope.ChatID, scope.OpenID).ArkModelOptions()
+		})
 	}, func(context.Context) error {
 		if ok, reason := ark_dal.Status(); !ok {
 			return errors.New(reason)

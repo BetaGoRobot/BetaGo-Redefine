@@ -63,7 +63,13 @@ func ResponseTextWithCache(ctx context.Context, req CachedResponseRequest, scope
 	if err != nil {
 		return "", err
 	}
-	req.Reasoning = effectiveResponsesReasoning(cfg, req.ModelID, req.Reasoning)
+	prepared, err := prepareConfiguredResponsesRequest(ctx, cfg, &responses.ResponsesRequest{
+		Model: req.ModelID, Reasoning: req.Reasoning,
+	}, scope)
+	if err != nil {
+		return "", err
+	}
+	req.Reasoning = prepared.Reasoning
 	ctx, span := otel.StartNamed(ctx, "ark.responses.cache")
 	span.SetAttributes(attribute.String("model.id", req.ModelID))
 	span.SetAttributes(attribute.String("cache.scene", cacheScene(req.CacheScene)))

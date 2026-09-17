@@ -27,7 +27,11 @@ var (
 
 var errUnavailable = errors.New("ark runtime unavailable")
 
-func Init(config *config.ArkConfig) {
+func Init(config *config.ArkConfig, resolvers ...ModelOptionsResolver) {
+	modelOptionsResolver = nil
+	if len(resolvers) > 0 {
+		modelOptionsResolver = resolvers[0]
+	}
 	if config == nil || config.APIKey == "" {
 		setNoop("ark config missing or api key empty")
 		return
@@ -81,7 +85,11 @@ func CreateResponses(ctx context.Context, body *responses.ResponsesRequest, scop
 		otel.RecordError(span, err)
 		return nil, err
 	}
-	body = prepareResponsesRequest(cfg, body)
+	body, err = prepareConfiguredResponsesRequest(ctx, cfg, body, scope)
+	if err != nil {
+		otel.RecordError(span, err)
+		return nil, err
+	}
 	if body != nil {
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
@@ -113,7 +121,11 @@ func CreateResponsesStream(ctx context.Context, body *responses.ResponsesRequest
 		otel.RecordError(span, err)
 		return nil, err
 	}
-	body = prepareResponsesRequest(cfg, body)
+	body, err = prepareConfiguredResponsesRequest(ctx, cfg, body, scope)
+	if err != nil {
+		otel.RecordError(span, err)
+		return nil, err
+	}
 	if body != nil {
 		span.SetAttributes(
 			attribute.String("model.id", body.Model),
