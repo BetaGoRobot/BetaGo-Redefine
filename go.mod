@@ -8,7 +8,7 @@ require (
 	github.com/VictoriaMetrics/metrics v1.44.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/bytedance/gg v1.1.0
-	github.com/bytedance/mockey v1.4.6
+	github.com/bytedance/mockey v1.4.7
 	github.com/bytedance/sonic v1.15.4
 	github.com/defensestation/osquery v1.0.0
 	github.com/dlclark/regexp2 v1.12.0
