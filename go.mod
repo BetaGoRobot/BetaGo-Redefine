@@ -43,7 +43,7 @@ require (
 	github.com/tmc/langchaingo v0.1.14
 	github.com/volcengine/volcengine-go-sdk v1.2.54
 	github.com/yanyiwu/gojieba v1.4.7
-	go.opentelemetry.io/contrib/bridges/otelzap v0.20.1
+	go.opentelemetry.io/contrib/bridges/otelzap v0.21.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.47.0
