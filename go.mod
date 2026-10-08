@@ -40,7 +40,7 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/sourcegraph/conc v0.3.0
 	github.com/stretchr/testify v1.12.1
-	github.com/tmc/langchaingo v0.1.14
+	github.com/tmc/langchaingo v0.1.15
 	github.com/volcengine/volcengine-go-sdk v1.2.54
 	github.com/yanyiwu/gojieba v1.4.7
 	go.opentelemetry.io/contrib/bridges/otelzap v0.21.0
