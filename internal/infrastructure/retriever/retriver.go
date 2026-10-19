@@ -24,7 +24,6 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/vectorstores"
-	vectoropensearch "github.com/tmc/langchaingo/vectorstores/opensearch"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/pkg/errgroup"
 	"go.uber.org/zap"
 )
@@ -120,7 +119,7 @@ func Status() (bool, string) {
 type RAGSystem struct {
 	llm      textGenerator
 	embedder *embeddings.EmbedderImpl
-	store    *vectoropensearch.Store
+	store    *documentStore
 	osClient *opensearchgo.Client
 }
 
@@ -233,10 +232,7 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 	}
 
 	// 3. 创建向量存储实例
-	store, err := vectoropensearch.New(
-		osClient,
-		vectoropensearch.WithEmbedder(embedder),
-	)
+	store, err := newDocumentStore(osClient, embedder)
 	if err != nil {
 		return nil, fmt.Errorf("创建 OpenSearch 向量存储失败: %w", err)
 	}
@@ -244,7 +240,7 @@ func NewRAGSystem(ctx context.Context, cfg Config) (*RAGSystem, error) {
 	return &RAGSystem{
 		llm:      llm,
 		embedder: embedder,
-		store:    &store,
+		store:    store,
 		osClient: osClient,
 	}, nil
 }
@@ -273,11 +269,10 @@ func (rs *RAGSystem) AddDocuments(ctx context.Context, suffix string, docs []sch
 	})
 	logs.L().Ctx(ctx).Info("正在为索引准备...", zap.String("indexName", indexName))
 	// 确保索引存在且维度正确
-	// CreateIndex 是幂等的，如果索引已存在，会返回错误，我们可以检查并忽略特定错误，或者简单地尝试添加
+	// 已存在的索引由 documentStore 显式识别；其他失败必须阻止后续写入。
 	_, err := rs.store.CreateIndex(ctx, indexName, mutateIndexMap)
 	if err != nil {
-		// 如果索引已存在，通常会报错，这里可以根据实际错误类型进行更精细的判断
-		logs.L().Ctx(ctx).Warn("创建索引时出现问题 (可能已存在): %v", zap.String("indexName", indexName), zap.Error(err))
+		return fmt.Errorf("创建索引 '%s' 失败: %w", indexName, err)
 	}
 
 	logs.L().Ctx(ctx).Info("正在向索引添加文档...", zap.String("indexName", indexName), zap.Int("docCount", len(docs)))
