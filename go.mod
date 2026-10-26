@@ -4,7 +4,7 @@ go 1.26.8
 
 require (
 	github.com/BetaGoRobot/go_utils v0.0.4
-	github.com/RealAlexandreAI/json-repair v0.0.18
+	github.com/RealAlexandreAI/json-repair v0.0.19
 	github.com/VictoriaMetrics/metrics v1.44.1
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/bytedance/gg v1.1.0
