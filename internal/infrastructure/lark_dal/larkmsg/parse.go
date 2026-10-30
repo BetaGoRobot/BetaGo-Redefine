@@ -13,6 +13,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	"github.com/bytedance/sonic"
 	"github.com/kevinmatthe/zaplog"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -83,10 +84,13 @@ func GetContentFromTextMsg(s string) string {
 func GetMsgFullByID(ctx context.Context, msgID string) *larkim.GetMessageResp {
 	resp, err := lark_dal.Client().Im.V1.Message.Get(ctx, larkim.NewGetMessageReqBuilder().MessageId(msgID).Build())
 	if err != nil {
-		logs.L().Ctx(ctx).Error("GetMsgByID", zap.Error(err))
+		logs.L().Ctx(ctx).Error("GetMsgByID", zap.String("message_id", msgID), zap.Error(err))
+	}
+	if resp == nil {
+		return &larkim.GetMessageResp{CodeError: larkcore.CodeError{Code: -1, Msg: "message lookup returned no response"}}
 	}
 	if !resp.Success() {
-		logs.L().Ctx(ctx).Error("GetMsgByID", zap.String("error", resp.Error()))
+		logs.L().Ctx(ctx).Error("GetMsgByID", zap.String("message_id", msgID), zap.Int("error_code", resp.Code), zap.String("error", resp.Error()))
 	}
 	return resp
 }
@@ -101,6 +105,9 @@ func GetChatIDFromMsgID(ctx context.Context, msgID string) (chatID string, err e
 	if !resp.Success() {
 		err = errors.New(resp.Error())
 		return
+	}
+	if resp.Data == nil || len(resp.Data.Items) == 0 || resp.Data.Items[0] == nil || resp.Data.Items[0].ChatId == nil {
+		return "", errors.New("message lookup returned no chat id")
 	}
 	chatID = *resp.Data.Items[0].ChatId
 	return
