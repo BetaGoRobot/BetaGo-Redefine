@@ -35,6 +35,7 @@ import (
 // addApplicationModules 注册依赖基础设施和执行器的上层模块。这里把遗留
 // 包级初始化收敛成有序的运行时阶段。
 func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, components *appComponents) {
+	app.AddModule(masterMemeModule(cfg))
 	app.AddModule(chatmetrics.NewModule(chatmetrics.ModuleOptions{
 		Interval:     5 * time.Minute,
 		Timeout:      2 * time.Minute,

@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "purpose": "synthetic design-contract examples; not a humor holdout or production test result",
+  "offset_unit": "Unicode rune, end exclusive",
+  "case_count": 12,
+  "cases": [
+    {
+      "id": "V01",
+      "prototype_checks": [
+        "C01",
+        "C21"
+      ],
+      "text": "三年，从钢铁雄心玩成海岛奇兵了。机器人，接一句。",
+      "expected_properties": {
+        "required_literal_anchor": "海岛奇兵",
+        "depends_on_model_key_order": false
+      }
+    },
+    {
+      "id": "V02",
+      "prototype_checks": [
+        "C02",
+        "C03"
+      ],
+      "text": "海岛奇兵的雷达升级有什么作用？认真讲游戏机制。",
+      "expected_properties": {
+        "required_literal_anchor": "海岛奇兵",
+        "first_layer_selected_sense": null
+      }
+    },
+    {
+      "id": "V03",
+      "prototype_checks": [
+        "C07"
+      ],
+      "text": "这波微操看得我沉默了。",
+      "expected_properties": {
+        "required_literal_anchor": "微操",
+        "minimum_title_length_rule": null
+      }
+    },
+    {
+      "id": "V04",
+      "prototype_checks": [
+        "C08"
+      ],
+      "text": "机器人春晚这个说法是怎么来的？",
+      "expected_properties": {
+        "required_literal_anchor": "机器人春晚",
+        "strip_robot_word": false
+      }
+    },
+    {
+      "id": "V05",
+      "prototype_checks": [
+        "C05"
+      ],
+      "text": "😀前文：三年，从钢铁雄心玩成海岛奇兵了。",
+      "expected_properties": {
+        "span_text_roundtrip": true,
+        "offset_unit": "Unicode rune"
+      }
+    },
+    {
+      "id": "V06",
+      "prototype_checks": [
+        "C17"
+      ],
+      "text": "ＡＩ来了。",
+      "expected_properties": {
+        "synthetic_dictionary_title": "AI",
+        "observed_text": "ＡＩ",
+        "rewrite_original": false
+      }
+    },
+    {
+      "id": "V07",
+      "prototype_checks": [
+        "C18"
+      ],
+      "text": "chair",
+      "expected_properties": {
+        "synthetic_dictionary_title": "AI",
+        "match_inside_latin_word": false
+      }
+    },
+    {
+      "id": "V08",
+      "prototype_checks": [
+        "C16",
+        "C31"
+      ],
+      "text": "校长来了。",
+      "expected_properties": {
+        "synthetic_alias_sense_refs": [
+          "school",
+          "history"
+        ],
+        "first_layer_selected_sense": null,
+        "stable_reference_order": true
+      }
+    },
+    {
+      "id": "V09",
+      "prototype_checks": [
+        "C09"
+      ],
+      "text": "𠮷新造词甲乙丙𠮷",
+      "expected_properties": {
+        "status": "no_anchor",
+        "invent_knowledge": false
+      }
+    },
+    {
+      "id": "V10",
+      "prototype_checks": [
+        "C11",
+        "C12"
+      ],
+      "text": "海岛奇兵",
+      "expected_properties": {
+        "expanded_usage_candidates": [],
+        "preserve_prior_knowledge": true
+      }
+    },
+    {
+      "id": "V11",
+      "prototype_checks": [
+        "C23",
+        "C32"
+      ],
+      "text": "海岛奇兵",
+      "expected_properties": {
+        "model_literal_query": "蒋介石",
+        "model_supplied_literal_source": "蒋介石",
+        "reject": "invented_literal"
+      }
+    },
+    {
+      "id": "V12",
+      "prototype_checks": [
+        "C33"
+      ],
+      "text": "海岛奇兵",
+      "expected_properties": {
+        "snapshot_generation": "fixture-v1",
+        "entry_generation": "fixture-v2",
+        "reject": "entry_generation_mismatch"
+      }
+    }
+  ]
+}

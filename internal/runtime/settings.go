@@ -196,7 +196,7 @@ func ExecutorConfigs(cfg *infraConfig.BaseConfig) map[string]ExecutorConfig {
 			Name:        "message_executor",
 			Workers:     defaultInt(runtimeCfg.MessageWorkers, 8),
 			QueueSize:   defaultInt(runtimeCfg.MessageQueueSize, 256),
-			TaskTimeout: optionalDuration(runtimeCfg.MessageTimeoutSeconds),
+			TaskTimeout: defaultDuration(runtimeCfg.MessageTimeoutSeconds, 2*time.Minute),
 		},
 		"reaction": {
 			Name:        "reaction_executor",

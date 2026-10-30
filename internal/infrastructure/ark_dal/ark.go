@@ -37,7 +37,10 @@ func Init(config *config.ArkConfig, resolvers ...ModelOptionsResolver) {
 		return
 	}
 	arkConfig = config
-	client = arkruntime.NewClientWithApiKey(config.APIKey)
+	client = arkruntime.NewClientWithApiKey(config.APIKey,
+		arkruntime.WithHTTPClient(newArkHTTPClient()),
+		arkruntime.WithRetryTimes(1),
+	)
 	disableReason = ""
 }
 

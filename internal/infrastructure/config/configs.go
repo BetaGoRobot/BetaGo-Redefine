@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/memeruntime"
 	"os"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 var config *BaseConfig
 
 type BaseConfig struct {
+	MemeConfig *memeruntime.Settings `json:"memes,omitempty" yaml:"memes" toml:"memes"`
 	// NOTE: 强依赖
 	// 关系数据库
 	BaseInfo             *BaseInfo             `json:"base_info" yaml:"base_info" toml:"base_info"`

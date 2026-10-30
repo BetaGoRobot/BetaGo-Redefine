@@ -15,6 +15,8 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/gotify"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/larkeventstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/miniodal"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/neteaseapi"
@@ -84,6 +86,14 @@ func addInfrastructureModules(
 				Migrations: schema.DefaultMigrations(),
 			}
 			report, err := runner.Apply(ctx)
+			if err == nil {
+				recorder := larkeventstore.NewRecorder(larkeventstore.NewGormStore(db.DB()))
+				recorder.AllowChat = func(ctx context.Context, chatID string) bool {
+					private, err := larkmsg.IsPrivateModeEnabled(ctx, chatID)
+					return err == nil && !private
+				}
+				larkeventstore.SetDefault(recorder)
+			}
 			if components != nil && components.schemaBootstrap != nil {
 				components.schemaBootstrap.Update(map[string]any{
 					"latest_version":  report.LatestVersion,
