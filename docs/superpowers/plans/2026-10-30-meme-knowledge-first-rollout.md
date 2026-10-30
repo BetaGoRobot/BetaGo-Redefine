@@ -18,45 +18,45 @@ All Go commands read root VS Code settings and use custom_skip_vips, test -v, ex
 
 Create `internal/application/lark/memes/knowledge_snapshot.go`, `knowledge_observations.go` and their focused tests. Define the typed binding/snapshot/entry/alias/sense/anchor/selection API provided by the parent. Compile detached, deterministic entries from immutable IndexRecord data; retain all use IDs and fingerprints; mark source explanations and inferred aliases accurately. Scan original rune spans with stable ordering and mapped normalization, preserve short terms and ambiguity, cap selected anchors at six, report omission. Validate scope and every entry binding, not just snapshot header.
 
-- [ ] Run existing memes package baseline.
-- [ ] Write missing-feature tests first: source/alias provenance, deterministic fingerprints, raw-span roundtrip, same-name ambiguity, short terms, two known anchors, normalization, dictionary order, six-anchor omission, generation mismatch.
-- [ ] Observe RED, implement the public API, run focused tests/race and self-review.
-- [ ] Commit only owned files; parent requests separate spec and quality review before accepting.
+- [x] Run existing memes package baseline.
+- [x] Write missing-feature tests first: source/alias provenance, deterministic fingerprints, raw-span roundtrip, same-name ambiguity, short terms, two known anchors, normalization, dictionary order, six-anchor omission, generation mismatch.
+- [x] Observe RED, implement the public API, run focused tests/race and self-review.
+- [x] Commit only owned files; parent requests separate spec and quality review before accepting.
 
 ## Task 2: Bound knowledge persistence and publication (parent ownership)
 
 Create `internal/infrastructure/memestore/knowledge.go` with PG tests; extend migration only for its new fact kind. Publish and read immutable manifests/chunks by generation+corpus/projection hashes with fingerprints, count limits and no mixing. Determine exact record membership from the existing publication ledger or matching canonical corpus artifacts before publishing. Add an operator command with explicit dry-run/publish, no source rewrite or implicit corpus activation.
 
-- [ ] Test missing/mismatched/tampered/chunked snapshots and isolated PG publication before implementation.
-- [ ] Reuse the current active corpus; do not rebuild embeddings or replace existing card versions.
-- [ ] Capture current active manifest before and after publication under the existing publication lock.
+- [x] Test missing/mismatched/tampered/chunked snapshots and isolated PG publication before implementation.
+- [x] Reuse the current active corpus; do not rebuild embeddings or replace existing card versions.
+- [x] Capture current active manifest before and after publication under the existing publication lock.
 
 ## Task 3: Grounded planner, query validation and bounded expansion
 
 Create separate grounded contracts/prompt/schema/service files in memes; preserve V1 APIs. Add ContextV2 to ReferenceResult with independent statuses, selected raw anchors, priors, concise hypotheses and sources. Literal queries compile from frozen observation refs; knowledge_link requires knowledge refs; hypothesis_probe remains explicitly derived. Reject invalid individual queries without destroying valid priors. Keep old lexical anchors independent of semantic budgets; count the complete request against seven logical searches and the existing 12-second deadline, ordinary planner one call. Do not demand two interpretations.
 
-- [ ] Regression for H03 key loss and model self-supplied literal_source.
-- [ ] Negative cases for explicit game/history questions, invented IDs, stale generation, zero/failed expansion and source changes.
-- [ ] Actual role-model probes retain all first responses and failures; no model self-score as acceptance.
+- [x] Regression for H03 key loss and model self-supplied literal_source.
+- [x] Negative cases for explicit game/history questions, invented IDs, stale generation, zero/failed expansion and source changes.
+- [x] Actual role-model probes retain all first responses and failures; no model self-score as acceptance.
 
 ## Task 4: Runtime and both hosts
 
 Extend memeruntime with explicit mode and generation-bound knowledge reads, caching immutable snapshots. Adapt next `cmd/lark-agent/meme_references.go` and engine scene, and master `handlers/meme_reference.go` plus bootstrap. Preserve delivered-card attribution, visible-output filters, ordinary questions, approvals, tools and action ledgers. Shared BuildContext must keep prior knowledge even when cards are empty and validate supplied references. Complete source-backed use metadata is rendered as an optional view, never a newly approved corpus record.
 
-- [ ] Full-context tests for prior-only fallback, six-anchor stability, no internal identifiers leaked and independent V1 behavior.
-- [ ] Native next and master readback/replay with exact runtime model/settings, serious controls and requested sharp humor.
+- [x] Full-context tests for prior-only fallback, six-anchor stability, no internal identifiers leaked and independent V1 behavior.
+- [x] Native next model replay plus MASTER actual initialization/knowledge/policy readback; exact role settings and serious controls recorded. Human humor evaluation remains separate.
 
 ## Task 5: Verification, publication and release
 
 Run scoped race/integration checks using disposable fixtures. Existing four baseline test failures are compared explicitly, never called passing. Read actual live master/next again before building. A late source/config drift requires rebasing the scoped overlay, not overwriting a concurrent release.
 
-- [ ] Publish design and complete self-contained source through gh, verify remote file hashes and expected branch head; include an exact reviewable change list.
-- [ ] Build each host with its own frozen module/toolchain, image user, dictionaries and prior labels.
-- [ ] Offline actual-config checks and real model/PG/Milvus read-only probes before runtime changes.
-- [ ] Publish verified knowledge sidecar and activate the explicit mode on the approved existing scopes only.
-- [ ] Release master and the three next apps separately with --no-deps --pull never; prove protected services and private config remain unchanged except declared mode settings.
-- [ ] Verify live health, zero restart loops, actual grounded trace/model activity and preserved rollback references. Do not send public messages without a specified test destination.
-- [ ] Report technical acceptance versus pending human humor evaluation. The user explicitly requests production publication; offline/deployment acceptance is not a claimed 80-window human evaluation.
+- [x] Publish design and complete self-contained source through gh, verify remote file hashes and expected branch head; include an exact reviewable change list.
+- [x] Build each host with its own frozen module/toolchain, image user, dictionaries and prior labels.
+- [x] Offline actual-config checks and real model/PG/Milvus read-only probes before runtime changes.
+- [x] Publish verified knowledge sidecar and activate the explicit mode on the approved existing scopes only.
+- [x] Release master and the three next apps separately with --no-deps --pull never; prove protected services and private config remain unchanged except declared mode settings.
+- [x] Verify live health, zero restart loops, MASTER natural grounded planner activity, Next actual prior-on-timeout behavior and preserved rollback references. Do not send public messages without a specified test destination.
+- [x] Report technical acceptance versus pending human humor evaluation. The user explicitly requests production publication; offline/deployment acceptance is not a claimed 80-window human evaluation.
 
 ## Completion
 
