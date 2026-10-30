@@ -472,6 +472,8 @@ func (o OpensearchMsgLogList) ToThreadLines() []string {
 }
 
 type OpensearchMsgLog struct {
+	ChatID       string            `json:"chat_id"`
+	RawText      *string           `json:"raw_text,omitempty"`
 	CreateTimeV2 string            `json:"create_time_v2"`
 	OpenID       string            `json:"user_id"`
 	UserName     string            `json:"user_name"`
@@ -544,6 +546,7 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 			}
 		}
 		l := &OpensearchMsgLog{
+			ChatID:       res.ChatID,
 			CreateTimeV2: res.CreateTimeV2,
 			OpenID:       res.OpenID,
 			UserName:     res.UserName,
@@ -553,6 +556,9 @@ func FilterMessage(ctx context.Context, hits []opensearchapi.SearchHit) (msgList
 			ParentID:     res.ParentID,
 			RootID:       res.RootID,
 			ThreadID:     res.ThreadID,
+		}
+		if original, ok := OriginalText(res.MessageType, res.RawMessage); ok {
+			l.RawText = &original
 		}
 		if r := l.ToLine(); r != "" {
 			msgList = append(msgList, l)

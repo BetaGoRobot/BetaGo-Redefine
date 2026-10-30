@@ -12,6 +12,8 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
 
+const topicRecallTimeout = 3 * time.Second
+
 var topicRecallDocsFn = func(
 	ctx context.Context,
 	suffix, query string,
@@ -32,6 +34,10 @@ func recallTopicDocsForMode(
 	captureEnabled bool,
 	embeddingFunc history.EmbeddingFunc,
 ) ([]schema.Document, error) {
+	// Optional semantic recall must not consume the time needed for the answer.
+	// Cancel only the child context; the caller retains recent/quoted context.
+	ctx, cancel := context.WithTimeout(ctx, topicRecallTimeout)
+	defer cancel()
 	if !captureEnabled {
 		return topicRecallDocsFn(ctx, chatID, query, topK, cutoffTime, "")
 	}
