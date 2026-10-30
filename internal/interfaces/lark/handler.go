@@ -17,6 +17,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/messages"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/reaction"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/larkeventstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
 	cardactionproto "github.com/BetaGoRobot/BetaGo-Redefine/pkg/cardaction"
@@ -162,6 +163,7 @@ func (h *HandlerSet) MessageV2Handler(ctx context.Context, event *larkim.P2Messa
 		attribute.String("sender.open_id", utils.AddrOrNil(event.Event.Sender.SenderId.OpenId)),
 	)
 	senderOpenID := botidentity.MessageSenderOpenID(event)
+	larkeventstore.Default().ObserveMessage(ctx, larkeventstore.CurrentScope(), utils.AddrOrNil(event.Event.Message.MessageId), utils.AddrOrNil(event.Event.Message.ChatId), false)
 
 	if isOutDated(*event.Event.Message.CreateTime) {
 		span.AddEvent("message.skipped", trace.WithAttributes(attribute.String("reason", "outdated")))
@@ -185,19 +187,31 @@ func (h *HandlerSet) MessageV2Handler(ctx context.Context, event *larkim.P2Messa
 // MessageReactionHandler 通过受控 reaction 执行器处理表情 / reaction 事件。
 func (h *HandlerSet) MessageReactionHandler(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) (err error) {
 	ctx, span := otel.StartEntry(ctx, "lark.reaction.handle")
+	if event == nil || event.Event == nil || event.Event.MessageId == nil {
+		span.End()
+		return nil
+	}
 	defer larkmsg.RecoverMsg(ctx, *event.Event.MessageId)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
 	span.SetAttributes(
 		attribute.String("message.id", utils.AddrOrNil(event.Event.MessageId)),
-		attribute.String("reaction.type", fmt.Sprintf("%v", event.Event.ReactionType)),
 	)
+	larkeventstore.Default().CaptureReaction(ctx, larkeventstore.CurrentScope(), event)
 
 	msgID := utils.AddrOrNil(event.Event.MessageId)
 	err = h.submitReactionProcessor(ctx, msgID, event)
 	if err != nil {
 		logs.L().Ctx(ctx).Error("submit reaction processor failed", zap.String("msg_id", msgID), zap.Error(err))
+		larkeventstore.Default().RecordResolution(ctx, larkeventstore.CurrentScope(), larkeventstore.ReactionID(ctx, larkeventstore.CurrentScope(), event), larkeventstore.Resolution{Source: "executor", Status: "enqueue_failed", Error: err.Error()})
 	}
+	return nil
+}
+
+func (h *HandlerSet) MessageRecalledHandler(ctx context.Context, event *larkim.P2MessageRecalledV1) error {
+	ctx, span := otel.StartEntry(ctx, "lark.message.recalled")
+	defer span.End()
+	larkeventstore.Default().CaptureRecall(ctx, larkeventstore.CurrentScope(), event)
 	return nil
 }
 
