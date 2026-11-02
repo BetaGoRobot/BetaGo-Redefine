@@ -350,7 +350,7 @@ func newEventDispatcher(
 		OnP2MessageReceiveV1(handlerSet.MessageV2Handler).
 		OnP2ApplicationAppVersionAuditV6(handlerSet.AuditV6Handler).
 		OnP2CardActionTrigger(handlerSet.CardActionHandler).
-		OnP2MessageRecalledV1(emptyHandler).
+		OnP2MessageRecalledV1(handlerSet.MessageRecalledHandler).
 		OnP2ChatMemberUserAddedV1(emptyHandler).
 		OnP2ChatMemberBotDeletedV1(emptyHandler).
 		OnP2ChatMemberUserDeletedV1(emptyHandler)

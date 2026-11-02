@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,6 +10,60 @@ import (
 	"github.com/tmc/langchaingo/schema"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
+
+func TestTopicRecallTimeoutPreservesAnswerContext(t *testing.T) {
+	oldRecall, oldHybrid := topicRecallDocsFn, topicHybridSearchFn
+	t.Cleanup(func() { topicRecallDocsFn, topicHybridSearchFn = oldRecall, oldHybrid })
+	for _, capture := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "capture"}[capture], func(t *testing.T) {
+			parent := context.Background()
+			wait := func(ctx context.Context) error {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > 3100*time.Millisecond {
+					return errors.New("optional recall has no short deadline")
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			topicRecallDocsFn = func(ctx context.Context, _, _ string, _ int, _, _ string) ([]schema.Document, error) {
+				return nil, wait(ctx)
+			}
+			topicHybridSearchFn = func(ctx context.Context, _ history.HybridSearchRequest, _ history.EmbeddingFunc) ([]*history.SearchResult, error) {
+				return nil, wait(ctx)
+			}
+			started := time.Now()
+			docs, err := recallTopicDocsForMode(parent, "chat", "你怎么看", 10, "", time.Now(), capture, nil)
+			if !errors.Is(err, context.DeadlineExceeded) || len(docs) != 0 {
+				t.Fatalf("stalled recall did not time out: docs=%v err=%v", docs, err)
+			}
+			if elapsed := time.Since(started); elapsed > 4*time.Second {
+				t.Fatalf("optional recall blocked answer preparation for %v", elapsed)
+			}
+			if parent.Err() != nil {
+				t.Fatalf("optional recall canceled the context needed for the answer: %v", parent.Err())
+			}
+		})
+	}
+}
+
+func TestTopicRecallRespectsShorterParentDeadline(t *testing.T) {
+	old := topicRecallDocsFn
+	t.Cleanup(func() { topicRecallDocsFn = old })
+	parent, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	want, _ := parent.Deadline()
+	topicRecallDocsFn = func(ctx context.Context, _, _ string, _ int, _, _ string) ([]schema.Document, error) {
+		if got, ok := ctx.Deadline(); !ok || got.After(want) {
+			t.Fatalf("recall extended the parent deadline: got %v want %v", got, want)
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	_, err := recallTopicDocsForMode(parent, "chat", "query", 10, "", time.Now(), false, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("parent cancellation lost: %v", err)
+	}
+}
 
 func TestRecallTopicDocsForModePreservesLegacyRetrieverCall(t *testing.T) {
 	oldRecall := topicRecallDocsFn

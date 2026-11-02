@@ -13,14 +13,14 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/model"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db/query"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/larkeventstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/otel"
 
-	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkmsg"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal/larkuser"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/xhandler"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 )
 
@@ -47,13 +47,13 @@ func (r *RecordReactionOperator) Name() string {
 //	@return err
 func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2MessageReactionCreatedV1, meta *xhandler.BaseMetaData) (err error) {
 	ctx, span := otel.Start(ctx)
-	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(event), 256)...)
+	larkeventstore.AnnotateReaction(ctx, event)
 	defer span.End()
 	defer otel.RecordErrorPtr(span, &err)
-	chatID, err := larkmsg.GetChatIDFromMsgID(ctx, *event.Event.MessageId)
-	if err != nil {
-		return err
+	if event == nil || event.Event == nil || event.Event.MessageId == nil || event.Event.OperatorType == nil || meta == nil || meta.ChatID == "" {
+		return nil
 	}
+	chatID := meta.ChatID
 	if *event.Event.OperatorType != "user" {
 		return nil
 	}
@@ -75,6 +75,7 @@ func (r *RecordReactionOperator) Run(ctx context.Context, event *larkim.P2Messag
 		return err
 	}
 	ins := query.Q.InteractionStat
+	span.SetAttributes(attribute.String("chat.id", chatID), attribute.String("chat.name", meta.ChatName))
 	return ins.WithContext(ctx).Create(&model.InteractionStat{
 		OpenID:     openID,
 		GuildID:    chatID,

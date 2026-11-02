@@ -206,22 +206,21 @@ func GenerateChatSeqTwoPhase(
 		extraCtx,
 		correctionsCtx,
 	)
-	if captureEnabled {
-		recordStandardChatPlan(ctx, event, StandardChatPlan{
-			ModelID:         modelID,
-			SystemPrompt:    genSysPrompt,
-			UserPrompt:      genUserPrompt,
-			CurrentInput:    currentInput,
-			HistoryItems:    historyItems,
-			RetrievedItems:  retrievedItems,
-			ExcludedItems:   excludedItems,
-			DegradedSources: degradedSources,
-			Files:           append([]string(nil), files...),
-			chatID:          chatID,
-			openID:          currentOpenID(event, metaData),
-			userName:        userName,
-			messageList:     messageList,
-		})
+	generatorPlan := StandardChatPlan{
+		ModelID:                modelID,
+		SystemPrompt:           genSysPrompt,
+		UserPrompt:             genUserPrompt,
+		CurrentInput:           currentInput,
+		HistoryItems:           historyItems,
+		RetrievedItems:         retrievedItems,
+		ExcludedItems:          excludedItems,
+		DegradedSources:        degradedSources,
+		Files:                  append([]string(nil), files...),
+		chatID:                 chatID,
+		openID:                 currentOpenID(event, metaData),
+		userName:               userName,
+		messageList:            messageList,
+		noMemeReferenceHistory: historyLimit == 0,
 	}
 
 	genScope := twophase.BuildGeneratorScope(baseScope)
@@ -236,7 +235,7 @@ func GenerateChatSeqTwoPhase(
 	}
 
 	logs.L().Ctx(ctx).Info("two_phase calling generator dal")
-	genStream, err := dal.Do(ctx, genScope, genSysPrompt, genUserPrompt, files...)
+	genStream, err := executeTwoPhaseReferenceGenerator(ctx, event, generatorPlan, genScope, dal)
 	if err != nil {
 		return nil, err
 	}

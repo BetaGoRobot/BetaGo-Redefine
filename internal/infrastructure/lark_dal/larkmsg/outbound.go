@@ -5,7 +5,9 @@ import (
 	"errors"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/lark_dal"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/larkeventstore"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/logs"
+	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"go.uber.org/zap"
@@ -21,7 +23,9 @@ func sendCreateMessage(ctx context.Context, req *larkim.CreateMessageReq, record
 		logs.L().Ctx(ctx).Error("CreateMessage", zap.String("respError", resp.Error()))
 		return nil, errors.New(resp.Error())
 	}
-	go RecordMessage2Opensearch(ctx, resp, recordContents...)
+	if resp.Data != nil {
+		recordOutboundReceipt(ctx, utils.AddrOrNil(resp.Data.MessageId), utils.AddrOrNil(resp.Data.ChatId), func(recordCtx context.Context) { RecordMessage2Opensearch(recordCtx, resp, recordContents...) })
+	}
 	return resp, nil
 }
 
@@ -35,6 +39,18 @@ func sendReplyMessage(ctx context.Context, req *larkim.ReplyMessageReq, recordCo
 		logs.L().Ctx(ctx).Error("ReplyMessage", zap.String("Error", larkcore.Prettify(resp.CodeError.Err)))
 		return nil, errors.New(resp.Error())
 	}
-	go RecordReplyMessage2Opensearch(ctx, resp, recordContents...)
+	if resp.Data != nil {
+		recordOutboundReceipt(ctx, utils.AddrOrNil(resp.Data.MessageId), utils.AddrOrNil(resp.Data.ChatId), func(recordCtx context.Context) { RecordReplyMessage2Opensearch(recordCtx, resp, recordContents...) })
+	}
 	return resp, nil
+}
+
+// A successful provider receipt is the authoritative point to remember group
+// ownership. Preserve the caller's trace even if the request was just canceled.
+func recordOutboundReceipt(ctx context.Context, messageID, chatID string, record func(context.Context)) {
+	ctx = utils.DurableContext(ctx)
+	larkeventstore.Default().ObserveMessage(ctx, larkeventstore.CurrentScope(), messageID, chatID, false)
+	if record != nil {
+		go record(ctx)
+	}
 }

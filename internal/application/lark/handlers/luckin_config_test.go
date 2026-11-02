@@ -37,7 +37,11 @@ func writeLuckinRuntimeConfigForTest(t *testing.T, credentialsKey, serverURL str
 
 func restoreWorkspaceConfigAfterTest(t *testing.T) {
 	t.Helper()
-	workspaceConfig, err := filepath.Abs("../../../../.dev/config.toml")
+	workspaceConfig := os.Getenv("BETAGO_CONFIG_PATH")
+	if workspaceConfig == "" {
+		workspaceConfig = "../../../../.dev/config.toml"
+	}
+	workspaceConfig, err := filepath.Abs(workspaceConfig)
 	if err != nil {
 		t.Fatalf("resolve workspace config: %v", err)
 	}

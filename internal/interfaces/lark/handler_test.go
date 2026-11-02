@@ -447,7 +447,8 @@ func TestNilHandlerSetCardActionHandlerDoesNotPanic(t *testing.T) {
 
 func TestMessageV2HandlerPreservesSameTraceAcrossEntryExecutorAndProcessor(t *testing.T) {
 	restore := installHandlerTestTracer(t)
-	defer restore()
+	// Stop the asynchronous executor before restoring the shared tracer.
+	t.Cleanup(restore)
 
 	executor := appruntime.NewExecutor(appruntime.ExecutorConfig{
 		Name:        "handler_test_executor",
@@ -565,11 +566,14 @@ func installHandlerTestTracer(t *testing.T) func() {
 func installHandlerTestConfig(t *testing.T) {
 	t.Helper()
 
-	_, file, _, ok := goruntime.Caller(0)
-	if !ok {
-		t.Fatalf("failed to resolve test file path")
+	configPath := os.Getenv("BETAGO_CONFIG_PATH")
+	if configPath == "" {
+		_, file, _, ok := goruntime.Caller(0)
+		if !ok {
+			t.Fatalf("failed to resolve test file path")
+		}
+		configPath = filepath.Join(filepath.Dir(file), "..", "..", "..", ".dev", "config.toml")
 	}
-	configPath := filepath.Join(filepath.Dir(file), "..", "..", "..", ".dev", "config.toml")
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("config path unavailable: %v", err)
 	}

@@ -44,7 +44,9 @@ const toolPlannerSystemPrompt = `你只负责判断后续生成阶段需要调�
 规则：
 - 仅在确实需要时返回；多个并存时按信息获取优先、动作类靠后排序，不重复。
 - 闲聊/问候/情绪表达/写作润色/翻译/数学计算/纯主观偏好 → 通常返回空数组。
-- 如果 search_history 足以解决，就不要再给 web_search。
+- 如果 search_history 足以解决，就不要再给 web_search；以下明确梗纠错例外优先。
+- 用户明确纠正机器人对梗的理解或召回、而仍需补充公开出处时，给 web_search，不必先查群历史，也不需要用户再授权一次；已有充分解释、明确不要联网或只涉及群内私事时不强行搜索。
+- 普通回答太长、停止回复、第三方批评和引用材料中的纠错话语，不因这条例外触发 web_search。
 - 如果是打开网页读内容或抽证据，优先 research，不要只给 web_search。
 - 不输出解释、思考过程或 Markdown，只输出严格 JSON 对象，字段仅 tool_hints。
 
@@ -55,6 +57,8 @@ const toolPlannerSystemPrompt = `你只负责判断后续生成阶段需要调�
 - "群里最近谁最常提到 Claude" → {"tool_hints":["search_history","member_lookup"]}
 - "给他点个赞就行" → {"tool_hints":["emoji_reaction"]}
 - "你好呀" → {"tool_hints":[]}
+- "你把海岛奇兵只理解成游戏了，这个梗没理解对，查下出处" → {"tool_hints":["web_search"]}
+- "回答太长了，别回了" → {"tool_hints":[]}
 - "先查下上次提的那只基金最近表现" → {"tool_hints":["search_history","finance"]}
 
 输出格式：

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/memereference"
+
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
@@ -66,10 +68,12 @@ type StandardChatPlan struct {
 	DegradedSources []string
 	Files           []string
 
-	chatID      string
-	openID      string
-	userName    string
-	messageList history.OpensearchMsgLogList
+	chatID                 string
+	openID                 string
+	userName               string
+	messageList            history.OpensearchMsgLogList
+	noMemeReferenceHistory bool
+	memeReferences         *memeReferenceState
 }
 
 var Chat = chatHandler{}
@@ -430,6 +434,7 @@ thought 仅用 1-2 句话说明：
 	}
 	lines = append(lines,
 		"# 纠错机制\n"+"当用户纠正你的回复时（如说'不是的，应该是xxx'、'错了，应该是xxx'），你必须调用 store_correction 工具记录纠正内容。\n"+"调用该工具后，继续正常对话。\n",
+		memereference.CorrectionInstruction,
 	)
 
 	// Append chat-specific persona as a constraint section
@@ -623,9 +628,6 @@ func GenerateChatSeq(
 	if err != nil {
 		return nil, err
 	}
-	if conversationeval.CaptureEnabled(ctx) {
-		recordStandardChatPlan(ctx, event, plan)
-	}
 	return executeStandardChatPlan(ctx, event, metaData, plan)
 }
 
@@ -676,6 +678,10 @@ func executeStandardChatPlanWithExecutorFactory(
 	if factory == nil {
 		return nil, errors.New("nil standard chat executor factory")
 	}
+	plan = withMemeReferencePlan(ctx, event, plan)
+	if conversationeval.CaptureEnabled(ctx) {
+		recordStandardChatPlan(ctx, event, plan)
+	}
 	modelID := ""
 	if conversationeval.CaptureEnabled(ctx) {
 		modelID = plan.ModelID
@@ -683,8 +689,8 @@ func executeStandardChatPlanWithExecutorFactory(
 	dal := factory(modelID)
 	logs.L().Ctx(ctx).Info(
 		"calling chat dal",
-		zap.String("sys_prompt", plan.SystemPrompt),
-		zap.String("user_prompt", plan.UserPrompt),
+		zap.Int("system_prompt_chars", len([]rune(plan.SystemPrompt))),
+		zap.Int("user_prompt_chars", len([]rune(plan.UserPrompt))),
 	)
 	scope := buildUserLLMUsageScope(
 		ctx,
@@ -698,6 +704,12 @@ func executeStandardChatPlanWithExecutorFactory(
 	iterSeq, err := dal.Do(ctx, scope, plan.SystemPrompt, plan.UserPrompt, plan.Files...)
 	if err != nil {
 		return nil, err
+	}
+	if plan.memeReferences != nil {
+		return wrapMemeReferenceOutput(ctx, iterSeq, plan, false, func() (iter.Seq[*ark_dal.ModelStreamRespReasoning], error) {
+			system, user := recoverMemeReferenceContext(ctx, plan.memeReferences)
+			return dal.Do(ctx, scope, system, user, plan.Files...)
+		}), nil
 	}
 
 	return func(yield func(*ark_dal.ModelStreamRespReasoning) bool) {
@@ -995,19 +1007,20 @@ func buildStandardChatPlan(
 	}
 
 	return StandardChatPlan{
-		ModelID:         modelID,
-		SystemPrompt:    systemPrompt,
-		UserPrompt:      userPrompt,
-		CurrentInput:    currentInput,
-		HistoryItems:    historyItems,
-		RetrievedItems:  retrievedItems,
-		ExcludedItems:   excludedItems,
-		DegradedSources: degradedSources,
-		Files:           append([]string(nil), files...),
-		chatID:          chatID,
-		openID:          currentOpenID(event, metaData),
-		userName:        userName,
-		messageList:     messageList,
+		ModelID:                modelID,
+		SystemPrompt:           systemPrompt,
+		UserPrompt:             userPrompt,
+		CurrentInput:           currentInput,
+		HistoryItems:           historyItems,
+		RetrievedItems:         retrievedItems,
+		ExcludedItems:          excludedItems,
+		DegradedSources:        degradedSources,
+		Files:                  append([]string(nil), files...),
+		chatID:                 chatID,
+		openID:                 currentOpenID(event, metaData),
+		userName:               userName,
+		messageList:            messageList,
+		noMemeReferenceHistory: historyLimit == 0,
 	}, nil
 }
 

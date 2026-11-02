@@ -37,7 +37,7 @@ func TestShutdownTimeoutRespectsConfig(t *testing.T) {
 func TestExecutorConfigsDefaults(t *testing.T) {
 	configs := ExecutorConfigs(&infraConfig.BaseConfig{})
 
-	if got := configs["message"]; got.Workers != 8 || got.QueueSize != 256 || got.TaskTimeout != 0 {
+	if got := configs["message"]; got.Workers != 8 || got.QueueSize != 256 || got.TaskTimeout != 2*time.Minute {
 		t.Fatalf("message executor config = %+v", got)
 	}
 	if got := configs["reaction"]; got.Workers != 4 || got.QueueSize != 128 || got.TaskTimeout != 0 {

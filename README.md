@@ -31,6 +31,7 @@ BetaGo-Redefine 是一个基于 Go 的智能聊天机器人系统，目前主要
 - 飞书事件驱动机器人主服务，接收消息、表情反应、卡片回调等事件
 - 基于火山方舟模型的聊天、推理、图片输入处理和工具调用
 - 历史消息记录、分块归档、OpenSearch 检索与群聊上下文召回
+- [梗知识参考召回](docs/architecture/meme-references.md)：Wiki 数据源、Milvus 四路召回，master 与 next 共用，用途卡作为主模型输入并记录召回及采用日志。
 - `todo` 与 `schedule` 两套任务能力，支持一次性提醒、cron 任务和定时执行工具
 - 运行时配置管理、功能开关管理、智能频控、消息撤回/禁言等运营能力
 - 图片词库、回复词库、音乐卡片、金价/A 股查询、词云和活跃度分析等插件能力
@@ -589,6 +590,7 @@ GitHub Actions 已配置以下工作流：
 
 ## 进一步阅读
 
+- [`docs/architecture/meme-references.md`](./docs/architecture/meme-references.md)
 - [`docs/todo_system_design.md`](./docs/todo_system_design.md)
 - [`docs/permission_scope_constraints.md`](./docs/permission_scope_constraints.md)
 - [`internal/application/lark/cardaction/README.md`](./internal/application/lark/cardaction/README.md)

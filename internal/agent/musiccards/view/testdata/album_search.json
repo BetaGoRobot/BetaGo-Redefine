@@ -1,0 +1,1 @@
+{"title":"专辑检索结果","items":[{"id":"99","title":"[专辑] 魔杰座","artist":"周杰伦","image_key":"img_album_99","comment":"听了很多年","comment_time":"2026-09-20","action":{"text":"查看专辑","value":{"action":"music.album","id":"99","token":"signed-album-99"}}}],"page":1,"total_pages":1,"total":1,"withdraw":{"value":{"token":"signed-withdraw"}},"updated_at":"2026-10-27 20:00:01"}

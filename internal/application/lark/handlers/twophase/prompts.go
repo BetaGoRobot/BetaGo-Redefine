@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/intentmeta"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/memereference"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/llmusage"
 	"github.com/BetaGoRobot/BetaGo-Redefine/pkg/utils"
 )
@@ -91,6 +92,7 @@ func BuildReplyGeneratorPrompt(mode string, persona string, toolHints []intentme
 		)
 	}
 
+	lines = append(lines, memereference.CorrectionInstruction)
 	if persona != "" {
 		lines = append(lines,
 			"",
