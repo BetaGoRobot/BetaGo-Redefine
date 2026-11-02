@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/memereference"
+
 	appconfig "github.com/BetaGoRobot/BetaGo-Redefine/internal/application/config"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/botidentity"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/conversationeval"
@@ -432,6 +434,7 @@ thought 仅用 1-2 句话说明：
 	}
 	lines = append(lines,
 		"# 纠错机制\n"+"当用户纠正你的回复时（如说'不是的，应该是xxx'、'错了，应该是xxx'），你必须调用 store_correction 工具记录纠正内容。\n"+"调用该工具后，继续正常对话。\n",
+		memereference.CorrectionInstruction,
 	)
 
 	// Append chat-specific persona as a constraint section

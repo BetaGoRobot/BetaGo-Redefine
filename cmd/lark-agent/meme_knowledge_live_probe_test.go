@@ -513,6 +513,12 @@ func TestMemeKnowledgePublishedReadback(t *testing.T) {
 	if err != nil || current == nil || len(current.PriorKnowledge) == 0 || len(cards) != 0 {
 		t.Fatal("native current source policy rejected verified visible prior")
 	}
+	if current.LinguisticMethod != memes.LinguisticObservationMethod || len(current.Linguistics) == 0 {
+		t.Fatal("native current source policy lost linguistic observations")
+	}
+	report["linguistic_method"] = current.LinguisticMethod
+	report["linguistic_dictionary_fingerprint"] = current.LinguisticDictionaryFingerprint
+	report["linguistic_observations"] = len(current.Linguistics)
 	report["native_revalidate_prior_titles"] = func() []string {
 		titles := []string{}
 		for _, p := range current.PriorKnowledge {

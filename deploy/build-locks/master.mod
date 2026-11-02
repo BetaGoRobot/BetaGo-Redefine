@@ -15,6 +15,7 @@ require (
 	github.com/eko/gocache/lib/v4 v4.4.0
 	github.com/eko/gocache/store/go_cache/v4 v4.2.10
 	github.com/enescakir/emoji v1.0.0
+	github.com/go-ego/gse v1.3.1
 	github.com/go-openapi/runtime v0.33.3
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gotify/go-api-client/v2 v2.0.4
@@ -71,6 +72,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/vcaesar/cedar v0.50.1 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
 	github.com/valyala/histogram v1.2.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect

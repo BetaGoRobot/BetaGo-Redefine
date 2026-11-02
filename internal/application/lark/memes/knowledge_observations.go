@@ -35,10 +35,12 @@ type KnowledgeEntryMatch struct {
 }
 
 type KnowledgeSelection struct {
-	Binding            KnowledgeBinding  `json:"binding"`
-	Anchors            []KnowledgeAnchor `json:"anchors"`
-	Entries            []KnowledgeEntry  `json:"entries"`
-	OmittedAnchorCount int               `json:"omitted_anchor_count"`
+	Binding            KnowledgeBinding        `json:"binding"`
+	Anchors            []KnowledgeAnchor       `json:"anchors"`
+	Entries            []KnowledgeEntry        `json:"entries"`
+	OmittedAnchorCount int                     `json:"omitted_anchor_count"`
+	Linguistics        []LinguisticObservation `json:"linguistics,omitempty"`
+	OmittedLinguistics int                     `json:"omitted_linguistics,omitempty"`
 }
 
 // SelectKnowledge is the convenience API for callers without a reusable
@@ -115,7 +117,15 @@ func knowledgeMatchKind(term knowledgeTerm, quote string) (string, int) {
 }
 
 func compareKnowledgeAnchors(a, b knowledgeAnchorCandidate) int {
-	// Newer turns always come first. Within the same turn, the priority
+	// Source-term associations always yield to exact title/alias candidates.
+	aLexical, bLexical := a.anchor.MatchKind == "source_term_overlap", b.anchor.MatchKind == "source_term_overlap"
+	if aLexical != bLexical {
+		if aLexical {
+			return 1
+		}
+		return -1
+	}
+	// Newer turns then come first. Within the same turn, the priority
 	// demotes generic dates/numbers, then ranks source provenance and exact
 	// matches; length, original position and IDs resolve the remaining ties.
 	if a.turnIndex != b.turnIndex {

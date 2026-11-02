@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var errKnowledgeLexicalBudget = errors.New("knowledge lexical postings exceed 32MiB budget")
+
 const (
 	maxKnowledgeLexiconBytes  = 32 << 20
 	maxKnowledgeMatcherStates = 2 << 20
@@ -15,6 +17,7 @@ const (
 // KnowledgeSelector owns an immutable, generation-bound dictionary prepared
 // once for concurrent requests. Its source data is detached during construction.
 type KnowledgeSelector struct {
+	lexical  map[string][]knowledgeLexicalPosting
 	binding  KnowledgeBinding
 	entries  map[string]KnowledgeEntry
 	patterns []knowledgePattern
@@ -52,7 +55,7 @@ func NewKnowledgeSelector(snapshot KnowledgeSnapshot) (*KnowledgeSelector, error
 	// bodies are additionally bounded by the authoritative PG reader.
 	metadataBytes := 0
 	for _, entry := range snapshot.Entries {
-		metadataBytes += len(entry.ID) + len(entry.Title) + 32
+		metadataBytes += len(entry.ID) + len(entry.Title) + len(entry.Description) + 32
 		if metadataBytes > maxKnowledgeLexiconBytes {
 			return nil, errors.New("knowledge lexicon exceeds 32MiB metadata budget")
 		}
@@ -64,6 +67,9 @@ func NewKnowledgeSelector(snapshot KnowledgeSnapshot) (*KnowledgeSelector, error
 		}
 	}
 	if err := ValidateKnowledgeSnapshot(snapshot, snapshot.Binding); err != nil {
+		return nil, err
+	}
+	if err := warmLinguisticAnalyzer(); err != nil {
 		return nil, err
 	}
 	selector := &KnowledgeSelector{binding: snapshot.Binding, entries: make(map[string]KnowledgeEntry, len(snapshot.Entries))}
@@ -143,6 +149,9 @@ func NewKnowledgeSelector(snapshot KnowledgeSnapshot) (*KnowledgeSelector, error
 		selector.nodes[i].edgeStart = int32(start)
 	}
 	selector.buildFailureLinks()
+	if err := selector.buildLexicalIndex(snapshot); err != nil {
+		return nil, err
+	}
 	return selector, nil
 }
 
@@ -171,6 +180,23 @@ func (selector *KnowledgeSelector) Select(req Request) (KnowledgeSelection, erro
 			// make this one original span, regardless of how many entries match.
 			pool.add(pattern.candidate(turn.TurnID, string(original[start:end]), start, end, turnIndex))
 		})
+	}
+	// One shared bounded pool retains at most 64 candidates across both lanes.
+	// Exact title/alias candidates always rank before lexical associations.
+	exactCount := min(len(pool.candidates), MaxKnowledgeAnchors)
+	exactEntries := map[string]bool{}
+	for _, candidate := range pool.candidates {
+		for _, id := range candidate.anchor.EntryIDs {
+			exactEntries[id] = true
+		}
+	}
+	for turnIndex := len(req.Dialogue) - 1; turnIndex >= 0; turnIndex-- {
+		turn := req.Dialogue[turnIndex]
+		tokens := linguisticTokens(turn.TurnID, turn.Text)
+		appendLinguisticObservations(&selection, tokens)
+		if exactCount < MaxKnowledgeAnchors {
+			selector.lexicalCandidates(turn, turnIndex, tokens, &pool, exactEntries)
+		}
 	}
 	candidates := pool.candidates
 	slices.SortFunc(candidates, compareKnowledgeAnchors)

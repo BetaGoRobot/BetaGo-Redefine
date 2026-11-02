@@ -19,7 +19,7 @@ func KnowledgeSourceKey(source SourceMetadata) string {
 // FilterKnowledgeSelection keeps original observations even after a source is
 // withdrawn. Its knowledge links only name entries that remain available.
 func FilterKnowledgeSelection(selection KnowledgeSelection, allowed map[string]bool) KnowledgeSelection {
-	out := KnowledgeSelection{Binding: selection.Binding, OmittedAnchorCount: selection.OmittedAnchorCount, Entries: []KnowledgeEntry{}, Anchors: []KnowledgeAnchor{}}
+	out := KnowledgeSelection{Linguistics: append([]LinguisticObservation(nil), selection.Linguistics...), OmittedLinguistics: selection.OmittedLinguistics, Binding: selection.Binding, OmittedAnchorCount: selection.OmittedAnchorCount, Entries: []KnowledgeEntry{}, Anchors: []KnowledgeAnchor{}}
 	for _, entry := range selection.Entries {
 		if allowed[entry.ID] {
 			out.Entries = append(out.Entries, entry)

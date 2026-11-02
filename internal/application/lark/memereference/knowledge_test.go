@@ -102,3 +102,74 @@ func TestGroundedFormatterRejectsDanglingReferencesAndInvalidFingerprints(t *tes
 		}
 	}
 }
+
+func TestLinguisticFormatterRejectsForgedCandidatesAndAllowsOldScenes(t *testing.T) {
+	old := priorResult(t)
+	old.ContextV2.Linguistics = nil
+	old.ContextV2.LinguisticMethod = ""
+	old.ContextV2.LinguisticDictionaryFingerprint = ""
+	if PromptContext(old) == nil {
+		t.Fatal("old exact-observation scene rejected")
+	}
+	for _, mutate := range []func(*memes.GroundedContext){
+		func(c *memes.GroundedContext) { c.LinguisticMethod = "unverified method" },
+		func(c *memes.GroundedContext) { c.LinguisticDictionaryFingerprint = strings.Repeat("a", 64) },
+		func(c *memes.GroundedContext) {
+			c.Linguistics = []memes.LinguisticObservation{{TurnID: "t", Text: "海岛", StartRune: 0, EndRune: 2, POS: "ns", Status: "verified"}}
+		},
+		func(c *memes.GroundedContext) {
+			c.Linguistics = []memes.LinguisticObservation{{TurnID: "t", Text: "海岛", StartRune: 0, EndRune: 2, POS: "n", Status: "dictionary_pos_candidate", EntityCandidate: "person"}}
+		},
+		func(c *memes.GroundedContext) {
+			c.Linguistics = []memes.LinguisticObservation{{TurnID: "t", Text: "陆地", StartRune: 0, EndRune: 2, POS: "n", Status: "dictionary_pos_candidate"}}
+		},
+		func(c *memes.GroundedContext) {
+			c.Linguistics = []memes.LinguisticObservation{{TurnID: "unknown", Text: "海岛", StartRune: 0, EndRune: 2, POS: "n", Status: "dictionary_pos_candidate"}}
+		},
+	} {
+		r := priorResult(t)
+		mutate(r.ContextV2)
+		if PromptContext(r) != nil {
+			raw, _ := json.Marshal(r.ContextV2)
+			t.Fatalf("forged linguistic context accepted: %s", raw)
+		}
+	}
+}
+
+func TestLinguisticFormatterTrimsOptionalTokensBeforeVerifiedPriors(t *testing.T) {
+	r := priorResult(t)
+	text := strings.Repeat("发动机和燃料", 100)
+	r.Sources = []memes.SourceFragment{{SourceID: 0, TurnID: "long", Quote: text, StartRune: 0, EndRune: 600}}
+	r.ContextV2.SourceIDs = []int{0}
+	r.ContextV2.Observations = nil
+	r.ContextV2.Interpretations = nil
+	r.ContextV2.PriorKnowledge[0].Description = strings.Repeat("保留完整来源释义。", 280)
+	r.ContextV2.Linguistics = nil
+	for i := range 32 {
+		r.ContextV2.Linguistics = append(r.ContextV2.Linguistics, memes.LinguisticObservation{TurnID: "long", Text: "发动机", StartRune: i * 6, EndRune: i*6 + 3, POS: "n", Status: "dictionary_pos_candidate"})
+	}
+	got := PromptContext(r)
+	if got == nil {
+		t.Fatal("linguistics caused valid priors to disappear")
+	}
+	if got.PriorKnowledge[0].Description != r.ContextV2.PriorKnowledge[0].Description || len(got.Linguistics) >= 32 {
+		t.Fatalf("optional linguistic tokens displaced source details: %+v", got)
+	}
+}
+
+func TestLinguisticLexicalMatchesRequireVersionedMethod(t *testing.T) {
+	r := priorResult(t)
+	r.ContextV2.Linguistics = nil
+	r.ContextV2.LinguisticMethod = ""
+	r.ContextV2.LinguisticDictionaryFingerprint = ""
+	r.ContextV2.Observations[0].MatchKind = "source_term_overlap"
+	r.ContextV2.Observations[0].EntryMatches[0].MatchKind = "source_term_overlap"
+	if PromptContext(r) != nil {
+		t.Fatal("new lexical provenance accepted with legacy alias-only method")
+	}
+	r.ContextV2.LinguisticMethod = memes.LinguisticObservationMethod
+	r.ContextV2.LinguisticDictionaryFingerprint = memes.LinguisticDictionaryFingerprint()
+	if PromptContext(r) == nil {
+		t.Fatal("versioned lexical context rejected")
+	}
+}

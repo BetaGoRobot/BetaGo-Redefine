@@ -11,6 +11,7 @@ import (
 
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/agent/domain"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/agent/modelapi"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/memereference"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -60,7 +61,7 @@ func legacyReplyConstraintCheckpoint(t *testing.T) (*autoEffectFixture, *resumeC
 	for _, definition := range f.engine.c.Registry.Definitions() {
 		tools = append(tools, &boundTool{definition: definition, store: f.store, job: f.job, task: task, refresh: f.engine.RefreshTask, present: f.engine.presentTool})
 	}
-	legacyInstruction := instruction + "\n" + conversationOutputInstruction
+	legacyInstruction := coreInstruction + "\n" + conversationOutputInstruction
 	legacyAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{Name: "group_agent", Description: "Virtual AI group member", Instruction: legacyInstruction, Model: NewChatAdapter(model, f.engine.c.MaxContextBytes, true), ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}}, MaxIterations: f.engine.c.MaxIterations})
 	if err != nil {
 		t.Fatal("create legacy native agent failed")
@@ -125,6 +126,9 @@ func TestNativeReplyConstraintsReachResumedLegacyApprovalCheckpoint(t *testing.T
 	system := replyConstraintSystem(resumed)
 	if !strings.Contains(system, replyConstraintsInstruction) || strings.Count(system, "阅读和回复约束：") != 1 {
 		t.Error("resumed legacy checkpoint did not receive exactly one current reply constraint block")
+	}
+	if strings.Count(system, memereference.CorrectionInstruction) != 1 {
+		t.Error("resumed legacy checkpoint did not receive exactly one current meme correction block")
 	}
 	if !strings.Contains(system, replyConstraintSystem(model.requests[0])) {
 		t.Error("resume replaced existing social, permission or output instructions")

@@ -10,6 +10,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/agent/domain"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/agent/modelapi"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/agent/telemetry"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/application/lark/memereference"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"go.opentelemetry.io/otel/attribute"
@@ -111,23 +112,25 @@ func (m *ChatAdapter) Generate(ctx context.Context, in []*schema.Message, opts .
 		// Native resume restores the checkpoint's old system message instead of
 		// rebuilding it from the current agent Instruction. Preserve that history
 		// and append only the missing rules in this model-bound request copy.
-		firstSystem, hasConstraints := -1, false
-		for i, message := range r.Messages {
-			if message.Role != "system" {
-				continue
+		for _, rule := range []string{replyConstraintsInstruction, memereference.CorrectionInstruction} {
+			firstSystem, hasConstraints := -1, false
+			for i, message := range r.Messages {
+				if message.Role != "system" {
+					continue
+				}
+				if firstSystem < 0 {
+					firstSystem = i
+				}
+				content, _ := message.Content.(string)
+				hasConstraints = hasConstraints || strings.Contains(content, rule)
 			}
-			if firstSystem < 0 {
-				firstSystem = i
-			}
-			content, _ := message.Content.(string)
-			hasConstraints = hasConstraints || strings.Contains(content, replyConstraintsInstruction)
-		}
-		if !hasConstraints {
-			if firstSystem >= 0 {
-				content, _ := r.Messages[firstSystem].Content.(string)
-				r.Messages[firstSystem].Content = content + "\n" + replyConstraintsInstruction
-			} else {
-				r.Messages = append([]modelapi.ChatMessage{{Role: "system", Content: replyConstraintsInstruction}}, r.Messages...)
+			if !hasConstraints {
+				if firstSystem >= 0 {
+					content, _ := r.Messages[firstSystem].Content.(string)
+					r.Messages[firstSystem].Content = content + "\n" + rule
+				} else {
+					r.Messages = append([]modelapi.ChatMessage{{Role: "system", Content: rule}}, r.Messages...)
+				}
 			}
 		}
 	}
