@@ -21,8 +21,8 @@ github.com/PuerkitoBio/purell v1.1.0/go.mod h1:c11w/QuzBsJSee3cPx9rAFu61PvFxuPbt
 github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578/go.mod h1:uGdkoq3SwY9Y+13GIhn11/XLaGBb4BfwItxLd5jeuXE=
 github.com/RealAlexandreAI/json-repair v0.0.19 h1:baerGHC8ahygxbh2xeKsF59DJEMFjJvm0AjYZ4QigdY=
 github.com/RealAlexandreAI/json-repair v0.0.19/go.mod h1:VbAKi6fhtCOpesCXt77rh0MvjPcRmw7kTiYMfIwh2BU=
-github.com/VictoriaMetrics/metrics v1.44.1 h1:OMyGrMkhI3hnq+IpJ1gZK9VhXcsOjUX1CoOFv//bJ0I=
-github.com/VictoriaMetrics/metrics v1.44.1/go.mod h1:xDM82ULLYCYdFRgQ2JBxi8Uf1+8En1So9YUwlGTOqTc=
+github.com/VictoriaMetrics/metrics v1.45.0 h1:Tv8dZRAjkO90rBTxYrWOHUWFBHsAKdKcZYmS/Wbo2EU=
+github.com/VictoriaMetrics/metrics v1.45.0/go.mod h1:xDM82ULLYCYdFRgQ2JBxi8Uf1+8En1So9YUwlGTOqTc=
 github.com/alicebob/miniredis/v2 v2.40.0 h1:6IgTQbvm2JiMYZ8yur/acNJzVjtSOWCelxXbk/LUBXc=
 github.com/alicebob/miniredis/v2 v2.40.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
 github.com/asaskevich/govalidator v0.0.0-20180720115003-f9ffefc3facf/go.mod h1:lB+ZfQJz7igIIfQNfa7Ml4HSf2uFQQRzpGGRXenZAgY=
