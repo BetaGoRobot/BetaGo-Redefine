@@ -1,39 +1,41 @@
-# 手机预览：拿到 ZIP 后再开始
+# 手机预览
 
-**现在先等维护者把准备好的 ZIP 发给你。** 歌曲服务还需完成部署，当前测试歌曲仍可能提示只能试听。服务器和歌曲由维护者处理，你不用搭服务或改网络。
+歌曲服务已经准备好。你只需要下载开发包，在自己的电脑登录飞书开发者工具，再用手机扫码。
 
-拿到 `betago-music-mini-dev.zip` 后，按下面操作：
-
-1. 解压 ZIP。
-2. 打开[飞书开发者工具](https://open.feishu.cn/document/tools-and-sdks/developer-tools-portal.md)，用有该应用开发权限的飞书账号登录。
+1. 下载本次提供的 `betago-music-mini-dev.zip`，解压。
+2. 打开[飞书开发者工具](https://open.feishu.cn/document/tools-and-sdks/developer-tools-portal.md)，登录有该应用开发权限的飞书账号。
 3. 点击“导入项目”，选择解压后包含 `project.config.json` 的文件夹。
 4. 编译成功后点击“预览”。
 5. 用手机飞书扫描二维码，打开小程序。
 
-进入后点“连接音乐服务”，搜索维护者提供的歌曲，再点歌曲播放。新选的歌曲会加入当前播放列表，已有歌曲会保留；也可以选择已有歌单后点击“播放”。
+不需要搭服务器、改网络或提供应用密钥，也不需要发布线上版本。AppID已核实。开发配置和域名许可需要这次预览确认；保留工具的正常校验，不勾选忽略域名校验。如果编译或扫码失败，把提示原样发给维护者。
 
-如果编译、扫码或播放失败，保留实际提示交给维护者。你不需要提供密码、App Secret、开发者 Token 或个人 Cookie，也不需要发布线上版本。
+电脑模拟器提示“后台播放不可用”时，仍需用手机预览；后台播放只在手机飞书中验证。
 
-## 手机上先试这些
+## 先播放这首长歌
 
-先播放 30 秒，暂停再继续，拖动进度，再切换歌曲。测试锁屏换曲时，按手机当前显示的时长，拖到歌曲**结束前 20 秒**，锁屏 70 秒，再检查是否进入下一首。
+进入小程序后点“连接音乐服务”，搜索 **小王日记**，选择毛不易的这首歌曲。它约 **43 分 36 秒**。
 
-长测步骤见 [真机执行表](device-validation.md)：播放列表总时长大于 30 分钟；单曲连续播放超过 10 分钟单独记录。现有长曲已在服务器检查了文件时长和读取，手机能否解码、锁屏继续播放仍待测。
+先听 30 秒，暂停再继续，确认手机有声音。然后从头播放并锁屏 15 分钟；另起一轮从头播放，锁屏 30 分钟。每次解锁后检查是否还在播放、进度是否正确。
 
-点击“复制排查信息”可保存测试记录。当前所有手机结果仍待测，本地 33 项自动测试通过也不代表手机通过。
+飞书账号用于登录开发工具，音乐服务本次使用自己的访客资料。当前所有手机结果仍待测，服务端检查通过不能代替手机播放。
 
-## 仅开发者需要：从源码构建
+## 换曲另测一次
 
-使用维护者提供的 ZIP 可以跳过本节。自行构建需要 Node >=18 和 zip，在源码目录运行：
+把《100种生活》排在《小王日记》前面。播放《100种生活》，按手机显示的时长拖到**结束前 20 秒**，锁屏 70 秒，再检查是否已自动进入《小王日记》。
+
+这项单独记录，不替代上面的 15/30 分钟连续播放。更多步骤见 [真机执行表](device-validation.md)；点击“复制排查信息”可保存记录。
+
+## 可选：从源码构建
+
+使用已配置 ZIP 可以跳过本节。自行构建需要 Node >=18 和 zip：
 
 ```sh
 npm ci --ignore-scripts
-npm run configure -- --app-id cli_你的应用ID --api-origin https://music-mini.kmhomelab.cn:2443
+npm run configure -- --app-id cli_你的应用ID --api-origin https://music-mini.kmhomelab.cn:2443 --audio-origin https://music.kmhomelab.cn:2443
 npm run build
 ```
 
-默认是 `service` 模式。配置和构建只生成本机开发包，不会替维护者部署服务。导入生成的 `dist/` 或解压后的开发包。源码在主仓库的位置是 `examples/feishu-music-mini`。
+默认 `service` 模式；API 与音频使用上面两个不同地址。`--audio-origin` 可以重复填写多个允许的音频来源。导入生成的 `dist/` 或解压后的开发包；主仓库源码路径为 `examples/feishu-music-mini`。
 
-开发回归另需 Python 3，执行 `npm run fixtures:generate`、`npm run verify`。两条 16 分钟合成音与显式 `--mode fixture` 仅供本机回归，不用于普通手机测试，也不部署公网测试音频服务。
-
-已有官方 CLI 登录态的开发者也可使用 `opdev preview ./dist --platform=mobile`，见[官方说明](https://open.feishu.cn/document/tools-and-resources/development-tools/ide-with-commands.md)。本任务尚未执行官方预览，不需要执行 `opdev upload`。
+本机开发回归另需 Python 3，执行 `npm run fixtures:generate`、`npm run verify`。两条 16 分钟合成音与显式 `--mode fixture` 仅供本机回归，不用于普通手机测试，也不部署公网测试音频服务。本地测试不能替代飞书官方编译和真机结果。

@@ -2,20 +2,22 @@
 
 本目录是 **BetaGoRobot/BetaGo-Redefine** 的薄小程序实验工程，负责飞书后台音频与自有音乐 API 适配。歌曲搜索、歌单、身份和音源由现有网页/API 服务管理，小程序不另建后端。
 
-普通手机测试复用真实 API 和现有 MinIO 歌曲。维护者在部署并启用已有歌曲缓存支持后交付已配置的 ZIP；应用开发者只需登录飞书开发者工具、导入、预览并用手机扫码。操作见 [开发者快速预览](docs/developer-quickstart.md)，无需在自己的电脑启动音频服务或修改服务器网络。
+普通手机测试复用真实 API 和现有 MinIO 歌曲。完整歌曲接口已通过服务端检查；开发者拿到已配置 ZIP 后，登录飞书开发者工具、导入、预览并用手机扫码即可。操作见 [开发者快速预览](docs/developer-quickstart.md)，无需在自己的电脑启动音频服务或修改服务器网络。
 
 ## 当前进度
 
 已实现官方 `tt.getBackgroundAudioManager` 适配、搜索歌曲并加入本设备播放列表、载入已有歌单、播放/暂停/切歌/拖动进度、过期后刷新并恢复位置、自有登录和恢复码、带版本检查的进度保存、排查信息和固定 HTTPS 网页入口。
 
-2026-11-13 已验证的服务入口是 `https://music-mini.kmhomelab.cn:2443`：
+2026-11-13 已验证的两个 HTTPS 来源如下，配置时需分别填写：
 
-| 路径 | 现有服务 | 已验证范围 |
+| 用途和来源 | 路径 | 已验证范围 |
 | --- | --- | --- |
-| `/music-api/v1/*` | 真实网页/API 后端 `172.18.0.1:37834` | HTTPS 登录、身份检查、搜索、读取/保存设备播放列表均返回 200 |
-| GET/HEAD `/cloudmusic/*` | 现有 MinIO | TLS 1.3；两首已存 MP3 的 Range 206；短链接 206 → 过期 403 → 重新签发后 206 |
+| API：`https://music-mini.kmhomelab.cn:2443` | `/music-api/v1/*` | 自有访客登录、搜索、设备播放列表与两首完整歌曲解析已通过 |
+| 音频：`https://music.kmhomelab.cn:2443` | GET/HEAD `/cloudmusic/*` | API 实际返回此来源；两首歌曲均返回 HTTPS Range 206 |
 
-**手机播放尚未就绪。** 网页/API 源码已有 MinIO 缓存支持，但真实部署仍需更新并启用该能力；抽样歌曲仍返回 `preview`，本原型会停止并提示只能试听。对象文件能下载与 API 能搜索，不能证明小程序已能取得完整歌曲。当前只确认该域名有 AAAA 记录，手机所用网络的 IPv6 连通性也需验证。飞书官方编译、手机扫码、锁屏和后台播放结果均待测。
+`netease:109616` 与 `netease:1417862065` 通过真实 API 返回 `available`、`reason: owned_minio_cache` 和上述音频来源，原先的缓存部署阻塞已解除。当前 `/auth/options` 的 `feishu.enabled=false`，播放器使用自有访客登录；飞书账号用于开发工具登录，不代表音乐服务已经开通飞书单点登录。
+
+**手机结果仍待测。** 尚未执行飞书开发者登录、官方编译或扫码；AppID已通过官方只读接口核实；发布版本未返回小程序能力，未版本化开发配置与域名许可仍须开发工具确认。已知入口有 AAAA 记录，手机网络可达性、解码、锁屏和后台播放均需实际验证，不能用服务端结果代替。
 
 现有《小王日记》（`netease:1417862065`）与 `netease:109616` 均已通过 HTTPS Range 206 检查，签名链接也通过 206 → 过期 403 → 重新签发后 206。两份完整 HTTPS 下载文件经服务器工具识别为 MP3、双声道、44.1 kHz，实际文件时长分别为 **43:35.592** 和 **4:49.573**，合计 **48:25.165**。手机解码与连续播放超过 10 分钟仍待验证。
 
@@ -25,21 +27,21 @@
 
 ```sh
 npm ci --ignore-scripts
-npm run configure -- --app-id cli_你的应用ID --api-origin https://music-mini.kmhomelab.cn:2443
+npm run configure -- --app-id cli_你的应用ID --api-origin https://music-mini.kmhomelab.cn:2443 --audio-origin https://music.kmhomelab.cn:2443
 npm run build
 ```
 
-`configure` 默认 `mode: service`，生成已忽略的 `config.local.json`，仅写入非敏感 App ID 和地址。网页入口可另加 `--web-url https://你的自有网页播放器地址/`。构建产物是 `dist/betago-music-mini-dev.zip`；导入解压后包含 `project.config.json` 的目录，源码根目录为 `./gadget/`。本地构建不调用飞书官方编译器。
+`configure` 默认 `mode: service`，生成已忽略的 `config.local.json`，仅写入非敏感 App ID 和地址。`--audio-origin` 可重复填写多个允许的音频来源；本次必须允许 `https://music.kmhomelab.cn:2443`，不能只填 API 的域名。网页入口可另加 `--web-url https://你的自有网页播放器地址/`。构建产物是 `dist/betago-music-mini-dev.zip`；导入解压后包含 `project.config.json` 的目录，源码根目录为 `./gadget/`。本地构建不调用飞书官方编译器。
 
 | 配置 | 含义 |
 | --- | --- |
 | `appId` | 现有飞书应用的非敏感 ID，不含 App Secret |
 | `mode: service` | 默认模式，连接真实 `/music-api/v1` API |
 | `apiBaseUrl` | 不带路径的 HTTPS origin；客户端自行追加 `/music-api/v1` |
-| `audioOrigins` | 允许的精确音频 origin，须与解析接口实际返回值一致 |
+| `audioOrigins` | 本次为 `https://music.kmhomelab.cn:2443`；须与解析接口实际返回值一致 |
 | `webPlayerUrl / webOrigins` | 固定 HTTPS 网页入口，不传递凭证或当前播放链接 |
 | `authMode: anonymous` | 新建自有访客登录，或使用本机已有登录；不自动继承网页访客资料 |
-| `authMode: feishu` | 连接时向自有后端发送飞书短期授权码，实际登录仍需目标应用联调 |
+| `authMode: feishu` | 预留适配，当前服务未启用；本次不使用、不声称飞书单点登录已通过 |
 | `feishuExchangePath` | 默认 `/music-api/v1/auth/feishu/exchange` |
 | `allowLocalhost` | 仅限本机开发回归；`service` 构建禁止开启 |
 
@@ -55,7 +57,7 @@ npm run verify
 
 此路径需要 Python 3。生成的两条 16 分钟 CC0 合成音只供本机开发回归，用于验证 Range、链接过期和播放器状态；不上传为普通手机测试歌曲，也不部署公网测试音频服务。需要专门构建测试模式时，开发者须显式添加 `--mode fixture`，它不再是默认配置。测试服务默认仅监听 `127.0.0.1:8787`，普通用户不需要运行 `fixtures:serve`。
 
-当前完整 `npm run verify` 已通过 33 项测试，包含 JS/JSON/TTML 校验、状态机和 HTTP 测试及开发包检查；它不能证明飞书官方编译或手机播放成功。
+当前完整 `npm run verify` 已通过 35 项测试，包含 JS/JSON/TTML 校验、状态机和 HTTP 测试及开发包检查；它不能证明飞书官方编译或手机播放成功。
 
 ## 身份、进度和验证边界
 
