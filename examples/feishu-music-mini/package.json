@@ -1,0 +1,18 @@
+{
+  "name": "betago-feishu-music-mini",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "description": "Thin Feishu gadget background audio prototype for BetaGo-Redefine",
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "check": "node scripts/check.mjs",
+    "build": "node scripts/build.mjs && node scripts/validate-package.mjs",
+    "configure": "node scripts/configure.mjs",
+    "package": "node scripts/package.mjs",
+    "fixtures:generate": "python3 scripts/generate-audio.py",
+    "fixtures:serve": "node fixtures/server.cjs",
+    "verify": "npm run check && npm test && npm run build"
+  },
+  "engines": { "node": ">=18" }
+}

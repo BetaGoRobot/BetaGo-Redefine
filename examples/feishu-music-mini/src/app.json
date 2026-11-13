@@ -1,0 +1,9 @@
+{
+  "pages": ["pages/player/index"],
+  "window": {
+    "navigationBarTitleText": "BetaGo 音乐原型",
+    "navigationBarBackgroundColor": "#102c36",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f3f6f7"
+  }
+}

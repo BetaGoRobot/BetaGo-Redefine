@@ -1,0 +1,18 @@
+# The real music service is owned/deployed by betago-music-web.
+# This route owns only the mini-program hostname, not the shared player router.
+http:
+  routers:
+    betago-music-mini-api:
+      rule: 'HostRegexp(`^music-mini\..+$`) && PathPrefix(`/music-api/v1/`)'
+      entryPoints:
+        - websecure
+        - websecure_extra
+        - websecure_v4
+      service: betago-music-mini-api
+      priority: 100
+      tls: {}
+  services:
+    betago-music-mini-api:
+      loadBalancer:
+        servers:
+          - url: http://172.18.0.1:37834

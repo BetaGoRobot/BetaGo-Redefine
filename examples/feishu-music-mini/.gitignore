@@ -1,0 +1,9 @@
+config.local.json
+dist/
+fixtures/audio/
+node_modules/
+*.log
+!evidence/verification.log
+evidence/private/
+
+__pycache__/
