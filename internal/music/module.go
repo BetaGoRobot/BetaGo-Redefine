@@ -27,7 +27,15 @@ type Module struct {
 var _ appruntime.Module = (*Module)(nil)
 
 func OptionsFromEnv(provider func() *gorm.DB) Options {
-	o := Options{SkipMigration: os.Getenv("MUSIC_MIGRATE") == "false", DBProvider: provider, Addr: os.Getenv("MUSIC_ADDR"), Origin: os.Getenv("MUSIC_ORIGIN"), AppID: os.Getenv("MUSIC_APP_ID"), StaticDir: os.Getenv("MUSIC_STATIC_DIR"), SecureCookie: os.Getenv("MUSIC_COOKIE_SECURE") != "false", Provider: AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL"), OwnedMediaHost: os.Getenv("MUSIC_OWNED_MEDIA_HOST")}}
+	o := Options{SkipMigration: os.Getenv("MUSIC_MIGRATE") == "false", DBProvider: provider, Addr: os.Getenv("MUSIC_ADDR"), Origin: os.Getenv("MUSIC_ORIGIN"), AppID: os.Getenv("MUSIC_APP_ID"), StaticDir: os.Getenv("MUSIC_STATIC_DIR"), SecureCookie: os.Getenv("MUSIC_COOKIE_SECURE") != "false", Provider: AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL"), OwnedMediaHost: os.Getenv("MUSIC_OWNED_MEDIA_HOST"), ServerCookie: os.Getenv("MUSIC_NETEASE_COOKIE")}}
+	if os.Getenv("MUSIC_MINIO_CACHE_ENABLED") == "true" {
+		p, err := newOwnedCacheProvider(ownedCacheConfig{endpoint: os.Getenv("MUSIC_MINIO_ENDPOINT"), publicOrigin: os.Getenv("MUSIC_MINIO_PUBLIC_ORIGIN"), bucket: os.Getenv("MUSIC_MINIO_BUCKET"), region: os.Getenv("MUSIC_MINIO_REGION"), accessKey: os.Getenv("MUSIC_MINIO_ACCESS_KEY"), secretKey: os.Getenv("MUSIC_MINIO_SECRET_KEY"), writeEnabled: os.Getenv("MUSIC_MINIO_CACHE_WRITE_ENABLED") == "true"}, o.Provider)
+		if err != nil {
+			o.providerErr, o.Provider = err, failedCacheProvider{}
+		} else {
+			o.Provider = p
+		}
+	}
 	if secret := os.Getenv("MUSIC_FEISHU_APP_SECRET"); secret != "" {
 		o.Verifier = FeishuVerifier{AppID: o.AppID, AppSecret: secret, RedirectURI: os.Getenv("MUSIC_FEISHU_REDIRECT_URI")}
 	}
@@ -39,6 +47,9 @@ func (*Module) Critical() bool       { return false }
 func (m *Module) Init(ctx context.Context) error {
 	if m.opts.Addr == "" {
 		return appruntime.ErrDisabled
+	}
+	if m.opts.providerErr != nil {
+		return m.opts.providerErr
 	}
 	u, err := url.Parse(m.opts.Origin)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Path != "" {
@@ -60,6 +71,13 @@ func (m *Module) Init(ctx context.Context) error {
 			if !exists {
 				return errors.New("apply music migration before starting with MUSIC_MIGRATE=false")
 			}
+		}
+		var canonicalColumn bool
+		if err := db.WithContext(ctx).Raw("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='music_tracks' AND column_name='canonical_verified')").Scan(&canonicalColumn).Error; err != nil {
+			return err
+		}
+		if !canonicalColumn {
+			return errors.New("apply music canonical metadata migration before starting with MUSIC_MIGRATE=false")
 		}
 	} else if err := Migrate(db.WithContext(ctx)); err != nil {
 		return err

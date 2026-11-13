@@ -27,12 +27,24 @@ type Options struct {
 	SecureCookie  bool
 	SkipMigration bool
 	Now           func() time.Time
+	providerErr   error
 }
 type Server struct {
-	db    *gorm.DB
-	opts  Options
-	mu    sync.Mutex
-	rates map[string]bucket
+	db          *gorm.DB
+	opts        Options
+	authOptions AuthOptions
+	mu          sync.Mutex
+	rates       map[string]bucket
+}
+
+// AuthOptions is public capability discovery and contains no credential or identity.
+type AuthOptions struct {
+	Guest  bool              `json:"guest"`
+	Feishu FeishuAuthOptions `json:"feishu"`
+}
+type FeishuAuthOptions struct {
+	Enabled bool   `json:"enabled"`
+	AppID   string `json:"appID"`
 }
 type bucket struct {
 	at time.Time
@@ -45,13 +57,17 @@ type account struct {
 }
 
 func NewServer(db *gorm.DB, opts Options) *Server {
+	capabilities := AuthOptions{Guest: true}
+	if opts.Verifier != nil && strings.TrimSpace(opts.AppID) != "" {
+		capabilities.Feishu = FeishuAuthOptions{Enabled: true, AppID: opts.AppID}
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	if opts.AppID == "" {
 		opts.AppID = "music"
 	}
-	return &Server{db: uncached(db), opts: opts, rates: map[string]bucket{}}
+	return &Server{db: uncached(db), opts: opts, authOptions: capabilities, rates: map[string]bucket{}}
 }
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -138,6 +154,11 @@ func (s *Server) Handler() http.Handler {
 		if v, ok := out.(*sessionResult); ok && v != nil && v.SessionToken == "" {
 			http.SetCookie(w, &http.Cookie{Name: "music_session", Value: v.cookie, Path: "/music-api/v1", HttpOnly: true, Secure: s.opts.SecureCookie, SameSite: http.SameSiteLaxMode, Expires: v.ExpiresAt, MaxAge: 30 * 24 * 3600})
 		}
+		if v, ok := out.(artworkRedirect); ok {
+			w.Header().Set("Location", string(v))
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
 		write(w, 200, out)
 	})
 }
@@ -166,6 +187,11 @@ type sessionInput struct {
 	Transport    string `json:"transport"`
 	Code         string `json:"code"`
 	RecoveryCode string `json:"recoveryCode"`
+}
+
+type artworkRedirect string
+type artworkProvider interface {
+	Artwork(context.Context, string) (string, error)
 }
 
 // Session response is produced by route; Handler attaches the cookie from its internal wrapper.
@@ -230,7 +256,7 @@ func (s *Server) session(r *http.Request, path string) (any, error) {
 		}
 		return s.issue(db, a, in.Transport)
 	}
-	if s.opts.Verifier == nil {
+	if !s.authOptions.Feishu.Enabled {
 		return nil, &apiError{503, "feishu_not_configured"}
 	}
 	ident, err := s.opts.Verifier.Verify(r.Context(), in.Code)
@@ -254,6 +280,17 @@ func (s *Server) session(r *http.Request, path string) (any, error) {
 }
 func (s *Server) route(r *http.Request) (any, error) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/music-api/v1/"), "/")
+	if r.Method == "GET" && path == "auth/options" {
+		return s.authOptions, nil
+	}
+	if r.Method == "GET" && strings.HasPrefix(path, "tracks/") && strings.HasSuffix(path, "/artwork") {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "tracks/"), "/artwork")
+		if p, ok := s.opts.Provider.(artworkProvider); ok {
+			u, err := p.Artwork(r.Context(), id)
+			return artworkRedirect(u), err
+		}
+		return nil, missing
+	}
 	if r.Method == "POST" && (path == "auth/guest" || path == "auth/recover" || path == "auth/feishu/exchange") {
 		return s.session(r, path)
 	}
@@ -308,11 +345,8 @@ func (s *Server) route(r *http.Request) (any, error) {
 		if err := body(r, &in); err != nil {
 			return nil, err
 		}
-		// Legacy import contains metadata only; URLs are neither accepted nor persisted.
-		if err := saveTrack(db, in.Track); err != nil {
-			return nil, err
-		}
-		return in.Track, nil
+		// The descriptor supplies identity only. Shared metadata comes from the configured provider.
+		return canonicalInputTrack(r.Context(), db, s.opts.Provider, in.Track)
 	}
 	if path == "tracks/details" && r.Method == "POST" {
 		var in struct {

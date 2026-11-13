@@ -260,7 +260,7 @@ func (s *Server) importData(db *gorm.DB, owner string, in Export) (any, error) {
 			}
 			ids := []string{}
 			for _, t := range p.Tracks {
-				if err := saveTrack(tx, t); err != nil {
+				if _, err := canonicalInputTrack(tx.Statement.Context, tx, s.opts.Provider, t); err != nil {
 					return err
 				}
 				ids = append(ids, t.ID)
@@ -270,7 +270,7 @@ func (s *Server) importData(db *gorm.DB, owner string, in Export) (any, error) {
 			}
 		}
 		for _, t := range in.Likes {
-			if err := saveTrack(tx, t); err != nil {
+			if _, err := canonicalInputTrack(tx.Statement.Context, tx, s.opts.Provider, t); err != nil {
 				return err
 			}
 			if err := tx.Exec("INSERT INTO music_likes(owner_id,track_id) VALUES(?,?) ON CONFLICT DO NOTHING", owner, t.ID).Error; err != nil {

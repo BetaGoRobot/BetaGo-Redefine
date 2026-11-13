@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -26,6 +27,16 @@ type Track struct {
 	Picture    string `json:"picture"`
 	DurationMs int64  `json:"durationMs"`
 }
+
+// All track-bearing responses, including old verified library rows, share the
+// same artwork guard without destructively rewriting personal catalogue data.
+func (t Track) MarshalJSON() ([]byte, error) {
+	type trackJSON Track
+	out := trackJSON(t)
+	out.Picture = securePicture(t.Picture)
+	return json.Marshal(out)
+}
+
 type Playlist struct {
 	ID       string  `json:"id"`
 	OwnerID  string  `json:"-"`
@@ -102,47 +113,72 @@ func secret() string {
 }
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func Migrate(db *gorm.DB) error {
-	b, err := sqlfiles.Files.ReadFile("20261113_music.sql")
-	if err != nil {
-		return err
-	}
-	return db.Transaction(func(tx *gorm.DB) error { return tx.Exec(string(b)).Error })
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql"} {
+			b, err := sqlfiles.Files.ReadFile(name)
+			if err != nil {
+				return err
+			}
+			if err = tx.Exec(string(b)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Raw SQL plus the same bypass setting as infrastructure/db avoids its generic query cache.
 func uncached(db *gorm.DB) *gorm.DB {
 	return db.Session(&gorm.Session{NewDB: true}).Set("betago:bypass_query_cache", true)
 }
+
+// ensureTrack only returns shared metadata that a server-side provider verified.
+// Older cache rows are deliberately unverified until the provider repairs them.
 func ensureTrack(ctx context.Context, db *gorm.DB, p Provider, id string) (Track, error) {
 	if err := validateID(id); err != nil {
 		return Track{}, err
 	}
-	var t Track
-	r := db.Raw("SELECT * FROM music_tracks WHERE id=?", id).Scan(&t)
-	if r.Error != nil {
-		return t, r.Error
+	var row struct {
+		Track             `gorm:"embedded"`
+		CanonicalVerified bool
 	}
-	if r.RowsAffected > 0 {
-		return t, nil
+	r := db.Raw("SELECT * FROM music_tracks WHERE id=?", id).Scan(&row)
+	if r.Error != nil {
+		return Track{}, r.Error
+	}
+	if r.RowsAffected > 0 && row.CanonicalVerified {
+		return row.Track, nil
 	}
 	if p == nil {
-		return t, missing
+		return Track{}, missing
 	}
 	t, err := p.Detail(ctx, id)
 	if err != nil {
-		return t, err
+		return Track{}, err
 	}
 	if t.ID != id {
-		return t, errors.New("provider identity mismatch")
+		return Track{}, errors.New("provider identity mismatch")
 	}
 	return t, saveTrack(db, t)
 }
+
+// Client metadata can identify a recording but cannot define the shared catalogue.
+func canonicalInputTrack(ctx context.Context, db *gorm.DB, p Provider, t Track) (Track, error) {
+	if validateID(t.ID) != nil || t.ID != t.Source+":"+t.ExternalID {
+		return Track{}, invalid("invalid_track")
+	}
+	return ensureTrack(ctx, db, p, t.ID)
+}
+
+// saveTrack is only for trusted server-side provider results, not client JSON.
 func saveTrack(db *gorm.DB, t Track) error {
-	if validateID(t.ID) != nil || t.ID != t.Source+":"+t.ExternalID || len(t.Title) > 1000 || len(t.Artist) > 2000 || len(t.Picture) > 4000 || t.DurationMs < 0 {
+	if validateID(t.ID) != nil || t.ID != t.Source+":"+t.ExternalID || len(t.Title) > 1000 || len(t.Artist) > 2000 || len(t.Album) > 2000 || len(t.Picture) > 4000 || t.DurationMs < 0 {
 		return invalid("invalid_track")
 	}
-	return db.Exec(`INSERT INTO music_tracks(id,source,external_id,title,artist,album,picture,duration_ms) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, t.ID, t.Source, t.ExternalID, t.Title, t.Artist, t.Album, t.Picture, t.DurationMs).Error
+	return db.Exec(`INSERT INTO music_tracks(id,source,external_id,title,artist,album,picture,duration_ms,canonical_verified) VALUES(?,?,?,?,?,?,?,?,true)
+ ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,artist=EXCLUDED.artist,album=EXCLUDED.album,picture=EXCLUDED.picture,duration_ms=EXCLUDED.duration_ms,canonical_verified=true`, t.ID, t.Source, t.ExternalID, t.Title, t.Artist, t.Album, t.Picture, t.DurationMs).Error
 }
+
 func playlist(db *gorm.DB, owner, id string) (Playlist, error) {
 	p := Playlist{Tracks: []Track{}}
 	r := db.Raw("SELECT * FROM music_playlists WHERE id=? AND owner_id=? AND deleted=false", id, owner).Scan(&p)

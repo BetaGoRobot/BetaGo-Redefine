@@ -14,18 +14,82 @@ import (
 	"time"
 )
 
-// AnonymousNetease never sends user cookies, never logs in and never requests unblock matching.
+// AnonymousNetease defaults to anonymous. Optional operator-held service-account
+// authorization is independent of application users; it never logs in or refreshes.
 type AnonymousNetease struct {
 	BaseURL        string
 	OwnedMediaHost string // Explicitly configured owned proxy/QA host; never infer a third-party source.
+	ServerCookie   string // Private operator configuration, never client input or query parameters.
 	Client         *http.Client
 }
 
 func (p AnonymousNetease) client() *http.Client {
 	if p.Client != nil {
-		return p.Client
+		c := *p.Client
+		c.CheckRedirect = rejectSourceRedirect
+		return &c
 	}
-	return &http.Client{Timeout: 12 * time.Second}
+	return &http.Client{Timeout: 12 * time.Second, CheckRedirect: rejectSourceRedirect}
+}
+func rejectSourceRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+func securePicture(raw string) string {
+	if strings.HasPrefix(raw, "/music-api/v1/tracks/") && strings.HasSuffix(raw, "/artwork") {
+		id := strings.TrimSuffix(strings.TrimPrefix(raw, "/music-api/v1/tracks/"), "/artwork")
+		if validateID(id) == nil {
+			return raw
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return ""
+	}
+	if u.Scheme == "https" {
+		return raw
+	}
+	if u.Scheme != "http" || (u.Port() != "" && u.Port() != "80") {
+		return ""
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "p1.music.126.net", "p2.music.126.net", "p3.music.126.net", "p4.music.126.net":
+		u.Scheme, u.Host = "https", strings.ToLower(u.Hostname())
+		return u.String()
+	}
+	return ""
+}
+
+// Probing uses its own client and no provider cookies, authorization or redirects.
+// A returned HTTP audio URL is never sent to an HTTPS browser without confirming
+// the exact official recording can be fetched over TLS.
+func verifiedHTTPSAudio(ctx context.Context, u *url.URL) bool {
+	if u.Port() != "" && u.Port() != "80" {
+		return false
+	}
+	u.Scheme, u.Host = "https", u.Hostname()
+	c := &http.Client{Timeout: 6 * time.Second, CheckRedirect: rejectSourceRedirect}
+	request := func(method string) int {
+		r, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+		if err != nil {
+			return 0
+		}
+		if method == "GET" {
+			r.Header.Set("Range", "bytes=0-0")
+		}
+		resp, err := c.Do(r)
+		if err != nil {
+			return 0
+		}
+		defer resp.Body.Close()
+		if method == "GET" {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1))
+		}
+		return resp.StatusCode
+	}
+	status := request("HEAD")
+	if status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented {
+		status = request("GET")
+	}
+	return status == http.StatusOK || status == http.StatusPartialContent
 }
 func (p AnonymousNetease) get(ctx context.Context, path string, q url.Values, out any) error {
 	if p.BaseURL == "" {
@@ -36,13 +100,16 @@ func (p AnonymousNetease) get(ctx context.Context, path string, q url.Values, ou
 	if err != nil {
 		return err
 	}
+	if p.ServerCookie != "" {
+		req.Header.Set("Cookie", p.ServerCookie)
+	}
 	resp, err := p.client().Do(req)
 	if err != nil {
 		return unavailable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return &apiError{503, "source_access_denied"}
+		return &apiError{http.StatusForbidden, "source_access_denied"}
 	}
 	if resp.StatusCode != 200 {
 		return unavailable
@@ -72,7 +139,7 @@ func (n netSong) track() Track {
 		artists = append(artists, a.Name)
 	}
 	id := strconv.FormatInt(n.ID, 10)
-	return Track{ID: "netease:" + id, Source: "netease", ExternalID: id, Title: n.Name, Artist: strings.Join(artists, ", "), Album: n.AL.Name, Picture: n.AL.PicURL, DurationMs: n.DT}
+	return Track{ID: "netease:" + id, Source: "netease", ExternalID: id, Title: n.Name, Artist: strings.Join(artists, ", "), Album: n.AL.Name, Picture: securePicture(n.AL.PicURL), DurationMs: n.DT}
 }
 
 var numeric = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
@@ -136,6 +203,10 @@ func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, err
 		// Some deployed anonymous adapters cannot decode the v1 upstream response.
 		// Compatibility endpoint, same source and recording; never retry a valid restriction response.
 		if err = p.get(ctx, "/song/url", url.Values{"id": {t.ExternalID}, "br": {"128000"}, "unblock": {"false"}}, &v); err != nil {
+			if ae, ok := err.(*apiError); ok && ae.Message == "source_access_denied" {
+				out.Reason = "provider_access_denied"
+				return out, nil
+			}
 			return out, err
 		}
 	}
@@ -144,8 +215,13 @@ func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, err
 		return out, nil
 	}
 	d := v.Data[0]
+	// Some upstreams encode permission results per recording, even with a URL present.
+	if d.Code != 0 && d.Code != http.StatusOK {
+		out.Reason = "provider_access_denied"
+		return out, nil
+	}
 	u, err := url.Parse(d.URL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return out, nil
 	}
 	host := strings.ToLower(u.Hostname())
@@ -154,13 +230,23 @@ func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, err
 		out.Reason = "source_mismatch: anonymous adapter returned an unapproved media host"
 		return out, nil
 	}
+	if u.Scheme == "http" && (owned || !verifiedHTTPSAudio(ctx, u)) {
+		out.Reason = "insecure_audio_https_unavailable"
+		return out, nil
+	}
 	// Provider URL only, without account fallback or substituting another recording.
 	out.Status = "available"
 	out.Reason = ""
-	out.URL = d.URL
+	if p.ServerCookie != "" {
+		out.Reason = "account_authorized_source"
+	}
+	out.URL = u.String()
 	if len(d.FreeTrialInfo) > 0 && string(d.FreeTrialInfo) != "null" {
 		out.Status = "preview"
 		out.Reason = "anonymous_preview_only"
+		if p.ServerCookie != "" {
+			out.Reason = "account_authorized_preview_only"
+		}
 	}
 	secs := d.Expi
 	if secs <= 0 || secs > 300 {
