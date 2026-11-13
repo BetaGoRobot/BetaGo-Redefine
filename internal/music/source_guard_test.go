@@ -81,6 +81,7 @@ func TestOfficialHTTPAudioRequiresCredentialFreeHTTPSVerification(t *testing.T) 
 	}{
 		{"https available", 200, 0, "available"},
 		{"head unsupported range works", 405, 206, "available"},
+		{"head rejected but exact HTTPS range works", 403, 206, "available"},
 		{"https denied", 403, 0, "unavailable"},
 		{"range denied", 405, 403, "unavailable"},
 	} {

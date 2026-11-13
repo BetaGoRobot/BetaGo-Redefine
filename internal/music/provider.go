@@ -86,7 +86,10 @@ func verifiedHTTPSAudio(ctx context.Context, u *url.URL) bool {
 		return resp.StatusCode
 	}
 	status := request("HEAD")
-	if status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented {
+	// Some official media CDNs reject HEAD (including 403) while serving the
+	// exact signed recording to GET. Verify that same HTTPS URL with one byte;
+	// this never retries a denial from the catalogue's authorization response.
+	if status != http.StatusOK && status != http.StatusPartialContent {
 		status = request("GET")
 	}
 	return status == http.StatusOK || status == http.StatusPartialContent
