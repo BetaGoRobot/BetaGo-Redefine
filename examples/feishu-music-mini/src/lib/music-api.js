@@ -72,6 +72,21 @@ class MusicApi {
     return { queue, index: q.currentIndex, positionMs: q.positionMs };
   }
   async playlists() { const r = await this.request(this.path('/playlists')); return r.playlists || []; }
+  async search(query) {
+    const q = String(query || '').trim();
+    if (!q || q.length > 120) throw fault('SEARCH_QUERY_REQUIRED');
+    const encoded = encodeURIComponent(q).replace(/[!'()*.]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+    const r = await this.request(this.path('/search?q=' + encoded));
+    if (!r || !Array.isArray(r.tracks) || r.tracks.some(t => !t || typeof t.id !== 'string' || typeof t.title !== 'string')) throw fault('INVALID_SEARCH_RESPONSE');
+    return r.tracks.slice(0, 30);
+  }
+  async useTracks(tracks, index) {
+    if (!Array.isArray(tracks) || !tracks.length) throw fault('EMPTY_QUEUE');
+    if (tracks.length > 1000) throw fault('QUEUE_LIMIT_REACHED');
+    const currentIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(Number(index) || 0)));
+    await this.saveProgress({ queueIds: tracks.map(t => t.id), index: currentIndex, positionMs: 0 });
+    return { queue: tracks, index: currentIndex, positionMs: 0 };
+  }
   async usePlaylist(id) {
     const list = await this.request(this.path('/playlists/' + encodeURIComponent(id)));
     if (!list.tracks || !list.tracks.length) throw fault('EMPTY_QUEUE');

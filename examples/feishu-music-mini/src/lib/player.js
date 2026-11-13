@@ -4,11 +4,12 @@ class Player {
   constructor(options) {
     this.audio = options.audio; this.api = options.api; this.diag = options.diag;
     this.persist = options.persist || (() => {}); this.now = options.now || Date.now;
-    this.notify = []; this.generation = 0; this.loading = false; this.intent = false;
+    this.notify = []; this.generation = 0; this.loading = false; this.intent = false; this.queueChanging = false;
     this.refreshes = 0; this.endedGeneration = -1; this.lastSave = -Infinity; this.lastObservation = -Infinity; this.hasSource = false;
     this.setTimer = options.setTimer || setTimeout; this.clearTimer = options.clearTimer || clearTimeout;
     this.state = { status: 'idle', queue: [], index: 0, positionMs: 0, durationMs: 0, errorCode: '', saveError: '', expiresAt: 0 };
     this.audio.on('play', () => {
+      if (this.queueChanging) { this.audio.pause(); return; }
       if (!this.state.queue.length) { this.audio.pause(); return; }
       if (!this.intent && this.loading) { this.audio.pause(); return; }
       // Native lock-screen Play is also a user action. Resume through a fresh source if expired.
@@ -35,7 +36,7 @@ class Player {
     });
   }
   subscribe(fn) { this.notify.push(fn); fn(this.snapshot()); return () => { this.notify = this.notify.filter(x => x !== fn); }; }
-  snapshot() { return Object.assign({}, this.state, { queue: this.state.queue.slice(), desiredPlaying: this.intent }); }
+  snapshot() { return Object.assign({}, this.state, { queue: this.state.queue.slice(), desiredPlaying: this.intent, queueChanging: this.queueChanging }); }
   update(patch) {
     const before = this.state.status; Object.assign(this.state, patch);
     if (before !== this.state.status) this.diag.add('state', { status: this.state.status, index: this.state.index, positionMs: this.state.positionMs });
@@ -51,6 +52,7 @@ class Player {
     this.update({ queue, index, positionMs: ms(session.positionMs), durationMs: ms(queue[index].durationMs), status: 'paused', expiresAt: 0, errorCode: '' });
   }
   async select(index, positionMs, play, refresh) {
+    if (this.queueChanging) return;
     if (!this.state.queue[index]) return;
     const generation = ++this.generation;
     this.clearWatchdog();
@@ -90,19 +92,21 @@ class Player {
     }
   }
   async play() {
+    if (this.queueChanging) return;
     if (!this.state.queue.length) return;
     if (this.loading) { this.intent = true; return; }
     // Resolve on each explicit resume: URLs can expire while paused or after interruption.
     await this.select(this.state.index, this.state.status === 'ended' ? 0 : this.state.positionMs, true);
   }
   clearWatchdog() { if (this.watchdog) this.clearTimer(this.watchdog); this.watchdog = null; }
-  pause() { this.intent = false; this.clearWatchdog(); this.audio.pause(); this.update({ status: 'paused' }); this.save(true); }
+  pause() { if (this.queueChanging) return; this.intent = false; this.clearWatchdog(); this.audio.pause(); this.update({ status: 'paused' }); this.save(true); }
   async next(delta) {
     const i = this.state.index + delta;
     if (i < 0 || i >= this.state.queue.length) return;
     return this.select(i, 0, true);
   }
   seek(value) {
+    if (this.queueChanging) return;
     const positionMs = ms(value, this.state.durationMs || undefined);
     this.update({ positionMs });
     if (this.hasSource && !this.loading && this.state.status !== 'error') {
@@ -126,12 +130,29 @@ class Player {
     return this.select(this.state.index, this.state.positionMs, this.intent, true);
   }
   lifecycle(visible) { this.diag.add('visibility', { visible }); this.save(true); }
+  async replaceQueue(loader) {
+    if (this.queueChanging) throw fault('QUEUE_CHANGE_IN_PROGRESS');
+    if (this.state.queue.length) this.pause();
+    this.intent = false; ++this.generation; this.clearWatchdog();
+    this.queueChanging = true; this.loading = true; this.update({});
+    const load = (this.saveChain || Promise.resolve()).then(loader);
+    // Queue mutations share the progress write barrier. Old-source callbacks are
+    // suspended until the new snapshot is installed, so they cannot restore old IDs.
+    this.saveChain = load.then(() => {}, () => {});
+    try {
+      const session = await load;
+      if (session && session.queue && session.queue.length) this.hydrate(session); else this.reset();
+    } finally {
+      this.queueChanging = false; this.loading = false; this.update({});
+    }
+  }
   reset() {
     ++this.generation; this.intent = false; this.loading = true; this.clearWatchdog();
     this.audio.stop(); this.hasSource = false; this.loading = false;
     this.update({ status: 'idle', queue: [], index: 0, positionMs: 0, durationMs: 0, expiresAt: 0, errorCode: '', saveError: '' });
   }
   save(force) {
+    if (this.queueChanging) return;
     if (!this.state.queue.length || (!force && this.now() - this.lastSave < 5000)) return;
     this.lastSave = this.now();
     if (force || this.now() - this.lastObservation >= 30000) {

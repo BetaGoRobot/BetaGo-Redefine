@@ -4,7 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const tracks = ['a', 'b'].map(c => ({ id: 'fixture:tone-' + c, source: 'fixture', externalID: 'tone-' + c, title: '[测试夹具] 合成音 ' + c.toUpperCase() + ' · 16 分钟', artist: 'BetaGo synthetic CC0', durationMs: 960000 }));
+const tracks = ['a', 'b'].map(c => ({ id: 'fixture:tone-' + c, source: 'fixture', externalID: 'tone-' + c, title: '[测试音频] 合成音 ' + c.toUpperCase() + ' · 16 分钟', artist: 'BetaGo synthetic CC0', durationMs: 960000 }));
 function createFixtureServer(options = {}) {
   const now = options.now || Date.now;
   const queues = new Map(), tokens = new Set();
@@ -48,6 +48,7 @@ function createFixtureServer(options = {}) {
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
     if (!tokens.has(token)) { json(401, { error: 'fixture session missing' }); return; }
     if (url.pathname === prefix + '/me') { json(200, { user: { id: 'fixture-guest', kind: 'guest' } }); return; }
+    if (url.pathname === prefix + '/search') { json(200, { tracks: tracks.filter(t => t.title.includes(url.searchParams.get('q') || '')) }); return; }
     if (url.pathname === prefix + '/auth/logout') { tokens.delete(token); json(200, {}); return; }
     if (url.pathname === '/fixture/control/expire') { revoked = lease; json(200, { fixture: true, revokedThrough: revoked }); return; }
     if (url.pathname === prefix + '/tracks/details') { json(200, { tracks: tracks.filter(t => (body.ids || []).includes(t.id)) }); return; }
@@ -71,7 +72,7 @@ function createFixtureServer(options = {}) {
       }
       json(200, current); return;
     }
-    const playlist = { id: 'fixture-dual', name: '[测试夹具] 合法双曲 · 共32分钟', revision: 1, tracks };
+    const playlist = { id: 'fixture-dual', name: '[测试音频] 两首合成音 · 共 32 分钟', revision: 1, tracks };
     if (url.pathname === prefix + '/playlists') { json(200, { playlists: [playlist] }); return; }
     if (url.pathname === prefix + '/playlists/fixture-dual') { json(200, playlist); return; }
     json(404, { error: 'fixture route missing' });

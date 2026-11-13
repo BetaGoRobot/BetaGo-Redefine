@@ -16,7 +16,7 @@ assert(/^cli_[a-zA-Z0-9]+$/.test(options['--app-id'] || ''), 'use the nonsecret 
 const origin = options['--api-origin']; assert.equal(originOf(origin, false), origin, 'api-origin must be a bare HTTPS origin');
 assert(!origin.includes('.invalid'), 'replace the placeholder with an existing test origin');
 const c = JSON.parse(await readFile('config.example.json', 'utf8'));
-c.appId = options['--app-id']; c.apiBaseUrl = origin; c.audioOrigins = [origin]; c.mode = options['--mode'] || 'fixture';
+c.appId = options['--app-id']; c.apiBaseUrl = origin; c.audioOrigins = [origin]; c.mode = options['--mode'] || 'service';
 assert(['fixture','service'].includes(c.mode));
 if (options['--web-url']) {
   c.webPlayerUrl = options['--web-url']; assert(!/[?#]/.test(c.webPlayerUrl)); c.webOrigins = [originOf(c.webPlayerUrl, false)];

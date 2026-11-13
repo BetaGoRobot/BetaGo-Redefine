@@ -5,3 +5,5 @@ node_modules/
 *.log
 !evidence/verification.log
 evidence/private/
+
+__pycache__/

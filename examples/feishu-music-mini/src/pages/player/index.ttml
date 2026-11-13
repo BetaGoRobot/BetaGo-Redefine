@@ -5,39 +5,46 @@
     <view class="status">{{status}}</view>
     <view class="title">{{title}}</view>
     <view class="time">{{time}} / {{total}}</view>
-    <slider min="0" max="{{duration || 1}}" value="{{position}}" step="1" bindchange="seek" disabled="{{!connected || unavailable}}" activeColor="#157f78" />
+    <slider min="0" max="{{duration || 1}}" value="{{position}}" step="1" bindchange="seek" disabled="{{!connected || unavailable || queueChanging}}" activeColor="#157f78" />
     <view class="controls">
-      <button bindtap="prev" disabled="{{!connected || index === 0}}">上一曲</button>
-      <button class="primary" bindtap="toggle" disabled="{{!connected}}">{{playing ? '暂停' : '播放'}}</button>
-      <button bindtap="next" disabled="{{!connected || index + 1 >= queue.length}}">下一曲</button>
+      <button bindtap="prev" disabled="{{!connected || queueChanging || index === 0}}">上一曲</button>
+      <button class="primary" bindtap="toggle" disabled="{{!connected || queueChanging}}">{{playing ? '暂停' : '播放'}}</button>
+      <button bindtap="next" disabled="{{!connected || queueChanging || index + 1 >= queue.length}}">下一曲</button>
     </view>
     <view class="error" tt:if="{{error}}">{{error}}</view>
-    <view class="error" tt:if="{{saveError}}">进度同步：{{saveError}}</view>
-    <button tt:if="{{connected}}" bindtap="retry">重新取源并播放</button>
+    <view class="error" tt:if="{{saveError}}">保存播放进度时遇到问题：{{saveError}}</view>
+    <button tt:if="{{connected}}" bindtap="retry">重试播放</button>
   </view>
   <view class="card" tt:if="{{!unavailable}}">
-    <button class="primary" bindtap="connect" loading="{{busy}}" disabled="{{busy}}">{{connected ? '重新连接 / 读取队列' : '连接自有服务'}}</button>
-    <view class="hint">连接不自动播放。飞书授权由环境配置决定；不使用网易云个人 Cookie。</view>
-    <input password="true" placeholder="可选：自有服务恢复码" value="{{recoveryValue}}" bindinput="recoveryInput" />
-    <button bindtap="recoverSession" disabled="{{busy}}">用恢复码连接已有资料</button>
-    <view class="section">当前队列</view>
+    <button class="primary" bindtap="connect" loading="{{busy}}" disabled="{{busy}}">{{connected ? '重新连接并载入歌曲' : '连接音乐服务'}}</button>
+    <view class="hint">连接后不会自动播放，点击“播放”开始。</view>
+    <input placeholder="输入歌名搜索" maxlength="120" bindinput="searchInput" bindconfirm="searchTracks" disabled="{{!connected}}" />
+    <button bindtap="searchTracks" disabled="{{!connected || busy}}">搜歌</button>
+    <view class="hint" tt:if="{{searched ? !searchResults.length : false}}">没有找到歌曲，试试其他歌名。</view>
+    <view tt:for="{{searchResults}}" tt:key="id" class="track">
+      <text>{{item.title}}</text><text class="artist">{{item.artist}}</text>
+      <button bindtap="playSearchResult" data-index="{{index}}" disabled="{{busy}}">加入并播放</button>
+    </view>
+    <input password="true" placeholder="可选：输入资料恢复码" value="{{recoveryValue}}" bindinput="recoveryInput" />
+    <button bindtap="recoverSession" disabled="{{busy}}">用恢复码找回播放资料</button>
+    <view class="section">当前播放列表</view>
     <view tt:for="{{queue}}" tt:key="id" class="track {{item.active ? 'active' : ''}}" bindtap="chooseTrack" data-index="{{index}}">
       <text>{{index + 1}} · {{item.title}}</text><text class="artist">{{item.artist}}</text>
     </view>
-    <view class="hint" tt:if="{{connected ? !queue.length : false}}">队列为空，从下面选择自有歌单。</view>
-    <button tt:for="{{playlists}}" tt:key="id" data-id="{{item.id}}" bindtap="choosePlaylist">载入：{{item.name}}</button>
-    <button tt:if="{{hasSession}}" bindtap="logout">退出自有会话 / 清除失效会话</button>
+    <view class="hint" tt:if="{{connected ? !queue.length : false}}">还没有歌曲，搜一首歌，或选择下方歌单。</view>
+    <button tt:for="{{playlists}}" tt:key="id" data-id="{{item.id}}" bindtap="choosePlaylist">选择歌单：{{item.name}}</button>
+    <button tt:if="{{hasSession}}" bindtap="logout">退出当前连接</button>
   </view>
   <view class="card" tt:if="{{fixture ? connected : false}}">
-    <view class="section">夹具控制</view>
-    <view class="hint">只控制测试服务，不代表飞书锁屏或后台已通过。</view>
-    <button bindtap="expire">使已签发 URL 过期</button>
-    <button bindtap="refresh">刷新续播（手动触发恢复路径）</button>
+    <view class="section">测试工具</view>
+    <view class="hint">用于测试音频恢复播放；锁屏和后台播放仍需在手机飞书中验证。</view>
+    <button bindtap="expire">让当前播放链接过期</button>
+    <button bindtap="refresh">刷新续播</button>
   </view>
   <view class="card">
     <button bindtap="web">在浏览器打开网页播放器</button>
-    <view class="hint">使用独立会话；不会携带私人音源或卡片进度。卡片原生音频的精确进度不可读取。</view>
-    <button bindtap="exportDiagnostics">复制脱敏诊断</button>
+    <view class="hint">网页播放器单独保存播放资料，当前播放进度不会自动带入。</view>
+    <button bindtap="exportDiagnostics">复制排查信息</button>
     <text selectable="true" class="diagnostics" tt:if="{{diagnostics}}">{{diagnostics}}</text>
   </view>
 </view>

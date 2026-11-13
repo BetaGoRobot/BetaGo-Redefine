@@ -59,6 +59,22 @@ test('HTTP FIXTURE: invalid bearer never silently creates a different guest iden
   const expired = new MusicApi(fetchTt(), config, store);
   await assert.rejects(() => expired.connect(), /SESSION_EXPIRED/);
 });
+test('HTTP FIXTURE: search existing API and append a selected track using device queue CAS', async t => {
+  const { api } = await setup(t);
+  const session = await api.openQueue();
+  const results = await api.search('合成音 A');
+  assert.equal(results.length, 1); assert.equal(results[0].id, session.queue[0].id);
+  const next = await api.useTracks(session.queue.concat(results[0]), 2);
+  assert.equal(next.index, 2); assert.equal(next.queue.length, 3);
+  const restored = await api.openQueue(); assert.equal(restored.index, 2); assert.equal(restored.queue.length, 3);
+});
+test('CONTRACT: song searches preserve apostrophes, live labels and repeated dots', async () => {
+  let requested;
+  const api = new MusicApi({ request: o => { requested = o.url; o.success({ statusCode: 200, data: { tracks: [] } }); } }, { apiBaseUrl: 'https://api.test', mode: 'service' }, memory());
+  const query = "Don't Stop (Live)...";
+  assert.deepEqual(await api.search(query), []);
+  assert.equal(new URL(requested).searchParams.get('q'), query);
+});
 test('CONTRACT: current gadget authorization exchanges code via own service using bearer transport', async () => {
   const requests = [], tt = { requestAccess: o => { assert.deepEqual(o.scopeList, []); o.success({ code: 'one-use-code' }); },
     request: o => { requests.push(o); o.success({ statusCode: 200, data: { sessionToken: 'own-service-token-1234567890' } }); } };

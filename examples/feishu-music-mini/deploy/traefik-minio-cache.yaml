@@ -1,0 +1,18 @@
+# Read-only HTTPS access to existing music objects. No new audio/backend service.
+http:
+  routers:
+    betago-music-mini-cache:
+      rule: 'HostRegexp(`^music-mini\..+$`) && PathPrefix(`/cloudmusic/`) && (Method(`GET`) || Method(`HEAD`))'
+      entryPoints:
+        - websecure
+        - websecure_extra
+        - websecure_v4
+      service: betago-music-mini-cache
+      priority: 100
+      tls: {}
+  services:
+    betago-music-mini-cache:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: http://minio:9000

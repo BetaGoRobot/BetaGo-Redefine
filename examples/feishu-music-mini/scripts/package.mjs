@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 await mkdir('dist', { recursive: true });
 await readFile('fixtures/audio/manifest.json');
 for (const [name, inputs] of [
-  ['betago-music-mini-source.zip', ['src','scripts','test','fixtures/LICENSE','fixtures/server.cjs','config.example.json','package.json','package-lock.json','README.md','docs','LICENSE','.gitignore']],
+  ['betago-music-mini-source.zip', ['src','scripts','test','fixtures/LICENSE','fixtures/server.cjs','config.example.json','package.json','package-lock.json','README.md','docs','deploy','LICENSE','.gitignore']],
   ['betago-music-audio-fixtures.zip', ['fixtures/audio','fixtures/LICENSE','fixtures/server.cjs','scripts/generate-audio.py']]
 ]) {
   await rm('dist/' + name, { force: true });

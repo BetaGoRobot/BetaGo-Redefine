@@ -100,3 +100,19 @@ test('FIXTURE: reloading queue cancels a pending resolver without leaving loadin
   d.resolve({ url: 'https://audio.test/a' }); await old;
   assert.equal(player.state.index, 1); assert.equal(player.state.positionMs, 60000);
 });
+test('FIXTURE: changing songs waits for prior saves and blocks stale seek/progress writes', async () => {
+  const pendingSave = deferred(), pendingQueue = deferred(); let writes = 0, loaderStarted = false;
+  const { player, audio } = harness({ api: { resolve: async () => ({ url: 'https://audio.test/a' }), saveProgress: async () => { writes++; if (writes === 1) await pendingSave.promise; } } });
+  await player.play();
+  const original = player.state.queue.slice();
+  const changed = player.replaceQueue(async () => { loaderStarted = true; await pendingQueue.promise; return { queue: original.concat({ id: 'fixture:c', title: 'C' }), index: 2, positionMs: 0 }; });
+  await flush(); assert.equal(loaderStarted, false);
+  pendingSave.resolve(); await flush(); assert.equal(loaderStarted, true);
+  const before = writes;
+  player.seek(123000); player.lifecycle(false); audio.emit('timeupdate', { positionMs: 456000 });
+  await player.play(); await flush();
+  assert.equal(writes, before); assert.equal(player.state.positionMs, 0);
+  pendingQueue.resolve(); await changed;
+  assert.equal(player.state.index, 2); assert.equal(player.state.queue.length, 3);
+  assert.equal(player.state.status, 'paused'); assert.equal(player.snapshot().queueChanging, false);
+});

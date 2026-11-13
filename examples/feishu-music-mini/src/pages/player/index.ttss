@@ -15,3 +15,4 @@
 .active { color: #157f78; background: #eef8f5; }
 .artist { display: block; font-size: 22rpx; margin-top: 8rpx; color: #526e77; }
 .diagnostics { display: block; white-space: pre-wrap; font-family: monospace; font-size: 20rpx; }
+input { min-height: 80rpx; padding: 12rpx 18rpx; margin: 16rpx 0; box-sizing: border-box; border: 1rpx solid #d8e6e7; border-radius: 12rpx; }

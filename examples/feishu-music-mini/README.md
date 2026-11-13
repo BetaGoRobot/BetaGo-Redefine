@@ -1,90 +1,77 @@
-# BetaGo 飞书背景音频原型
+# BetaGo 飞书音乐小程序原型
 
-本目录是 **BetaGoRobot/BetaGo-Redefine** 的薄小程序实验工程。只负责客户端背景音频与自有音乐 API 适配，不实现生产歌单后端，不修改旧 BetaGo、YesPlayMusic 或共享 Bot。
+本目录是 **BetaGoRobot/BetaGo-Redefine** 的薄小程序实验工程，负责飞书后台音频与自有音乐 API 适配。歌曲搜索、歌单、身份和音源由现有网页/API 服务管理，小程序不另建后端。
 
-开发者从这里开始：[导入、登录和手机扫码步骤](docs/developer-quickstart.md)。合入主仓库时目录是 `examples/feishu-music-mini`，专用 CI 会上传三个 ZIP 开发产物。
+普通手机测试复用真实 API 和现有 MinIO 歌曲。维护者在部署并启用已有歌曲缓存支持后交付已配置的 ZIP；应用开发者只需登录飞书开发者工具、导入、预览并用手机扫码。操作见 [开发者快速预览](docs/developer-quickstart.md)，无需在自己的电脑启动音频服务或修改服务器网络。
 
-已实现：官方 `tt.getBackgroundAudioManager` 适配、连续队列、播放/暂停/切歌/seek、一次取源刷新并恢复位置、自有 bearer 会话与恢复码、CAS 进度保存、状态观察和脱敏诊断、固定 HTTPS 网页回退。Android/iOS 真机行为全部待测；Node 模拟管理器和 HTTP 测试不是飞书真机证明。
+## 当前进度
 
-## 本地复现
+已实现官方 `tt.getBackgroundAudioManager` 适配、搜索歌曲并加入本设备播放列表、载入已有歌单、播放/暂停/切歌/拖动进度、过期后刷新并恢复位置、自有登录和恢复码、带版本检查的进度保存、排查信息和固定 HTTPS 网页入口。
 
-需要 Node >=18、Python 3 和 zip；没有 npm 运行时依赖。
+2026-11-13 已验证的服务入口是 `https://music-mini.kmhomelab.cn:2443`：
+
+| 路径 | 现有服务 | 已验证范围 |
+| --- | --- | --- |
+| `/music-api/v1/*` | 真实网页/API 后端 `172.18.0.1:37834` | HTTPS 登录、身份检查、搜索、读取/保存设备播放列表均返回 200 |
+| GET/HEAD `/cloudmusic/*` | 现有 MinIO | TLS 1.3；两首已存 MP3 的 Range 206；短链接 206 → 过期 403 → 重新签发后 206 |
+
+**手机播放尚未就绪。** 网页/API 源码已有 MinIO 缓存支持，但真实部署仍需更新并启用该能力；抽样歌曲仍返回 `preview`，本原型会停止并提示只能试听。对象文件能下载与 API 能搜索，不能证明小程序已能取得完整歌曲。当前只确认该域名有 AAAA 记录，手机所用网络的 IPv6 连通性也需验证。飞书官方编译、手机扫码、锁屏和后台播放结果均待测。
+
+现有《小王日记》（`netease:1417862065`）与 `netease:109616` 均已通过 HTTPS Range 206 检查，签名链接也通过 206 → 过期 403 → 重新签发后 206。两份完整 HTTPS 下载文件经服务器工具识别为 MP3、双声道、44.1 kHz，实际文件时长分别为 **43:35.592** 和 **4:49.573**，合计 **48:25.165**。手机解码与连续播放超过 10 分钟仍待验证。
+
+## 源码构建（可选）
+
+需要 Node >=18 和 zip；没有 npm 运行时依赖。合入主仓库后的路径是 `examples/feishu-music-mini`。普通测试使用维护者提供的已配置开发包即可；CI 的通用包仍可能含占位 App ID/地址，不能当作可直接播放的手机包。
+
+```sh
+npm ci --ignore-scripts
+npm run configure -- --app-id cli_你的应用ID --api-origin https://music-mini.kmhomelab.cn:2443
+npm run build
+```
+
+`configure` 默认 `mode: service`，生成已忽略的 `config.local.json`，仅写入非敏感 App ID 和地址。网页入口可另加 `--web-url https://你的自有网页播放器地址/`。构建产物是 `dist/betago-music-mini-dev.zip`；导入解压后包含 `project.config.json` 的目录，源码根目录为 `./gadget/`。本地构建不调用飞书官方编译器。
+
+| 配置 | 含义 |
+| --- | --- |
+| `appId` | 现有飞书应用的非敏感 ID，不含 App Secret |
+| `mode: service` | 默认模式，连接真实 `/music-api/v1` API |
+| `apiBaseUrl` | 不带路径的 HTTPS origin；客户端自行追加 `/music-api/v1` |
+| `audioOrigins` | 允许的精确音频 origin，须与解析接口实际返回值一致 |
+| `webPlayerUrl / webOrigins` | 固定 HTTPS 网页入口，不传递凭证或当前播放链接 |
+| `authMode: anonymous` | 新建自有访客登录，或使用本机已有登录；不自动继承网页访客资料 |
+| `authMode: feishu` | 连接时向自有后端发送飞书短期授权码，实际登录仍需目标应用联调 |
+| `feishuExchangePath` | 默认 `/music-api/v1/auth/feishu/exchange` |
+| `allowLocalhost` | 仅限本机开发回归；`service` 构建禁止开启 |
+
+连接后保持暂停。搜索并选择歌曲时，会保留本设备已有播放列表：已有歌曲直接选中，新歌曲追加后播放。选择已有歌单则把该歌单载入本设备播放列表。播放地址只在使用时获取，不作为歌曲身份或长期保存内容。
+
+## 本机开发回归
 
 ```sh
 npm ci --ignore-scripts
 npm run fixtures:generate
 npm run verify
-node scripts/config-check.mjs
 ```
 
-`npm run verify` 校验 JS 语法、JSON、TTML 层级/事件处理器，运行关键状态机与 HTTP 夹具测试，再生成可导入开发包。此命令不调用飞书官方编译器。
+此路径需要 Python 3。生成的两条 16 分钟 CC0 合成音只供本机开发回归，用于验证 Range、链接过期和播放器状态；不上传为普通手机测试歌曲，也不部署公网测试音频服务。需要专门构建测试模式时，开发者须显式添加 `--mode fixture`，它不再是默认配置。测试服务默认仅监听 `127.0.0.1:8787`，普通用户不需要运行 `fixtures:serve`。
 
-开发包位于 `dist/betago-music-mini-dev.zip`。解压后在飞书开发者工具导入包含 `project.config.json` 的目录；源码根目录由 `miniprogramRoot: ./gadget/` 指定。开发工具根据 `setting.es6: true` 处理源码。工程使用原生 `.js/.json/.ttml/.ttss`，没有微信/抖音 SDK。
+当前完整 `npm run verify` 已通过 33 项测试，包含 JS/JSON/TTML 校验、状态机和 HTTP 测试及开发包检查；它不能证明飞书官方编译或手机播放成功。
 
-## 环境配置与导入
+## 身份、进度和验证边界
 
-```sh
-cp config.example.json config.local.json
-# 编辑非敏感的 App ID、测试服务 HTTPS 地址与允许域名
-npm run build
-```
+自有登录凭证保存在飞书本地缓存中，仅发送给配置的自有服务；清缓存会丢失本机登录。工程不保存飞书 user_access_token、App Secret 或网易个人 Cookie。恢复码只在用户输入后发送给自有服务，不写入缓存、日志或跳转地址。退出会吊销当前登录并清理本机凭证。
 
-`config.local.json` 已忽略，不接受密钥、身份或任意新增字段。例子里的 `.invalid` 地址有意不可访问；构建会列出未配置项，不会把它当作可用的手机预览。
+App 持有唯一音频管理器，页面隐藏不会主动停止。暂停或其他音频打断后不自动抢回声音；显式播放会重新获取地址并恢复已记录位置。后台换曲、链接刷新、长时间锁屏和进度保存以真机结果为准。没有可靠官方 API 读取聊天卡片音频的精确进度，网页入口也不会自动接收当前音源或进度。
 
-| 配置 | 含义 |
-| --- | --- |
-| `appId` | 现有飞书测试应用的非敏感 ID；无 App Secret |
-| `mode: fixture` | 使用本目录 HTTP 夹具，路径增加 `/fixture`，页面与诊断均显示夹具标记 |
-| `mode: service` | 使用共享契约 `/music-api/v1`；生产歌单/身份全部交给自有服务 |
-| `apiBaseUrl` | 服务源地址，手机测试必须使用受信任 HTTPS；不含 token 或查询参数 |
-| `audioOrigins` | 精确音源 origin 允许列表；需要与实际 resolver/CDN 返回值一致，不接受任意源 |
-| `webPlayerUrl / webOrigins` | 固定 HTTPS 网页回退；禁止 query/hash、任意 schema 或重定向参数 |
-| `authMode: anonymous` | 新自有访客会话，或使用本机已有 bearer；不自动继承网页访客身份 |
-| `authMode: feishu` | 用户连接时调用 `requestAccess({scopeList:[]})`，旧端回退 `login`；发送短期 code 到自有交换接口 |
-| `feishuExchangePath` | 默认 `/music-api/v1/auth/feishu/exchange`；后端必须用同一 App 验证实际租户/用户 |
-| `allowLocalhost` | 只为 Node/本机夹具联调；`service` 构建禁止开启，手机不能访问服务器的 localhost |
-
-App 实例持有唯一音频管理器，Page 的隐藏/卸载不会主动 stop。暂停或其他音频打断后不自动抢回声音；点击播放会重新取源并恢复本播放器记录的位置。锁屏原生 Play 事件也会更新状态，过期时重新取源。后台是否还能执行取源/自动换曲、长时间定时器及进度保存，以真机矩阵为准。
-
-自有 bearer 存在飞书本地缓存中，只发送到配置的自有服务。该缓存不是安全硬件存储保证，清缓存会丢失；不存飞书 user_access_token、App Secret、网易 Cookie。退出会话会吊销服务会话并清除本地 bearer。恢复码只在显式输入时发送至自有服务，不写入缓存/日志/跳转 URL。
-
-飞书登录交换和实际取源仍需用目标应用联调；本仓库不声称匿名/飞书登录/网页会话可以直接互换。用已部署自有服务的恢复码，可在小程序显式连接同一资料，再选择歌单。队列 deviceID 只定位设备队列，不是凭证。
-
-## 确定性音源
-
-```sh
-npm run fixtures:generate
-npm run fixtures:serve
-```
-
-默认监听 `127.0.0.1:8787`，`GET /fixture/health` 会返回 `fixture: true` 和 `nativeDeviceProof: false`。两条原创低音量三角波各 **16 分钟**，PCM WAV、8 kHz、16 bit、mono，CC0；每分钟首秒静音作为观察标记。完整哈希见生成后的 `fixtures/audio/manifest.json`。用于验证播放行为，不是第三方音乐内容；WAV 在目标客户端的实际解码也属于真机待测项。
-
-如需手机连接，在**现有获准的测试 HTTPS 入口**反向代理本服务，保留 `/fixture/*`、Range、Content-Range 和 Content-Length，并通过 `FIXTURE_PUBLIC_ORIGIN` 指定该入口：
-
-```sh
-FIXTURE_PUBLIC_ORIGIN=https://your-existing-test-origin.example \
-  FIXTURE_PORT=8787 npm run fixtures:serve
-```
-
-此地址是占位示例，不会创建 DNS、云资源或修改应用权限。本服务默认只绑定 loopback；可通过既有代理访问，不建议向公网直接开放 HTTP。
-
-音源租约默认 60 秒（`FIXTURE_LEASE_MS` 可调）。点击“使已签发 URL 过期”后，旧 URL 的后续请求必定返回 403；新 resolve 返回新租约。已经缓冲的音频不会因 URL 字符串过期必然停止，真机可通过 seek 到未缓冲处触发新请求。页面“刷新续播”只是显式调用恢复路径，不能冒充原生 `onError` 自动恢复成功。
-
-## 接口和验证范围
-
-共享契约来自相邻网页/后端任务，本目录保存只读的 [契约快照](docs/music-api-contract.md)。精确映射和边界见 [docs/api-integration.md](docs/api-integration.md)。
-
-真实设备步骤、通过标准和结果表见 [docs/device-validation.md](docs/device-validation.md) 与 [docs/device-results.csv](docs/device-results.csv)。诊断最多保留 240 条，仅包含相对时间、设备型号/OS/飞书/SDK 版本、状态、队列下标、位置、固定错误码；没有曲目名称/ID、URL、sessionToken、授权码、Cookie 或原始 SDK 错误。复制后可保存为本地 JSON，勿把开发工具 Network 面板原始请求导出作为公开诊断。
-
-没有官方可靠 API 读取聊天卡片 native audio 的进度。本原型只恢复自有播放器的队列记录，网页回退不传递凭证或签名音源。外部播放器注册表暂为空，没有集成未知 schema。
+接口边界见 [API 对齐记录](docs/api-integration.md) 与只读 [契约快照](docs/music-api-contract.md)。设备步骤见 [真机执行表](docs/device-validation.md)，结果表为 [device-results.csv](docs/device-results.csv)，当前均待测。排查信息最多保留 240 条，不包含歌曲 ID/名称、播放 URL、登录凭证、授权码或 Cookie；公开前仍需检查截图和文件中的个人资料。
 
 ## 官方依据（2026-11-13 核对）
 
 - [BackgroundAudioManager](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/media/backgroundaudio/getbackgroundaudiomanager.md)：小程序 Android/iOS >=5.20；PC/H5 不支持。
-- [背景音频概述与已知问题](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/media/backgroundaudio/background-audio.md)：网络 URL、音轨切换与其他音频打断均需验证。
+- [背景音频概述与已知问题](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/media/backgroundaudio/background-audio.md)：音轨切换与其他音频打断需要验证。
 - [seek 秒单位](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/media/backgroundaudio/backgroundaudiomanager/seek.md)、[本地缓存签名](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/cache/setstoragesync.md)。
 - [小程序登录](https://open.feishu.cn/document/client-docs/gadget/open-capabilities/gadget-login.md)、[requestAccess](https://open.feishu.cn/document/web-app/gadget-api/open-ability/login/requestaccess.md)。
 - [项目配置](https://open.feishu.cn/document/tools-and-resources/development-tools/development-of-gadget-in-tools/gadget-project-configuration.md)、[官方 CLI 与预览前提](https://open.feishu.cn/document/tools-and-resources/development-tools/ide-with-commands.md)。
-- [openSchema](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/navigation/openschema.md)：固定网页回退仍受平台、应用白名单和实际支持限制。
+- [openSchema](https://open.feishu.cn/document/client-docs/gadget/-web-app-api/navigation/openschema.md)：网页入口仍受应用允许范围和平台实际支持限制。
 
-官方目录把小程序开发列为不推荐新开发；本工程是能力验证原型，应用维护者仍需确认现有应用能否启用该能力。不会发布线上应用或修改应用权限。
+官方目录把小程序开发列为不推荐新开发；本工程用于能力验证，应用维护者需确认现有应用能启用小程序。本任务不发布线上版本或修改应用权限。

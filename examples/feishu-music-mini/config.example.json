@@ -1,6 +1,6 @@
 {
   "appId": "",
-  "mode": "fixture",
+  "mode": "service",
   "apiBaseUrl": "https://music-test.example.invalid",
   "audioOrigins": ["https://music-test.example.invalid"],
   "webPlayerUrl": "https://music.example.invalid/",
