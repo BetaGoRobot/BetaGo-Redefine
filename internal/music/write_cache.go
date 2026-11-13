@@ -74,7 +74,7 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 		return source
 	}
 	u, err := url.Parse(source.URL)
-	if err != nil || u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || !officialMediaHost(u.Hostname()) || source.TrackID != t.ID || t.ID != "netease:"+t.ExternalID || !numeric.MatchString(t.ExternalID) {
+	if err != nil || u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || !p.approvedMediaHost(u.Hostname()) || source.TrackID != t.ID || t.ID != p.sourceID()+":"+t.ExternalID || !numeric.MatchString(t.ExternalID) {
 		return failure("source_not_approved")
 	}
 	select {
@@ -86,7 +86,7 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	key := "music/" + t.ExternalID + ".mp3"
+	key := p.objectKey("music", t.ExternalID, ".mp3")
 	if _, err := p.reader.StatObject(ctx, p.bucket, key, minio.StatObjectOptions{}); err == nil {
 		source.Reason += ";cache_skipped_existing_unverified_audio"
 		return source
@@ -94,7 +94,7 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 		return failure("audio_check")
 	}
 	canonical, err := p.fallback.Detail(ctx, t.ID)
-	if err != nil || canonical.ID != t.ID || canonical.Source != "netease" || canonical.ExternalID != t.ExternalID {
+	if err != nil || canonical.ID != t.ID || canonical.Source != p.sourceID() || canonical.ExternalID != t.ExternalID {
 		return failure("metadata")
 	}
 	canonical.Picture = securePicture(canonical.Picture)
@@ -126,12 +126,12 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 	lyricsCached := false
 	if lyrics, err := p.fallback.Lyrics(ctx, canonical); err == nil && lyrics.TrackID == t.ID {
 		b, _ := json.Marshal(map[string]any{"code": 200, "lrc": map[string]string{"lyric": lyrics.LRC}, "tlyric": map[string]string{"lyric": lyrics.TranslatedLRC}})
-		lyricsCached = p.put(ctx, "lyrics/"+t.ExternalID+".json", b, "application/json") == nil
+		lyricsCached = p.put(ctx, p.objectKey("lyrics", t.ExternalID, ".json"), b, "application/json") == nil
 	}
 	// The manifest is the commit marker and contains no source URL or credential.
 	// A failed/incomplete upload has no new manifest and cannot become a cache hit.
 	manifest, _ := json.Marshal(ownedManifest{Format: "betago-music-cache", Version: 1, Status: "available", Track: canonical, AudioObject: key, CachedAt: time.Now().UTC()})
-	if err := p.put(ctx, "catalog/"+t.ExternalID+".json", manifest, "application/json"); err != nil {
+	if err := p.put(ctx, p.objectKey("catalog", t.ExternalID, ".json"), manifest, "application/json"); err != nil {
 		return failure("manifest_write")
 	}
 	// Read and sign the newly committed fixed object without running source lookup.

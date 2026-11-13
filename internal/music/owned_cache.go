@@ -24,12 +24,15 @@ var ownedMiss = errors.New("owned cache object absent")
 // selects a numeric recording ID, never an object name, URL or credentials.
 type ownedCacheConfig struct {
 	endpoint, publicOrigin, bucket, region, accessKey, secretKey string
+	source                                                       string
+	writers                                                      chan struct{}
 	writeEnabled                                                 bool
 }
 type ownedCacheProvider struct {
 	reader, signer *minio.Client
 	bucket         string
 	publicOrigin   string
+	source         string
 	fallback       Provider
 	writeEnabled   bool
 	writers        chan struct{}
@@ -43,8 +46,39 @@ func cacheOrigin(raw string, httpsOnly bool) (*url.URL, error) {
 	}
 	return u, nil
 }
+func (p *ownedCacheProvider) sourceID() string {
+	if p.source == "" {
+		return "netease"
+	}
+	return p.source
+}
+func (p *ownedCacheProvider) externalID(id string) (string, bool) {
+	prefix := p.sourceID() + ":"
+	external := strings.TrimPrefix(id, prefix)
+	return external, strings.HasPrefix(id, prefix) && numeric.MatchString(external)
+}
+func (p *ownedCacheProvider) objectKey(kind, external, suffix string) string {
+	prefix := ""
+	if p.sourceID() != "netease" {
+		prefix = p.sourceID() + "/"
+	}
+	return kind + "/" + prefix + external + suffix
+}
+func (p *ownedCacheProvider) approvedMediaHost(host string) bool {
+	host = strings.ToLower(host)
+	if p.sourceID() == "netease" {
+		return officialMediaHost(host)
+	}
+	return p.sourceID() == "kuwo" && (host == "kuwo.cn" || strings.HasSuffix(host, ".kuwo.cn"))
+}
 func newOwnedCacheProvider(c ownedCacheConfig, fallback Provider) (Provider, error) {
 	badConfig := errors.New("MUSIC_MINIO cache requires valid endpoints, HTTPS public origin, bucket and server credentials")
+	if c.source == "" {
+		c.source = "netease"
+	}
+	if c.source != "netease" && c.source != "kuwo" {
+		return nil, badConfig
+	}
 	internal, err := cacheOrigin(c.endpoint, false)
 	if err != nil {
 		return nil, badConfig
@@ -70,7 +104,10 @@ func newOwnedCacheProvider(c ownedCacheConfig, fallback Provider) (Provider, err
 	if err != nil {
 		return nil, badConfig
 	}
-	return &ownedCacheProvider{reader: reader, signer: signer, bucket: c.bucket, publicOrigin: strings.TrimRight(c.publicOrigin, "/"), fallback: fallback, writeEnabled: c.writeEnabled, writers: make(chan struct{}, 2)}, nil
+	if c.writers == nil {
+		c.writers = make(chan struct{}, 2)
+	}
+	return &ownedCacheProvider{reader: reader, signer: signer, bucket: c.bucket, publicOrigin: strings.TrimRight(c.publicOrigin, "/"), source: c.source, fallback: fallback, writeEnabled: c.writeEnabled, writers: c.writers}, nil
 }
 
 func ownedError(err error) error {
@@ -108,7 +145,8 @@ type ownedDescriptor struct {
 }
 
 func (d ownedDescriptor) track(id, externalID string) (Track, error) {
-	if (d.TrackID != "" && d.TrackID != id) || (d.Source != "" && d.Source != "netease") || (d.ExternalID != "" && d.ExternalID != externalID) || strings.TrimSpace(d.Title) == "" {
+	source, _, _ := strings.Cut(id, ":")
+	if (d.TrackID != "" && d.TrackID != id) || (d.Source != "" && d.Source != source) || (d.ExternalID != "" && d.ExternalID != externalID) || strings.TrimSpace(d.Title) == "" {
 		return Track{}, &apiError{502, "owned_cache_invalid_metadata"}
 	}
 	artist := ""
@@ -136,23 +174,23 @@ func (d ownedDescriptor) track(id, externalID string) (Track, error) {
 	if picture == "" {
 		picture = d.PictureURL
 	}
-	return Track{ID: id, Source: "netease", ExternalID: externalID, Title: d.Title, Artist: artist, Album: d.Album, DurationMs: duration, Picture: securePicture(picture)}, nil
+	return Track{ID: id, Source: source, ExternalID: externalID, Title: d.Title, Artist: artist, Album: d.Album, DurationMs: duration, Picture: securePicture(picture)}, nil
 }
 func (p *ownedCacheProvider) lookup(ctx context.Context, id string) (Track, ownedDescriptor, error) {
 	d := ownedDescriptor{}
-	external := strings.TrimPrefix(id, "netease:")
-	if !strings.HasPrefix(id, "netease:") || !numeric.MatchString(external) {
+	external, valid := p.externalID(id)
+	if !valid {
 		return Track{}, d, ownedMiss
 	}
-	b, err := p.read(ctx, "catalog/"+external+".json")
+	b, err := p.read(ctx, p.objectKey("catalog", external, ".json"))
 	if err == nil {
 		var manifest ownedManifest
-		if json.Unmarshal(b, &manifest) != nil || manifest.Format != "betago-music-cache" || manifest.Version != 1 || manifest.Status != "available" || manifest.AudioObject != "music/"+external+".mp3" || manifest.Track.ID != id || manifest.Track.Source != "netease" || manifest.Track.ExternalID != external {
+		if json.Unmarshal(b, &manifest) != nil || manifest.Format != "betago-music-cache" || manifest.Version != 1 || manifest.Status != "available" || manifest.AudioObject != p.objectKey("music", external, ".mp3") || manifest.Track.ID != id || manifest.Track.Source != p.sourceID() || manifest.Track.ExternalID != external {
 			return Track{}, d, &apiError{502, "owned_cache_invalid_metadata"}
 		}
 		artist, _ := json.Marshal(manifest.Track.Artist)
-		d = ownedDescriptor{TrackID: id, Source: "netease", ExternalID: external, Title: manifest.Track.Title, Artist: artist, Album: manifest.Track.Album, Picture: manifest.Track.Picture, DurationMs: manifest.Track.DurationMs}
-	} else if err == ownedMiss {
+		d = ownedDescriptor{TrackID: id, Source: p.sourceID(), ExternalID: external, Title: manifest.Track.Title, Artist: artist, Album: manifest.Track.Album, Picture: manifest.Track.Picture, DurationMs: manifest.Track.DurationMs}
+	} else if err == ownedMiss && p.sourceID() == "netease" {
 		b, err = p.read(ctx, "info/"+external+".json")
 		if err == nil && json.Unmarshal(b, &d) != nil {
 			return Track{}, d, &apiError{502, "owned_cache_invalid_metadata"}
@@ -165,25 +203,25 @@ func (p *ownedCacheProvider) lookup(ctx context.Context, id string) (Track, owne
 	if err != nil {
 		return Track{}, d, err
 	}
-	stat, err := p.reader.StatObject(ctx, p.bucket, "music/"+external+".mp3", minio.StatObjectOptions{})
+	stat, err := p.reader.StatObject(ctx, p.bucket, p.objectKey("music", external, ".mp3"), minio.StatObjectOptions{})
 	if err != nil {
 		return Track{}, d, ownedError(err)
 	}
 	if stat.Size <= 0 {
 		return Track{}, d, &apiError{502, "owned_cache_invalid_audio"}
 	}
-	if image, err := p.reader.StatObject(ctx, p.bucket, "picture/"+external+".jpg", minio.StatObjectOptions{}); err == nil && image.Size > 0 {
+	if image, err := p.reader.StatObject(ctx, p.bucket, p.objectKey("picture", external, ".jpg"), minio.StatObjectOptions{}); err == nil && image.Size > 0 {
 		t.Picture = p.publicOrigin + "/music-api/v1/tracks/" + url.PathEscape(id) + "/artwork"
 	}
 	return t, d, nil
 }
 
 func (p *ownedCacheProvider) Artwork(ctx context.Context, id string) (string, error) {
-	external := strings.TrimPrefix(id, "netease:")
-	if !strings.HasPrefix(id, "netease:") || !numeric.MatchString(external) {
+	external, valid := p.externalID(id)
+	if !valid {
 		return "", missing
 	}
-	stat, err := p.reader.StatObject(ctx, p.bucket, "picture/"+external+".jpg", minio.StatObjectOptions{})
+	stat, err := p.reader.StatObject(ctx, p.bucket, p.objectKey("picture", external, ".jpg"), minio.StatObjectOptions{})
 	if err != nil {
 		if e := ownedError(err); e != ownedMiss {
 			return "", e
@@ -193,7 +231,7 @@ func (p *ownedCacheProvider) Artwork(ctx context.Context, id string) (string, er
 	if stat.Size <= 0 {
 		return "", missing
 	}
-	u, err := p.signer.PresignedGetObject(ctx, p.bucket, "picture/"+external+".jpg", ownedURLLifetime, url.Values{"response-content-type": {"image/jpeg"}})
+	u, err := p.signer.PresignedGetObject(ctx, p.bucket, p.objectKey("picture", external, ".jpg"), ownedURLLifetime, url.Values{"response-content-type": {"image/jpeg"}})
 	if err != nil {
 		return "", &apiError{503, "owned_cache_signing_failed"}
 	}
@@ -239,7 +277,7 @@ func (p *ownedCacheProvider) resolve(ctx context.Context, t Track) (Resolution, 
 }
 func (p *ownedCacheProvider) signAudio(ctx context.Context, t Track) (Resolution, error) {
 	out := Resolution{TrackID: t.ID, Status: "unavailable", Reason: "owned_cache_signing_failed"}
-	u, err := p.signer.PresignedGetObject(ctx, p.bucket, "music/"+t.ExternalID+".mp3", ownedURLLifetime, url.Values{"response-content-type": {"audio/mpeg"}})
+	u, err := p.signer.PresignedGetObject(ctx, p.bucket, p.objectKey("music", t.ExternalID, ".mp3"), ownedURLLifetime, url.Values{"response-content-type": {"audio/mpeg"}})
 	if err != nil {
 		out.Reason = "owned_cache_signing_failed"
 		return out, nil
@@ -281,12 +319,12 @@ func (p *ownedCacheProvider) Lyrics(ctx context.Context, t Track) (Lyrics, error
 	if len(d.Lyrics) > 0 && string(d.Lyrics) != "null" {
 		return cachedLyrics(t.ID, d.Lyrics)
 	}
-	b, err := p.read(ctx, "lyrics/"+canonical.ExternalID+".json")
+	b, err := p.read(ctx, p.objectKey("lyrics", canonical.ExternalID, ".json"))
 	if err == nil {
 		return cachedLyrics(t.ID, b)
 	}
 	if err == ownedMiss {
-		b, err = p.read(ctx, "lyrics/"+canonical.ExternalID+".txt")
+		b, err = p.read(ctx, p.objectKey("lyrics", canonical.ExternalID, ".txt"))
 		if err == nil {
 			return Lyrics{TrackID: t.ID, LRC: string(b)}, nil
 		}

@@ -283,6 +283,12 @@ func (s *Server) route(r *http.Request) (any, error) {
 	if r.Method == "GET" && path == "auth/options" {
 		return s.authOptions, nil
 	}
+	if r.Method == "GET" && path == "catalog/options" {
+		if provider, ok := s.opts.Provider.(catalogueOptionsProvider); ok {
+			return provider.CatalogueOptions(), nil
+		}
+		return CatalogueOptions{DefaultSource: "netease", Sources: []CatalogueSource{{ID: "netease", Name: "网易云"}}}, nil
+	}
 	if r.Method == "GET" && strings.HasPrefix(path, "tracks/") && strings.HasSuffix(path, "/artwork") {
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "tracks/"), "/artwork")
 		if p, ok := s.opts.Provider.(artworkProvider); ok {
@@ -327,9 +333,20 @@ func (s *Server) route(r *http.Request) (any, error) {
 		if s.opts.Provider == nil {
 			return nil, unavailable
 		}
-		tracks, err := s.opts.Provider.Search(r.Context(), q)
+		source := strings.TrimSpace(r.URL.Query().Get("source"))
+		if source == "" {
+			source = "netease"
+		}
+		var tracks []Track
+		if provider, ok := s.opts.Provider.(sourceSearcher); ok {
+			tracks, err = provider.SearchSource(r.Context(), source, q)
+		} else if source != "netease" {
+			return nil, invalid("source_not_configured")
+		} else {
+			tracks, err = s.opts.Provider.Search(r.Context(), q)
+		}
 		if err != nil {
-			return nil, unavailable
+			return nil, err
 		}
 		for _, t := range tracks {
 			if err := saveTrack(db, t); err != nil {

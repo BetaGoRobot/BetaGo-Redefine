@@ -243,6 +243,9 @@ func TestWriteThroughMissingManifestDoesNotExposeOrphanAudio(t *testing.T) {
 	if !audioExists || manifestExists {
 		t.Fatal("test did not reproduce an audio-only incomplete commit")
 	}
+	if router, ok := p.(SourceRouter); ok {
+		p = router.Primary
+	}
 	if _, _, err := p.(*ownedCacheProvider).lookup(context.Background(), "netease:42"); err != ownedMiss {
 		t.Fatalf("orphan audio became a cache hit: %v", err)
 	}

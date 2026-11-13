@@ -1,7 +1,7 @@
 name: Music API
 on:
   pull_request:
-    paths: ['internal/music/**', 'cmd/music-server/**', 'script/sql/20261113_music.sql', '.github/workflows/music.yml']
+    paths: ['internal/music/**', 'cmd/music-server/**', 'deploy/music-sources/**', 'script/sql/20261113_music*.sql', '.github/workflows/music.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,6 +24,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read-only alternative source validation
+        run: node deploy/music-sources/alternative-source.cjs --selftest
       - name: Persistent API, isolation, CAS and provider tests
         env:
           BETAGO_CONFIG_PATH: .dev/config.toml
