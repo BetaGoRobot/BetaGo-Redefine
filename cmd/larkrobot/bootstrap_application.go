@@ -28,6 +28,7 @@ import (
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/conversationindex"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/infrastructure/db"
 	"github.com/BetaGoRobot/BetaGo-Redefine/internal/interfaces/webui"
+	"github.com/BetaGoRobot/BetaGo-Redefine/internal/music"
 	appruntime "github.com/BetaGoRobot/BetaGo-Redefine/internal/runtime"
 	uuid "github.com/satori/go.uuid"
 )
@@ -295,6 +296,7 @@ func addApplicationModules(app *appruntime.App, cfg *infraConfig.BaseConfig, com
 		app.Registry(),
 		appruntime.PrometheusProvider{},
 	))
+	app.AddModule(music.NewModule(music.OptionsFromEnv(db.DB)))
 	app.AddModule(webui.NewModule(webui.Options{
 		Config:           webuiConfig(cfg),
 		ConfigManager:    appconfig.GetManager(),

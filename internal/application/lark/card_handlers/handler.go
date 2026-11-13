@@ -134,6 +134,9 @@ func buildMusicDetailCardViewWithOptions(ctx context.Context, musicID, page int,
 	}
 
 	type resultURL struct {
+		TrackID    string
+		Source     string
+		ExternalID string
 		Title      string
 		LyricsURL  string
 		MusicURL   string
@@ -159,6 +162,9 @@ func buildMusicDetailCardViewWithOptions(ctx context.Context, musicID, page int,
 
 	audioFileKey := ""
 	audioDurationMs := opts.audioDurationMs
+	if audioDurationMs <= 0 {
+		audioDurationMs = songDetail.Dt
+	}
 	if !opts.skipAudioUpload {
 		// Synchronous audio upload - blocking, only used when explicitly requested.
 		audioData, err := larkimg.GetAudioFromURL(ctx, musicURL)
@@ -176,6 +182,9 @@ func buildMusicDetailCardViewWithOptions(ctx context.Context, musicID, page int,
 	}
 
 	targetURL := &resultURL{
+		TrackID:    "netease:" + strconv.Itoa(musicID),
+		Source:     "netease",
+		ExternalID: strconv.Itoa(musicID),
 		Title:      songDetail.Name,
 		LyricsURL:  lyricsURL,
 		MusicURL:   musicURL,
@@ -195,7 +204,7 @@ func buildMusicDetailCardViewWithOptions(ctx context.Context, musicID, page int,
 		return nil
 	}
 
-	playerURL := utils.BuildURL(res)
+	playerURL := utils.BuildMusicURL(res, "netease:"+strconv.Itoa(musicID))
 	quotaRemain := maxPageSize
 	lyricList := strings.Split(lyrics, "\n")
 	newList := make([]string, 0)
