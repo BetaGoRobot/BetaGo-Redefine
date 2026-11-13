@@ -3,6 +3,7 @@ package cardhandlers
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,9 @@ import (
 
 func useWorkspaceConfigPath(t *testing.T) {
 	t.Helper()
+	if os.Getenv("BETAGO_CONFIG_PATH") != "" {
+		return
+	}
 	configPath, err := filepath.Abs("../../../../.dev/config.toml")
 	if err != nil {
 		t.Fatalf("resolve config path: %v", err)
