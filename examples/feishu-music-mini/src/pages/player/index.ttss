@@ -1,0 +1,17 @@
+.screen { padding: 36rpx 28rpx 72rpx; }
+.eyebrow { font-size: 22rpx; letter-spacing: 3rpx; color: #526e77; }
+.mode { margin: 14rpx 0 30rpx; color: #6a5b37; font-size: 24rpx; }
+.card { background: #fff; border-radius: 22rpx; padding: 28rpx; margin-bottom: 24rpx; }
+.status { color: #157f78; font-size: 24rpx; }
+.title { font-weight: bold; font-size: 42rpx; margin: 20rpx 0; }
+.time { color: #526e77; text-align: right; font-size: 24rpx; }
+.controls { display: flex; gap: 12rpx; }
+.controls button { flex: 1; padding: 0 10rpx; }
+.primary { background: #157f78; color: #fff; }
+.error { background: #fff1eb; color: #a83e22; padding: 20rpx; border-radius: 12rpx; margin: 14rpx 0; }
+.hint { color: #526e77; font-size: 24rpx; line-height: 1.6; margin: 16rpx 0; }
+.section { font-weight: bold; margin: 28rpx 0 12rpx; }
+.track { border-top: 1rpx solid #e5eeee; padding: 22rpx 12rpx; }
+.active { color: #157f78; background: #eef8f5; }
+.artist { display: block; font-size: 22rpx; margin-top: 8rpx; color: #526e77; }
+.diagnostics { display: block; white-space: pre-wrap; font-family: monospace; font-size: 20rpx; }

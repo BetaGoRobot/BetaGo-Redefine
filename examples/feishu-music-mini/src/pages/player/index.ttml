@@ -1,0 +1,43 @@
+<view class="screen">
+  <view class="eyebrow">BETAGO / FEISHU GADGET</view>
+  <view class="mode">{{mode}}</view>
+  <view class="card">
+    <view class="status">{{status}}</view>
+    <view class="title">{{title}}</view>
+    <view class="time">{{time}} / {{total}}</view>
+    <slider min="0" max="{{duration || 1}}" value="{{position}}" step="1" bindchange="seek" disabled="{{!connected || unavailable}}" activeColor="#157f78" />
+    <view class="controls">
+      <button bindtap="prev" disabled="{{!connected || index === 0}}">上一曲</button>
+      <button class="primary" bindtap="toggle" disabled="{{!connected}}">{{playing ? '暂停' : '播放'}}</button>
+      <button bindtap="next" disabled="{{!connected || index + 1 >= queue.length}}">下一曲</button>
+    </view>
+    <view class="error" tt:if="{{error}}">{{error}}</view>
+    <view class="error" tt:if="{{saveError}}">进度同步：{{saveError}}</view>
+    <button tt:if="{{connected}}" bindtap="retry">重新取源并播放</button>
+  </view>
+  <view class="card" tt:if="{{!unavailable}}">
+    <button class="primary" bindtap="connect" loading="{{busy}}" disabled="{{busy}}">{{connected ? '重新连接 / 读取队列' : '连接自有服务'}}</button>
+    <view class="hint">连接不自动播放。飞书授权由环境配置决定；不使用网易云个人 Cookie。</view>
+    <input password="true" placeholder="可选：自有服务恢复码" value="{{recoveryValue}}" bindinput="recoveryInput" />
+    <button bindtap="recoverSession" disabled="{{busy}}">用恢复码连接已有资料</button>
+    <view class="section">当前队列</view>
+    <view tt:for="{{queue}}" tt:key="id" class="track {{item.active ? 'active' : ''}}" bindtap="chooseTrack" data-index="{{index}}">
+      <text>{{index + 1}} · {{item.title}}</text><text class="artist">{{item.artist}}</text>
+    </view>
+    <view class="hint" tt:if="{{connected ? !queue.length : false}}">队列为空，从下面选择自有歌单。</view>
+    <button tt:for="{{playlists}}" tt:key="id" data-id="{{item.id}}" bindtap="choosePlaylist">载入：{{item.name}}</button>
+    <button tt:if="{{hasSession}}" bindtap="logout">退出自有会话 / 清除失效会话</button>
+  </view>
+  <view class="card" tt:if="{{fixture ? connected : false}}">
+    <view class="section">夹具控制</view>
+    <view class="hint">只控制测试服务，不代表飞书锁屏或后台已通过。</view>
+    <button bindtap="expire">使已签发 URL 过期</button>
+    <button bindtap="refresh">刷新续播（手动触发恢复路径）</button>
+  </view>
+  <view class="card">
+    <button bindtap="web">在浏览器打开网页播放器</button>
+    <view class="hint">使用独立会话；不会携带私人音源或卡片进度。卡片原生音频的精确进度不可读取。</view>
+    <button bindtap="exportDiagnostics">复制脱敏诊断</button>
+    <text selectable="true" class="diagnostics" tt:if="{{diagnostics}}">{{diagnostics}}</text>
+  </view>
+</view>

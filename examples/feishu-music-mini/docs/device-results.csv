@@ -1,0 +1,27 @@
+platform,case,device_model,os_version,feishu_version,sdk_version,build_sha256,network,battery_policy,operator,executed_at,result,observed_track_index,observed_position_ms,audible_interruption,native_event_observed,evidence_path,notes
+Android,FG,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,CHAT,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,CARD,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,BG,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,LOCK15,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,LOCK30,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,NEXT,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,EXPIRE,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,EXPIRE-PAUSE,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,CALL,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,OTHER,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,COLD,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+Android,FALLBACK,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,FG,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,CHAT,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,CARD,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,BG,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,LOCK15,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,LOCK30,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,NEXT,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,EXPIRE,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,EXPIRE-PAUSE,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,CALL,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,OTHER,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,COLD,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests
+iOS,FALLBACK,UNRECORDED,UNRECORDED,UNRECORDED,UNRECORDED,,,,,,PENDING,,,,,,No authorized Feishu preview/device session available; never inferred from mock tests

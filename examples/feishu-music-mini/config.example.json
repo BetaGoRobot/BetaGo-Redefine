@@ -1,0 +1,12 @@
+{
+  "appId": "",
+  "mode": "fixture",
+  "apiBaseUrl": "https://music-test.example.invalid",
+  "audioOrigins": ["https://music-test.example.invalid"],
+  "webPlayerUrl": "https://music.example.invalid/",
+  "webOrigins": ["https://music.example.invalid"],
+  "authMode": "anonymous",
+  "feishuExchangePath": "/music-api/v1/auth/feishu/exchange",
+  "allowLocalhost": false,
+  "requestTimeoutMs": 10000
+}
