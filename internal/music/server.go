@@ -17,17 +17,18 @@ import (
 )
 
 type Options struct {
-	DBProvider    func() *gorm.DB
-	Provider      Provider
-	Verifier      IdentityVerifier
-	AppID         string
-	Origin        string
-	Addr          string
-	StaticDir     string
-	SecureCookie  bool
-	SkipMigration bool
-	Now           func() time.Time
-	providerErr   error
+	DBProvider       func() *gorm.DB
+	Provider         Provider
+	PlaylistImporter PublicPlaylistImporter
+	Verifier         IdentityVerifier
+	AppID            string
+	Origin           string
+	Addr             string
+	StaticDir        string
+	SecureCookie     bool
+	SkipMigration    bool
+	Now              func() time.Time
+	providerErr      error
 }
 type Server struct {
 	db          *gorm.DB
@@ -318,6 +319,19 @@ func (s *Server) route(r *http.Request) (any, error) {
 	if path == "auth/feishu/profile" && r.Method == "POST" {
 		return s.refreshFeishuProfile(r, a)
 	}
+	if path == "search-history" {
+		return s.searchHistory(r, a)
+	}
+	if path == "recommendations" && r.Method == "GET" {
+		limit, err := requestLimit(r, 12, 50)
+		if err != nil {
+			return nil, err
+		}
+		return recommendOwned(r.Context(), s.db, s.opts.Provider, a.ID, limit)
+	}
+	if path == "imports/netease-playlist" && r.Method == "POST" {
+		return s.importNeteasePlaylist(r, a)
+	}
 	if path == "auth/logout" && r.Method == "POST" {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if token == "" {
@@ -334,7 +348,7 @@ func (s *Server) route(r *http.Request) (any, error) {
 	}
 	if path == "search" && r.Method == "GET" {
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
-		if q == "" || len(q) > 200 {
+		if q == "" || len([]rune(q)) > 200 || len(q) > 800 {
 			return nil, invalid("invalid_query")
 		}
 		if s.opts.Provider == nil {

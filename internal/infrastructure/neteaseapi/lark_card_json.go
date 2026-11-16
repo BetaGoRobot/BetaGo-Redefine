@@ -91,6 +91,14 @@ func withMusicListBaseVars(ctx context.Context, vars *larktpl.MusicListCardVars)
 
 func musicListRawCardElements(vars *larktpl.MusicListCardVars) []any {
 	elements := make([]any, 0, len(vars.ObjectList1)+3)
+	query := strings.TrimSuffix(strings.TrimPrefix(vars.Query, "["), "]")
+	if links := utils.BuildMusicWebLinks(query, ""); links.BrowserURL != "" {
+		content := "[网页搜歌](" + links.BrowserURL + ")"
+		if links.AppLink != "" {
+			content = "[网页搜歌](" + links.AppLink + ") · [浏览器打开](" + links.BrowserURL + ")"
+		}
+		elements = append(elements, map[string]any{"tag": "markdown", "content": content})
+	}
 	for _, item := range vars.ObjectList1 {
 		if item == nil {
 			continue

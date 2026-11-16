@@ -3,6 +3,7 @@ package cardhandlers
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,39 @@ func TestBuildMusicDetailRawCardOmitsAudioRegionWhenUnavailable(t *testing.T) {
 	jsonStr := string(raw)
 	if strings.Contains(jsonStr, `"tag":"audio"`) || strings.Contains(jsonStr, `"show_progress_bar":true`) {
 		t.Fatalf("did not expect audio region when audio element missing: %s", jsonStr)
+	}
+}
+
+func TestMusicDetailCardConfiguredWebEntryAndBrowserFallback(t *testing.T) {
+	useWorkspaceConfigPath(t)
+	t.Setenv("MUSIC_WEB_ORIGIN", "https://music.example.test:2443")
+	t.Setenv("MUSIC_WEB_APP_ID", "cli_music_test")
+	card := BuildMusicDetailRawCard(context.Background(), MusicDetailCardView{
+		Title: "public song", PlayerURL: "https://legacy.example.test/player",
+		RefreshID: map[string]string{cardactionproto.IDField: "42"},
+	})
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"applink.feishu.cn", "浏览器打开", "music.example.test:2443/play?trackID=netease%3A42"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("detail entry missing %s", want)
+		}
+	}
+	primary := card["body"].(map[string]any)["elements"].([]any)[0].(map[string]any)
+	button := primary["columns"].([]any)[0].(map[string]any)["elements"].([]any)[0].(map[string]any)
+	playURL := button["behaviors"].([]any)[0].(map[string]any)["default_url"].(string)
+	app, err := url.Parse(playURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(app.Query().Get("lk_target_url"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Query().Has("path") || app.Query().Get("mode") != "window" || target.Host != "music.example.test:2443" || target.Path != "/play" || target.Query().Get("trackID") != "netease:42" {
+		t.Fatal("card Play AppLink did not preserve the complete track target")
 	}
 }

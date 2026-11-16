@@ -130,14 +130,21 @@ func TestConfiguredServiceCookieNeverBecomesUserIdentityOrRedirects(t *testing.T
 	for _, preview := range []bool{false, true} {
 		seen := 0
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Cookie") != providerCookie {
-				t.Error("configured service did not receive its server-held authorization")
+			if r.Header.Get("Cookie") != "" && r.Header.Get("Cookie") != providerCookie {
+				t.Error("unexpected server-held authorization")
+			}
+			if r.URL.Path == "/song/detail" && r.Header.Get("Cookie") != "" {
+				t.Error("metadata received service credentials")
 			}
 			seen++
 			switch r.URL.Path {
 			case "/song/detail":
 				fmt.Fprint(w, `{"code":200,"songs":[{"id":42,"name":"authorized recording","dt":1000}]}`)
 			case "/song/url/v1":
+				if r.Header.Get("Cookie") == "" {
+					fmt.Fprint(w, `{"code":200,"data":[{"id":42,"code":200,"url":null}]}`)
+					return
+				}
 				trial := "null"
 				if preview {
 					trial = `{"start":0,"end":30}`

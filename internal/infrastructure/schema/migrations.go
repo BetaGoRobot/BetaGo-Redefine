@@ -45,6 +45,7 @@ func buildDefaultMigrations() []Migration {
 		loadSQLMigration("20261113_music.sql", false),
 		loadSQLMigration("20261113_music_canonical.sql", false),
 		loadSQLMigration("20261116_music_profile.sql", false),
+		loadSQLMigration("20261116_music_recommendations.sql", false),
 	}
 	for index := range migrations {
 		migrations[index].Checksum = migrationChecksum(migrations[index])

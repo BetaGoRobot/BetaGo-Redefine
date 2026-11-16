@@ -33,6 +33,7 @@ type ownedCacheProvider struct {
 	bucket         string
 	publicOrigin   string
 	source         string
+	namespace      string // Internal media namespace; never a catalogue identity or client input.
 	fallback       Provider
 	writeEnabled   bool
 	writers        chan struct{}
@@ -59,6 +60,9 @@ func (p *ownedCacheProvider) externalID(id string) (string, bool) {
 }
 func (p *ownedCacheProvider) objectKey(kind, external, suffix string) string {
 	prefix := ""
+	if p.namespace != "" {
+		return kind + "/" + p.namespace + "/" + external + suffix
+	}
 	if p.sourceID() != "netease" {
 		prefix = p.sourceID() + "/"
 	}
@@ -137,6 +141,10 @@ func (p *ownedCacheProvider) read(ctx context.Context, key string) ([]byte, erro
 }
 
 type ownedDescriptor struct {
+	provenance mediaProvenance
+	namespace  string
+	audioSize  int64
+
 	TrackID, Source, ExternalID, Title, Album string
 	Artist                                    json.RawMessage
 	Picture, PictureURL                       string
@@ -176,7 +184,17 @@ func (d ownedDescriptor) track(id, externalID string) (Track, error) {
 	}
 	return Track{ID: id, Source: source, ExternalID: externalID, Title: d.Title, Artist: artist, Album: d.Album, DurationMs: duration, Picture: securePicture(picture)}, nil
 }
+func (p *ownedCacheProvider) unmCache() *ownedCacheProvider {
+	return &ownedCacheProvider{reader: p.reader, signer: p.signer, bucket: p.bucket, publicOrigin: p.publicOrigin, source: p.sourceID(), namespace: "unm/pyncmd/netease", fallback: p.fallback, writeEnabled: p.writeEnabled, writers: p.writers}
+}
 func (p *ownedCacheProvider) lookup(ctx context.Context, id string) (Track, ownedDescriptor, error) {
+	t, d, err := p.lookupNamespace(ctx, id)
+	if err == ownedMiss && p.sourceID() == "netease" && p.namespace == "" {
+		return p.unmCache().lookupNamespace(ctx, id)
+	}
+	return t, d, err
+}
+func (p *ownedCacheProvider) lookupNamespace(ctx context.Context, id string) (Track, ownedDescriptor, error) {
 	d := ownedDescriptor{}
 	external, valid := p.externalID(id)
 	if !valid {
@@ -185,12 +203,21 @@ func (p *ownedCacheProvider) lookup(ctx context.Context, id string) (Track, owne
 	b, err := p.read(ctx, p.objectKey("catalog", external, ".json"))
 	if err == nil {
 		var manifest ownedManifest
-		if json.Unmarshal(b, &manifest) != nil || manifest.Format != "betago-music-cache" || manifest.Version != 1 || manifest.Status != "available" || manifest.AudioObject != p.objectKey("music", external, ".mp3") || manifest.Track.ID != id || manifest.Track.Source != p.sourceID() || manifest.Track.ExternalID != external {
+		if json.Unmarshal(b, &manifest) != nil || manifest.Format != "betago-music-cache" || (manifest.Version != 1 && manifest.Version != 2) || manifest.Status != "available" || manifest.AudioObject != p.objectKey("music", external, ".mp3") || manifest.Track.ID != id || manifest.Track.Source != p.sourceID() || manifest.Track.ExternalID != external {
 			return Track{}, d, &apiError{502, "owned_cache_invalid_metadata"}
 		}
+		if p.namespace != "" {
+			if manifest.Version != 2 || !manifest.Provenance.validUNM(id) || manifest.AudioSize <= 0 || len(manifest.AudioSHA256) != 64 || !durationNearCanonical(manifest.VerifiedDurationMs, manifest.Track.DurationMs) {
+				return Track{}, d, &apiError{502, "owned_cache_invalid_provenance"}
+			}
+		} else if manifest.Version != 1 {
+			return Track{}, d, &apiError{502, "owned_cache_invalid_provenance"}
+		}
+		d.provenance, d.namespace, d.audioSize = manifest.Provenance, p.namespace, manifest.AudioSize
 		artist, _ := json.Marshal(manifest.Track.Artist)
-		d = ownedDescriptor{TrackID: id, Source: p.sourceID(), ExternalID: external, Title: manifest.Track.Title, Artist: artist, Album: manifest.Track.Album, Picture: manifest.Track.Picture, DurationMs: manifest.Track.DurationMs}
-	} else if err == ownedMiss && p.sourceID() == "netease" {
+		d.TrackID, d.Source, d.ExternalID, d.Title, d.Artist, d.Album, d.Picture, d.DurationMs = id, p.sourceID(), external, manifest.Track.Title, artist, manifest.Track.Album, manifest.Track.Picture, manifest.Track.DurationMs
+
+	} else if err == ownedMiss && p.sourceID() == "netease" && p.namespace == "" {
 		b, err = p.read(ctx, "info/"+external+".json")
 		if err == nil && json.Unmarshal(b, &d) != nil {
 			return Track{}, d, &apiError{502, "owned_cache_invalid_metadata"}
@@ -207,7 +234,7 @@ func (p *ownedCacheProvider) lookup(ctx context.Context, id string) (Track, owne
 	if err != nil {
 		return Track{}, d, ownedError(err)
 	}
-	if stat.Size <= 0 {
+	if stat.Size <= 0 || (d.audioSize > 0 && stat.Size != d.audioSize) {
 		return Track{}, d, &apiError{502, "owned_cache_invalid_audio"}
 	}
 	if image, err := p.reader.StatObject(ctx, p.bucket, p.objectKey("picture", external, ".jpg"), minio.StatObjectOptions{}); err == nil && image.Size > 0 {
@@ -258,7 +285,7 @@ func (p *ownedCacheProvider) Resolve(ctx context.Context, t Track) (Resolution, 
 	return v.(Resolution), nil
 }
 func (p *ownedCacheProvider) resolve(ctx context.Context, t Track) (Resolution, error) {
-	canonical, _, err := p.lookup(ctx, t.ID)
+	canonical, d, err := p.lookup(ctx, t.ID)
 	if err == ownedMiss {
 		out, err := p.fallback.Resolve(ctx, t)
 		if err != nil || !p.writeEnabled {
@@ -273,9 +300,12 @@ func (p *ownedCacheProvider) resolve(ctx context.Context, t Track) (Resolution, 
 		}
 		return out, nil
 	}
-	return p.signAudio(ctx, canonical)
+	return p.signAudio(ctx, canonical, d)
 }
-func (p *ownedCacheProvider) signAudio(ctx context.Context, t Track) (Resolution, error) {
+func (p *ownedCacheProvider) signAudio(ctx context.Context, t Track, d ownedDescriptor) (Resolution, error) {
+	if d.namespace != "" {
+		p = p.unmCache()
+	}
 	out := Resolution{TrackID: t.ID, Status: "unavailable", Reason: "owned_cache_signing_failed"}
 	u, err := p.signer.PresignedGetObject(ctx, p.bucket, p.objectKey("music", t.ExternalID, ".mp3"), ownedURLLifetime, url.Values{"response-content-type": {"audio/mpeg"}})
 	if err != nil {
@@ -289,6 +319,7 @@ func (p *ownedCacheProvider) signAudio(ctx context.Context, t Track) (Resolution
 	}
 	expires := issued.Add(ownedURLLifetime)
 	out.Status, out.Reason, out.URL, out.ExpiresAt = "available", "owned_minio_cache", u.String(), &expires
+	d.provenance.apply(&out)
 	return out, nil
 }
 
@@ -318,6 +349,9 @@ func (p *ownedCacheProvider) Lyrics(ctx context.Context, t Track) (Lyrics, error
 	}
 	if len(d.Lyrics) > 0 && string(d.Lyrics) != "null" {
 		return cachedLyrics(t.ID, d.Lyrics)
+	}
+	if d.namespace != "" {
+		p = p.unmCache()
 	}
 	b, err := p.read(ctx, p.objectKey("lyrics", canonical.ExternalID, ".json"))
 	if err == nil {

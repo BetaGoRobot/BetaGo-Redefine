@@ -26,6 +26,10 @@ func (p AnonymousNetease) client() *http.Client {
 	if p.Client != nil {
 		c := *p.Client
 		c.CheckRedirect = rejectSourceRedirect
+		c.Jar = nil
+		if c.Timeout <= 0 || c.Timeout > 12*time.Second {
+			c.Timeout = 12 * time.Second
+		}
 		return &c
 	}
 	return &http.Client{Timeout: 12 * time.Second, CheckRedirect: rejectSourceRedirect}
@@ -113,6 +117,9 @@ func (p AnonymousNetease) get(ctx context.Context, path string, q url.Values, ou
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return &apiError{http.StatusForbidden, "source_access_denied"}
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &apiError{429, "provider_rate_limited"}
+	}
 	if resp.StatusCode != 200 {
 		return unavailable
 	}
@@ -177,14 +184,17 @@ func (p AnonymousNetease) Detail(ctx context.Context, id string) (Track, error) 
 	if err := p.get(ctx, "/song/detail", url.Values{"ids": {ext}}, &v); err != nil {
 		return Track{}, err
 	}
-	if v.Code != 200 || len(v.Songs) != 1 {
+	if v.Code != 200 || len(v.Songs) != 1 || strconv.FormatInt(v.Songs[0].ID, 10) != ext {
 		return Track{}, missing
 	}
 	return v.Songs[0].track(), nil
 }
 func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, error) {
+	return p.resolveNetease(ctx, t, true)
+}
+func (p AnonymousNetease) resolveNetease(ctx context.Context, t Track, compatibility bool) (Resolution, error) {
 	out := Resolution{TrackID: t.ID, Status: "unavailable", Reason: "source_not_supported"}
-	if t.Source != "netease" || !numeric.MatchString(t.ExternalID) {
+	if t.Source != "netease" || t.ID != "netease:"+t.ExternalID || !numeric.MatchString(t.ExternalID) {
 		return out, nil
 	}
 	var v struct {
@@ -198,32 +208,51 @@ func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, err
 		}
 	}
 	if err := p.get(ctx, "/song/url/v1", url.Values{"id": {t.ExternalID}, "level": {"standard"}, "unblock": {"false"}}, &v); err != nil {
-		if ae, ok := err.(*apiError); ok && ae.Message == "source_access_denied" {
-			out.Reason = "provider_access_denied"
+		if ae, ok := err.(*apiError); ok && (ae.Status == 403 || ae.Status == 429) {
+			out.Reason = ae.Message
+			if ae.Status == 403 {
+				out.Reason = "provider_access_denied"
+			}
 			return out, nil
+		}
+		if !compatibility {
+			return out, err
 		}
 		// Some deployed anonymous adapters cannot decode the v1 upstream response.
 		// Compatibility endpoint, same source and recording; never retry a valid restriction response.
 		if err = p.get(ctx, "/song/url", url.Values{"id": {t.ExternalID}, "br": {"128000"}, "unblock": {"false"}}, &v); err != nil {
-			if ae, ok := err.(*apiError); ok && ae.Message == "source_access_denied" {
-				out.Reason = "provider_access_denied"
+			if ae, ok := err.(*apiError); ok && (ae.Status == 403 || ae.Status == 429) {
+				out.Reason = ae.Message
+				if ae.Status == 403 {
+					out.Reason = "provider_access_denied"
+				}
 				return out, nil
 			}
 			return out, err
 		}
 	}
 	out.Reason = "anonymous_source_unavailable_or_restricted"
-	if v.Code != 200 || len(v.Data) != 1 || strconv.FormatInt(v.Data[0].ID, 10) != t.ExternalID || v.Data[0].URL == "" {
+	if v.Code != 200 || len(v.Data) != 1 || strconv.FormatInt(v.Data[0].ID, 10) != t.ExternalID {
 		return out, nil
 	}
 	d := v.Data[0]
+	out.MediaSource = "netease:anonymous"
+	if p.ServerCookie != "" {
+		out.MediaSource = "netease:account"
+	}
+	out.OriginTrackID, out.MatchMethod, out.Verification = t.ID, "provider_external_id", "provider_id"
 	// Some upstreams encode permission results per recording, even with a URL present.
 	if d.Code != 0 && d.Code != http.StatusOK {
 		out.Reason = "provider_access_denied"
 		return out, nil
 	}
+	if d.URL == "" {
+		out.accountEligible = true
+		out.Reason = "anonymous_same_id_no_url"
+		return out, nil
+	}
 	u, err := url.Parse(d.URL)
-	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Scheme == "https" && u.Port() != "" && u.Port() != "443") || (u.Scheme == "http" && u.Port() != "" && u.Port() != "80") {
 		return out, nil
 	}
 	host := strings.ToLower(u.Hostname())
@@ -245,6 +274,7 @@ func (p AnonymousNetease) Resolve(ctx context.Context, t Track) (Resolution, err
 	out.URL = u.String()
 	if len(d.FreeTrialInfo) > 0 && string(d.FreeTrialInfo) != "null" {
 		out.Status = "preview"
+		out.accountEligible = true
 		out.Reason = "anonymous_preview_only"
 		if p.ServerCookie != "" {
 			out.Reason = "account_authorized_preview_only"

@@ -52,11 +52,16 @@ type Queue struct {
 	PositionMs   int64    `json:"positionMs"`
 }
 type Resolution struct {
-	TrackID   string     `json:"trackID"`
-	Status    string     `json:"status"`
-	URL       string     `json:"url,omitempty"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	Reason    string     `json:"reason,omitempty"`
+	TrackID         string     `json:"trackID"`
+	Status          string     `json:"status"`
+	URL             string     `json:"url,omitempty"`
+	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
+	Reason          string     `json:"reason,omitempty"`
+	MediaSource     string     `json:"mediaSource,omitempty"`
+	OriginTrackID   string     `json:"originTrackID,omitempty"`
+	MatchMethod     string     `json:"matchMethod,omitempty"`
+	Verification    string     `json:"verification,omitempty"`
+	accountEligible bool
 }
 type Lyrics struct {
 	TrackID       string `json:"trackID"`
@@ -117,7 +122,7 @@ func secret() string {
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func Migrate(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql", "20261116_music_profile.sql"} {
+		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql", "20261116_music_profile.sql", "20261116_music_recommendations.sql"} {
 			b, err := sqlfiles.Files.ReadFile(name)
 			if err != nil {
 				return err

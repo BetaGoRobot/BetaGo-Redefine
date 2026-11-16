@@ -3,6 +3,8 @@ package music
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime"
@@ -17,12 +19,16 @@ import (
 const ownedAudioLimit = 64 << 20
 
 type ownedManifest struct {
-	Format      string    `json:"format"`
-	Version     int       `json:"version"`
-	Status      string    `json:"status"`
-	Track       Track     `json:"track"`
-	AudioObject string    `json:"audioObject"`
-	CachedAt    time.Time `json:"cachedAt"`
+	Format             string          `json:"format"`
+	Version            int             `json:"version"`
+	Status             string          `json:"status"`
+	Track              Track           `json:"track"`
+	AudioObject        string          `json:"audioObject"`
+	CachedAt           time.Time       `json:"cachedAt"`
+	Provenance         mediaProvenance `json:"provenance"`
+	AudioSize          int64           `json:"audioSize,omitempty"`
+	AudioSHA256        string          `json:"audioSHA256,omitempty"`
+	VerifiedDurationMs int64           `json:"verifiedDurationMs,omitempty"`
 }
 
 func officialMediaHost(host string) bool {
@@ -73,6 +79,12 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 		source.Reason += ";cache_failed_" + reason
 		return source
 	}
+	if source.MediaSource == "unm:pyncmd" {
+		if p.sourceID() != "netease" || source.OriginTrackID != t.ID || source.MatchMethod != "provider_external_id" {
+			return failure("provenance")
+		}
+		p = p.unmCache()
+	}
 	u, err := url.Parse(source.URL)
 	if err != nil || u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || !p.approvedMediaHost(u.Hostname()) || source.TrackID != t.ID || t.ID != p.sourceID()+":"+t.ExternalID || !numeric.MatchString(t.ExternalID) {
 		return failure("source_not_approved")
@@ -120,6 +132,25 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 	if !cacheableMP3(audio, response.Header.Get("Content-Type")) {
 		return failure("format")
 	}
+	verifiedDuration := int64(0)
+	if p.namespace != "" {
+		var complete bool
+		verifiedDuration, complete = validateCompleteMP3Duration(audio, canonical.DurationMs)
+		if !complete {
+			source.Verification = "duration_mismatch"
+			if verifiedDuration > 0 && verifiedDuration < canonical.DurationMs {
+				source.Status = "preview"
+				source.Reason = "unm_duration_preview_only;cache_skipped_preview"
+				return source
+			}
+			source.Status = "unavailable"
+			source.URL = ""
+			source.ExpiresAt = nil
+			source.Reason = "unm_incomplete_or_mismatched_audio"
+			return source
+		}
+		source.Verification = "id_and_duration"
+	}
 	if err := p.put(ctx, key, audio, "audio/mpeg"); err != nil {
 		return failure("audio_write")
 	}
@@ -130,16 +161,21 @@ func (p *ownedCacheProvider) cacheResolved(ctx context.Context, t Track, source 
 	}
 	// The manifest is the commit marker and contains no source URL or credential.
 	// A failed/incomplete upload has no new manifest and cannot become a cache hit.
-	manifest, _ := json.Marshal(ownedManifest{Format: "betago-music-cache", Version: 1, Status: "available", Track: canonical, AudioObject: key, CachedAt: time.Now().UTC()})
+	version := 1
+	if p.namespace != "" {
+		version = 2
+	}
+	sum := sha256.Sum256(audio)
+	manifest, _ := json.Marshal(ownedManifest{Format: "betago-music-cache", Version: version, Status: "available", Track: canonical, AudioObject: key, CachedAt: time.Now().UTC(), Provenance: provenanceOf(source), AudioSize: int64(len(audio)), AudioSHA256: hex.EncodeToString(sum[:]), VerifiedDurationMs: verifiedDuration})
 	if err := p.put(ctx, p.objectKey("catalog", t.ExternalID, ".json"), manifest, "application/json"); err != nil {
 		return failure("manifest_write")
 	}
 	// Read and sign the newly committed fixed object without running source lookup.
-	canonical, _, err = p.lookup(ctx, t.ID)
+	canonical, descriptor, err := p.lookup(ctx, t.ID)
 	if err != nil {
 		return failure("verification")
 	}
-	out, err := p.signAudio(ctx, canonical)
+	out, err := p.signAudio(ctx, canonical, descriptor)
 	if err != nil || out.Reason != "owned_minio_cache" {
 		return failure("verification")
 	}

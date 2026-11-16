@@ -49,9 +49,10 @@ func (FeatureScope) CommandEnum() xcommand.EnumDescriptor {
 type MusicSearchType string
 
 const (
-	MusicSearchTypeSong     MusicSearchType = "song"
-	MusicSearchTypeAlbum    MusicSearchType = "album"
-	MusicSearchTypePlaylist MusicSearchType = "playlist"
+	MusicSearchTypeSong      MusicSearchType = "song"
+	MusicSearchTypeAlbum     MusicSearchType = "album"
+	MusicSearchTypePlaylist  MusicSearchType = "playlist"
+	MusicSearchTypeRecommend MusicSearchType = "recommend"
 )
 
 func (MusicSearchType) CommandEnum() xcommand.EnumDescriptor {
@@ -60,6 +61,7 @@ func (MusicSearchType) CommandEnum() xcommand.EnumDescriptor {
 			{Value: string(MusicSearchTypeSong), Label: "单曲"},
 			{Value: string(MusicSearchTypeAlbum), Label: "专辑"},
 			{Value: string(MusicSearchTypePlaylist), Label: "歌单"},
+			{Value: string(MusicSearchTypeRecommend), Label: "兴趣推荐"},
 		},
 		DefaultValue: string(MusicSearchTypeSong),
 	}

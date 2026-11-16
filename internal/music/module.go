@@ -27,7 +27,8 @@ type Module struct {
 var _ appruntime.Module = (*Module)(nil)
 
 func OptionsFromEnv(provider func() *gorm.DB) Options {
-	o := Options{SkipMigration: os.Getenv("MUSIC_MIGRATE") == "false", DBProvider: provider, Addr: os.Getenv("MUSIC_ADDR"), Origin: os.Getenv("MUSIC_ORIGIN"), AppID: os.Getenv("MUSIC_APP_ID"), StaticDir: os.Getenv("MUSIC_STATIC_DIR"), SecureCookie: os.Getenv("MUSIC_COOKIE_SECURE") != "false", Provider: AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL"), OwnedMediaHost: os.Getenv("MUSIC_OWNED_MEDIA_HOST"), ServerCookie: os.Getenv("MUSIC_NETEASE_COOKIE")}}
+	o := Options{SkipMigration: os.Getenv("MUSIC_MIGRATE") == "false", DBProvider: provider, Addr: os.Getenv("MUSIC_ADDR"), Origin: os.Getenv("MUSIC_ORIGIN"), AppID: os.Getenv("MUSIC_APP_ID"), StaticDir: os.Getenv("MUSIC_STATIC_DIR"), SecureCookie: os.Getenv("MUSIC_COOKIE_SECURE") != "false", Provider: newNeteasePipeline(AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL"), OwnedMediaHost: os.Getenv("MUSIC_OWNED_MEDIA_HOST")}, os.Getenv("MUSIC_UNM_BRIDGE_URL"), os.Getenv("MUSIC_NETEASE_COOKIE"))}
+	o.PlaylistImporter = AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL")}
 	cacheEnabled := os.Getenv("MUSIC_MINIO_CACHE_ENABLED") == "true"
 	cacheConfig := ownedCacheConfig{endpoint: os.Getenv("MUSIC_MINIO_ENDPOINT"), publicOrigin: os.Getenv("MUSIC_MINIO_PUBLIC_ORIGIN"), bucket: os.Getenv("MUSIC_MINIO_BUCKET"), region: os.Getenv("MUSIC_MINIO_REGION"), accessKey: os.Getenv("MUSIC_MINIO_ACCESS_KEY"), secretKey: os.Getenv("MUSIC_MINIO_SECRET_KEY"), writeEnabled: os.Getenv("MUSIC_MINIO_CACHE_WRITE_ENABLED") == "true", writers: make(chan struct{}, 2)}
 	if cacheEnabled {
@@ -83,7 +84,7 @@ func (m *Module) Init(ctx context.Context) error {
 	}
 	db := m.opts.DBProvider()
 	if m.opts.SkipMigration {
-		for _, table := range []string{"music_users", "music_sessions", "music_tracks", "music_playlists", "music_entries", "music_likes", "music_history", "music_queues", "music_shares"} {
+		for _, table := range []string{"music_users", "music_sessions", "music_tracks", "music_playlists", "music_entries", "music_likes", "music_history", "music_queues", "music_shares", "music_search_history"} {
 			var exists bool
 			if err := db.WithContext(ctx).Raw("SELECT to_regclass(?) IS NOT NULL", table).Scan(&exists).Error; err != nil {
 				return err
