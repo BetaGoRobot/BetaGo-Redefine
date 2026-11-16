@@ -38,9 +38,9 @@ func BuildMusicWebLinks(query, trackID string) MusicWebURLs {
 		app := url.URL{Scheme: "https", Host: "applink.feishu.cn", Path: "/client/web_app/open"}
 		// Feishu's path parameter cannot carry a query or fragment. The browser
 		// URL already contains encoded query values; encode the complete URL once
-		// more as lk_target_url, per the H5 AppLink protocol. appCenter keeps the
-		// application in Feishu navigation instead of forcing a separate window.
-		app.RawQuery = url.Values{"appId": {appID}, "mode": {"appCenter"}, "lk_target_url": {links.BrowserURL}}.Encode()
+		// more as lk_target_url, per the H5 AppLink protocol. Request a bounded
+		// sidebar beside the conversation; actual placement is client-controlled.
+		app.RawQuery = url.Values{"appId": {appID}, "mode": {"sidebar"}, "min_width": {"360"}, "max_width": {"480"}, "lk_target_url": {links.BrowserURL}}.Encode()
 		links.AppLink = app.String()
 	}
 	return links

@@ -20,10 +20,13 @@ the shared Bot. Keep database credentials in private deployment configuration.
 With no web origin, existing descriptor `target` and player URLs remain intact.
 With the origin configured, song links carry the stable `trackID` only. Search
 cards include an encoded `q` link. Both cards expose an independent browser URL;
-Feishu AppLink uses the configured app ID, `mode=appCenter`, and the complete
+Feishu AppLink uses the configured app ID, `mode=sidebar`, and the complete
 browser URL encoded into `lk_target_url`. Browser query values are encoded
-first; the complete URL is then encoded as the outer parameter. The default opens in Feishu Workplace/navigation tabs; `window` explicitly
-requests a separate window and is not the primary card behavior. No query or
+first; the complete URL is then encoded as the outer parameter. The default requests a 360–480px sidebar (`min_width`/`max_width`, supported
+since Feishu 7.9). Actual placement is controlled by the client and entry context;
+a real client sidebar result has not been verified. `appCenter` requests a
+Workplace/navigation tab, `window` a separate window, and `window-semi` a small
+separate window. The browser entry remains independently usable. No query or
 fragment is placed in the protocol's `path` parameter.
 No open ID, session cookie, OAuth code, owner ID or administrator token is added
 to a link. See the [official H5 AppLink protocol](https://open.feishu.cn/document/common-capabilities/applink-protocol/supported-protocol/open-an-h5-app.md).

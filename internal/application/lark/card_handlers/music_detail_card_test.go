@@ -147,7 +147,7 @@ func TestMusicDetailCardConfiguredWebEntryAndBrowserFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Query().Has("path") || app.Query().Get("mode") != "appCenter" || target.Host != "music.example.test:2443" || target.Path != "/play" || target.Query().Get("trackID") != "netease:42" {
+	if app.Query().Has("path") || app.Query().Get("mode") != "sidebar" || target.Host != "music.example.test:2443" || target.Path != "/play" || target.Query().Get("trackID") != "netease:42" {
 		t.Fatal("card Play AppLink did not preserve the complete track target")
 	}
 }

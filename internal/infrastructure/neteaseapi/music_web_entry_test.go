@@ -38,7 +38,7 @@ func TestMusicSearchCardAddsConfiguredWebEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Query().Has("path") || app.Query().Get("mode") != "appCenter" || target.Host != "music.example.test:2443" || target.Path != "/search" || target.Query().Get("q") != "中文 & query" {
+	if app.Query().Has("path") || app.Query().Get("mode") != "sidebar" || target.Host != "music.example.test:2443" || target.Path != "/search" || target.Query().Get("q") != "中文 & query" {
 		t.Fatal("card search AppLink did not preserve the actual target URL")
 	}
 }

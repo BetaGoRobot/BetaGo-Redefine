@@ -15,8 +15,11 @@ func TestMusicURLUsesConfiguredWebAppWithoutLegacyDescriptor(t *testing.T) {
 	if got.Host != "applink.feishu.cn" || got.Path != "/client/web_app/open" || got.Query().Get("appId") != "cli_music_test" {
 		t.Fatalf("configured app entry not selected: host=%s path=%s", got.Host, got.Path)
 	}
-	if got.Query().Has("path") || got.Query().Get("mode") != "appCenter" {
-		t.Fatal("web AppLink must use appCenter and a complete lk_target_url, not path with query")
+	if got.Query().Has("path") || got.Query().Get("mode") != "sidebar" {
+		t.Fatal("web AppLink must use sidebar and a complete lk_target_url, not path with query")
+	}
+	if got.Query().Get("min_width") != "360" || got.Query().Get("max_width") != "480" {
+		t.Fatal("default sidebar must keep a bounded width beside the chat")
 	}
 	target, err := url.Parse(got.Query().Get("lk_target_url"))
 	if err != nil {
@@ -54,7 +57,7 @@ func TestMusicWebLinksEncodeSearchAndRejectUntrustedConfiguration(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Query().Has("path") || app.Query().Get("mode") != "appCenter" || app.Query().Get("lk_target_url") != links.BrowserURL {
+	if app.Query().Has("path") || app.Query().Get("mode") != "sidebar" || app.Query().Get("lk_target_url") != links.BrowserURL {
 		t.Fatal("complete browser URL was incorrectly nested in AppLink")
 	}
 	target, err := url.Parse(app.Query().Get("lk_target_url"))
