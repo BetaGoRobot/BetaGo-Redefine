@@ -79,7 +79,10 @@ type Provider interface {
 	Resolve(context.Context, Track) (Resolution, error)
 	Lyrics(context.Context, Track) (Lyrics, error)
 }
-type Identity struct{ AppID, TenantKey, Subject string }
+type Identity struct {
+	AppID, TenantKey, Subject string
+	DisplayName, AvatarURL    string
+}
 type IdentityVerifier interface {
 	Verify(context.Context, string) (Identity, error)
 }
@@ -114,7 +117,7 @@ func secret() string {
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func Migrate(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql"} {
+		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql", "20261116_music_profile.sql"} {
 			b, err := sqlfiles.Files.ReadFile(name)
 			if err != nil {
 				return err

@@ -1,7 +1,7 @@
 name: Music API
 on:
   pull_request:
-    paths: ['internal/music/**', 'cmd/music-server/**', 'deploy/music-sources/**', 'script/sql/20261113_music*.sql', '.github/workflows/music.yml']
+    paths: ['internal/music/**', 'cmd/music-server/**', 'deploy/music-sources/**', 'script/sql/*music*.sql', '.github/workflows/music.yml']
   workflow_dispatch:
 permissions:
   contents: read

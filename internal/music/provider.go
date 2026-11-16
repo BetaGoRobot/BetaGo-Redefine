@@ -352,8 +352,13 @@ func (v FeishuVerifier) Verify(ctx context.Context, code string) (Identity, erro
 	var user struct {
 		Code int
 		Data struct {
-			OpenID    string `json:"open_id"`
-			TenantKey string `json:"tenant_key"`
+			OpenID       string `json:"open_id"`
+			TenantKey    string `json:"tenant_key"`
+			Name         string `json:"name"`
+			EnglishName  string `json:"en_name"`
+			AvatarThumb  string `json:"avatar_thumb"`
+			AvatarURL    string `json:"avatar_url"`
+			AvatarMiddle string `json:"avatar_middle"`
 		}
 	}
 	if info.StatusCode != 200 {
@@ -365,5 +370,9 @@ func (v FeishuVerifier) Verify(ctx context.Context, code string) (Identity, erro
 	if user.Code != 0 || user.Data.OpenID == "" || user.Data.TenantKey == "" {
 		return out, fmt.Errorf("feishu identity missing tenant or subject")
 	}
-	return Identity{AppID: v.AppID, TenantKey: user.Data.TenantKey, Subject: user.Data.OpenID}, nil
+	name := normalizedDisplayName(user.Data.Name)
+	if name == "" {
+		name = normalizedDisplayName(user.Data.EnglishName)
+	}
+	return Identity{AppID: v.AppID, TenantKey: user.Data.TenantKey, Subject: user.Data.OpenID, DisplayName: name, AvatarURL: verifiedAvatarURL(user.Data.AvatarThumb, user.Data.AvatarURL, user.Data.AvatarMiddle)}, nil
 }

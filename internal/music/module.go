@@ -99,6 +99,13 @@ func (m *Module) Init(ctx context.Context) error {
 		if !canonicalColumn {
 			return errors.New("apply music canonical metadata migration before starting with MUSIC_MIGRATE=false")
 		}
+		var profileColumns int64
+		if err := db.WithContext(ctx).Raw("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='music_users' AND column_name IN ('display_name','avatar_url','profile_updated_at')").Scan(&profileColumns).Error; err != nil {
+			return err
+		}
+		if profileColumns != 3 {
+			return errors.New("apply music profile migration before starting with MUSIC_MIGRATE=false")
+		}
 	} else if err := Migrate(db.WithContext(ctx)); err != nil {
 		return err
 	}

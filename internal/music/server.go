@@ -51,9 +51,13 @@ type bucket struct {
 	n  int
 }
 type account struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	ExpiresAt time.Time `json:"-"`
+	ID                  string     `json:"id"`
+	Kind                string     `json:"kind"`
+	DisplayName         string     `json:"displayName"`
+	AvatarURL           string     `json:"avatarURL"`
+	ProfileUpdatedAt    *time.Time `json:"profileUpdatedAt"`
+	ProfileNeedsRefresh bool       `json:"profileNeedsRefresh" gorm:"-"`
+	ExpiresAt           time.Time  `json:"-"`
 }
 
 func NewServer(db *gorm.DB, opts Options) *Server {
@@ -173,7 +177,7 @@ func (s *Server) auth(r *http.Request) (account, error) {
 	if token == "" {
 		return a, &apiError{401, "session_required"}
 	}
-	res := s.db.WithContext(r.Context()).Raw(`SELECT u.id,u.kind,s.expires_at FROM music_users u JOIN music_sessions s ON s.user_id=u.id WHERE s.hash=? AND s.expires_at>? AND u.app_id=?`, digest(token), s.opts.Now(), s.opts.AppID).Scan(&a)
+	res := s.db.WithContext(r.Context()).Raw(`SELECT u.id,u.kind,u.display_name,u.avatar_url,u.profile_updated_at,s.expires_at FROM music_users u JOIN music_sessions s ON s.user_id=u.id WHERE s.hash=? AND s.expires_at>? AND u.app_id=?`, digest(token), s.opts.Now(), s.opts.AppID).Scan(&a)
 	if res.Error != nil {
 		return a, res.Error
 	}
@@ -247,7 +251,7 @@ func (s *Server) session(r *http.Request, path string) (any, error) {
 			return nil, &apiError{401, "invalid_recovery_code"}
 		}
 		var a account
-		res := db.Raw("SELECT id,kind FROM music_users WHERE recovery_hash=? AND app_id=?", digest(in.RecoveryCode), s.opts.AppID).Scan(&a)
+		res := db.Raw("SELECT id,kind,display_name,avatar_url,profile_updated_at FROM music_users WHERE recovery_hash=? AND app_id=?", digest(in.RecoveryCode), s.opts.AppID).Scan(&a)
 		if res.Error != nil {
 			return nil, res.Error
 		}
@@ -268,10 +272,10 @@ func (s *Server) session(r *http.Request, path string) (any, error) {
 	}
 	var a account
 	err = db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO music_users(id,kind,app_id,tenant_key,subject) VALUES(?,'feishu',?,?,?) ON CONFLICT(app_id,tenant_key,subject) DO NOTHING`, secret(), ident.AppID, ident.TenantKey, ident.Subject).Error; err != nil {
+		if err := tx.Exec(`INSERT INTO music_users(id,kind,app_id,tenant_key,subject,display_name,avatar_url,profile_updated_at) VALUES(?,'feishu',?,?,?,?,?,?) ON CONFLICT(app_id,tenant_key,subject) DO UPDATE SET display_name=EXCLUDED.display_name,avatar_url=EXCLUDED.avatar_url,profile_updated_at=EXCLUDED.profile_updated_at WHERE music_users.kind='feishu'`, secret(), ident.AppID, ident.TenantKey, ident.Subject, normalizedDisplayName(ident.DisplayName), verifiedAvatarURL(ident.AvatarURL), s.opts.Now().UTC()).Error; err != nil {
 			return err
 		}
-		return tx.Raw("SELECT id,kind FROM music_users WHERE app_id=? AND tenant_key=? AND subject=?", ident.AppID, ident.TenantKey, ident.Subject).Scan(&a).Error
+		return tx.Raw("SELECT id,kind,display_name,avatar_url,profile_updated_at FROM music_users WHERE kind='feishu' AND app_id=? AND tenant_key=? AND subject=?", ident.AppID, ident.TenantKey, ident.Subject).Scan(&a).Error
 	})
 	if err != nil {
 		return nil, err
@@ -310,6 +314,9 @@ func (s *Server) route(r *http.Request) (any, error) {
 	db := s.db.WithContext(r.Context())
 	if path == "me" && r.Method == "GET" {
 		return map[string]any{"user": a, "expiresAt": a.ExpiresAt}, nil
+	}
+	if path == "auth/feishu/profile" && r.Method == "POST" {
+		return s.refreshFeishuProfile(r, a)
 	}
 	if path == "auth/logout" && r.Method == "POST" {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
