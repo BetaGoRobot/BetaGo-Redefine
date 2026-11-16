@@ -19,7 +19,12 @@ the shared Bot. Keep database credentials in private deployment configuration.
 
 With no web origin, existing descriptor `target` and player URLs remain intact.
 With the origin configured, song links carry the stable `trackID` only. Search
-cards include an encoded `q` link. Both cards expose an independent browser URL;
+stays in the Bot: search results, per-track play callbacks, pagination and footer
+actions are preserved. One optional `打开播放器` button appears below the search
+results. It opens `/play` without a query or selected track; it does not move
+the search to the website. There is no new-feature prompt, impression counter
+or click-tracking state. With no web AppID the same button uses the browser URL.
+Detail cards retain their independent browser entry.
 Feishu AppLink uses the configured app ID, `mode=sidebar`, and the complete
 browser URL encoded into `lk_target_url`. Browser query values are encoded
 first; the complete URL is then encoded as the outer parameter. The default requests a 360–480px sidebar (`min_width`/`max_width`, supported
@@ -77,6 +82,8 @@ unsafe origins/track IDs, both card entry points, recommendation argument
 parsing, trusted identity denial, no-account fallback, read-only PG settings and
 one current-message text reply using a local test replacement. Tests do not
 send real Feishu messages or query a live music/database account.
+The configured search card differs from the original only by its optional player
+button; a full card comparison preserves the search rows and existing callbacks.
 
 Use the repository's Go 1.26.8 wrapper and `custom_skip_vips` baseline. The Bot
 source is intended for normal code review and a later explicit Bot release;

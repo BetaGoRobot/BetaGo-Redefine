@@ -16,22 +16,33 @@ var musicWebAppID = regexp.MustCompile(`^cli_[A-Za-z0-9_]{1,100}$`)
 // BuildMusicWebLinks only accepts operator configuration and catalogue/search
 // identifiers. Identity, sessions and authorization codes never enter these URLs.
 func BuildMusicWebLinks(query, trackID string) MusicWebURLs {
+	if trackID != "" && !musicWebTrackID.MatchString(trackID) {
+		return MusicWebURLs{}
+	}
+	path := "/library"
+	q := url.Values{}
+	if trackID != "" {
+		path = "/play"
+		q.Set("trackID", trackID)
+	} else if query = strings.TrimSpace(query); query != "" {
+		path = "/search"
+		q.Set("q", query)
+	}
+	return buildMusicWebLinks(path, q)
+}
+
+// BuildMusicPlayerLinks opens the player's existing queue without moving a Bot
+// search to the website or selecting a track on behalf of the user.
+func BuildMusicPlayerLinks() MusicWebURLs {
+	return buildMusicWebLinks("/play", nil)
+}
+
+func buildMusicWebLinks(path string, q url.Values) MusicWebURLs {
 	origin, err := url.Parse(strings.TrimSpace(os.Getenv("MUSIC_WEB_ORIGIN")))
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") || origin.Opaque != "" {
 		return MusicWebURLs{}
 	}
-	if trackID != "" && !musicWebTrackID.MatchString(trackID) {
-		return MusicWebURLs{}
-	}
-	origin.Path = "/library"
-	q := url.Values{}
-	if trackID != "" {
-		origin.Path = "/play"
-		q.Set("trackID", trackID)
-	} else if query = strings.TrimSpace(query); query != "" {
-		origin.Path = "/search"
-		q.Set("q", query)
-	}
+	origin.Path = path
 	origin.RawQuery = q.Encode()
 	links := MusicWebURLs{BrowserURL: origin.String()}
 	if appID := strings.TrimSpace(os.Getenv("MUSIC_WEB_APP_ID")); musicWebAppID.MatchString(appID) {
