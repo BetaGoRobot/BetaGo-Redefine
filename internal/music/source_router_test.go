@@ -157,8 +157,8 @@ func TestCatalogueSourceConfigurationKeepsDefaultAndSharesCacheWriterPool(t *tes
 		t.Fatal(options.providerErr)
 	}
 	router = options.Provider.(SourceRouter)
-	primary := router.Primary.(*ownedCacheProvider)
-	other := router.Sources["kuwo"].(*ownedCacheProvider)
+	primary := router.Primary.(*directDeliveryProvider).legacy.(*ownedCacheProvider)
+	other := router.Sources["kuwo"].(*directDeliveryProvider).legacy.(*ownedCacheProvider)
 	if primary.sourceID() != "netease" || other.sourceID() != "kuwo" {
 		t.Fatal("cache source namespace changed")
 	}

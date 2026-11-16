@@ -52,6 +52,7 @@ type Queue struct {
 	PositionMs   int64    `json:"positionMs"`
 }
 type Resolution struct {
+	Delivery        string     `json:"delivery,omitempty"`
 	TrackID         string     `json:"trackID"`
 	Status          string     `json:"status"`
 	URL             string     `json:"url,omitempty"`

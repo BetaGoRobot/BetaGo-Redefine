@@ -149,6 +149,13 @@ func (s *Server) Handler() http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
+		if delivery := r.Header.Get("X-Music-Delivery"); delivery != "" {
+			if delivery != "direct" {
+				fail(w, invalid("invalid_audio_delivery"))
+				return
+			}
+			ctx = context.WithValue(ctx, directDeliveryKey{}, true)
+		}
 		r = r.WithContext(ctx)
 		r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024)
 		out, err := s.route(r)
@@ -411,6 +418,13 @@ func (s *Server) route(r *http.Request) (any, error) {
 		id, err := url.PathUnescape(parts[1])
 		if err != nil {
 			return nil, invalid("invalid_id")
+		}
+		if len(parts) == 3 && parts[2] == "resolve" && r.Method == "POST" {
+			ctx, err := audioDeliveryContext(r)
+			if err != nil {
+				return nil, err
+			}
+			r = r.WithContext(ctx)
 		}
 		t, err := ensureTrack(r.Context(), db, s.opts.Provider, id)
 		if err != nil {
