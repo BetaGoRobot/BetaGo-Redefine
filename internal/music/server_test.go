@@ -292,7 +292,7 @@ func TestAnonymousProviderRestrictionsAndIdentityVerification(t *testing.T) {
 			fmt.Fprint(w, `{"code":200,"data":[{"id":42,"url":"https://audio.test/42.mp3","expi":60,"freeTrialInfo":null}]}`)
 		case "/lyric":
 			fmt.Fprintf(w, `{"code":200,"lrc":{"lyric":"[00:00]track %s"}}`, r.URL.Query().Get("id"))
-		case "/open-apis/authen/v2/oauth/token":
+		case "/oauth/v3/token":
 			fmt.Fprint(w, `{"code":0,"access_token":"server-only-token"}`)
 		case "/open-apis/authen/v1/user_info":
 			if r.Header.Get("Authorization") != "Bearer server-only-token" {

@@ -1,7 +1,6 @@
 package music
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -283,9 +282,13 @@ func (p AnonymousNetease) Lyrics(ctx context.Context, t Track) (Lyrics, error) {
 // FeishuVerifier exchanges only a short-lived code and trusts identity exclusively from user_info.
 // No provider token is returned to clients or persisted.
 type FeishuVerifier struct {
-	AppID, AppSecret, RedirectURI string
-	Client                        *http.Client
-	BaseURL                       string
+	AppID, AppSecret string
+	// RedirectURI is retained for configuration compatibility. This verifier handles
+	// H5 JSAPI codes, not a browser OAuth redirect/callback flow.
+	RedirectURI string
+	Client      *http.Client
+	// BaseURL overrides both service origins for local protocol tests only.
+	BaseURL string
 }
 
 func (v FeishuVerifier) Verify(ctx context.Context, code string) (Identity, error) {
@@ -293,20 +296,30 @@ func (v FeishuVerifier) Verify(ctx context.Context, code string) (Identity, erro
 	if code == "" || len(code) > 2048 || v.AppID == "" || v.AppSecret == "" {
 		return out, fmt.Errorf("feishu not configured")
 	}
-	c := v.Client
-	if c == nil {
-		c = &http.Client{Timeout: 12 * time.Second}
+	c := http.Client{Timeout: 12 * time.Second}
+	if v.Client != nil {
+		c = *v.Client
+		if c.Timeout <= 0 {
+			c.Timeout = 12 * time.Second
+		}
 	}
-	base := v.BaseURL
-	if base == "" {
-		base = "https://open.feishu.cn"
+	// Neither application cookies nor credential-bearing redirects may leave this exchange.
+	c.Jar = nil
+	c.CheckRedirect = rejectSourceRedirect
+	tokenURL := "https://accounts.feishu.cn/oauth/v3/token"
+	userInfoURL := "https://open.feishu.cn/open-apis/authen/v1/user_info"
+	if v.BaseURL != "" {
+		base := strings.TrimRight(v.BaseURL, "/")
+		tokenURL, userInfoURL = base+"/oauth/v3/token", base+"/open-apis/authen/v1/user_info"
 	}
-	b, _ := json.Marshal(map[string]string{"grant_type": "authorization_code", "code": code, "client_id": v.AppID, "client_secret": v.AppSecret, "redirect_uri": v.RedirectURI})
-	req, err := http.NewRequestWithContext(ctx, "POST", base+"/open-apis/authen/v2/oauth/token", bytes.NewReader(b))
+	// JSAPI requestAccess/requestAuthCode did not construct a browser OAuth redirect.
+	// Do not invent redirect_uri or PKCE parameters for that flow.
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {v.AppID}, "client_secret": {v.AppSecret}}
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.Do(req)
 	if err != nil {
 		return out, err
@@ -326,7 +339,7 @@ func (v FeishuVerifier) Verify(ctx context.Context, code string) (Identity, erro
 	if token.Code != 0 || token.AccessToken == "" || token.Error != "" {
 		return out, fmt.Errorf("feishu exchange rejected")
 	}
-	req, err = http.NewRequestWithContext(ctx, "GET", base+"/open-apis/authen/v1/user_info", nil)
+	req, err = http.NewRequestWithContext(ctx, "GET", userInfoURL, nil)
 	if err != nil {
 		return out, err
 	}
