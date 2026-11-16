@@ -17,6 +17,7 @@ type MusicDetailCardView struct {
 	Subtitle         string
 	ImageKey         string
 	PlayerURL        string
+	WebBrowserURL    string
 	SourceMusicURL   string
 	AudioFileKey     string
 	AudioID          string
@@ -85,6 +86,15 @@ func BuildMusicDetailRawCard(ctx context.Context, view MusicDetailCardView) lark
 }
 
 func normalizeMusicDetailCardView(ctx context.Context, view MusicDetailCardView) MusicDetailCardView {
+	if id := view.RefreshID[cardaction.IDField]; id != "" {
+		if links := utils.BuildMusicWebLinks("", "netease:"+id); links.BrowserURL != "" {
+			view.WebBrowserURL = links.BrowserURL
+			view.PlayerURL = links.BrowserURL
+			if links.AppLink != "" {
+				view.PlayerURL = links.AppLink
+			}
+		}
+	}
 	if strings.TrimSpace(view.RefreshTime) == "" {
 		view.RefreshTime = time.Now().In(utils.UTC8Loc()).Format(time.DateTime)
 	}
@@ -111,7 +121,7 @@ func normalizeMusicDetailCardView(ctx context.Context, view MusicDetailCardView)
 }
 
 func musicDetailPrimaryActions(view MusicDetailCardView) map[string]any {
-	return map[string]any{
+	actions := map[string]any{
 		"tag":                "column_set",
 		"horizontal_spacing": "8px",
 		"horizontal_align":   "left",
@@ -148,6 +158,13 @@ func musicDetailPrimaryActions(view MusicDetailCardView) map[string]any {
 		},
 		"margin": "0px 0px 0px 0px",
 	}
+	if view.WebBrowserURL != "" {
+		actions["columns"] = append(actions["columns"].([]any), musicDetailButtonColumn(map[string]any{
+			"tag": "button", "text": map[string]any{"tag": "plain_text", "content": "浏览器打开"}, "type": "default", "size": "tiny",
+			"behaviors": []any{map[string]any{"type": "open_url", "default_url": view.WebBrowserURL}},
+		}))
+	}
+	return actions
 }
 
 func musicDetailAudioSection(view MusicDetailCardView) map[string]any {

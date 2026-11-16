@@ -21,7 +21,7 @@ import (
 
 type MusicSearchArgs struct {
 	Type     MusicSearchType `json:"type"`
-	Keywords string          `json:"keywords" cli:"keywords,input,required"`
+	Keywords string          `json:"keywords" cli:"keywords,input"`
 	Voice    bool            `json:"voice"`
 }
 
@@ -39,7 +39,7 @@ func (musicSearchHandler) ParseCLI(args []string) (MusicSearchArgs, error) {
 	}
 	if input == "" {
 		input = argsMap["keywords"]
-		if input == "" {
+		if input == "" && searchType != MusicSearchTypeRecommend {
 			return MusicSearchArgs{}, errors.New("keywords is required")
 		}
 	}
@@ -61,7 +61,7 @@ func (musicSearchHandler) ParseTool(raw string) (MusicSearchArgs, error) {
 		return MusicSearchArgs{}, err
 	}
 	parsed.Type = searchType
-	if parsed.Keywords == "" {
+	if parsed.Keywords == "" && parsed.Type != MusicSearchTypeRecommend {
 		return MusicSearchArgs{}, errors.New("keywords is required")
 	}
 	return parsed, nil
@@ -70,21 +70,20 @@ func (musicSearchHandler) ParseTool(raw string) (MusicSearchArgs, error) {
 func (musicSearchHandler) ToolSpec() xcommand.ToolSpec {
 	return xcommand.ToolSpec{
 		Name: "music_search",
-		Desc: "根据输入的关键词搜索相关的音乐并发送卡片或语音消息",
+		Desc: "根据关键词搜索音乐；用户主动请求音乐推荐时用 type=recommend，回复兴趣推荐或音乐网页入口",
 		Params: arktools.NewParams("object").
 			AddProp("type", &arktools.Prop{
 				Type: "string",
-				Desc: "搜索对象类型",
+				Desc: "song、album、playlist；用户主动请求推荐时用 recommend",
 			}).
 			AddProp("keywords", &arktools.Prop{
 				Type: "string",
-				Desc: "搜索关键词；当 type=playlist 时传歌单 ID",
+				Desc: "搜索关键词；当 type=playlist 时传歌单 ID；recommend 可不填",
 			}).
 			AddProp("voice", &arktools.Prop{
 				Type: "boolean",
 				Desc: "是否直接发送语音消息（仅限单曲搜索）",
-			}).
-			AddRequired("keywords"),
+			}),
 		Result: func(metaData *xhandler.BaseMetaData) string {
 			result, _ := metaData.GetExtra(musicSearchToolResultKey)
 			return result
@@ -97,6 +96,9 @@ func (musicSearchHandler) Handle(ctx context.Context, data *larkim.P2MessageRece
 	span.SetAttributes(otel.PreviewAttrs("event", larkcore.Prettify(data), 256)...)
 	defer span.End()
 	defer func() { otel.RecordError(span, err) }()
+	if arg.Type == MusicSearchTypeRecommend {
+		return handleMusicRecommendation(ctx, data, metaData)
+	}
 
 	accessor := appconfig.NewAccessor(ctx, currentChatID(data, metaData), currentOpenID(data, metaData))
 	replyInThread := utils.GetIfInthread(ctx, metaData, accessor.MusicCardInThread())
@@ -206,6 +208,9 @@ func sendMusicVoice(ctx context.Context, data *larkim.P2MessageReceiveV1, metaDa
 }
 
 func resolveMusicSearchApprovalSummary(arg MusicSearchArgs) string {
+	if arg.Type == MusicSearchTypeRecommend {
+		return "将回复音乐兴趣推荐或音乐网页入口"
+	}
 	msgType := "音乐卡片"
 	if arg.Voice {
 		msgType = "语音消息"
@@ -217,11 +222,12 @@ func resolveMusicSearchApprovalSummary(arg MusicSearchArgs) string {
 }
 
 func (musicSearchHandler) CommandDescription() string {
-	return "搜索音乐"
+	return "搜索音乐或查看兴趣推荐"
 }
 
 func (musicSearchHandler) CommandExamples() []string {
 	return []string{
+		"/music --type=recommend",
 		"/music 稻香",
 		"/music --type=album 范特西",
 		"/music --type=playlist 3778678",

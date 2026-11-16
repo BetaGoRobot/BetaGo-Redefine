@@ -1,0 +1,23 @@
+# Independent sidecar only; no Bot, database or account service.
+services:
+  kuwo-source:
+    image: node:24-bookworm-slim
+    network_mode: host
+    user: "${MUSIC_SOURCE_UID:-1000}:${MUSIC_SOURCE_GID:-1000}"
+    working_dir: /app
+    command: ["node", "alternative-source.cjs"]
+    environment:
+      MUSIC_KUWO_PORT: "37836"
+      MUSIC_KUWO_CATALOGUE_PATH: /data/catalogue.json
+    volumes:
+      - ./:/app:ro
+      - ./data:/data:rw
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:37836/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

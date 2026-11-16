@@ -97,6 +97,13 @@ func musicListRawCardElements(vars *larktpl.MusicListCardVars) []any {
 		}
 		elements = append(elements, musicListRawCardItem(item))
 	}
+	if links := utils.BuildMusicPlayerLinks(); links.BrowserURL != "" {
+		playerURL := links.BrowserURL
+		if links.AppLink != "" {
+			playerURL = links.AppLink
+		}
+		elements = append(elements, openURLButton("打开播放器", "default", "small", "play_outlined", playerURL))
+	}
 	elements = append(elements,
 		musicListFooterActions(vars),
 		map[string]any{

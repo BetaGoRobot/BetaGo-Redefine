@@ -31,23 +31,11 @@ type Provider interface {
 	GetAlbumDetail(ctx context.Context, albumID string) (*AlbumDetail, error)
 	AsyncGetSearchRes(ctx context.Context, searchRes SearchMusic) ([]*SearchMusicItem, error)
 	GetComment(ctx context.Context, commentType CommentType, id string) (*CommentResult, error)
-	TryGetLastCookie(ctx context.Context)
-	LoginNetEase(ctx context.Context) error
-	LoginNetEaseQR(ctx context.Context) error
-	CheckIfLogin(ctx context.Context) bool
-	RefreshLogin(ctx context.Context) error
-	SaveCookie(ctx context.Context)
 }
 
 // NetEaseContext 网易云API调用封装
 type NetEaseContext struct {
-	cookies  []*http.Cookie
-	qrStruct struct {
-		isOutDated bool
-		uniKey     string
-		qrBase64   string
-	}
-	loginType string
+	cookies []*http.Cookie
 }
 
 type noopProvider struct {
@@ -100,13 +88,6 @@ func (n noopProvider) AsyncGetSearchRes(context.Context, SearchMusic) ([]*Search
 func (n noopProvider) GetComment(context.Context, CommentType, string) (*CommentResult, error) {
 	return nil, n.unavailableErr()
 }
-
-func (n noopProvider) TryGetLastCookie(context.Context)     {}
-func (n noopProvider) LoginNetEase(context.Context) error   { return n.unavailableErr() }
-func (n noopProvider) LoginNetEaseQR(context.Context) error { return n.unavailableErr() }
-func (n noopProvider) CheckIfLogin(context.Context) bool    { return false }
-func (n noopProvider) RefreshLogin(context.Context) error   { return n.unavailableErr() }
-func (n noopProvider) SaveCookie(context.Context)           {}
 
 type dailySongs struct {
 	Data struct {

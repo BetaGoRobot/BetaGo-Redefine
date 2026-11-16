@@ -108,7 +108,7 @@ func fetchMusicURLBatch(ctx context.Context, cookies []*http.Cookie, musicIDs []
 			"id":        joinSongIDs(musicIDs),
 			"level":     "standard",
 			"timestamp": fmt.Sprint(time.Now().UnixNano()),
-			"unblock":   "true",
+			"unblock":   "false",
 		},
 	).SetCookies(cookies).Post(NetEaseAPIBaseURL + "/song/url/v1")
 	if err != nil {
@@ -214,34 +214,9 @@ func Init() {
 	ctx := &NetEaseContext{}
 	NetEaseGCtx = ctx
 
-	startUpCtx := context.Background()
-	ctx.TryGetLastCookie(startUpCtx)
+	// Anonymous catalogue mode: do not load personal cookies, log in, show QR,
+	// or start the old 300-second account refresh goroutine.
 
-	go func() {
-		err := ctx.LoginNetEase(startUpCtx)
-		if err != nil {
-			logs.L().Ctx(startUpCtx).Error("error in init loginNetease", zap.Error(err))
-			err = ctx.LoginNetEaseQR(startUpCtx)
-			if err != nil {
-				logs.L().Ctx(startUpCtx).Error("error in init loginNeteaseQR", zap.Error(err))
-			}
-		}
-		for {
-			if ctx.loginType == "qr" {
-				if !ctx.CheckIfLogin(startUpCtx) {
-					ctx.LoginNetEaseQR(startUpCtx)
-				}
-			} else {
-				ctx.RefreshLogin(startUpCtx)
-				if ctx.CheckIfLogin(startUpCtx) {
-					ctx.SaveCookie(startUpCtx)
-				} else {
-					logs.L().Ctx(startUpCtx).Error("error in refresh login")
-				}
-			}
-			time.Sleep(time.Second * 300)
-		}
-	}()
 }
 
 func setNoop(reason string) {
