@@ -12,18 +12,25 @@ import (
 func (s *Server) playlists(r *http.Request, a account, path string) (any, error) {
 	db := s.db.WithContext(r.Context())
 	if path == "playlists" && r.Method == "GET" {
-		ps := []Playlist{}
-		if err := db.Raw("SELECT * FROM music_playlists WHERE owner_id=? AND deleted=false ORDER BY id", a.ID).Scan(&ps).Error; err != nil {
-			return nil, err
-		}
-		for n := range ps {
-			p, err := playlist(db, a.ID, ps[n].ID)
-			if err != nil {
+		ps, err := readPlaylists(db, a.ID, "")
+		return map[string]any{"playlists": ps}, err
+	}
+	if r.Method == "POST" {
+		parts := strings.Split(path, "/")
+		switch {
+		case path == "playlists/sync":
+			return s.createPlaylistSync(r, a)
+		case len(parts) == 3 && parts[2] == "sync":
+			if err := body(r, &struct{}{}); err != nil {
 				return nil, err
 			}
-			ps[n] = p
+			return s.syncPlaylist(r.Context(), a.ID, parts[1], false)
+		case len(parts) == 3 && parts[2] == "tracks":
+			return s.prependPlaylistTracks(r, a.ID, parts[1])
 		}
-		return map[string]any{"playlists": ps}, nil
+	}
+	if strings.Count(path, "/") > 1 {
+		return nil, missing
 	}
 	var in struct {
 		Name     string   `json:"name"`
@@ -61,6 +68,9 @@ func (s *Server) playlists(r *http.Request, a account, path string) (any, error)
 		return nil, missing
 	}
 	if r.Method == "PUT" {
+		if _, err := editablePlaylist(db, a.ID, id, false); err != nil {
+			return nil, err
+		}
 		if strings.TrimSpace(in.Name) == "" || len(in.Name) > 200 {
 			return nil, invalid("invalid_name")
 		}
@@ -71,13 +81,12 @@ func (s *Server) playlists(r *http.Request, a account, path string) (any, error)
 		}
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
-		p := Playlist{}
-		res := tx.Raw("SELECT * FROM music_playlists WHERE id=? AND owner_id=? FOR UPDATE", id, a.ID).Scan(&p)
-		if res.Error != nil {
-			return res.Error
+		p, err := playlistRow(tx, a.ID, id, true)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 || p.Deleted {
-			return missing
+		if r.Method == "PUT" && p.SyncSourceID != "" {
+			return syncPlaylistReadOnly
 		}
 		if p.Revision != in.Revision {
 			return conflict

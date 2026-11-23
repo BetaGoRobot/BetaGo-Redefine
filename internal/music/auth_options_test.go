@@ -28,7 +28,7 @@ func TestPublicAuthOptionsExposeOnlyConfiguredCapabilities(t *testing.T) {
 				t.Fatalf("public capability lookup requires a session: %d %s", w.Code, w.Body.String())
 			}
 			out := call(t, h, "", "GET", "/auth/options", nil, http.StatusOK)
-			want := map[string]any{"guest": true, "feishu": map[string]any{"enabled": tc.enabled, "appID": tc.appID}}
+			want := map[string]any{"guest": true, "library": map[string]any{"playlistAdd": true, "neteasePlaylistSync": false}, "feishu": map[string]any{"enabled": tc.enabled, "appID": tc.appID}}
 			if !reflect.DeepEqual(out, want) {
 				t.Fatalf("capability response leaked or misrepresented configuration: got %#v want %#v", out, want)
 			}

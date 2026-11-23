@@ -169,9 +169,9 @@ func TestPublicPlaylistRejectsRestrictedOversizedAndMissingMetadata(t *testing.T
 		})
 	}
 	_, upstream := newPlaylistImportFixture(t, nil)
-	_, err := (AnonymousNetease{BaseURL: upstream.URL}).PublicPlaylist(context.Background(), "123")
-	if ae, ok := err.(*apiError); !ok || ae.Status != 422 || ae.Message != "public_playlist_empty" {
-		t.Fatal("empty public playlist was accepted")
+	got, err := (AnonymousNetease{BaseURL: upstream.URL}).PublicPlaylist(context.Background(), "123")
+	if err != nil || got.ID != "123" || got.Tracks == nil || len(got.Tracks) != 0 {
+		t.Fatalf("verified empty snapshot: %+v, %v", got, err)
 	}
 }
 

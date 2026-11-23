@@ -17,31 +17,38 @@ import (
 )
 
 type Options struct {
-	DBProvider       func() *gorm.DB
-	Provider         Provider
-	PlaylistImporter PublicPlaylistImporter
-	Verifier         IdentityVerifier
-	AppID            string
-	Origin           string
-	Addr             string
-	StaticDir        string
-	SecureCookie     bool
-	SkipMigration    bool
-	Now              func() time.Time
-	providerErr      error
+	DBProvider          func() *gorm.DB
+	Provider            Provider
+	PlaylistImporter    PublicPlaylistImporter
+	DisablePlaylistSync bool
+	Verifier            IdentityVerifier
+	AppID               string
+	Origin              string
+	Addr                string
+	StaticDir           string
+	SecureCookie        bool
+	SkipMigration       bool
+	Now                 func() time.Time
+	providerErr         error
 }
 type Server struct {
-	db          *gorm.DB
-	opts        Options
-	authOptions AuthOptions
-	mu          sync.Mutex
-	rates       map[string]bucket
+	db                  *gorm.DB
+	opts                Options
+	authOptions         AuthOptions
+	playlistSyncLimiter playlistSyncLimiter
+	mu                  sync.Mutex
+	rates               map[string]bucket
 }
 
 // AuthOptions is public capability discovery and contains no credential or identity.
 type AuthOptions struct {
-	Guest  bool              `json:"guest"`
-	Feishu FeishuAuthOptions `json:"feishu"`
+	Guest   bool              `json:"guest"`
+	Feishu  FeishuAuthOptions `json:"feishu"`
+	Library LibraryOptions    `json:"library"`
+}
+type LibraryOptions struct {
+	PlaylistAdd         bool `json:"playlistAdd"`
+	NeteasePlaylistSync bool `json:"neteasePlaylistSync"`
 }
 type FeishuAuthOptions struct {
 	Enabled bool   `json:"enabled"`
@@ -62,7 +69,7 @@ type account struct {
 }
 
 func NewServer(db *gorm.DB, opts Options) *Server {
-	capabilities := AuthOptions{Guest: true}
+	capabilities := AuthOptions{Guest: true, Library: LibraryOptions{PlaylistAdd: true, NeteasePlaylistSync: opts.PlaylistImporter != nil && !opts.DisablePlaylistSync}}
 	if opts.Verifier != nil && strings.TrimSpace(opts.AppID) != "" {
 		capabilities.Feishu = FeishuAuthOptions{Enabled: true, AppID: opts.AppID}
 	}
@@ -72,7 +79,7 @@ func NewServer(db *gorm.DB, opts Options) *Server {
 	if opts.AppID == "" {
 		opts.AppID = "music"
 	}
-	return &Server{db: uncached(db), opts: opts, authOptions: capabilities, rates: map[string]bucket{}}
+	return &Server{db: uncached(db), opts: opts, authOptions: capabilities, playlistSyncLimiter: newPlaylistSyncLimiter(), rates: map[string]bucket{}}
 }
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

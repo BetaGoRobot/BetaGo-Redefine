@@ -113,3 +113,9 @@ Accepts a numeric playlist ID or full official `music.163.com` / `y.music.163.co
 The import provider reads only fixed `/playlist/detail` and batched `/song/detail` paths through the configured trusted catalogue adapter, with **no operator Cookie or cookie jar** and no account fallback. Public metadata has an18-second overall deadline, batches of at most50 tracks and at most4 workers. All track IDs and complete canonical metadata must match the request. At most1000 original entries are accepted; over-limit import returns413 `public_playlist_too_large` without silently truncating, even if deduplication would make it smaller. Stable IDs are deduplicated in first-occurrence order. Metadata, new playlist and entries are persisted in one transaction after all metadata succeeds; failures leave no partial playlist or shared-catalogue writes.
 
 Private/restricted playlists return403 `public_playlist_access_denied`; missing/incomplete metadata422 `public_playlist_metadata_incomplete`; empty playlists422 `public_playlist_empty`; source failure503 `public_playlist_source_unavailable`; missing configured importer503 `public_playlist_import_not_configured`; explicit rate limiting429 `provider_rate_limited`. These are never an instruction to log into NetEase in the browser or borrow the operator's private playlist visibility.
+
+### 同步歌单与普通歌单增量加歌
+
+支持同步的运行端通过 `GET /auth/options` 的可选 `library` 字段声明能力。
+同步订阅支持首次读取与手动刷新独立端点，普通增量加歌由服务端默认置顶。
+完整接口、调度、增量迁移和回退见 [H5 网易云同步歌单与常规加歌](music-playlist-sync.md)。

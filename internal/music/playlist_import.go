@@ -127,8 +127,8 @@ func (p AnonymousNetease) PublicPlaylist(ctx context.Context, id string) (Public
 		Playlist struct {
 			ID         int64
 			Name       string
-			Privacy    int
-			TrackCount int
+			Privacy    *int
+			TrackCount *int
 			TrackIDs   []struct{ ID int64 } `json:"trackIds"`
 		}
 	}
@@ -139,17 +139,14 @@ func (p AnonymousNetease) PublicPlaylist(ctx context.Context, id string) (Public
 		return out, err
 	}
 	pl := detail.Playlist
-	if pl.Privacy != 0 {
+	if pl.Privacy != nil && *pl.Privacy != 0 {
 		return out, &apiError{403, "public_playlist_access_denied"}
 	}
-	if pl.TrackCount > 1000 || len(pl.TrackIDs) > 1000 {
+	if pl.TrackCount != nil && *pl.TrackCount > 1000 || len(pl.TrackIDs) > 1000 {
 		return out, &apiError{413, "public_playlist_too_large"}
 	}
-	if len(pl.TrackIDs) == 0 && pl.TrackCount == 0 {
-		return out, &apiError{422, "public_playlist_empty"}
-	}
 	if strconv.FormatInt(pl.ID, 10) != id || strings.TrimSpace(pl.Name) == "" || len(pl.Name) > 200 ||
-		pl.TrackCount != len(pl.TrackIDs) || len(pl.TrackIDs) == 0 {
+		pl.Privacy == nil || pl.TrackCount == nil || pl.TrackIDs == nil || *pl.TrackCount != len(pl.TrackIDs) {
 		return out, &apiError{422, "public_playlist_metadata_incomplete"}
 	}
 	ids := make([]string, 0, len(pl.TrackIDs))
@@ -178,6 +175,9 @@ func (p AnonymousNetease) PublicPlaylist(ctx context.Context, id string) (Public
 		go func() {
 			defer wg.Done()
 			for batch := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				lo, hi := batch*50, min((batch+1)*50, len(ordered))
 				var response struct {
 					Code  int

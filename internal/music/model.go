@@ -38,12 +38,19 @@ func (t Track) MarshalJSON() ([]byte, error) {
 }
 
 type Playlist struct {
-	ID       string  `json:"id"`
-	OwnerID  string  `json:"-"`
-	Name     string  `json:"name"`
-	Revision int64   `json:"revision"`
-	Deleted  bool    `json:"-"`
-	Tracks   []Track `json:"tracks" gorm:"-"`
+	ID                string        `json:"id"`
+	OwnerID           string        `json:"-"`
+	Name              string        `json:"name"`
+	Revision          int64         `json:"revision"`
+	Deleted           bool          `json:"-"`
+	Tracks            []Track       `json:"tracks" gorm:"-"`
+	Kind              string        `json:"kind,omitempty" gorm:"-"`
+	Sync              *PlaylistSync `json:"sync,omitempty" gorm:"-"`
+	SyncSourceID      string        `json:"-"`
+	SyncLastSuccessAt *time.Time    `json:"-"`
+	SyncLastAttemptAt *time.Time    `json:"-"`
+	SyncLastError     string        `json:"-"`
+	SyncLeaseUntil    *time.Time    `json:"-"`
 }
 type Queue struct {
 	Revision     int64    `json:"revision"`
@@ -123,7 +130,7 @@ func secret() string {
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func Migrate(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql", "20261116_music_profile.sql", "20261116_music_recommendations.sql"} {
+		for _, name := range []string{"20261113_music.sql", "20261113_music_canonical.sql", "20261116_music_profile.sql", "20261116_music_recommendations.sql", "20261123_music_playlist_sync.sql"} {
 			b, err := sqlfiles.Files.ReadFile(name)
 			if err != nil {
 				return err
@@ -188,20 +195,62 @@ func saveTrack(db *gorm.DB, t Track) error {
  ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,artist=EXCLUDED.artist,album=EXCLUDED.album,picture=EXCLUDED.picture,duration_ms=EXCLUDED.duration_ms,canonical_verified=true`, t.ID, t.Source, t.ExternalID, t.Title, t.Artist, t.Album, t.Picture, t.DurationMs).Error
 }
 
+// One statement gives the revision, sync status and ordered tracks the same MVCC snapshot.
+func readPlaylists(db *gorm.DB, owner, id string) ([]Playlist, error) {
+	type row struct {
+		Playlist     `gorm:"embedded"`
+		TrackPayload []byte
+	}
+	query := `SELECT p.id, p.owner_id, p.name, p.revision, p.sync_source_id,
+		p.sync_last_success_at, p.sync_last_attempt_at, p.sync_last_error, p.sync_lease_until,
+		COALESCE((
+			SELECT jsonb_agg(jsonb_build_object(
+				'id', t.id, 'source', t.source, 'externalID', t.external_id,
+				'title', t.title, 'artist', t.artist, 'album', t.album,
+				'picture', t.picture, 'durationMs', t.duration_ms
+			) ORDER BY entry.position)
+			FROM (
+				SELECT track_id, position::bigint FROM music_entries
+				WHERE playlist_id = p.id AND p.sync_source_id IS NULL
+				UNION ALL
+				SELECT x.track_id, x.position FROM jsonb_array_elements_text(p.sync_track_ids)
+					WITH ORDINALITY AS x(track_id, position)
+			) entry JOIN music_tracks t ON t.id = entry.track_id
+		), '[]'::jsonb) AS track_payload
+		FROM music_playlists p WHERE p.owner_id = ? AND NOT p.deleted`
+	args := []any{owner}
+	if id != "" {
+		query += " AND p.id = ?"
+		args = append(args, id)
+	}
+	var rows []row
+	if err := db.Raw(query+" ORDER BY p.id", args...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]Playlist, 0, len(rows))
+	for _, r := range rows {
+		p := r.Playlist
+		if err := json.Unmarshal(r.TrackPayload, &p.Tracks); err != nil {
+			return nil, err
+		}
+		p.setSyncInfo()
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 func playlist(db *gorm.DB, owner, id string) (Playlist, error) {
-	p := Playlist{Tracks: []Track{}}
-	r := db.Raw("SELECT * FROM music_playlists WHERE id=? AND owner_id=? AND deleted=false", id, owner).Scan(&p)
-	if r.Error != nil {
-		return p, r.Error
+	if id == "" {
+		return Playlist{}, missing
 	}
-	if r.RowsAffected == 0 {
-		return p, missing
+	rows, err := readPlaylists(db, owner, id)
+	if err != nil {
+		return Playlist{}, err
 	}
-	err := db.Raw(`SELECT t.* FROM music_tracks t JOIN music_entries e ON e.track_id=t.id WHERE e.playlist_id=? ORDER BY e.position`, id).Scan(&p.Tracks).Error
-	if p.Tracks == nil {
-		p.Tracks = []Track{}
+	if len(rows) == 0 {
+		return Playlist{}, missing
 	}
-	return p, err
+	return rows[0], nil
 }
 func unique(ids []string) []string {
 	out := []string{}
@@ -218,12 +267,13 @@ func entries(tx *gorm.DB, id string, ids []string) error {
 	if err := tx.Exec("DELETE FROM music_entries WHERE playlist_id=?", id).Error; err != nil {
 		return err
 	}
-	for n, t := range unique(ids) {
-		if err := tx.Exec("INSERT INTO music_entries(playlist_id,track_id,position) VALUES(?,?,?)", id, t, n).Error; err != nil {
-			return err
-		}
+	encoded, err := json.Marshal(unique(ids))
+	if err != nil {
+		return err
 	}
-	return nil
+	return tx.Exec(`INSERT INTO music_entries(playlist_id,track_id,position)
+		SELECT ?, track_id, position - 1
+		FROM jsonb_array_elements_text(CAST(? AS jsonb)) WITH ORDINALITY AS x(track_id,position)`, id, string(encoded)).Error
 }
 func createPlaylist(tx *gorm.DB, owner, name string, ids []string) (string, error) {
 	name = strings.TrimSpace(name)

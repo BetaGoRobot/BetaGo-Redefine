@@ -22,6 +22,9 @@ type Module struct {
 	listener net.Listener
 	mu       sync.Mutex
 	serveErr error
+	library  *Server
+	stopSync context.CancelFunc
+	syncDone chan struct{}
 }
 
 var _ appruntime.Module = (*Module)(nil)
@@ -29,7 +32,10 @@ var _ appruntime.Module = (*Module)(nil)
 func OptionsFromEnv(provider func() *gorm.DB) Options {
 	pipeline := newNeteasePipeline(AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL"), OwnedMediaHost: os.Getenv("MUSIC_OWNED_MEDIA_HOST")}, os.Getenv("MUSIC_UNM_BRIDGE_URL"), os.Getenv("MUSIC_NETEASE_COOKIE"))
 	o := Options{SkipMigration: os.Getenv("MUSIC_MIGRATE") == "false", DBProvider: provider, Addr: os.Getenv("MUSIC_ADDR"), Origin: os.Getenv("MUSIC_ORIGIN"), AppID: os.Getenv("MUSIC_APP_ID"), StaticDir: os.Getenv("MUSIC_STATIC_DIR"), SecureCookie: os.Getenv("MUSIC_COOKIE_SECURE") != "false", Provider: pipeline}
-	o.PlaylistImporter = AnonymousNetease{BaseURL: os.Getenv("MUSIC_NETEASE_URL")}
+	if endpoint := strings.TrimSpace(os.Getenv("MUSIC_NETEASE_URL")); endpoint != "" {
+		o.PlaylistImporter = AnonymousNetease{BaseURL: endpoint}
+	}
+	o.DisablePlaylistSync = os.Getenv("MUSIC_PLAYLIST_SYNC") == "false"
 	cacheEnabled := os.Getenv("MUSIC_MINIO_CACHE_ENABLED") == "true"
 	cacheConfig := ownedCacheConfig{endpoint: os.Getenv("MUSIC_MINIO_ENDPOINT"), publicOrigin: os.Getenv("MUSIC_MINIO_PUBLIC_ORIGIN"), bucket: os.Getenv("MUSIC_MINIO_BUCKET"), region: os.Getenv("MUSIC_MINIO_REGION"), accessKey: os.Getenv("MUSIC_MINIO_ACCESS_KEY"), secretKey: os.Getenv("MUSIC_MINIO_SECRET_KEY"), writeEnabled: os.Getenv("MUSIC_MINIO_CACHE_WRITE_ENABLED") == "true", writers: make(chan struct{}, 2)}
 	if cacheEnabled {
@@ -110,10 +116,21 @@ func (m *Module) Init(ctx context.Context) error {
 		if profileColumns != 3 {
 			return errors.New("apply music profile migration before starting with MUSIC_MIGRATE=false")
 		}
+		var syncColumns int64
+		if err := db.WithContext(ctx).Raw(`SELECT count(*) FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name='music_playlists'
+			AND column_name IN ('sync_source_id','sync_track_ids','sync_last_success_at','sync_last_attempt_at',
+			'sync_last_error','sync_next_auto_at','sync_lease_token','sync_lease_until')`).Scan(&syncColumns).Error; err != nil {
+			return err
+		}
+		if syncColumns != 8 {
+			return errors.New("apply music playlist sync migration before starting with MUSIC_MIGRATE=false")
+		}
 	} else if err := Migrate(db.WithContext(ctx)); err != nil {
 		return err
 	}
 	s := NewServer(db, m.opts)
+	m.library = s
 	mux := http.NewServeMux()
 	mux.Handle("/music-api/v1/", s.HTTP())
 	if m.opts.StaticDir != "" {
@@ -156,6 +173,23 @@ func (m *Module) Start(context.Context) error {
 			m.mu.Unlock()
 		}
 	}()
+	if m.library.authOptions.Library.NeteasePlaylistSync {
+		syncCtx, cancel := context.WithCancel(context.Background())
+		m.stopSync, m.syncDone = cancel, make(chan struct{})
+		go func() {
+			defer close(m.syncDone)
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for syncCtx.Err() == nil {
+				m.library.runPlaylistSyncSweep(syncCtx)
+				select {
+				case <-syncCtx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	return nil
 }
 func (m *Module) Ready(context.Context) error {
@@ -173,5 +207,16 @@ func (m *Module) Stop(ctx context.Context) error {
 	if m.server == nil {
 		return nil
 	}
-	return m.server.Shutdown(ctx)
+	if m.stopSync != nil {
+		m.stopSync()
+	}
+	err := m.server.Shutdown(ctx)
+	if m.syncDone != nil {
+		select {
+		case <-m.syncDone:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+	}
+	return err
 }
