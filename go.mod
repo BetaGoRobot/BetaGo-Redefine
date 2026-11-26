@@ -30,7 +30,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/olivere/elastic/v7 v7.0.32
 	github.com/opensearch-project/opensearch-go v1.1.0
-	github.com/opensearch-project/opensearch-go/v4 v4.8.0
+	github.com/opensearch-project/opensearch-go/v4 v4.8.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pkg/errors v0.9.1
@@ -156,11 +156,11 @@ require (
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/arch v0.24.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/grpc v1.83.2 // indirect
